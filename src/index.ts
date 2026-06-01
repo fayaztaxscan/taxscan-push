@@ -1,12 +1,7 @@
-import express from 'express';
+import { createApp } from './app';
 import { env } from './lib/env';
-import { healthRouter } from './routes/health';
 
-const app = express();
-
-app.use(express.json());
-
-app.use(healthRouter);
+const app = createApp();
 
 app.listen(env.port, () => {
   // eslint-disable-next-line no-console
