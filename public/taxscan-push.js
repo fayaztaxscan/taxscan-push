@@ -262,8 +262,38 @@
       close();
     }
 
+    function getFocusables() {
+      var nodes = wrap.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.prototype.slice.call(nodes).filter(function (el) {
+        return !el.disabled && el.offsetParent !== null;
+      });
+    }
+
     function onKey(e) {
-      if (e.key === 'Escape') dismiss();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        dismiss();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      var focusables = getFocusables();
+      if (focusables.length === 0) return;
+      var first = focusables[0];
+      var last = focusables[focusables.length - 1];
+      var active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !wrap.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last || !wrap.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
 
     xBtn.addEventListener('click', dismiss);

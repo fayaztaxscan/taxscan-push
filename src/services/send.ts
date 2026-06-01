@@ -109,7 +109,22 @@ export async function executeCampaign(
       campaignId: campaign.id,
     };
 
-    const outcomes = await workerPool(kept, concurrency, (sub) => sender(sub, payload));
+    // Per-item try/catch isolates failures: a sender that throws (custom or
+    // web-push's synchronous validation throw on bad keys) becomes a `failed`
+    // outcome for that one subscriber instead of aborting the whole batch.
+    const outcomes = await workerPool(kept, concurrency, async (sub) => {
+      try {
+        return await sender(sub, payload);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          expired: false,
+          failed: true,
+          error: message,
+        } satisfies SendOutcome;
+      }
+    });
 
     let sent = 0;
     let expiredPruned = 0;

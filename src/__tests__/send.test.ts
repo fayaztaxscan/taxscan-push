@@ -2,6 +2,7 @@ import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dispatchCampaign, type Sender } from '../services/send';
 import { startOfTodayIST } from '../lib/quietHours';
+import { validKeys } from './helpers';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -22,11 +23,12 @@ async function makeSubscriber(
   suffix: string,
   topics: string[] = [],
 ): Promise<Subscriber> {
+  const keys = validKeys();
   const sub = await prisma.subscriber.create({
     data: {
       endpoint: `${TEST_PREFIX}${suffix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
-      p256dh: 'p',
-      auth: 'a',
+      p256dh: keys.p256dh,
+      auth: keys.auth,
       portal,
       topics,
     },
@@ -206,6 +208,62 @@ describe('dispatchCampaign', () => {
 
     expect(result.status).toBe('SENT');
     expect(result.sent).toBeGreaterThanOrEqual(1);
+  });
+
+  it('isolates per-subscriber failures so one bad sender call cannot abort the batch', async () => {
+    const portal = uniquePortal('isolate');
+    const good = await makeSubscriber(portal, 'good');
+    const syncBad = await makeSubscriber(portal, 'sync-bad');
+    const webpushBad = await makeSubscriber(portal, 'webpush-bad');
+
+    const sender: Sender = async (sub) => {
+      if (sub.id === syncBad.id) {
+        // Mirrors what web-push throws synchronously from generateRequestDetails
+        // when p256dh isn't a valid 65-byte key.
+        throw new Error('Invalid p256dh - must be 65 bytes');
+      }
+      if (sub.id === webpushBad.id) {
+        // A WebPushError-shaped throw (non-404/410): isWebPushError matches,
+        // and the new failed branch is what we're asserting on.
+        const err = Object.assign(new Error('500 Internal Error'), {
+          statusCode: 500,
+          endpoint: sub.endpoint,
+          body: 'oops',
+        });
+        throw err;
+      }
+      return { ok: true, statusCode: 201 };
+    };
+
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'mixed batch',
+        body: 'b',
+        url: 'https://taxscan.in',
+        target: { type: 'all' },
+        breaking: true, // deterministic — bypass quiet hours
+      },
+      { sender, now: ist(2026, 6, 1, 12, 0), cap: 100 },
+    );
+    campaignIds.push(result.campaignId);
+
+    expect(result.status).toBe('SENT');
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(2);
+    expect(result.expiredPruned).toBe(0);
+
+    const events = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, type: 'SENT' },
+    });
+    expect(events.map((e) => e.subscriberId)).toEqual([good.id]);
+
+    // The two bad subscribers remain ACTIVE (404/410 is the only path that flips status).
+    const stillActive = await prisma.subscriber.findMany({
+      where: { id: { in: [syncBad.id, webpushBad.id] } },
+      select: { id: true, status: true },
+    });
+    expect(stillActive.every((s) => s.status === 'ACTIVE')).toBe(true);
   });
 
   it('prunes EXPIRED subscribers on 410 and does not record SENT for them', async () => {

@@ -21,6 +21,27 @@ npm run dev
 
 The server listens on `PORT` (default `3000`). Health check: `GET /healthz`.
 
+### Local-dev notification gotcha (macOS Chrome)
+
+On macOS, browser-pushed notifications only render on screen if Chrome itself is allowed to send
+notifications at the OS level. Open **System Settings → Notifications → Google Chrome** and turn
+notifications on. If this is off, the push reaches the browser and the SW runs, but nothing visible
+appears and you'll wonder why. Same applies to Brave / Edge / Arc.
+
+### One-off cleanup of malformed subscribers
+
+If garbage subscriptions (curl-smoke seeds, hand-typed test rows) sit in the table with bogus keys,
+`web-push` will throw synchronously when trying to send to them. Run this once to flip them to
+EXPIRED:
+
+```bash
+npm run db:cleanup-bad-keys
+```
+
+It scans `ACTIVE` rows whose `p256dh` doesn't decode to 65 bytes or whose `auth` isn't 16 bytes and
+flips them. Going forward `/api/subscribe` rejects malformed keys with 400, so this should be a
+one-shot.
+
 ## VAPID keys
 
 Web push requires a VAPID key pair. Generate one:

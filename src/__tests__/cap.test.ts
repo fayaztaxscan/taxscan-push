@@ -2,6 +2,7 @@ import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { filterByCap } from '../lib/cap';
 import { startOfTodayIST } from '../lib/quietHours';
+import { validKeys } from './helpers';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -12,11 +13,12 @@ const TEST_PREFIX = 'https://test-cap.example.com/sub/';
 const created: string[] = [];
 
 async function makeSubscriber(suffix: string): Promise<Subscriber> {
+  const keys = validKeys();
   const sub = await prisma.subscriber.create({
     data: {
       endpoint: `${TEST_PREFIX}${suffix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
-      p256dh: 'p',
-      auth: 'a',
+      p256dh: keys.p256dh,
+      auth: keys.auth,
       portal: 'test-cap',
       topics: [],
     },
