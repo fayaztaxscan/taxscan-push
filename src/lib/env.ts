@@ -28,4 +28,11 @@ export const env = {
     quietStart: process.env.QUIET_HOURS_START ?? '23:00',
     quietEnd: process.env.QUIET_HOURS_END ?? '07:00',
   },
+  rss: {
+    enabled: process.env.RSS_ENABLED === 'true',
+    feedUrl: process.env.RSS_FEED_URL ?? 'https://www.taxscan.in/feed',
+    cron: process.env.RSS_POLL_CRON ?? '*/5 * * * *',
+    tz: 'Asia/Kolkata',
+    portal: 'taxscan',
+  },
 };

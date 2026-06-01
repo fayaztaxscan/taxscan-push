@@ -60,11 +60,25 @@ model Campaign {
   status      CampaignStatus @default(DRAFT)
   createdAt   DateTime       @default(now())
 
-  events Event[]
+  events    Event[]
+  feedItems FeedItem[]
 
   @@index([portal])
   @@index([status])
   @@index([scheduledAt])
+}
+
+model FeedItem {
+  id         String   @id @default(cuid())
+  feedUrl    String
+  guid       String
+  campaignId String?
+  createdAt  DateTime @default(now())
+
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@unique([feedUrl, guid])
+  @@index([feedUrl])
 }
 
 model Event {

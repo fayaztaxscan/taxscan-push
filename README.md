@@ -43,6 +43,40 @@ VAPID_SUBJECT=mailto:admin@taxscan.in
 
 Rotating the key pair invalidates every existing subscription, so generate once per environment.
 
+## RSS poller
+
+The poller is off by default. To enable, set in `.env`:
+
+```
+RSS_ENABLED=true
+RSS_FEED_URL=https://www.taxscan.in/feed
+RSS_POLL_CRON=*/5 * * * *
+```
+
+The cron is interpreted in `Asia/Kolkata`. On each tick the poller fetches the feed and, for any
+item whose `(feedUrl, guid)` pair is not in the `FeedItem` table, creates a Campaign and dispatches
+it via the Task 5 service to the `taxscan` portal. Items with one or more `<category>` elements are
+sent to topic-targeted subscribers; otherwise the campaign targets `all`.
+
+### Topic slug convention
+
+RSS categories are slugged with `s.toLowerCase().replace(/[^a-z0-9]+/g, '-')`. The subscribe form
+must use the same convention so subscriber `topics` line up with RSS category slugs.
+Examples: `Income Tax → income-tax`, `GST → gst`, `Customs & Trade → customs-trade`.
+
+### First-run behaviour
+
+A fresh install with an empty `FeedItem` table will treat every current feed item as new and
+dispatch all of them on the first poll. Keep `RSS_ENABLED=false` until you're ready, or prime the
+table with a one-off script.
+
+### Dispatch failure policy
+
+If a dispatch throws after the `FeedItem` row has been claimed, the row is left in place
+(`campaignId` stays null) and the item is logged but never retried. This is deliberate — it keeps
+"never re-send" inviolable across crashes, at the cost of permanently skipping one item per failed
+dispatch. Watch the logs.
+
 ## Admin send endpoint
 
 `POST /api/send` is the admin-only dispatch endpoint. Authenticate with a static bearer token:
