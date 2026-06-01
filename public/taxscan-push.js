@@ -280,20 +280,20 @@
       if (e.key !== 'Tab') return;
       var focusables = getFocusables();
       if (focusables.length === 0) return;
-      var first = focusables[0];
-      var last = focusables[focusables.length - 1];
+      // Fully manage Tab inside the banner: always preventDefault and move focus
+      // to the next/previous focusable. Relying on the browser's natural Tab to
+      // stay inside the wrap leaks at boundaries in some Chrome builds.
+      e.preventDefault();
       var active = document.activeElement;
-      if (e.shiftKey) {
-        if (active === first || !wrap.contains(active)) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (active === last || !wrap.contains(active)) {
-          e.preventDefault();
-          first.focus();
-        }
+      var idx = focusables.indexOf(active);
+      if (idx === -1) {
+        focusables[0].focus();
+        return;
       }
+      var nextIdx = e.shiftKey
+        ? (idx - 1 + focusables.length) % focusables.length
+        : (idx + 1) % focusables.length;
+      focusables[nextIdx].focus();
     }
 
     xBtn.addEventListener('click', dismiss);
