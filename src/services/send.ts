@@ -1,4 +1,4 @@
-import type { Subscriber } from '@prisma/client';
+import type { Campaign, Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/push';
@@ -38,6 +38,21 @@ export type DispatchDeps = {
   quietEnd?: string;
 };
 
+export type ExecuteDeps = {
+  sender?: Sender;
+  now?: Date;
+  cap?: number;
+  concurrency?: number;
+};
+
+export type ExecuteResult = {
+  campaignId: string;
+  sent: number;
+  capped: number;
+  expiredPruned: number;
+  failed: number;
+};
+
 async function resolveTargets(portal: string, target: Target): Promise<Subscriber[]> {
   if (target.type === 'all') {
     return prisma.subscriber.findMany({ where: { portal, status: 'ACTIVE' } });
@@ -66,55 +81,31 @@ async function workerPool<T, R>(
   return results;
 }
 
-export async function dispatchCampaign(
-  input: CampaignInput,
-  deps: DispatchDeps = {},
-): Promise<DispatchResult> {
+/**
+ * Run the send loop for an existing Campaign row. Used by dispatchCampaign
+ * (after the quiet-hours check passes) and by the sweeper (when a SCHEDULED
+ * campaign comes due).
+ */
+export async function executeCampaign(
+  campaign: Campaign,
+  deps: ExecuteDeps = {},
+): Promise<ExecuteResult> {
   const now = deps.now ?? new Date();
   const sender = deps.sender ?? sendToSubscriber;
   const cap = deps.cap ?? env.send.freqCapPerDay;
   const concurrency = deps.concurrency ?? env.send.concurrency;
-  const quietStart = deps.quietStart ?? env.send.quietStart;
-  const quietEnd = deps.quietEnd ?? env.send.quietEnd;
 
-  const campaign = await prisma.campaign.create({
-    data: {
-      portal: input.portal,
-      title: input.title,
-      body: input.body,
-      url: input.url,
-      icon: input.icon ?? null,
-      target: input.target as object,
-      status: 'DRAFT',
-    },
-  });
+  const target = campaign.target as unknown as Target;
 
   try {
-    if (!input.breaking && isQuietHours(now, quietStart, quietEnd)) {
-      const scheduledAt = nextAllowedAt(now, quietStart, quietEnd);
-      await prisma.campaign.update({
-        where: { id: campaign.id },
-        data: { status: 'SCHEDULED', scheduledAt },
-      });
-      return {
-        campaignId: campaign.id,
-        status: 'SCHEDULED',
-        sent: 0,
-        capped: 0,
-        expiredPruned: 0,
-        failed: 0,
-        deferred: { scheduledAt: scheduledAt.toISOString() },
-      };
-    }
-
-    const candidates = await resolveTargets(input.portal, input.target);
+    const candidates = await resolveTargets(campaign.portal, target);
     const { kept, capped } = await filterByCap(candidates, cap, now);
 
     const payload: PushPayload = {
-      title: input.title,
-      body: input.body,
-      url: input.url,
-      icon: input.icon ?? undefined,
+      title: campaign.title,
+      body: campaign.body,
+      url: campaign.url,
+      icon: campaign.icon ?? undefined,
       campaignId: campaign.id,
     };
 
@@ -147,18 +138,52 @@ export async function dispatchCampaign(
       data: { status: 'SENT' },
     });
 
-    return {
-      campaignId: campaign.id,
-      status: 'SENT',
-      sent,
-      capped: capped.length,
-      expiredPruned,
-      failed,
-    };
+    return { campaignId: campaign.id, sent, capped: capped.length, expiredPruned, failed };
   } catch (err) {
     await prisma.campaign
       .update({ where: { id: campaign.id }, data: { status: 'FAILED' } })
       .catch(() => undefined);
     throw err;
   }
+}
+
+export async function dispatchCampaign(
+  input: CampaignInput,
+  deps: DispatchDeps = {},
+): Promise<DispatchResult> {
+  const now = deps.now ?? new Date();
+  const quietStart = deps.quietStart ?? env.send.quietStart;
+  const quietEnd = deps.quietEnd ?? env.send.quietEnd;
+
+  const campaign = await prisma.campaign.create({
+    data: {
+      portal: input.portal,
+      title: input.title,
+      body: input.body,
+      url: input.url,
+      icon: input.icon ?? null,
+      target: input.target as object,
+      status: 'DRAFT',
+    },
+  });
+
+  if (!input.breaking && isQuietHours(now, quietStart, quietEnd)) {
+    const scheduledAt = nextAllowedAt(now, quietStart, quietEnd);
+    await prisma.campaign.update({
+      where: { id: campaign.id },
+      data: { status: 'SCHEDULED', scheduledAt },
+    });
+    return {
+      campaignId: campaign.id,
+      status: 'SCHEDULED',
+      sent: 0,
+      capped: 0,
+      expiredPruned: 0,
+      failed: 0,
+      deferred: { scheduledAt: scheduledAt.toISOString() },
+    };
+  }
+
+  const result = await executeCampaign(campaign, deps);
+  return { ...result, status: 'SENT' };
 }

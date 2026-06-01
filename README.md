@@ -70,6 +70,21 @@ A fresh install with an empty `FeedItem` table will treat every current feed ite
 dispatch all of them on the first poll. Keep `RSS_ENABLED=false` until you're ready, or prime the
 table with a one-off script.
 
+## Scheduled-campaign sweeper
+
+Campaigns that hit the quiet-hours gate are persisted with `status=SCHEDULED` and `scheduledAt` set
+to the next allowed instant. The sweeper is a separate cron tick that picks them up:
+
+```
+SWEEPER_ENABLED=true
+SWEEPER_CRON=* * * * *
+```
+
+Each tick finds `status=SCHEDULED AND scheduledAt <= now`, re-checks quiet hours (a campaign landing
+back inside a window gets its `scheduledAt` pushed forward instead of sent), and otherwise claims
+the row atomically (`SCHEDULED → DRAFT`) before running the same send loop used by `/api/send`. The
+sweeper has its own single-flight lock so a slow tick can't overlap the next one.
+
 ### Dispatch failure policy
 
 If a dispatch throws after the `FeedItem` row has been claimed, the row is left in place
