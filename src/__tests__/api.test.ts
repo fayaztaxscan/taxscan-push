@@ -1,10 +1,14 @@
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import type { Sender } from '../services/send';
 
+const okSender: Sender = async () => ({ ok: true, statusCode: 201 });
 const app = createApp();
+const sendApp = createApp({ sender: okSender });
 
 const TEST_PREFIX = 'https://test-taxscan.example.com/sub/';
+const SEND_PORTAL = 'test-api-send';
 function makeEndpoint(suffix: string): string {
   return `${TEST_PREFIX}${suffix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
@@ -16,7 +20,13 @@ function makeSubscription(suffix: string) {
   };
 }
 
+const apiCampaignIds: string[] = [];
+
 afterAll(async () => {
+  if (apiCampaignIds.length) {
+    await prisma.event.deleteMany({ where: { campaignId: { in: apiCampaignIds } } });
+    await prisma.campaign.deleteMany({ where: { id: { in: apiCampaignIds } } });
+  }
   const subs = await prisma.subscriber.findMany({
     where: { endpoint: { startsWith: TEST_PREFIX } },
     select: { id: true },
@@ -145,5 +155,71 @@ describe('GET /api/config', () => {
     const res = await request(app).get('/api/config');
     expect(res.status).toBe(200);
     expect(typeof res.body.vapidPublicKey).toBe('string');
+  });
+});
+
+describe('POST /api/send', () => {
+  it('returns 401 without a bearer token', async () => {
+    const res = await request(sendApp).post('/api/send').send({
+      portal: SEND_PORTAL,
+      title: 't',
+      body: 'b',
+      url: 'https://taxscan.in',
+      target: { type: 'all' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 with a wrong bearer token', async () => {
+    const res = await request(sendApp)
+      .post('/api/send')
+      .set('Authorization', 'Bearer wrong')
+      .send({
+        portal: SEND_PORTAL,
+        title: 't',
+        body: 'b',
+        url: 'https://taxscan.in',
+        target: { type: 'all' },
+      });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 400 for a malformed body', async () => {
+    const res = await request(sendApp)
+      .post('/api/send')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`)
+      .send({ portal: SEND_PORTAL });
+    expect(res.status).toBe(400);
+  });
+
+  it('dispatches a campaign to a seeded subscriber and records SENT', async () => {
+    const subscription = makeSubscription('api-send');
+    await request(sendApp)
+      .post('/api/subscribe')
+      .send({ subscription, portal: SEND_PORTAL })
+      .expect(201);
+
+    const res = await request(sendApp)
+      .post('/api/send')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`)
+      .send({
+        portal: SEND_PORTAL,
+        title: 'api hello',
+        body: 'from /api/send',
+        url: 'https://taxscan.in/x',
+        target: { type: 'all' },
+        breaking: true, // bypass quiet hours so this is deterministic regardless of wall clock
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('SENT');
+    expect(res.body.sent).toBeGreaterThanOrEqual(1);
+    expect(typeof res.body.campaignId).toBe('string');
+    apiCampaignIds.push(res.body.campaignId);
+
+    const events = await prisma.event.findMany({
+      where: { campaignId: res.body.campaignId, type: 'SENT' },
+    });
+    expect(events.length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -43,6 +43,34 @@ VAPID_SUBJECT=mailto:admin@taxscan.in
 
 Rotating the key pair invalidates every existing subscription, so generate once per environment.
 
+## Admin send endpoint
+
+`POST /api/send` is the admin-only dispatch endpoint. Authenticate with a static bearer token:
+
+```
+Authorization: Bearer $ADMIN_TOKEN
+```
+
+Body:
+
+```json
+{
+  "portal": "taxscan",
+  "title": "...",
+  "body": "...",
+  "url": "https://taxscan.in/article/123",
+  "icon": "https://taxscan.in/icon.png",
+  "target": { "type": "all" },
+  "breaking": false
+}
+```
+
+`target` is either `{ "type": "all" }` or `{ "type": "topics", "topics": ["gst", "income-tax"] }`. The
+service applies the per-subscriber daily cap (`FREQ_CAP_PER_DAY`, default 4) and the IST quiet-hours
+window (`QUIET_HOURS_START`/`QUIET_HOURS_END`, default 23:00→07:00). Inside the quiet window the
+campaign is persisted as `SCHEDULED` with `scheduledAt` set to the next allowed instant — set
+`breaking: true` to bypass.
+
 ## Scripts
 
 | Command              | What it does                                          |

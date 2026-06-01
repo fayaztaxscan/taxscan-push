@@ -1,0 +1,164 @@
+import type { Subscriber } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { env } from '../lib/env';
+import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/push';
+import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
+import { filterByCap } from '../lib/cap';
+
+export type Target = { type: 'all' } | { type: 'topics'; topics: string[] };
+
+export type CampaignInput = {
+  portal: string;
+  title: string;
+  body: string;
+  url: string;
+  icon?: string | null;
+  target: Target;
+  breaking?: boolean;
+};
+
+export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
+
+export type DispatchResult = {
+  campaignId: string;
+  status: 'SENT' | 'SCHEDULED' | 'FAILED';
+  sent: number;
+  capped: number;
+  expiredPruned: number;
+  failed: number;
+  deferred?: { scheduledAt: string };
+};
+
+export type DispatchDeps = {
+  sender?: Sender;
+  now?: Date;
+  cap?: number;
+  concurrency?: number;
+  quietStart?: string;
+  quietEnd?: string;
+};
+
+async function resolveTargets(portal: string, target: Target): Promise<Subscriber[]> {
+  if (target.type === 'all') {
+    return prisma.subscriber.findMany({ where: { portal, status: 'ACTIVE' } });
+  }
+  return prisma.subscriber.findMany({
+    where: { portal, status: 'ACTIVE', topics: { hasSome: target.topics } },
+  });
+}
+
+async function workerPool<T, R>(
+  items: T[],
+  concurrency: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let idx = 0;
+  const lanes = Math.max(1, Math.min(concurrency, items.length || 1));
+  const workers = Array.from({ length: lanes }, async () => {
+    for (;;) {
+      const i = idx++;
+      if (i >= items.length) return;
+      results[i] = await work(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export async function dispatchCampaign(
+  input: CampaignInput,
+  deps: DispatchDeps = {},
+): Promise<DispatchResult> {
+  const now = deps.now ?? new Date();
+  const sender = deps.sender ?? sendToSubscriber;
+  const cap = deps.cap ?? env.send.freqCapPerDay;
+  const concurrency = deps.concurrency ?? env.send.concurrency;
+  const quietStart = deps.quietStart ?? env.send.quietStart;
+  const quietEnd = deps.quietEnd ?? env.send.quietEnd;
+
+  const campaign = await prisma.campaign.create({
+    data: {
+      portal: input.portal,
+      title: input.title,
+      body: input.body,
+      url: input.url,
+      icon: input.icon ?? null,
+      target: input.target as object,
+      status: 'DRAFT',
+    },
+  });
+
+  try {
+    if (!input.breaking && isQuietHours(now, quietStart, quietEnd)) {
+      const scheduledAt = nextAllowedAt(now, quietStart, quietEnd);
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: { status: 'SCHEDULED', scheduledAt },
+      });
+      return {
+        campaignId: campaign.id,
+        status: 'SCHEDULED',
+        sent: 0,
+        capped: 0,
+        expiredPruned: 0,
+        failed: 0,
+        deferred: { scheduledAt: scheduledAt.toISOString() },
+      };
+    }
+
+    const candidates = await resolveTargets(input.portal, input.target);
+    const { kept, capped } = await filterByCap(candidates, cap, now);
+
+    const payload: PushPayload = {
+      title: input.title,
+      body: input.body,
+      url: input.url,
+      icon: input.icon ?? undefined,
+      campaignId: campaign.id,
+    };
+
+    const outcomes = await workerPool(kept, concurrency, (sub) => sender(sub, payload));
+
+    let sent = 0;
+    let expiredPruned = 0;
+    let failed = 0;
+    for (let i = 0; i < kept.length; i++) {
+      const outcome = outcomes[i];
+      const sub = kept[i];
+      if (outcome.ok) {
+        sent++;
+        await prisma.event.create({
+          data: { type: 'SENT', campaignId: campaign.id, subscriberId: sub.id },
+        });
+      } else if (outcome.expired) {
+        expiredPruned++;
+      } else {
+        failed++;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `push failed for subscriber ${sub.id}: ${outcome.statusCode} ${outcome.error}`,
+        );
+      }
+    }
+
+    await prisma.campaign.update({
+      where: { id: campaign.id },
+      data: { status: 'SENT' },
+    });
+
+    return {
+      campaignId: campaign.id,
+      status: 'SENT',
+      sent,
+      capped: capped.length,
+      expiredPruned,
+      failed,
+    };
+  } catch (err) {
+    await prisma.campaign
+      .update({ where: { id: campaign.id }, data: { status: 'FAILED' } })
+      .catch(() => undefined);
+    throw err;
+  }
+}
