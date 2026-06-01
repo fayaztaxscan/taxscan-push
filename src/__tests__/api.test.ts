@@ -72,6 +72,21 @@ describe('POST /api/subscribe', () => {
     expect(res.body.error).toBe('invalid_request');
   });
 
+  it('records the source flag in the SUBSCRIBED event meta', async () => {
+    const subscription = makeSubscription('with-source');
+    const res = await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal: 'taxscan', source: 'recapture' });
+    expect(res.status).toBe(201);
+
+    const sub = await prisma.subscriber.findUnique({ where: { endpoint: subscription.endpoint } });
+    const event = await prisma.event.findFirst({
+      where: { subscriberId: sub!.id, type: 'SUBSCRIBED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(event?.meta).toEqual({ source: 'recapture' });
+  });
+
   it('upsert re-subscribes an EXPIRED endpoint back to ACTIVE', async () => {
     const subscription = makeSubscription('reactivate');
     await request(app).post('/api/subscribe').send({ subscription, portal: 'taxscan' }).expect(201);

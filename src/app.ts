@@ -1,3 +1,4 @@
+import path from 'path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { corsMiddleware } from './lib/cors';
 import { healthRouter } from './routes/health';
@@ -14,6 +15,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   app.use(healthRouter);
   app.use('/api', createApiRouter({ sender: opts.sender }));
+  app.use(express.static(path.resolve(__dirname, '..', 'public')));
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

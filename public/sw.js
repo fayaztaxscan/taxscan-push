@@ -1,114 +1,21 @@
-/* =====================================================================
- * Taxscan Web Push — service worker (sw.js)
- * Serve this file from the ROOT of taxscan.in over HTTPS:
- *   https://www.taxscan.in/sw.js
- * (Your vendor installs it the same way iZooto's worker was installed.)
+/* Taxscan Web Push — service worker
  *
- * Replace the two placeholders below at deploy time.
- * ===================================================================== */
+ * Registered by taxscan-push.js as `/sw.js?api=<API_BASE>`. The api param lets
+ * the SW reach a cross-origin backend (e.g. api.taxscan.in) in Phase 2; if it
+ * is absent we fall back to the SW's own origin.
+ */
 
-const API_BASE = '__API_BASE__';            // e.g. 'https://push.taxscan.in'  (your backend)
-const VAPID_PUBLIC_KEY = '__VAPID_PUBLIC_KEY__'; // your VAPID PUBLIC key (Strategy A: fresh key)
+const API_BASE = (() => {
+  try {
+    return new URL(self.location.href).searchParams.get('api') || self.location.origin;
+  } catch (_) {
+    return self.location.origin;
+  }
+})();
 
-/* Activate the new worker immediately so cut-over is fast. */
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
-/* ---------- Receive & display a push ---------- */
-self.addEventListener('push', (event) => {
-  let payload = {};
-  try {
-    payload = event.data ? event.data.json() : {};
-  } catch (e) {
-    payload = { title: 'Taxscan', body: event.data ? event.data.text() : '' };
-  }
-
-  const title = payload.title || 'Taxscan';
-  const options = {
-    body: payload.body || '',
-    icon: payload.icon || 'https://www.taxscan.in/images/logo.png',
-    badge: payload.badge || 'https://www.taxscan.in/images/logo.png',
-    image: payload.image || undefined,
-    // `tag` collapses duplicates; use the campaign id so the same article never stacks.
-    tag: payload.tag || payload.campaignId || undefined,
-    renotify: !!payload.tag,
-    requireInteraction: !!payload.breaking, // breaking news stays until tapped
-    data: {
-      url: payload.url || 'https://www.taxscan.in/',
-      campaignId: payload.campaignId || null
-    },
-    actions: payload.actions || [{ action: 'open', title: 'Read' }]
-  };
-
-  event.waitUntil(self.registration.showNotification(title, options));
-});
-
-/* ---------- Click: record it, then open/focus the article ---------- */
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  const data = event.notification.data || {};
-  const url = data.url || 'https://www.taxscan.in/';
-
-  event.waitUntil((async () => {
-    try {
-      const sub = await self.registration.pushManager.getSubscription();
-      await fetch(API_BASE + '/api/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'CLICKED',
-          endpoint: sub ? sub.endpoint : null,
-          campaignId: data.campaignId
-        })
-      });
-    } catch (e) { /* tracking is best-effort */ }
-
-    // Focus an already-open tab on the same URL, else open a new one.
-    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const client of clientList) {
-      if (client.url === url && 'focus' in client) return client.focus();
-    }
-    if (self.clients.openWindow) return self.clients.openWindow(url);
-  })());
-});
-
-/* ---------- Dismiss tracking (optional, useful for analytics) ---------- */
-self.addEventListener('notificationclose', (event) => {
-  const data = event.notification.data || {};
-  event.waitUntil((async () => {
-    try {
-      const sub = await self.registration.pushManager.getSubscription();
-      await fetch(API_BASE + '/api/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'DISMISSED',
-          endpoint: sub ? sub.endpoint : null,
-          campaignId: data.campaignId
-        })
-      });
-    } catch (e) { /* ignore */ }
-  })());
-});
-
-/* ---------- Re-subscribe automatically if the subscription expires ---------- */
-self.addEventListener('pushsubscriptionchange', (event) => {
-  event.waitUntil((async () => {
-    try {
-      const sub = await self.registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-      });
-      await fetch(API_BASE + '/api/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription: sub, portal: 'taxscan', source: 'resubscribe' })
-      });
-    } catch (e) { /* ignore */ }
-  })());
-});
-
-/* ---------- helper ---------- */
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -117,3 +24,102 @@ function urlBase64ToUint8Array(base64String) {
   for (let i = 0; i < raw.length; ++i) output[i] = raw.charCodeAt(i);
   return output;
 }
+
+function postJSON(path, body) {
+  return fetch(API_BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }).catch(() => undefined);
+}
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (_) {
+    payload = { title: 'Taxscan', body: event.data ? event.data.text() : '' };
+  }
+
+  const title = payload.title || 'Taxscan';
+  const options = {
+    body: payload.body || '',
+    icon: payload.icon || '/icon-192.png',
+    badge: payload.badge || '/icon-192.png',
+    tag: payload.tag || payload.campaignId || undefined,
+    renotify: false,
+    data: {
+      url: payload.url || '/',
+      campaignId: payload.campaignId || null,
+    },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = event.notification.data || {};
+  const url = data.url || '/';
+
+  event.waitUntil(
+    (async () => {
+      try {
+        const sub = await self.registration.pushManager.getSubscription();
+        await postJSON('/api/track', {
+          type: 'CLICKED',
+          endpoint: sub ? sub.endpoint : undefined,
+          campaignId: data.campaignId || undefined,
+        });
+      } catch (_) {
+        /* tracking is best-effort */
+      }
+
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of clients) {
+        if (client.url === url && 'focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })(),
+  );
+});
+
+self.addEventListener('notificationclose', (event) => {
+  const data = event.notification.data || {};
+  event.waitUntil(
+    (async () => {
+      try {
+        const sub = await self.registration.pushManager.getSubscription();
+        await postJSON('/api/track', {
+          type: 'DISMISSED',
+          endpoint: sub ? sub.endpoint : undefined,
+          campaignId: data.campaignId || undefined,
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })(),
+  );
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const cfg = await fetch(API_BASE + '/api/config').then((r) => r.json());
+        if (!cfg || !cfg.vapidPublicKey) return;
+        const sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(cfg.vapidPublicKey),
+        });
+        await postJSON('/api/subscribe', {
+          subscription: sub.toJSON(),
+          portal: 'taxscan',
+          source: 'pushsubscriptionchange',
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })(),
+  );
+});

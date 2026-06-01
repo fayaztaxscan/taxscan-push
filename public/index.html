@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Taxscan Push — demo</title>
+    <style>
+      :root {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+        color: #0b2545;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        max-width: 760px;
+        margin-inline: auto;
+        line-height: 1.55;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 8px;
+      }
+      p.muted {
+        color: #475569;
+        margin-top: 0;
+      }
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 16px;
+        margin: 16px 0;
+        background: #f8fafc;
+      }
+      .panel pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-size: 12px;
+        color: #0b2545;
+      }
+      .btn-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      button.dbg {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        color: #0b2545;
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button.dbg:hover {
+        background: #f1f5f9;
+      }
+      article {
+        margin-top: 32px;
+      }
+      article p {
+        margin: 0 0 14px;
+      }
+    </style>
+    <script>
+      // Set API base BEFORE the SDK script loads. Defaults to the current origin.
+      window.TAXSCAN_PUSH_CONFIG = { apiBase: window.location.origin };
+    </script>
+    <script src="/taxscan-push.js" defer></script>
+  </head>
+  <body>
+    <h1>Taxscan Web Push — local demo</h1>
+    <p class="muted">
+      This page boots the SDK against the local backend. The soft prompt is gated by
+      <em>never on landing</em>; use the debug buttons below to simulate a 2nd page and force the
+      prompt to appear.
+    </p>
+
+    <div class="panel" id="state">
+      <div class="btn-row" style="margin-bottom: 10px">
+        <button class="dbg" id="btn-state">Refresh state</button>
+        <button class="dbg" id="btn-reset-dismissed">Clear dismissed cookie</button>
+        <button class="dbg" id="btn-simulate-2nd">Simulate 2nd page</button>
+        <button class="dbg" id="btn-show">Show prompt now</button>
+        <button class="dbg" id="btn-unsub">Unsubscribe</button>
+      </div>
+      <pre id="state-json">loading…</pre>
+    </div>
+
+    <article id="filler">
+      <p>
+        Scroll past ~50% of this article to trigger the soft prompt on a non-landing page. The
+        engagement triggers are: scrolled past 50%, OR 30 seconds elapsed, OR you've already viewed
+        a 2nd page in this session. None of these fire on the landing page.
+      </p>
+      <p>
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut
+        labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco
+        laboris nisi ut aliquip ex ea commodo consequat.
+      </p>
+      <p>
+        Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+        pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt
+        mollit anim id est laborum.
+      </p>
+      <p>
+        Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque
+        laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi
+        architecto beatae vitae dicta sunt explicabo.
+      </p>
+      <p>
+        Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia
+        consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam
+        est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.
+      </p>
+      <p>
+        At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium
+        voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati
+        cupiditate non provident.
+      </p>
+      <p>
+        Similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga.
+        Et harum quidem rerum facilis est et expedita distinctio. Nam libero tempore, cum soluta
+        nobis est eligendi optio cumque nihil impedit.
+      </p>
+      <p>
+        Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut
+        et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur
+        a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis
+        doloribus asperiores repellat.
+      </p>
+      <p>
+        On a fresh load this is page 1 (landing) — the prompt is suppressed even if you scroll all
+        the way down. Click <strong>Simulate 2nd page</strong> and reload to move into the 2nd-page
+        flow.
+      </p>
+    </article>
+
+    <script>
+      async function refresh() {
+        if (!window.TaxscanPush) {
+          document.getElementById('state-json').textContent = 'SDK not loaded';
+          return;
+        }
+        const s = await window.TaxscanPush.getState();
+        document.getElementById('state-json').textContent = JSON.stringify(
+          {
+            permission: s.permission,
+            swRegistered: s.registered,
+            endpoint: s.endpoint ? s.endpoint.slice(-40) : null,
+            topics: s.topics,
+            dismissed: s.dismissed,
+            pagesThisSession: s.pagesThisSession,
+          },
+          null,
+          2,
+        );
+      }
+
+      document.getElementById('btn-state').addEventListener('click', refresh);
+      document.getElementById('btn-reset-dismissed').addEventListener('click', () => {
+        window.TaxscanPush.resetDismissed();
+        refresh();
+      });
+      document.getElementById('btn-simulate-2nd').addEventListener('click', () => {
+        sessionStorage.setItem('txn_push_pages', '1');
+        refresh();
+        alert('Reload the page — it will now count as your 2nd page in this session.');
+      });
+      document.getElementById('btn-show').addEventListener('click', () => {
+        window.TaxscanPush.resetDismissed();
+        window.TaxscanPush.showPromptNow();
+      });
+      document.getElementById('btn-unsub').addEventListener('click', async () => {
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = reg && (await reg.pushManager.getSubscription());
+        if (sub) {
+          await fetch('/api/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          });
+          await sub.unsubscribe();
+        }
+        refresh();
+      });
+
+      // Initial refresh once the SDK has booted.
+      window.addEventListener('load', () => setTimeout(refresh, 500));
+    </script>
+  </body>
+</html>

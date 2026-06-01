@@ -18,6 +18,7 @@ const SubscribeSchema = z.object({
   portal: z.string().min(1),
   topics: z.array(z.string()).optional(),
   userAgent: z.string().optional(),
+  source: z.string().optional(),
 });
 
 const UnsubscribeSchema = z.object({
@@ -57,7 +58,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     try {
       const parsed = SubscribeSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
-      const { subscription, portal, topics, userAgent } = parsed.data;
+      const { subscription, portal, topics, userAgent, source } = parsed.data;
 
       const subscriber = await prisma.subscriber.upsert({
         where: { endpoint: subscription.endpoint },
@@ -81,7 +82,11 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
       });
 
       await prisma.event.create({
-        data: { type: 'SUBSCRIBED', subscriberId: subscriber.id },
+        data: {
+          type: 'SUBSCRIBED',
+          subscriberId: subscriber.id,
+          meta: source ? { source } : undefined,
+        },
       });
 
       return res.status(201).json({ id: subscriber.id });
