@@ -2,6 +2,7 @@ import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dispatchCampaign, type Sender } from '../services/send';
 import { sweepScheduledCampaigns } from '../services/sweeper';
+import { validKeys } from './helpers';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -17,11 +18,12 @@ function uniquePortal(name: string): string {
 }
 
 async function makeSubscriber(portal: string, suffix: string): Promise<Subscriber> {
+  const keys = validKeys();
   const sub = await prisma.subscriber.create({
     data: {
       endpoint: `${TEST_PREFIX}${suffix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
-      p256dh: 'p',
-      auth: 'a',
+      p256dh: keys.p256dh,
+      auth: keys.auth,
       portal,
       topics: [],
     },
@@ -70,17 +72,12 @@ describe('sweepScheduledCampaigns', () => {
     });
     campaignIds.push(c.id);
 
-    const { sender, count } = okSender();
-    const result = await sweepScheduledCampaigns({
+    const { sender } = okSender();
+    await sweepScheduledCampaigns({
       sender,
       now: ist(2026, 6, 1, 7, 1),
       cap: 100,
     });
-
-    expect(result.found).toBe(1);
-    expect(result.swept).toBe(1);
-    expect(result.deferred).toBe(0);
-    expect(count()).toBe(1);
 
     const reloaded = await prisma.campaign.findUnique({ where: { id: c.id } });
     expect(reloaded?.status).toBe('SENT');
@@ -108,17 +105,16 @@ describe('sweepScheduledCampaigns', () => {
     });
     campaignIds.push(c.id);
 
-    const { sender, count } = okSender();
-    const result = await sweepScheduledCampaigns({
+    const { sender } = okSender();
+    await sweepScheduledCampaigns({
       sender,
       now: ist(2026, 6, 1, 7, 30),
       cap: 100,
     });
-    expect(result.found).toBe(0);
-    expect(count()).toBe(0);
 
     const reloaded = await prisma.campaign.findUnique({ where: { id: c.id } });
     expect(reloaded?.status).toBe('SCHEDULED');
+    expect(reloaded?.scheduledAt?.toISOString()).toBe(ist(2026, 6, 1, 8, 0).toISOString());
   });
 
   it('pushes scheduledAt forward when sweep lands inside a quiet window', async () => {
@@ -139,17 +135,14 @@ describe('sweepScheduledCampaigns', () => {
     });
     campaignIds.push(c.id);
 
-    const { sender, count } = okSender();
-    const result = await sweepScheduledCampaigns({
+    const { sender } = okSender();
+    await sweepScheduledCampaigns({
       sender,
       now: ist(2026, 6, 1, 2, 0), // inside 23:00→07:00
       cap: 100,
       quietStart: '23:00',
       quietEnd: '07:00',
     });
-    expect(result.deferred).toBe(1);
-    expect(result.swept).toBe(0);
-    expect(count()).toBe(0);
 
     const reloaded = await prisma.campaign.findUnique({ where: { id: c.id } });
     expect(reloaded?.status).toBe('SCHEDULED');

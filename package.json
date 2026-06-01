@@ -14,6 +14,7 @@
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "gen:vapid": "ts-node-dev --transpile-only --no-notify scripts/gen-vapid.ts",
+    "db:cleanup-bad-keys": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/cleanup-bad-keys.ts",
     "test": "jest"
   },
   "dependencies": {

@@ -2,6 +2,7 @@ import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import type { Sender } from '../services/send';
+import { validKeys } from './helpers';
 
 const okSender: Sender = async () => ({ ok: true, statusCode: 201 });
 const app = createApp();
@@ -16,7 +17,7 @@ function makeEndpoint(suffix: string): string {
 function makeSubscription(suffix: string) {
   return {
     endpoint: makeEndpoint(suffix),
-    keys: { p256dh: 'p256dh-' + suffix, auth: 'auth-' + suffix },
+    keys: validKeys(),
   };
 }
 
@@ -70,6 +71,35 @@ describe('POST /api/subscribe', () => {
     const res = await request(app).post('/api/subscribe').send({ portal: 'taxscan' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_request');
+  });
+
+  it('rejects a subscription whose p256dh does not decode to 65 bytes', async () => {
+    const res = await request(app)
+      .post('/api/subscribe')
+      .send({
+        subscription: {
+          endpoint: makeEndpoint('bad-p256dh'),
+          keys: { p256dh: 'not-a-real-key', auth: validKeys().auth },
+        },
+        portal: 'taxscan',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_request');
+  });
+
+  it('records the source flag in the SUBSCRIBED event meta', async () => {
+    const subscription = makeSubscription('with-source');
+    const res = await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal: 'taxscan', source: 'recapture' });
+    expect(res.status).toBe(201);
+
+    const sub = await prisma.subscriber.findUnique({ where: { endpoint: subscription.endpoint } });
+    const event = await prisma.event.findFirst({
+      where: { subscriberId: sub!.id, type: 'SUBSCRIBED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(event?.meta).toEqual({ source: 'recapture' });
   });
 
   it('upsert re-subscribes an EXPIRED endpoint back to ACTIVE', async () => {

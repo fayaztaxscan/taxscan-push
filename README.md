@@ -21,6 +21,27 @@ npm run dev
 
 The server listens on `PORT` (default `3000`). Health check: `GET /healthz`.
 
+### Local-dev notification gotcha (macOS Chrome)
+
+On macOS, browser-pushed notifications only render on screen if Chrome itself is allowed to send
+notifications at the OS level. Open **System Settings → Notifications → Google Chrome** and turn
+notifications on. If this is off, the push reaches the browser and the SW runs, but nothing visible
+appears and you'll wonder why. Same applies to Brave / Edge / Arc.
+
+### One-off cleanup of malformed subscribers
+
+If garbage subscriptions (curl-smoke seeds, hand-typed test rows) sit in the table with bogus keys,
+`web-push` will throw synchronously when trying to send to them. Run this once to flip them to
+EXPIRED:
+
+```bash
+npm run db:cleanup-bad-keys
+```
+
+It scans `ACTIVE` rows whose `p256dh` doesn't decode to 65 bytes or whose `auth` isn't 16 bytes and
+flips them. Going forward `/api/subscribe` rejects malformed keys with 400, so this should be a
+one-shot.
+
 ## VAPID keys
 
 Web push requires a VAPID key pair. Generate one:
@@ -42,6 +63,56 @@ VAPID_SUBJECT=mailto:admin@taxscan.in
 - `VAPID_SUBJECT` must be a valid `mailto:` (or `https:`) URL the push service can contact.
 
 Rotating the key pair invalidates every existing subscription, so generate once per environment.
+
+## Browser SDK
+
+`public/taxscan-push.js` is the client SDK; `public/sw.js` is the service worker; `public/index.html`
+is a local demo. The Express app serves `public/` at the root, so `npm run dev` lets you open
+`http://localhost:3000/` and exercise the whole flow.
+
+### How to embed on taxscan.in
+
+```html
+<script>
+  window.TAXSCAN_PUSH_CONFIG = { apiBase: 'https://push.taxscan.in' };
+</script>
+<script src="https://push.taxscan.in/taxscan-push.js" defer></script>
+```
+
+If `apiBase` is omitted the SDK falls back to the current origin. The SW reads the same value from
+its own URL query (`/sw.js?api=…`) so a cross-origin backend works without code changes.
+
+### Soft-prompt rules
+
+- **Never on landing.** The first page in a session is suppressed regardless of scroll or dwell.
+- On the 2nd+ page, the prompt shows after the earliest of: 50% scroll, 30s dwell, or a 2s grace
+  delay (the "viewed a 2nd page" signal).
+- Dismissing the prompt (X / "No thanks" / Escape) sets a 7-day `localStorage` flag.
+
+### Topic slugs
+
+Soft-prompt labels map to slugs: **GST → `gst`**, **Income Tax → `income-tax`**, **Customs → `customs`**,
+**Corporate → `corporate`**. These match `slugify` in the RSS poller, so subscribers and campaigns
+line up.
+
+### iZooto migration / recapture
+
+On every load, if `Notification.permission === 'granted'` the SDK silently brings the user under our
+VAPID key:
+
+1. Read the existing subscription (if any) and compare its `applicationServerKey` byte-for-byte to
+   ours.
+2. If it matches, do nothing.
+3. Otherwise unsubscribe and resubscribe with our key, then `POST /api/subscribe` with
+   `source:"recapture"`. The resulting `SUBSCRIBED` event carries `meta:{source:"recapture"}`.
+
+Older browsers that don't expose `applicationServerKey` fall into the resubscribe path — one-time
+endpoint churn, but it guarantees we can deliver.
+
+### Notification icon
+
+Drop a 192×192 PNG at `public/icon-192.png`. If missing, browsers fall back to a default. The
+service worker reads `payload.icon` from each push first, then `/icon-192.png`.
 
 ## RSS poller
 

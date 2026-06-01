@@ -5,11 +5,31 @@ import { env } from '../lib/env';
 import { requireBearer } from '../lib/auth';
 import { dispatchCampaign, type Sender } from '../services/send';
 
+function base64urlByteLength(s: string): number {
+  const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
+  const std = padded.replace(/-/g, '+').replace(/_/g, '/');
+  try {
+    return Buffer.from(std, 'base64').length;
+  } catch {
+    return -1;
+  }
+}
+
 const SubscriptionSchema = z.object({
   endpoint: z.string().min(1),
   keys: z.object({
-    p256dh: z.string().min(1),
-    auth: z.string().min(1),
+    p256dh: z
+      .string()
+      .min(1)
+      .refine((s) => base64urlByteLength(s) === 65, {
+        message: 'p256dh must base64url-decode to 65 bytes',
+      }),
+    auth: z
+      .string()
+      .min(1)
+      .refine((s) => base64urlByteLength(s) === 16, {
+        message: 'auth must base64url-decode to 16 bytes',
+      }),
   }),
 });
 
@@ -18,6 +38,7 @@ const SubscribeSchema = z.object({
   portal: z.string().min(1),
   topics: z.array(z.string()).optional(),
   userAgent: z.string().optional(),
+  source: z.string().optional(),
 });
 
 const UnsubscribeSchema = z.object({
@@ -57,7 +78,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     try {
       const parsed = SubscribeSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
-      const { subscription, portal, topics, userAgent } = parsed.data;
+      const { subscription, portal, topics, userAgent, source } = parsed.data;
 
       const subscriber = await prisma.subscriber.upsert({
         where: { endpoint: subscription.endpoint },
@@ -81,7 +102,11 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
       });
 
       await prisma.event.create({
-        data: { type: 'SUBSCRIBED', subscriberId: subscriber.id },
+        data: {
+          type: 'SUBSCRIBED',
+          subscriberId: subscriber.id,
+          meta: source ? { source } : undefined,
+        },
       });
 
       return res.status(201).json({ id: subscriber.id });
