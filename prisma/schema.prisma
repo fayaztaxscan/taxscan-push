@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubscriberStatus {
+  ACTIVE
+  EXPIRED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  FAILED
+}
+
+enum EventType {
+  SENT
+  DELIVERED
+  CLICKED
+  DISMISSED
+  SUBSCRIBED
+  UNSUBSCRIBED
+  PROMPT_SHOWN
+  PROMPT_ACCEPTED
+}
+
+model Subscriber {
+  id        String           @id @default(cuid())
+  portal    String           @default("taxscan")
+  endpoint  String           @unique
+  p256dh    String
+  auth      String
+  topics    String[]
+  userAgent String?
+  status    SubscriberStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  events Event[]
+
+  @@index([portal])
+  @@index([status])
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  portal      String
+  title       String
+  body        String
+  url         String
+  icon        String?
+  target      Json
+  scheduledAt DateTime?
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+
+  events Event[]
+
+  @@index([portal])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model Event {
+  id           String    @id @default(cuid())
+  campaignId   String?
+  subscriberId String?
+  type         EventType
+  meta         Json?
+  createdAt    DateTime  @default(now())
+
+  campaign   Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  subscriber Subscriber? @relation(fields: [subscriberId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId])
+  @@index([subscriberId])
+  @@index([type])
+  @@index([createdAt])
+}
