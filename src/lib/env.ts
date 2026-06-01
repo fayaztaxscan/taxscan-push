@@ -35,4 +35,8 @@ export const env = {
     tz: 'Asia/Kolkata',
     portal: 'taxscan',
   },
+  sweeper: {
+    enabled: process.env.SWEEPER_ENABLED === 'true',
+    cron: process.env.SWEEPER_CRON ?? '* * * * *',
+  },
 };
