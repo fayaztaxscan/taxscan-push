@@ -121,6 +121,60 @@ describe('dispatchCampaign', () => {
     expect(events.find((e) => e.subscriberId === b.id)).toBeUndefined();
   });
 
+  it('topic-targeted dispatch also reaches "All news" subscribers', async () => {
+    const portal = uniquePortal('all-overlap');
+    const gst = await makeSubscriber(portal, 'gst', ['gst']);
+    const allSub = await makeSubscriber(portal, 'all', ['all']);
+    const corp = await makeSubscriber(portal, 'corp', ['corporate']);
+
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'gst ruling',
+        body: '...',
+        url: 'https://taxscan.in/gst',
+        target: { type: 'topics', topics: ['gst'] },
+      },
+      { sender: okSender(), now: ist(2026, 6, 1, 12, 0), cap: 100 },
+    );
+    campaignIds.push(result.campaignId);
+
+    const events = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, type: 'SENT' },
+      select: { subscriberId: true },
+    });
+    const reached = new Set(events.map((e) => e.subscriberId));
+    expect(reached.has(gst.id)).toBe(true);
+    expect(reached.has(allSub.id)).toBe(true); // "All news" subscriber receives every topic dispatch
+    expect(reached.has(corp.id)).toBe(false); // Corporate-only subscriber doesn't
+  });
+
+  it('topics:["all"] dispatch reaches only "All news" subscribers (the fallback case)', async () => {
+    const portal = uniquePortal('only-all');
+    const gst = await makeSubscriber(portal, 'gst', ['gst']);
+    const allSub = await makeSubscriber(portal, 'all', ['all']);
+
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'other taxations',
+        body: '...',
+        url: 'https://taxscan.in/ot',
+        target: { type: 'topics', topics: ['all'] },
+      },
+      { sender: okSender(), now: ist(2026, 6, 1, 12, 0), cap: 100 },
+    );
+    campaignIds.push(result.campaignId);
+
+    const events = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, type: 'SENT' },
+      select: { subscriberId: true },
+    });
+    const reached = new Set(events.map((e) => e.subscriberId));
+    expect(reached.has(allSub.id)).toBe(true);
+    expect(reached.has(gst.id)).toBe(false);
+  });
+
   it('skips subscribers already at cap', async () => {
     const now = ist(2026, 6, 1, 12, 0);
     const todayStart = startOfTodayIST(now);
@@ -264,6 +318,17 @@ describe('dispatchCampaign', () => {
       select: { id: true, status: true },
     });
     expect(stillActive.every((s) => s.status === 'ACTIVE')).toBe(true);
+
+    // FAILED events are recorded for both non-expired failures so the
+    // delivery-rate metric can count them.
+    const failedEvents = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, type: 'FAILED' },
+      select: { subscriberId: true, meta: true },
+    });
+    expect(failedEvents).toHaveLength(2);
+    expect(failedEvents.every((e) => (e.meta as { reason: string }).reason === 'error')).toBe(
+      true,
+    );
   });
 
   it('prunes EXPIRED subscribers on 410 and does not record SENT for them', async () => {
@@ -302,5 +367,13 @@ describe('dispatchCampaign', () => {
       where: { campaignId: result.campaignId, subscriberId: a.id, type: 'SENT' },
     });
     expect(sentForA).toHaveLength(1);
+
+    // The 410 also records a FAILED event tagged with reason:'expired'.
+    const failedForB = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, subscriberId: b.id, type: 'FAILED' },
+      select: { meta: true },
+    });
+    expect(failedForB).toHaveLength(1);
+    expect((failedForB[0].meta as { reason: string }).reason).toBe('expired');
   });
 });

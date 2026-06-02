@@ -26,12 +26,22 @@
     scrollThreshold: 0.5,
     dwellMs: 30000,
     secondPageDelayMs: 2000,
+    // When true, after registering our own SW we unregister any OTHER
+    // service worker the page has (e.g. iZooto's). Leave false during the
+    // parallel-run cutover phase so both push systems coexist; flip to true
+    // when this system becomes the only sender. See README "Cutover from iZooto".
+    cutoverMode: false,
   };
   var cfg = Object.assign({}, defaults, window.TAXSCAN_PUSH_CONFIG || {});
   if (!cfg.apiBase) cfg.apiBase = window.location.origin;
 
   // Display label -> slug used by the RSS pipeline and /api/send topic targets.
+  // `defaultChecked: true` items are ticked when the prompt first renders;
+  // "All news" is the default opt-in so new subscribers receive every campaign
+  // until they refine. Topic-specific items override "All news" subscribers'
+  // reach automatically since the backend folds 'all' into every topic dispatch.
   var TOPIC_OPTIONS = [
+    { label: 'All news', slug: 'all', defaultChecked: true },
     { label: 'GST', slug: 'gst' },
     { label: 'Income Tax', slug: 'income-tax' },
     { label: 'Customs', slug: 'customs' },
@@ -143,10 +153,22 @@
       userVisibleOnly: true,
       applicationServerKey: ourKey,
     });
+    // Default-topics rule: a subscriber must never end up receiving nothing.
+    // - Explicit non-empty topics win.
+    // - Otherwise fall back to anything previously stored locally.
+    // - Otherwise default to ['all'] so iZooto migrants on the recapture path
+    //   automatically land on every campaign until they refine.
+    var storedTopics = loadStoredTopics();
+    var finalTopics =
+      topics && topics.length > 0
+        ? topics
+        : storedTopics && storedTopics.length > 0
+          ? storedTopics
+          : ['all'];
     await post('/api/subscribe', {
       subscription: sub.toJSON(),
       portal: cfg.portal,
-      topics: topics || loadStoredTopics() || [],
+      topics: finalTopics,
       userAgent: navigator.userAgent,
       source: source,
     });
@@ -198,7 +220,7 @@
     var descId = 'txnpush-desc-' + Date.now();
     var selected = {};
     TOPIC_OPTIONS.forEach(function (t) {
-      selected[t.slug] = true;
+      selected[t.slug] = !!t.defaultChecked;
     });
 
     var wrap = document.createElement('div');
@@ -212,7 +234,9 @@
         '<label class="txnpush-topic">' +
         '<input type="checkbox" data-slug="' +
         t.slug +
-        '" checked aria-label="' +
+        '"' +
+        (t.defaultChecked ? ' checked' : '') +
+        ' aria-label="' +
         t.label +
         '" data-i="' +
         i +
@@ -257,6 +281,8 @@
       }, 220);
     }
 
+    // Product decision: Escape, × close, and No thanks ALL persist the 7-day
+    // dismissed flag. Consistency over leniency — three "no" actions, one outcome.
     function dismiss() {
       setDismissed();
       close();
@@ -280,20 +306,20 @@
       if (e.key !== 'Tab') return;
       var focusables = getFocusables();
       if (focusables.length === 0) return;
-      var first = focusables[0];
-      var last = focusables[focusables.length - 1];
+      // Fully manage Tab inside the banner: always preventDefault and move focus
+      // to the next/previous focusable. Relying on the browser's natural Tab to
+      // stay inside the wrap leaks at boundaries in some Chrome builds.
+      e.preventDefault();
       var active = document.activeElement;
-      if (e.shiftKey) {
-        if (active === first || !wrap.contains(active)) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (active === last || !wrap.contains(active)) {
-          e.preventDefault();
-          first.focus();
-        }
+      var idx = focusables.indexOf(active);
+      if (idx === -1) {
+        focusables[0].focus();
+        return;
       }
+      var nextIdx = e.shiftKey
+        ? (idx - 1 + focusables.length) % focusables.length
+        : (idx + 1) % focusables.length;
+      focusables[nextIdx].focus();
     }
 
     xBtn.addEventListener('click', dismiss);
@@ -310,6 +336,9 @@
       var slugs = Object.keys(selected).filter(function (s) {
         return selected[s];
       });
+      // If the user unchecks every box, default them to 'all' so they receive
+      // something instead of nothing. Backend has the same safety net.
+      if (slugs.length === 0) slugs = ['all'];
       storeTopics(slugs);
       close();
       try {
@@ -363,6 +392,35 @@
     showSoftPrompt();
   }
 
+  /* ---------------- cutover: unregister foreign service workers ---------------- */
+
+  // When cutoverMode is on, walk every SW registration the page has and
+  // unregister anything that isn't ours. Path-agnostic, so we don't need to
+  // know iZooto's exact worker URL.
+  async function maybeUnregisterForeignWorkers() {
+    if (!cfg.cutoverMode) return;
+    try {
+      var ourUrl = new URL(cfg.swPath, window.location.origin).href.split('?')[0];
+      var regs = await navigator.serviceWorker.getRegistrations();
+      for (var i = 0; i < regs.length; i++) {
+        var reg = regs[i];
+        var sw = reg.active || reg.waiting || reg.installing;
+        if (!sw) continue;
+        var url = sw.scriptURL.split('?')[0];
+        if (url === ourUrl) continue;
+        try {
+          await reg.unregister();
+          // eslint-disable-next-line no-console
+          console.log('[taxscan-push] unregistered foreign service worker:', url);
+        } catch (_) {
+          /* best-effort */
+        }
+      }
+    } catch (_) {
+      /* getRegistrations failure: nothing to do */
+    }
+  }
+
   /* ---------------- boot ---------------- */
 
   async function init() {
@@ -377,6 +435,9 @@
     } catch (_) {
       return;
     }
+
+    // After OUR worker is live, optionally unregister iZooto's (or any other).
+    await maybeUnregisterForeignWorkers();
 
     try {
       var cfgRes = await fetch(cfg.apiBase + '/api/config');

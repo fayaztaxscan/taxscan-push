@@ -11,19 +11,35 @@ type FeedOutput = { items: FeedItem[] };
 export type Fetcher = (url: string) => Promise<FeedOutput>;
 export type Dispatcher = (input: CampaignInput) => Promise<DispatchResult>;
 
+export type FeedConfig = { topic: string; url: string };
+
+export type SendMode = 'capture_only' | 'live';
+
 export type PollDeps = {
   feedUrl?: string;
+  topic?: string;
   fetcher?: Fetcher;
   dispatcher?: Dispatcher;
   portal?: string;
+  mode?: SendMode;
 };
 
 export type PollResult = {
+  topic: string;
   feedUrl: string;
   itemsFound: number;
+  alreadySeen: number;
   newItems: number;
   sent: number;
+  captured: number;
   errors: number;
+  durationMs: number;
+  mode: SendMode;
+};
+
+export type PollAllResult = {
+  feeds: PollResult[];
+  totals: Omit<PollResult, 'topic' | 'feedUrl' | 'mode'>;
 };
 
 const defaultParser = new Parser();
@@ -54,16 +70,36 @@ function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
 
+function resolveFeedConfig(deps: PollDeps): FeedConfig {
+  if (deps.feedUrl && deps.topic) return { topic: deps.topic, url: deps.feedUrl };
+  if (deps.feedUrl) {
+    const match = env.rss.feeds.find((f) => f.url === deps.feedUrl);
+    if (!match) {
+      throw new Error(
+        `pollOnce: no topic provided and feedUrl ${deps.feedUrl} is not in env.rss.feeds`,
+      );
+    }
+    return match;
+  }
+  if (env.rss.feeds.length === 0) {
+    throw new Error('pollOnce: no feedUrl provided and env.rss.feeds is empty');
+  }
+  return env.rss.feeds[0];
+}
+
 export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
-  const feedUrl = deps.feedUrl ?? env.rss.feedUrl;
+  const { topic, url: feedUrl } = resolveFeedConfig(deps);
   const fetcher = deps.fetcher ?? defaultFetcher;
   const dispatcher = deps.dispatcher ?? dispatchCampaign;
   const portal = deps.portal ?? env.rss.portal;
+  const mode = deps.mode ?? env.send.mode;
   const startedAt = Date.now();
 
   let itemsFound = 0;
+  let alreadySeen = 0;
   let newItems = 0;
   let sent = 0;
+  let captured = 0;
   let errors = 0;
 
   try {
@@ -72,11 +108,14 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
     itemsFound = items.length;
     const guids = items.map((it) => pickGuid(it)!);
 
+    // GUID-only dedupe: an article that ANY feed has already claimed is
+    // already in the DB regardless of which feed first saw it. Skip those.
     const seen = await prisma.feedItem.findMany({
-      where: { feedUrl, guid: { in: guids } },
+      where: { guid: { in: guids } },
       select: { guid: true },
     });
     const seenSet = new Set(seen.map((s) => s.guid));
+    alreadySeen = seenSet.size;
     const fresh = items.filter((it) => !seenSet.has(pickGuid(it)!));
 
     for (const item of fresh) {
@@ -85,23 +124,62 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
       try {
         claim = await prisma.feedItem.create({ data: { feedUrl, guid } });
       } catch (err) {
-        if (isUniqueConstraintError(err)) continue;
+        if (isUniqueConstraintError(err)) {
+          // Another feed (or this feed mid-tick) just claimed the same guid.
+          alreadySeen++;
+          continue;
+        }
         errors++;
         // eslint-disable-next-line no-console
-        console.error('[rss] failed to claim feed item', { guid, err });
+        console.error('[rss] failed to claim feed item', { topic, guid, err });
         continue;
       }
       newItems++;
 
-      const categories = (item.categories ?? []).map((c) => slugify(String(c))).filter(Boolean);
       const input: CampaignInput = {
         portal,
         title: item.title!.trim(),
         body: trimDescription(item),
         url: item.link!.trim(),
-        target: categories.length ? { type: 'topics', topics: categories } : { type: 'all' },
+        // The feed's configured topic IS the section. Categories on the item
+        // are ignored — the source URL is the source of truth.
+        target: { type: 'topics', topics: [topic] },
         breaking: false,
       };
+
+      if (mode === 'capture_only') {
+        // Capture-only: write the Campaign as DRAFT and link the FeedItem,
+        // but skip dispatch. iZooto stays in charge of notifications while
+        // we passively build the migrated subscriber base.
+        try {
+          const campaign = await prisma.campaign.create({
+            data: {
+              portal: input.portal,
+              title: input.title,
+              body: input.body,
+              url: input.url,
+              icon: input.icon ?? null,
+              target: input.target as object,
+              status: 'DRAFT',
+            },
+          });
+          await prisma.feedItem.update({
+            where: { id: claim.id },
+            data: { campaignId: campaign.id },
+          });
+          captured++;
+        } catch (err) {
+          errors++;
+          // eslint-disable-next-line no-console
+          console.error('[rss] capture failed; feed item kept to prevent re-capture', {
+            topic,
+            guid,
+            feedItemId: claim.id,
+            err,
+          });
+        }
+        continue;
+      }
 
       try {
         const result = await dispatcher(input);
@@ -114,6 +192,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
         errors++;
         // eslint-disable-next-line no-console
         console.error('[rss] dispatch failed; feed item kept to prevent re-send', {
+          topic,
           guid,
           feedItemId: claim.id,
           err,
@@ -123,15 +202,43 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   } catch (err) {
     errors++;
     // eslint-disable-next-line no-console
-    console.error('[rss] poll failed', { feedUrl, err });
+    console.error('[rss] poll failed', { topic, feedUrl, err });
   }
 
-  const ms = Date.now() - startedAt;
+  const durationMs = Date.now() - startedAt;
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] poll feed=${feedUrl} items=${itemsFound} new=${newItems} sent=${sent} errors=${errors} ms=${ms}`,
+    `[rss] poll topic=${topic} feed=${feedUrl} mode=${mode} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} captured=${captured} errors=${errors} ms=${durationMs}`,
   );
-  return { feedUrl, itemsFound, newItems, sent, errors };
+  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, captured, errors, durationMs, mode };
+}
+
+export async function pollAllFeeds(
+  deps: Omit<PollDeps, 'feedUrl' | 'topic'> = {},
+  feeds: FeedConfig[] = env.rss.feeds,
+): Promise<PollAllResult> {
+  const startedAt = Date.now();
+  const results: PollResult[] = [];
+  // Sequential — gentler on the source, the DB, and easier to read in logs.
+  // Six feeds × ~1 s each is well under the 5-minute cron window.
+  for (const feed of feeds) {
+    const r = await pollOnce({ ...deps, feedUrl: feed.url, topic: feed.topic });
+    results.push(r);
+  }
+  const totals = {
+    itemsFound: results.reduce((s, r) => s + r.itemsFound, 0),
+    alreadySeen: results.reduce((s, r) => s + r.alreadySeen, 0),
+    newItems: results.reduce((s, r) => s + r.newItems, 0),
+    sent: results.reduce((s, r) => s + r.sent, 0),
+    captured: results.reduce((s, r) => s + r.captured, 0),
+    errors: results.reduce((s, r) => s + r.errors, 0),
+    durationMs: Date.now() - startedAt,
+  };
+  // eslint-disable-next-line no-console
+  console.log(
+    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} captured=${totals.captured} errors=${totals.errors} ms=${totals.durationMs}`,
+  );
+  return { feeds: results, totals };
 }
 
 let isPolling = false;
@@ -145,23 +252,31 @@ export function startPoller(): void {
   if (!cron.validate(env.rss.cron)) {
     throw new Error(`Invalid RSS_POLL_CRON: ${env.rss.cron}`);
   }
+  if (env.rss.feeds.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn('[rss] no feeds configured — set RSS_FEED_<TOPIC>=<url> vars');
+    return;
+  }
   cron.schedule(
     env.rss.cron,
     async () => {
       if (isPolling) {
         // eslint-disable-next-line no-console
-        console.log('[rss] previous poll still running, skipping tick');
+        console.log('[rss] previous tick still running, skipping');
         return;
       }
       isPolling = true;
       try {
-        await pollOnce();
+        await pollAllFeeds();
       } finally {
         isPolling = false;
       }
     },
     { timezone: env.rss.tz },
   );
+  const summary = env.rss.feeds.map((f) => `${f.topic} → ${f.url}`).join('\n  ');
   // eslint-disable-next-line no-console
-  console.log(`[rss] poller scheduled cron="${env.rss.cron}" tz=${env.rss.tz} feed=${env.rss.feedUrl}`);
+  console.log(
+    `[rss] poller scheduled cron="${env.rss.cron}" tz=${env.rss.tz}\n  ${summary}`,
+  );
 }

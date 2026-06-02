@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import {
+  pollAllFeeds,
   pollOnce,
   slugify,
   trimDescription,
@@ -122,7 +123,13 @@ describe('pollOnce dedupe', () => {
       { guid: 'c', title: 'Article C', link: 'https://taxscan.in/c' },
     ];
     const { dispatcher, calls } = recordingDispatcher();
-    const result = await pollOnce({ feedUrl, fetcher: fakeFetcher(items), dispatcher });
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      mode: 'live',
+      fetcher: fakeFetcher(items),
+      dispatcher,
+    });
 
     expect(result).toMatchObject({ itemsFound: 3, newItems: 3, sent: 3, errors: 0 });
     expect(calls.map((c) => c.title).sort()).toEqual(['Article A', 'Article B', 'Article C']);
@@ -141,11 +148,17 @@ describe('pollOnce dedupe', () => {
     ];
     const fetcher = fakeFetcher(items);
     const first = recordingDispatcher();
-    await pollOnce({ feedUrl, fetcher, dispatcher: first.dispatcher });
+    await pollOnce({ feedUrl, topic: 'gst', mode: 'live', fetcher, dispatcher: first.dispatcher });
     expect(first.calls.length).toBe(2);
 
     const second = recordingDispatcher();
-    const result = await pollOnce({ feedUrl, fetcher, dispatcher: second.dispatcher });
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      mode: 'live',
+      fetcher,
+      dispatcher: second.dispatcher,
+    });
     expect(result.newItems).toBe(0);
     expect(result.sent).toBe(0);
     expect(second.calls.length).toBe(0);
@@ -160,6 +173,8 @@ describe('pollOnce dedupe', () => {
     ];
     await pollOnce({
       feedUrl,
+      topic: 'gst',
+      mode: 'live',
       fetcher: fakeFetcher(original),
       dispatcher: recordingDispatcher().dispatcher,
     });
@@ -172,6 +187,8 @@ describe('pollOnce dedupe', () => {
     const second = recordingDispatcher();
     const result = await pollOnce({
       feedUrl,
+      topic: 'gst',
+      mode: 'live',
       fetcher: fakeFetcher(updated),
       dispatcher: second.dispatcher,
     });
@@ -188,68 +205,76 @@ describe('pollOnce dedupe', () => {
     ];
 
     const failing = failingDispatcher();
-    const r1 = await pollOnce({ feedUrl, fetcher: fakeFetcher(items), dispatcher: failing.dispatcher });
+    const r1 = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      mode: 'live',
+      fetcher: fakeFetcher(items),
+      dispatcher: failing.dispatcher,
+    });
     expect(r1.errors).toBe(1);
     expect(r1.sent).toBe(0);
 
-    const row = await prisma.feedItem.findUnique({
-      where: { feedUrl_guid: { feedUrl, guid: 'fail-1' } },
-    });
+    const row = await prisma.feedItem.findUnique({ where: { guid: 'fail-1' } });
     expect(row).not.toBeNull();
     expect(row?.campaignId).toBeNull();
 
     // Next tick: should not retry
     const second = recordingDispatcher();
-    const r2 = await pollOnce({ feedUrl, fetcher: fakeFetcher(items), dispatcher: second.dispatcher });
+    const r2 = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      mode: 'live',
+      fetcher: fakeFetcher(items),
+      dispatcher: second.dispatcher,
+    });
     expect(r2.newItems).toBe(0);
     expect(r2.sent).toBe(0);
     expect(second.calls.length).toBe(0);
   });
 });
 
-describe('pollOnce target resolution', () => {
-  it('maps RSS categories to slugged topic targets', async () => {
-    const feedUrl = freshFeedUrl('topics');
+describe('pollOnce per-feed topic tagging', () => {
+  it('tags every item with the feed\'s configured topic, ignoring <category> entirely', async () => {
+    const feedUrl = freshFeedUrl('gst-feed');
     trackFeed(feedUrl);
     const { dispatcher, calls } = recordingDispatcher();
     await pollOnce({
       feedUrl,
+      topic: 'gst',
+      mode: 'live',
       fetcher: fakeFetcher([
+        // These categories would have mapped to ['income-tax'] under the old
+        // category-parsing logic, but the feed itself is the source of truth.
         {
-          guid: 'cat-1',
-          title: 'GST verdict',
-          link: 'https://taxscan.in/gst-1',
-          categories: ['GST', 'Income Tax'],
+          guid: 'tag-1',
+          title: 'GST piece',
+          link: 'https://taxscan.in/gst',
+          categories: ['Income Tax,Top Stories'],
+        },
+        {
+          guid: 'tag-2',
+          title: 'Another',
+          link: 'https://taxscan.in/x',
+          categories: ['Whatever,Top Stories'],
         },
       ]),
       dispatcher,
     });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].target).toEqual({ type: 'topics', topics: ['gst', 'income-tax'] });
+    expect(calls).toHaveLength(2);
+    expect(calls[0].target).toEqual({ type: 'topics', topics: ['gst'] });
+    expect(calls[1].target).toEqual({ type: 'topics', topics: ['gst'] });
   });
 
-  it('falls back to target=all when no categories are present', async () => {
-    const feedUrl = freshFeedUrl('all');
-    trackFeed(feedUrl);
-    const { dispatcher, calls } = recordingDispatcher();
-    await pollOnce({
-      feedUrl,
-      fetcher: fakeFetcher([
-        { guid: 'noc-1', title: 'No categories', link: 'https://taxscan.in/noc' },
-      ]),
-      dispatcher,
-    });
-    expect(calls[0].target).toEqual({ type: 'all' });
-    expect(calls[0].breaking).toBe(false);
-  });
-
-  it('uses a trimmed contentSnippet as the body', async () => {
+  it('uses a trimmed contentSnippet as the body and stays under the cap', async () => {
     const feedUrl = freshFeedUrl('body');
     trackFeed(feedUrl);
     const long = 'word '.repeat(60).trim();
     const { dispatcher, calls } = recordingDispatcher();
     await pollOnce({
       feedUrl,
+      topic: 'customs',
+      mode: 'live',
       fetcher: fakeFetcher([
         {
           guid: 'body-1',
@@ -262,5 +287,123 @@ describe('pollOnce target resolution', () => {
     });
     expect(calls[0].body.length).toBeLessThanOrEqual(140);
     expect(calls[0].body.endsWith('…')).toBe(true);
+  });
+});
+
+describe('cross-feed dedupe (guid-only)', () => {
+  it('the same GUID arriving from two section feeds dispatches exactly once', async () => {
+    const gstFeed = freshFeedUrl('gst');
+    const itFeed = freshFeedUrl('it');
+    trackFeed(gstFeed);
+    trackFeed(itFeed);
+    const sharedGuid = 'cross-feed-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+    const sharedItem: FakeItem = {
+      guid: sharedGuid,
+      title: 'Cross-fed article',
+      link: 'https://taxscan.in/cross',
+    };
+
+    const first = recordingDispatcher();
+    const r1 = await pollOnce({
+      feedUrl: gstFeed,
+      topic: 'gst',
+      mode: 'live',
+      fetcher: fakeFetcher([sharedItem]),
+      dispatcher: first.dispatcher,
+    });
+    expect(r1.sent).toBe(1);
+    expect(first.calls).toHaveLength(1);
+    // First feed to claim the guid wins — target reflects gst, not income-tax.
+    expect(first.calls[0].target).toEqual({ type: 'topics', topics: ['gst'] });
+
+    // Now Income Tax feed surfaces the same article. Dedupe must hold.
+    const second = recordingDispatcher();
+    const r2 = await pollOnce({
+      feedUrl: itFeed,
+      topic: 'income-tax',
+      mode: 'live',
+      fetcher: fakeFetcher([sharedItem]),
+      dispatcher: second.dispatcher,
+    });
+    expect(r2.alreadySeen).toBe(1);
+    expect(r2.newItems).toBe(0);
+    expect(r2.sent).toBe(0);
+    expect(second.calls).toHaveLength(0);
+
+    // Exactly one FeedItem row, recording the feed that won the race.
+    const rows = await prisma.feedItem.findMany({ where: { guid: sharedGuid } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].feedUrl).toBe(gstFeed);
+  });
+});
+
+describe('SEND_MODE capture_only', () => {
+  it('writes the Campaign as DRAFT, links the FeedItem, and never calls the dispatcher', async () => {
+    const feedUrl = freshFeedUrl('capture');
+    trackFeed(feedUrl);
+    const { dispatcher, calls } = recordingDispatcher();
+    const guid = 'capture-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      mode: 'capture_only',
+      fetcher: fakeFetcher([
+        { guid, title: 'Captured', link: 'https://taxscan.in/cap', contentSnippet: 'body' },
+      ]),
+      dispatcher,
+    });
+
+    expect(result.mode).toBe('capture_only');
+    expect(result.captured).toBe(1);
+    expect(result.sent).toBe(0);
+    expect(calls).toHaveLength(0);
+
+    const feedItem = await prisma.feedItem.findUnique({ where: { guid } });
+    expect(feedItem).not.toBeNull();
+    expect(feedItem?.campaignId).not.toBeNull();
+    const campaign = await prisma.campaign.findUnique({ where: { id: feedItem!.campaignId! } });
+    expect(campaign?.status).toBe('DRAFT');
+    expect(campaign?.title).toBe('Captured');
+  });
+});
+
+describe('pollAllFeeds iteration', () => {
+  it('hits every configured feed sequentially and aggregates totals', async () => {
+    const feedA = freshFeedUrl('all-a');
+    const feedB = freshFeedUrl('all-b');
+    trackFeed(feedA);
+    trackFeed(feedB);
+    const seenFeeds: string[] = [];
+    const fetcher: Fetcher = async (url) => {
+      seenFeeds.push(url);
+      if (url === feedA) {
+        return {
+          items: [
+            { guid: 'all-a-1', title: 'A1', link: 'https://taxscan.in/a1' },
+            { guid: 'all-a-2', title: 'A2', link: 'https://taxscan.in/a2' },
+          ],
+        } as never;
+      }
+      return {
+        items: [
+          { guid: 'all-b-1', title: 'B1', link: 'https://taxscan.in/b1' },
+        ],
+      } as never;
+    };
+    const { dispatcher } = recordingDispatcher();
+    const result = await pollAllFeeds(
+      { fetcher, dispatcher, mode: 'live' },
+      [
+        { topic: 'gst', url: feedA },
+        { topic: 'customs', url: feedB },
+      ],
+    );
+    expect(seenFeeds).toEqual([feedA, feedB]); // sequential, in config order
+    expect(result.feeds).toHaveLength(2);
+    expect(result.feeds[0].topic).toBe('gst');
+    expect(result.feeds[1].topic).toBe('customs');
+    expect(result.totals.itemsFound).toBe(3);
+    expect(result.totals.sent).toBe(3);
   });
 });

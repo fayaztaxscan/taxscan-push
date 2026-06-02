@@ -6,3 +6,7 @@ build/
 *.log
 .DS_Store
 prisma/*.db
+*.tsbuildinfo
+# Playwright outputs
+admin/test-results/
+admin/playwright-report/
