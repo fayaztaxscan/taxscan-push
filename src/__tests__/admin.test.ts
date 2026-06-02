@@ -194,4 +194,50 @@ describe('GET /api/metrics', () => {
     );
     expect(Array.isArray(res.body.campaigns)).toBe(true);
   });
+
+  it('funnel.subscribed only counts SUBSCRIBED events with meta.source = "soft-prompt"', async () => {
+    const before = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(before.status).toBe(200);
+    const beforeSubscribed = before.body.funnel.subscribed as number;
+
+    const subSoftPrompt = await prisma.subscriber.create({
+      data: {
+        endpoint: `${TEST_PREFIX}funnel-sp-${Date.now()}`,
+        p256dh: validKeys().p256dh,
+        auth: validKeys().auth,
+        portal: 'taxscan',
+        topics: [],
+      },
+    });
+    createdSubscriberEndpoints.push(subSoftPrompt.endpoint);
+
+    const subRecapture = await prisma.subscriber.create({
+      data: {
+        endpoint: `${TEST_PREFIX}funnel-rc-${Date.now()}`,
+        p256dh: validKeys().p256dh,
+        auth: validKeys().auth,
+        portal: 'taxscan',
+        topics: [],
+      },
+    });
+    createdSubscriberEndpoints.push(subRecapture.endpoint);
+
+    await prisma.event.create({
+      data: { type: 'SUBSCRIBED', subscriberId: subSoftPrompt.id, meta: { source: 'soft-prompt' } },
+    });
+    await prisma.event.create({
+      data: { type: 'SUBSCRIBED', subscriberId: subRecapture.id, meta: { source: 'recapture' } },
+    });
+
+    const after = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(after.status).toBe(200);
+    const afterSubscribed = after.body.funnel.subscribed as number;
+    // Only the soft-prompt row should count toward the funnel. The recapture row
+    // is excluded.
+    expect(afterSubscribed - beforeSubscribed).toBe(1);
+  });
 });

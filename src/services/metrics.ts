@@ -47,6 +47,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     expiredSubscribers,
     recentSubs,
     eventTypeCounts,
+    softPromptSubscribed,
     sentEventCount,
     clickedEventCount,
     recentCampaigns,
@@ -61,6 +62,12 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       by: ['type'],
       _count: { _all: true },
       where: { type: { in: ['PROMPT_SHOWN', 'PROMPT_ACCEPTED', 'SUBSCRIBED', 'UNSUBSCRIBED'] } },
+    }),
+    // Funnel `subscribed` is scoped to the soft-prompt path so it lines up with
+    // PROMPT_SHOWN / PROMPT_ACCEPTED. Recapture and pushsubscriptionchange
+    // SUBSCRIBED events inflate the raw type count but never see the prompt.
+    prisma.event.count({
+      where: { type: 'SUBSCRIBED', meta: { path: ['source'], equals: 'soft-prompt' } },
     }),
     prisma.event.count({ where: { type: 'SENT' } }),
     prisma.event.count({ where: { type: 'CLICKED' } }),
@@ -96,9 +103,11 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   for (const row of eventTypeCounts) byType.set(row.type, row._count._all);
   const promptShown = byType.get('PROMPT_SHOWN') ?? 0;
   const promptAccepted = byType.get('PROMPT_ACCEPTED') ?? 0;
-  const subscribed = byType.get('SUBSCRIBED') ?? 0;
+  const totalSubscribed = byType.get('SUBSCRIBED') ?? 0;
   const unsubscribed = byType.get('UNSUBSCRIBED') ?? 0;
-  const unsubscribeRate = subscribed > 0 ? unsubscribed / subscribed : null;
+  // Unsubscribe rate uses the total subscribed denominator (any user, any source,
+  // can unsubscribe — the rate is a measure of churn against the whole base).
+  const unsubscribeRate = totalSubscribed > 0 ? unsubscribed / totalSubscribed : null;
 
   // Per-campaign sent/clicked. One groupBy keyed by campaignId + type, then assemble.
   // Prisma handles `in: []` correctly (returns no rows) so no need to gate the query.
@@ -134,7 +143,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   return {
     activeSubscribers,
     growth,
-    funnel: { promptShown, promptAccepted, subscribed },
+    funnel: { promptShown, promptAccepted, subscribed: softPromptSubscribed },
     unsubscribeRate,
     totals: { sent: sentEventCount, clicked: clickedEventCount, expired: expiredSubscribers },
     campaigns,

@@ -205,6 +205,22 @@ include `test` in the array stored at `txn_push_topics` in localStorage from Dev
 `cd admin && npm run build` produces a static bundle in `admin/dist/`. A future task can mount it via
 `app.use('/admin', express.static('admin/dist'))` to serve at `/admin`.
 
+### Playwright E2E (admin)
+
+One happy-path spec covers the literal acceptance criterion (log in → compose → send → dashboard
+shows CTR). Run it from `admin/`:
+
+```bash
+cd admin
+npm run e2e
+```
+
+Playwright boots both servers itself with `E2E_MOCK_SENDER=true` so the dispatch path is exercised
+end-to-end without touching FCM. The `finally` block runs `npm run db:cleanup-e2e` from the project
+root, which deletes anything whose subscriber endpoint starts with `https://e2e-test.example.com/`
+or whose campaign title starts with `E2E `. If a run crashes hard you can run that cleanup script
+manually.
+
 ## Admin send endpoint
 
 `POST /api/send` is the admin-only dispatch endpoint. Authenticate with a static bearer token:
