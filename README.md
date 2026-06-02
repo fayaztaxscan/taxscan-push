@@ -195,6 +195,62 @@ If a dispatch throws after the `FeedItem` row has been claimed, the row is left 
 "never re-send" inviolable across crashes, at the cost of permanently skipping one item per failed
 dispatch. Watch the logs.
 
+## Cutover from iZooto
+
+Two flags let this system run safely **side-by-side with iZooto** before taking over.
+
+| Flag | Where | Default | Behaviour |
+|---|---|---|---|
+| `SEND_MODE` | backend `.env` | `capture_only` | The RSS poller still detects new items, slugs them by feed source, and writes Campaigns as `DRAFT` (linked from `FeedItem.campaignId`), but **does not dispatch**. Subscribers keep receiving from iZooto. Admin manual sends through `/api/send` are unaffected — only the RSS poller is gated. |
+| `CUTOVER_MODE` | browser SDK (`window.TAXSCAN_PUSH_CONFIG.cutoverMode`) | `false` | After our own service worker is live, the SDK walks every other SW registered on the page and unregisters it. Path-agnostic (no need to know iZooto's worker URL). When `false`, the old SW stays, allowing parallel run. |
+
+### Safe sequence
+
+1. **Day 0 — parallel run** (default).
+   ```
+   SEND_MODE=capture_only
+   window.TAXSCAN_PUSH_CONFIG = { ...config, cutoverMode: false }
+   ```
+   - iZooto sends notifications (status quo).
+   - Our RSS poller runs but stores items as DRAFT — log line shows `mode=capture_only sent=0 captured=N`.
+   - The SDK's recapture path silently migrates any returning iZooto subscriber whose `Notification.permission === 'granted'`. Watch
+     `subscribersBySource.recapture` climb on the Dashboard.
+   - Optionally bulk-import the iZooto CSV (see next section).
+
+2. **Day N — take over** (flip both flags **at the same time**).
+   ```
+   SEND_MODE=live
+   window.TAXSCAN_PUSH_CONFIG = { ...config, cutoverMode: true }
+   ```
+   - Our RSS poller dispatches normally; log line shows `mode=live sent=N captured=0`.
+   - On every subscriber's next visit, the SDK unregisters iZooto's SW. From that visit on, iZooto can no longer reach them through this browser.
+
+**Do not run `SEND_MODE=live` with `cutoverMode=false` for any extended period** — both systems would send the same article. The danger window is from the moment you flip `SEND_MODE` until every subscriber has revisited and the SDK has unregistered iZooto's SW for them.
+
+### Bulk import (Strategy B, optional)
+
+```
+npm run import:izooto -- path/to/izooto-export.csv
+npm run import:izooto -- path/to/izooto-export.csv --dry-run   # validates without writing
+```
+
+CSV format: header row with at least `endpoint, p256dh, auth`; optional `userAgent`. Each row becomes a Subscriber + a SUBSCRIBED Event tagged with `meta.source = "import"`. The script prints a per-run summary:
+
+```
+[import:izooto] === Summary ===
+  Total rows in file:        1247
+  Successfully imported:     1198
+  Skipped (already in DB):   42
+  Skipped (bad/empty keys):  7
+  Errors:                    0
+  ────────────────────────────────
+  Migrated 1198 of 1247 (96.1%)
+```
+
+The imported count then shows up in `/api/metrics → subscribersBySource.import` and on the Dashboard's "Subscriber sources" table — that's how you confirm the import "stuck" after the script returns.
+
+**Caveat:** Strategy B only works cleanly if iZooto registered subscribers with **your** VAPID public key. If iZooto used its own VAPID, the endpoints are technically valid but sending to them will return 403 from FCM/Mozilla. The Task 9 FAILED-event path catches that — sends fail visibly and the bad endpoints get flipped to EXPIRED automatically — but the migration won't actually deliver notifications. Recommend **Strategy A (recapture only)** unless you're sure about the VAPID-key history.
+
 ## What good looks like
 
 The dashboard surfaces four primary metrics as coloured indicators (green / amber / red). Targets

@@ -266,7 +266,54 @@ describe('GET /api/metrics', () => {
     // optInRate and deliveryRate are number | null (null when denominator is 0).
     expect(['number', 'object']).toContain(typeof res.body.optInRate);
     expect(['number', 'object']).toContain(typeof res.body.deliveryRate);
+    expect(res.body.subscribersBySource).toEqual(
+      expect.objectContaining({
+        'soft-prompt': expect.any(Number),
+        recapture: expect.any(Number),
+        pushsubscriptionchange: expect.any(Number),
+        import: expect.any(Number),
+      }),
+    );
     expect(Array.isArray(res.body.campaigns)).toBe(true);
+  });
+
+  it('reports subscribersBySource with all known source slugs', async () => {
+    // Seed one of each meaningful source so the response shape covers them.
+    const portal = uniquePortal('source-mix');
+    async function makeRecord(source: string) {
+      const sub = await prisma.subscriber.create({
+        data: {
+          endpoint: `${TEST_PREFIX}src-${source}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+          p256dh: validKeys().p256dh,
+          auth: validKeys().auth,
+          portal,
+          topics: ['all'],
+        },
+      });
+      createdSubscriberEndpoints.push(sub.endpoint);
+      await prisma.event.create({
+        data: { type: 'SUBSCRIBED', subscriberId: sub.id, meta: { source } },
+      });
+    }
+    const beforeRes = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    const before = beforeRes.body.subscribersBySource;
+
+    await makeRecord('soft-prompt');
+    await makeRecord('recapture');
+    await makeRecord('pushsubscriptionchange');
+    await makeRecord('import');
+
+    const afterRes = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(afterRes.status).toBe(200);
+    const after = afterRes.body.subscribersBySource;
+    expect(after['soft-prompt']).toBe(before['soft-prompt'] + 1);
+    expect(after['recapture']).toBe(before['recapture'] + 1);
+    expect(after['pushsubscriptionchange']).toBe(before['pushsubscriptionchange'] + 1);
+    expect(after['import']).toBe(before['import'] + 1);
   });
 
   it('reports deliveryRate from SENT and FAILED event counts', async () => {

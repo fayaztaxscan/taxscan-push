@@ -26,6 +26,11 @@
     scrollThreshold: 0.5,
     dwellMs: 30000,
     secondPageDelayMs: 2000,
+    // When true, after registering our own SW we unregister any OTHER
+    // service worker the page has (e.g. iZooto's). Leave false during the
+    // parallel-run cutover phase so both push systems coexist; flip to true
+    // when this system becomes the only sender. See README "Cutover from iZooto".
+    cutoverMode: false,
   };
   var cfg = Object.assign({}, defaults, window.TAXSCAN_PUSH_CONFIG || {});
   if (!cfg.apiBase) cfg.apiBase = window.location.origin;
@@ -387,6 +392,35 @@
     showSoftPrompt();
   }
 
+  /* ---------------- cutover: unregister foreign service workers ---------------- */
+
+  // When cutoverMode is on, walk every SW registration the page has and
+  // unregister anything that isn't ours. Path-agnostic, so we don't need to
+  // know iZooto's exact worker URL.
+  async function maybeUnregisterForeignWorkers() {
+    if (!cfg.cutoverMode) return;
+    try {
+      var ourUrl = new URL(cfg.swPath, window.location.origin).href.split('?')[0];
+      var regs = await navigator.serviceWorker.getRegistrations();
+      for (var i = 0; i < regs.length; i++) {
+        var reg = regs[i];
+        var sw = reg.active || reg.waiting || reg.installing;
+        if (!sw) continue;
+        var url = sw.scriptURL.split('?')[0];
+        if (url === ourUrl) continue;
+        try {
+          await reg.unregister();
+          // eslint-disable-next-line no-console
+          console.log('[taxscan-push] unregistered foreign service worker:', url);
+        } catch (_) {
+          /* best-effort */
+        }
+      }
+    } catch (_) {
+      /* getRegistrations failure: nothing to do */
+    }
+  }
+
   /* ---------------- boot ---------------- */
 
   async function init() {
@@ -401,6 +435,9 @@
     } catch (_) {
       return;
     }
+
+    // After OUR worker is live, optionally unregister iZooto's (or any other).
+    await maybeUnregisterForeignWorkers();
 
     try {
       var cfgRes = await fetch(cfg.apiBase + '/api/config');

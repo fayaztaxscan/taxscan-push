@@ -59,6 +59,10 @@ export const env = {
     concurrency: Number.isFinite(parsedConcurrency) && parsedConcurrency > 0 ? parsedConcurrency : 10,
     quietStart: process.env.QUIET_HOURS_START ?? '23:00',
     quietEnd: process.env.QUIET_HOURS_END ?? '07:00',
+    // SEND_MODE: 'capture_only' (default) keeps the RSS poller storing items
+    // as DRAFT campaigns without dispatching, so iZooto and our system can
+    // run in parallel without double-sending. Flip to 'live' to take over.
+    mode: process.env.SEND_MODE === 'live' ? ('live' as const) : ('capture_only' as const),
   },
   rss: {
     enabled: process.env.RSS_ENABLED === 'true',

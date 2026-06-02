@@ -13,12 +13,15 @@ export type Dispatcher = (input: CampaignInput) => Promise<DispatchResult>;
 
 export type FeedConfig = { topic: string; url: string };
 
+export type SendMode = 'capture_only' | 'live';
+
 export type PollDeps = {
   feedUrl?: string;
   topic?: string;
   fetcher?: Fetcher;
   dispatcher?: Dispatcher;
   portal?: string;
+  mode?: SendMode;
 };
 
 export type PollResult = {
@@ -28,13 +31,15 @@ export type PollResult = {
   alreadySeen: number;
   newItems: number;
   sent: number;
+  captured: number;
   errors: number;
   durationMs: number;
+  mode: SendMode;
 };
 
 export type PollAllResult = {
   feeds: PollResult[];
-  totals: Omit<PollResult, 'topic' | 'feedUrl'>;
+  totals: Omit<PollResult, 'topic' | 'feedUrl' | 'mode'>;
 };
 
 const defaultParser = new Parser();
@@ -87,12 +92,14 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const fetcher = deps.fetcher ?? defaultFetcher;
   const dispatcher = deps.dispatcher ?? dispatchCampaign;
   const portal = deps.portal ?? env.rss.portal;
+  const mode = deps.mode ?? env.send.mode;
   const startedAt = Date.now();
 
   let itemsFound = 0;
   let alreadySeen = 0;
   let newItems = 0;
   let sent = 0;
+  let captured = 0;
   let errors = 0;
 
   try {
@@ -140,6 +147,40 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
         breaking: false,
       };
 
+      if (mode === 'capture_only') {
+        // Capture-only: write the Campaign as DRAFT and link the FeedItem,
+        // but skip dispatch. iZooto stays in charge of notifications while
+        // we passively build the migrated subscriber base.
+        try {
+          const campaign = await prisma.campaign.create({
+            data: {
+              portal: input.portal,
+              title: input.title,
+              body: input.body,
+              url: input.url,
+              icon: input.icon ?? null,
+              target: input.target as object,
+              status: 'DRAFT',
+            },
+          });
+          await prisma.feedItem.update({
+            where: { id: claim.id },
+            data: { campaignId: campaign.id },
+          });
+          captured++;
+        } catch (err) {
+          errors++;
+          // eslint-disable-next-line no-console
+          console.error('[rss] capture failed; feed item kept to prevent re-capture', {
+            topic,
+            guid,
+            feedItemId: claim.id,
+            err,
+          });
+        }
+        continue;
+      }
+
       try {
         const result = await dispatcher(input);
         await prisma.feedItem.update({
@@ -167,9 +208,9 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const durationMs = Date.now() - startedAt;
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] poll topic=${topic} feed=${feedUrl} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} errors=${errors} ms=${durationMs}`,
+    `[rss] poll topic=${topic} feed=${feedUrl} mode=${mode} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} captured=${captured} errors=${errors} ms=${durationMs}`,
   );
-  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, errors, durationMs };
+  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, captured, errors, durationMs, mode };
 }
 
 export async function pollAllFeeds(
@@ -189,12 +230,13 @@ export async function pollAllFeeds(
     alreadySeen: results.reduce((s, r) => s + r.alreadySeen, 0),
     newItems: results.reduce((s, r) => s + r.newItems, 0),
     sent: results.reduce((s, r) => s + r.sent, 0),
+    captured: results.reduce((s, r) => s + r.captured, 0),
     errors: results.reduce((s, r) => s + r.errors, 0),
     durationMs: Date.now() - startedAt,
   };
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} errors=${totals.errors} ms=${totals.durationMs}`,
+    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} captured=${totals.captured} errors=${totals.errors} ms=${totals.durationMs}`,
   );
   return { feeds: results, totals };
 }

@@ -14,6 +14,12 @@ type Metrics = {
   optInRate: number | null;
   deliveryRate: number | null;
   totals: { sent: number; clicked: number; expired: number; failed: number };
+  subscribersBySource: {
+    'soft-prompt': number;
+    recapture: number;
+    pushsubscriptionchange: number;
+    import: number;
+  };
   campaigns: {
     id: string;
     title: string;
@@ -25,6 +31,13 @@ type Metrics = {
     deliveryRate: number | null;
     createdAt: string;
   }[];
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  'soft-prompt': 'Soft prompt (organic opt-in)',
+  recapture: 'Recaptured (iZooto migration)',
+  pushsubscriptionchange: 'SW endpoint rotation',
+  import: 'Bulk import',
 };
 
 const api = useApi();
@@ -52,6 +65,16 @@ const overallCtrValue = computed(() => {
   const t = metrics.value?.totals;
   if (!t || t.sent === 0) return null;
   return t.clicked / t.sent;
+});
+
+const sourceEntries = computed(() => {
+  const src = metrics.value?.subscribersBySource;
+  if (!src) return [] as { key: string; label: string; count: number }[];
+  return (Object.keys(src) as (keyof typeof src)[]).map((key) => ({
+    key,
+    label: SOURCE_LABELS[key] || key,
+    count: src[key],
+  }));
 });
 
 function fmtDate(iso: string): string {
@@ -114,6 +137,25 @@ onMounted(load);
       </div>
 
       <div class="card" style="margin-top: 16px">
+        <h2>Subscriber sources</h2>
+        <table>
+          <thead>
+            <tr><th>Source</th><th>Subscribers</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="entry in sourceEntries" :key="entry.key">
+              <td>{{ entry.label }}</td>
+              <td>{{ entry.count.toLocaleString() }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="muted" style="margin-top: 6px">
+          Watch <strong>Recaptured</strong> grow during iZooto cutover. Once comfortable, flip
+          <code>SEND_MODE=live</code> and <code>CUTOVER_MODE=true</code> together.
+        </div>
+      </div>
+
+      <div class="card">
         <h2>30-day subscriber growth</h2>
         <SparkLine :points="sparkPoints" />
         <div class="muted" style="margin-top: 6px">

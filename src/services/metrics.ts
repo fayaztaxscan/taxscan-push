@@ -31,6 +31,12 @@ export type CampaignStat = {
   scheduledAt: string | null;
 };
 
+export type SubscriberSource =
+  | 'soft-prompt'
+  | 'recapture'
+  | 'pushsubscriptionchange'
+  | 'import';
+
 export type Metrics = {
   activeSubscribers: number;
   growth: GrowthPoint[];
@@ -39,8 +45,16 @@ export type Metrics = {
   optInRate: number | null;
   deliveryRate: number | null;
   totals: { sent: number; clicked: number; expired: number; failed: number };
+  subscribersBySource: Record<SubscriberSource, number>;
   campaigns: CampaignStat[];
 };
+
+const KNOWN_SOURCES: SubscriberSource[] = [
+  'soft-prompt',
+  'recapture',
+  'pushsubscriptionchange',
+  'import',
+];
 
 export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   const today = startOfDayIST(now);
@@ -55,6 +69,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     sentEventCount,
     clickedEventCount,
     failedEventCount,
+    bySourceCounts,
     recentCampaigns,
   ] = await Promise.all([
     prisma.subscriber.count({ where: { status: 'ACTIVE' } }),
@@ -77,6 +92,13 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     prisma.event.count({ where: { type: 'SENT' } }),
     prisma.event.count({ where: { type: 'CLICKED' } }),
     prisma.event.count({ where: { type: 'FAILED' } }),
+    Promise.all(
+      KNOWN_SOURCES.map((s) =>
+        prisma.event.count({
+          where: { type: 'SUBSCRIBED', meta: { path: ['source'], equals: s } },
+        }),
+      ),
+    ),
     prisma.campaign.findMany({
       orderBy: { createdAt: 'desc' },
       take: 20,
@@ -159,6 +181,10 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       ? sentEventCount / (sentEventCount + failedEventCount)
       : null;
 
+  const subscribersBySource = Object.fromEntries(
+    KNOWN_SOURCES.map((s, i) => [s, bySourceCounts[i]]),
+  ) as Record<SubscriberSource, number>;
+
   return {
     activeSubscribers,
     growth,
@@ -172,6 +198,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       expired: expiredSubscribers,
       failed: failedEventCount,
     },
+    subscribersBySource,
     campaigns,
   };
 }
