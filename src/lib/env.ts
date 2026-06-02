@@ -39,4 +39,8 @@ export const env = {
     enabled: process.env.SWEEPER_ENABLED === 'true',
     cron: process.env.SWEEPER_CRON ?? '* * * * *',
   },
+  admin: {
+    password: process.env.ADMIN_PASSWORD ?? '',
+  },
+  testSegmentTopic: process.env.TEST_SEGMENT_TOPIC ?? 'test',
 };

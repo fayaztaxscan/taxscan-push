@@ -172,6 +172,39 @@ If a dispatch throws after the `FeedItem` row has been claimed, the row is left 
 "never re-send" inviolable across crashes, at the cost of permanently skipping one item per failed
 dispatch. Watch the logs.
 
+## Admin SPA
+
+A small Vue 3 + Vite app lives in `admin/`. Three screens: Compose & send, Campaigns, Dashboard,
+behind a password login that exchanges for the bearer token.
+
+### Run it locally
+
+```bash
+# in one terminal — backend
+ADMIN_PASSWORD=your-pw npm run dev
+
+# in another — Vite dev server, proxies /api → :3000
+cd admin
+npm install        # first time only
+npm run dev        # opens on http://localhost:5173
+```
+
+Sign in with `ADMIN_PASSWORD`; the SPA stores the issued bearer token in `localStorage` and attaches
+it to every subsequent `/api/*` call.
+
+### Send test to internal segment
+
+The Compose screen's "Send test" button posts a campaign with `target: { type: 'topics', topics: [TEST_SEGMENT_TOPIC] }`
+and `breaking: true`. To receive these on your dev browser, open the demo page (`/`), accept the
+soft prompt, and tick the topic that matches `TEST_SEGMENT_TOPIC` (default `test`). Add `test`
+to the topic chooser in `public/taxscan-push.js` for a fully wired internal-test flow, or just
+include `test` in the array stored at `txn_push_topics` in localStorage from DevTools.
+
+### Production deploy (out of scope for Phase 1)
+
+`cd admin && npm run build` produces a static bundle in `admin/dist/`. A future task can mount it via
+`app.use('/admin', express.static('admin/dist'))` to serve at `/admin`.
+
 ## Admin send endpoint
 
 `POST /api/send` is the admin-only dispatch endpoint. Authenticate with a static bearer token:

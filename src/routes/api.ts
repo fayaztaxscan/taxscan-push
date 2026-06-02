@@ -4,6 +4,8 @@ import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { requireBearer } from '../lib/auth';
 import { dispatchCampaign, type Sender } from '../services/send';
+import { buildMetrics, listCampaigns } from '../services/metrics';
+import { timingSafeEqual } from 'crypto';
 
 function base64urlByteLength(s: string): number {
   const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
@@ -65,6 +67,11 @@ const SendSchema = z.object({
   icon: z.string().optional(),
   target: TargetSchema,
   breaking: z.boolean().optional(),
+  scheduledAt: z.string().datetime().optional(),
+});
+
+const LoginSchema = z.object({
+  password: z.string().min(1),
 });
 
 function badRequest(res: Response, err: z.ZodError) {
@@ -175,9 +182,70 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     try {
       const parsed = SendSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
+      const { scheduledAt, ...input } = parsed.data;
 
-      const result = await dispatchCampaign(parsed.data, { sender: opts.sender });
+      if (scheduledAt) {
+        const when = new Date(scheduledAt);
+        if (when.getTime() > Date.now()) {
+          const campaign = await prisma.campaign.create({
+            data: {
+              portal: input.portal,
+              title: input.title,
+              body: input.body,
+              url: input.url,
+              icon: input.icon ?? null,
+              target: input.target as object,
+              status: 'SCHEDULED',
+              scheduledAt: when,
+            },
+          });
+          return res.status(200).json({
+            campaignId: campaign.id,
+            status: 'SCHEDULED',
+            sent: 0,
+            capped: 0,
+            expiredPruned: 0,
+            failed: 0,
+            deferred: { scheduledAt: when.toISOString() },
+          });
+        }
+      }
+
+      const result = await dispatchCampaign(input, { sender: opts.sender });
       return res.status(200).json(result);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post('/auth/login', (req, res) => {
+    const parsed = LoginSchema.safeParse(req.body);
+    if (!parsed.success) return badRequest(res, parsed.error);
+    if (!env.admin.password || !env.adminToken) {
+      return res.status(503).json({ error: 'admin_unconfigured' });
+    }
+    const provided = Buffer.from(parsed.data.password);
+    const expected = Buffer.from(env.admin.password);
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+      return res.status(401).json({ error: 'invalid_password' });
+    }
+    return res.json({ token: env.adminToken, testSegmentTopic: env.testSegmentTopic });
+  });
+
+  router.get('/campaigns', requireBearer, async (req, res, next) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+      const campaigns = await listCampaigns(limit);
+      return res.json({ campaigns });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get('/metrics', requireBearer, async (_req, res, next) => {
+    try {
+      const metrics = await buildMetrics();
+      return res.json(metrics);
     } catch (err) {
       return next(err);
     }
