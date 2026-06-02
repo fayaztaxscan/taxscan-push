@@ -208,7 +208,7 @@ describe('pollOnce dedupe', () => {
 });
 
 describe('pollOnce target resolution', () => {
-  it('maps RSS categories to slugged topic targets', async () => {
+  it('maps known RSS categories to the chooser slugs and dedupes', async () => {
     const feedUrl = freshFeedUrl('topics');
     trackFeed(feedUrl);
     const { dispatcher, calls } = recordingDispatcher();
@@ -217,8 +217,8 @@ describe('pollOnce target resolution', () => {
       fetcher: fakeFetcher([
         {
           guid: 'cat-1',
-          title: 'GST verdict',
-          link: 'https://taxscan.in/gst-1',
+          title: 'Two known categories',
+          link: 'https://taxscan.in/2',
           categories: ['GST', 'Income Tax'],
         },
       ]),
@@ -228,7 +228,53 @@ describe('pollOnce target resolution', () => {
     expect(calls[0].target).toEqual({ type: 'topics', topics: ['gst', 'income-tax'] });
   });
 
-  it('falls back to target=all when no categories are present', async () => {
+  it('handles the real taxscan.in shape: comma-joined + HTML entities + Top Stories meta tag', async () => {
+    // These are the exact strings the live taxscan.in feed emits today —
+    // multiple categories packed into one element, &amp; for the ampersand,
+    // "Top Stories" tagged on every item.
+    const feedUrl = freshFeedUrl('real');
+    trackFeed(feedUrl);
+    const { dispatcher, calls } = recordingDispatcher();
+    await pollOnce({
+      feedUrl,
+      fetcher: fakeFetcher([
+        {
+          guid: 'r-it',
+          title: 'IT article',
+          link: 'https://taxscan.in/it',
+          categories: ['Income Tax,Top Stories'],
+        },
+        {
+          guid: 'r-ec',
+          title: 'Customs article',
+          link: 'https://taxscan.in/ec',
+          categories: ['Excise &amp; Customs,Top Stories'],
+        },
+        {
+          guid: 'r-gst',
+          title: 'GST article',
+          link: 'https://taxscan.in/gst-real',
+          categories: ['CST &amp; VAT / GST,Top Stories'],
+        },
+        {
+          guid: 'r-ot',
+          title: 'Unknown category article',
+          link: 'https://taxscan.in/x',
+          categories: ['Some Future Category,Top Stories'],
+        },
+      ]),
+      dispatcher,
+    });
+    expect(calls).toHaveLength(4);
+    const byTitle = Object.fromEntries(calls.map((c) => [c.title, c.target]));
+    expect(byTitle['IT article']).toEqual({ type: 'topics', topics: ['income-tax'] });
+    expect(byTitle['Customs article']).toEqual({ type: 'topics', topics: ['customs'] });
+    expect(byTitle['GST article']).toEqual({ type: 'topics', topics: ['gst'] });
+    // Unknown category isn't in the chooser → skipped → fallback to 'all' only.
+    expect(byTitle['Unknown category article']).toEqual({ type: 'topics', topics: ['all'] });
+  });
+
+  it('falls back to topics:["all"] when no categories are present', async () => {
     const feedUrl = freshFeedUrl('all');
     trackFeed(feedUrl);
     const { dispatcher, calls } = recordingDispatcher();
@@ -239,8 +285,27 @@ describe('pollOnce target resolution', () => {
       ]),
       dispatcher,
     });
-    expect(calls[0].target).toEqual({ type: 'all' });
+    expect(calls[0].target).toEqual({ type: 'topics', topics: ['all'] });
     expect(calls[0].breaking).toBe(false);
+  });
+
+  it('falls back to topics:["all"] when every category is filtered out', async () => {
+    const feedUrl = freshFeedUrl('skipped');
+    trackFeed(feedUrl);
+    const { dispatcher, calls } = recordingDispatcher();
+    await pollOnce({
+      feedUrl,
+      fetcher: fakeFetcher([
+        {
+          guid: 'skip-1',
+          title: 'Only meta tag',
+          link: 'https://taxscan.in/x',
+          categories: ['Top Stories'],
+        },
+      ]),
+      dispatcher,
+    });
+    expect(calls[0].target).toEqual({ type: 'topics', topics: ['all'] });
   });
 
   it('uses a trimmed contentSnippet as the body', async () => {

@@ -36,6 +36,55 @@ export function slugify(s: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * Map raw RSS category labels (after entity-decode + lowercase + trim) to the
+ * four user-facing topic slugs the SDK chooser exposes. Anything not in this
+ * table is dropped — see the poller test for the canonical taxscan.in inputs.
+ */
+const CATEGORY_TO_TOPIC: Record<string, string> = {
+  gst: 'gst',
+  // Taxscan's current label for the GST bucket. CST and VAT are legacy indirect
+  // taxes folded into the same editorial category as GST coverage.
+  'cst & vat / gst': 'gst',
+  'income tax': 'income-tax',
+  'income-tax': 'income-tax',
+  customs: 'customs',
+  'excise & customs': 'customs',
+  'excise and customs': 'customs',
+  excise: 'customs',
+  corporate: 'corporate',
+  'corporate law': 'corporate',
+  'company law': 'corporate',
+};
+
+// "Top Stories" is on every taxscan.in item — a meta tag, not a content
+// category. Stripping it prevents a flood-everyone target.
+const SKIP_CATEGORIES = new Set(['top stories']);
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&#038;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+export function mapCategoriesToTopics(raws: string[] | undefined): string[] {
+  if (!raws) return [];
+  const topics = new Set<string>();
+  for (const raw of raws) {
+    // Taxscan packs multiple categories into a single <category> element
+    // separated by commas. Split before lookup.
+    for (const piece of String(raw).split(',')) {
+      const cleaned = decodeHtmlEntities(piece).trim().toLowerCase();
+      if (!cleaned || SKIP_CATEGORIES.has(cleaned)) continue;
+      const topic = CATEGORY_TO_TOPIC[cleaned];
+      if (topic) topics.add(topic);
+    }
+  }
+  return Array.from(topics);
+}
+
 export function trimDescription(item: FeedItem, max = 140): string {
   const raw =
     item.contentSnippet ||
@@ -93,13 +142,18 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
       }
       newItems++;
 
-      const categories = (item.categories ?? []).map((c) => slugify(String(c))).filter(Boolean);
+      const topics = mapCategoriesToTopics(item.categories);
+      // If nothing maps (e.g. "Other Taxations,Top Stories"), fall through to
+      // the synthetic 'all' topic so only "All news" subscribers receive it —
+      // not topic-specific subscribers who didn't sign up for it.
       const input: CampaignInput = {
         portal,
         title: item.title!.trim(),
         body: trimDescription(item),
         url: item.link!.trim(),
-        target: categories.length ? { type: 'topics', topics: categories } : { type: 'all' },
+        target: topics.length
+          ? { type: 'topics', topics }
+          : { type: 'topics', topics: ['all'] },
         breaking: false,
       };
 

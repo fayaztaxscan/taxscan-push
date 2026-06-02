@@ -57,8 +57,12 @@ async function resolveTargets(portal: string, target: Target): Promise<Subscribe
   if (target.type === 'all') {
     return prisma.subscriber.findMany({ where: { portal, status: 'ACTIVE' } });
   }
+  // Topic-targeted dispatches also reach subscribers who chose the "All news"
+  // option. Folding 'all' into the hasSome filter keeps the topic-table simple
+  // and avoids a second query.
+  const topics = Array.from(new Set([...target.topics, 'all']));
   return prisma.subscriber.findMany({
-    where: { portal, status: 'ACTIVE', topics: { hasSome: target.topics } },
+    where: { portal, status: 'ACTIVE', topics: { hasSome: topics } },
   });
 }
 

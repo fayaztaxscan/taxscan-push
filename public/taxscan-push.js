@@ -31,7 +31,12 @@
   if (!cfg.apiBase) cfg.apiBase = window.location.origin;
 
   // Display label -> slug used by the RSS pipeline and /api/send topic targets.
+  // `defaultChecked: true` items are ticked when the prompt first renders;
+  // "All news" is the default opt-in so new subscribers receive every campaign
+  // until they refine. Topic-specific items override "All news" subscribers'
+  // reach automatically since the backend folds 'all' into every topic dispatch.
   var TOPIC_OPTIONS = [
+    { label: 'All news', slug: 'all', defaultChecked: true },
     { label: 'GST', slug: 'gst' },
     { label: 'Income Tax', slug: 'income-tax' },
     { label: 'Customs', slug: 'customs' },
@@ -198,7 +203,7 @@
     var descId = 'txnpush-desc-' + Date.now();
     var selected = {};
     TOPIC_OPTIONS.forEach(function (t) {
-      selected[t.slug] = true;
+      selected[t.slug] = !!t.defaultChecked;
     });
 
     var wrap = document.createElement('div');
@@ -212,7 +217,9 @@
         '<label class="txnpush-topic">' +
         '<input type="checkbox" data-slug="' +
         t.slug +
-        '" checked aria-label="' +
+        '"' +
+        (t.defaultChecked ? ' checked' : '') +
+        ' aria-label="' +
         t.label +
         '" data-i="' +
         i +
