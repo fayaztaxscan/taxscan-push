@@ -87,6 +87,22 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
       if (!parsed.success) return badRequest(res, parsed.error);
       const { subscription, portal, topics, userAgent, source } = parsed.data;
 
+      // Default-topics rule: no subscriber ends up receiving nothing. iZooto
+      // migrants and brand-new subscribers landing through any code path get
+      // ['all'] if they haven't actively narrowed. Existing subscribers keep
+      // their previous choice on a no-topics recapture.
+      const existing = await prisma.subscriber.findUnique({
+        where: { endpoint: subscription.endpoint },
+        select: { topics: true },
+      });
+      const explicit = topics && topics.length > 0;
+      const preserved = !explicit && existing && existing.topics.length > 0;
+      const finalTopics = explicit
+        ? topics!
+        : preserved
+          ? existing!.topics
+          : ['all'];
+
       const subscriber = await prisma.subscriber.upsert({
         where: { endpoint: subscription.endpoint },
         create: {
@@ -94,7 +110,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
           p256dh: subscription.keys.p256dh,
           auth: subscription.keys.auth,
           portal,
-          topics: topics ?? [],
+          topics: finalTopics,
           userAgent: userAgent ?? null,
           status: 'ACTIVE',
         },
@@ -102,7 +118,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
           p256dh: subscription.keys.p256dh,
           auth: subscription.keys.auth,
           portal,
-          topics: topics ?? [],
+          topics: finalTopics,
           userAgent: userAgent ?? null,
           status: 'ACTIVE',
         },

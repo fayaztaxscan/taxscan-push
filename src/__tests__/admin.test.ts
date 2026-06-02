@@ -183,7 +183,8 @@ describe('admin test-segment helpers', () => {
       (s: { endpoint: string }) => s.endpoint === subscription.endpoint,
     );
     expect(mine).toBeDefined();
-    expect(mine.topics).toEqual([]);
+    // Default-topics rule: a subscribe with no topics lands as ['all'].
+    expect(mine.topics).toEqual(['all']);
   });
 
   it('POST /api/admin/subscribers/:id/test-segment appends the test topic', async () => {

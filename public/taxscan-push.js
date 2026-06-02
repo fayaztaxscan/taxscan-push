@@ -148,10 +148,22 @@
       userVisibleOnly: true,
       applicationServerKey: ourKey,
     });
+    // Default-topics rule: a subscriber must never end up receiving nothing.
+    // - Explicit non-empty topics win.
+    // - Otherwise fall back to anything previously stored locally.
+    // - Otherwise default to ['all'] so iZooto migrants on the recapture path
+    //   automatically land on every campaign until they refine.
+    var storedTopics = loadStoredTopics();
+    var finalTopics =
+      topics && topics.length > 0
+        ? topics
+        : storedTopics && storedTopics.length > 0
+          ? storedTopics
+          : ['all'];
     await post('/api/subscribe', {
       subscription: sub.toJSON(),
       portal: cfg.portal,
-      topics: topics || loadStoredTopics() || [],
+      topics: finalTopics,
       userAgent: navigator.userAgent,
       source: source,
     });
@@ -319,6 +331,9 @@
       var slugs = Object.keys(selected).filter(function (s) {
         return selected[s];
       });
+      // If the user unchecks every box, default them to 'all' so they receive
+      // something instead of nothing. Backend has the same safety net.
+      if (slugs.length === 0) slugs = ['all'];
       storeTopics(slugs);
       close();
       try {

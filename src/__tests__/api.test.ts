@@ -87,6 +87,45 @@ describe('POST /api/subscribe', () => {
     expect(res.body.error).toBe('invalid_request');
   });
 
+  it('defaults topics to ["all"] for a new subscriber with no topics in the body', async () => {
+    const subscription = makeSubscription('default-all');
+    const res = await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal: 'taxscan' });
+    expect(res.status).toBe(201);
+    const sub = await prisma.subscriber.findUnique({ where: { endpoint: subscription.endpoint } });
+    expect(sub?.topics).toEqual(['all']);
+  });
+
+  it('defaults topics to ["all"] for a new subscriber with empty topics array', async () => {
+    const subscription = makeSubscription('default-all-empty');
+    const res = await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal: 'taxscan', topics: [] });
+    expect(res.status).toBe(201);
+    const sub = await prisma.subscriber.findUnique({ where: { endpoint: subscription.endpoint } });
+    expect(sub?.topics).toEqual(['all']);
+  });
+
+  it('preserves an existing subscriber\'s topics on a no-topics re-subscribe (iZooto recapture)', async () => {
+    const subscription = makeSubscription('preserve');
+    // First subscribe with an explicit topic — simulates a user who narrowed.
+    await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal: 'taxscan', topics: ['gst'] })
+      .expect(201);
+
+    // Second subscribe with no topics — simulates a recapture / SW refresh.
+    await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal: 'taxscan', source: 'recapture' })
+      .expect(201);
+
+    const sub = await prisma.subscriber.findUnique({ where: { endpoint: subscription.endpoint } });
+    // Their previous choice survives the recapture — they don't get clobbered to ['all'].
+    expect(sub?.topics).toEqual(['gst']);
+  });
+
   it('records the source flag in the SUBSCRIBED event meta', async () => {
     const subscription = makeSubscription('with-source');
     const res = await request(app)
