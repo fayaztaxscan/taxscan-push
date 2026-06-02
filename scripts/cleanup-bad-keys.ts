@@ -26,7 +26,7 @@ function base64urlByteLength(s: string): number {
   for (const s of bad) {
     // eslint-disable-next-line no-console
     console.log(
-      `[cleanup]   expiring ${s.id} endpoint=${s.endpoint.slice(-40)} ` +
+      `[cleanup]   expiring ${s.id} ` +
         `p256dh=${base64urlByteLength(s.p256dh)}B auth=${base64urlByteLength(s.auth)}B`,
     );
   }
