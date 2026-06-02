@@ -137,6 +137,9 @@ label {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;
+  /* Tables inside cards (Campaigns, Recent campaigns) can overflow on narrow
+     viewports; scroll within the card rather than the document body. */
+  overflow-x: auto;
 }
 .card + .card {
   margin-top: 16px;
@@ -168,6 +171,11 @@ label {
 @media (max-width: 720px) {
   .metric-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
   }
 }
 
