@@ -147,7 +147,7 @@ function base64urlByteLength(s: string): number {
       errors++;
       // eslint-disable-next-line no-console
       console.error(
-        `[import:izooto] row failed: …${endpoint.slice(-40)} — ${err instanceof Error ? err.message : err}`,
+        `[import:izooto] row failed (endpoint redacted) — ${err instanceof Error ? err.message : err}`,
       );
     }
   }

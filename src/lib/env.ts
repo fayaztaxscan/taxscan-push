@@ -44,6 +44,18 @@ function parseRssFeeds(): { topic: string; url: string }[] {
 const parsedCap = Number(process.env.FREQ_CAP_PER_DAY);
 const parsedConcurrency = Number(process.env.SEND_CONCURRENCY);
 
+const allowedPushHosts = (
+  process.env.ALLOWED_PUSH_HOSTS ?? 'taxscan.in,www.taxscan.in'
+)
+  .split(',')
+  .map((h) => h.trim().toLowerCase())
+  .filter(Boolean);
+
+function intEnv(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -79,4 +91,11 @@ export const env = {
     password: process.env.ADMIN_PASSWORD ?? '',
   },
   testSegmentTopic: process.env.TEST_SEGMENT_TOPIC ?? 'test',
+  allowedPushHosts,
+  rateLimit: {
+    // Per-minute caps. Defaults are conservative — burst legitimate traffic
+    // shouldn't hit them, but bot subscribe/track spam does.
+    publicPerMin: intEnv('RATE_LIMIT_PUBLIC_PER_MIN', 60),
+    loginPerMin: intEnv('RATE_LIMIT_LOGIN_PER_MIN', 5),
+  },
 };

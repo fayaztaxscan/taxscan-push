@@ -5,6 +5,8 @@ import { env } from '../lib/env';
 import { requireBearer } from '../lib/auth';
 import { dispatchCampaign, type Sender } from '../services/send';
 import { buildMetrics, listCampaigns } from '../services/metrics';
+import { isAllowedPushUrl } from '../lib/urlAllowlist';
+import { makeLoginLimiter, makePublicLimiter } from '../lib/rateLimit';
 import { timingSafeEqual } from 'crypto';
 
 function base64urlByteLength(s: string): number {
@@ -63,7 +65,12 @@ const SendSchema = z.object({
   portal: z.string().min(1),
   title: z.string().min(1),
   body: z.string().min(1),
-  url: z.string().min(1),
+  url: z
+    .string()
+    .min(1)
+    .refine(isAllowedPushUrl, {
+      message: 'url host is not in ALLOWED_PUSH_HOSTS',
+    }),
   icon: z.string().optional(),
   target: TargetSchema,
   breaking: z.boolean().optional(),
@@ -78,10 +85,18 @@ function badRequest(res: Response, err: z.ZodError) {
   return res.status(400).json({ error: 'invalid_request', issues: err.issues });
 }
 
-export function createApiRouter(opts: { sender?: Sender } = {}): Router {
+export function createApiRouter(
+  opts: { sender?: Sender; publicPerMin?: number; loginPerMin?: number } = {},
+): Router {
   const router = Router();
 
-  router.post('/subscribe', async (req, res, next) => {
+  // Per-IP rate limiters. The public limiter wraps the four public endpoints
+  // (subscribe / unsubscribe / track / config). The login limiter is tighter,
+  // gating brute-force on the admin password.
+  const publicLimiter = makePublicLimiter(opts.publicPerMin ?? env.rateLimit.publicPerMin);
+  const loginLimiter = makeLoginLimiter(opts.loginPerMin ?? env.rateLimit.loginPerMin);
+
+  router.post('/subscribe', publicLimiter, async (req, res, next) => {
     try {
       const parsed = SubscribeSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
@@ -138,7 +153,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     }
   });
 
-  router.post('/unsubscribe', async (req, res, next) => {
+  router.post('/unsubscribe', publicLimiter, async (req, res, next) => {
     try {
       const parsed = UnsubscribeSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
@@ -162,7 +177,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     }
   });
 
-  router.post('/track', async (req, res, next) => {
+  router.post('/track', publicLimiter, async (req, res, next) => {
     try {
       const parsed = TrackSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
@@ -190,7 +205,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     }
   });
 
-  router.get('/config', (_req, res) => {
+  router.get('/config', publicLimiter, (_req, res) => {
     return res.json({ vapidPublicKey: env.vapid.publicKey });
   });
 
@@ -234,7 +249,7 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     }
   });
 
-  router.post('/auth/login', (req, res) => {
+  router.post('/auth/login', loginLimiter, (req, res) => {
     const parsed = LoginSchema.safeParse(req.body);
     if (!parsed.success) return badRequest(res, parsed.error);
     if (!env.admin.password || !env.adminToken) {

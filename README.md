@@ -202,7 +202,7 @@ Two flags let this system run safely **side-by-side with iZooto** before taking 
 | Flag | Where | Default | Behaviour |
 |---|---|---|---|
 | `SEND_MODE` | backend `.env` | `capture_only` | The RSS poller still detects new items, slugs them by feed source, and writes Campaigns as `DRAFT` (linked from `FeedItem.campaignId`), but **does not dispatch**. Subscribers keep receiving from iZooto. Admin manual sends through `/api/send` are unaffected — only the RSS poller is gated. |
-| `CUTOVER_MODE` | browser SDK (`window.TAXSCAN_PUSH_CONFIG.cutoverMode`) | `false` | After our own service worker is live, the SDK walks every other SW registered on the page and unregisters it. Path-agnostic (no need to know iZooto's worker URL). When `false`, the old SW stays, allowing parallel run. |
+| `CUTOVER_MODE` | browser SDK (`window.TAXSCAN_PUSH_CONFIG.cutoverMode`) | `false` | After our own service worker is live, the SDK walks every SW registered on the page and unregisters **only iZooto's** — identified by host (`cdn.izooto.com` or any `*.izooto.com`) with a case-insensitive `/izooto/i` substring fallback. The site's own PWA worker at `/service-worker.js` and our push worker are explicitly spared. When `false`, no unregister runs (parallel-run default). |
 
 ### Safe sequence
 
