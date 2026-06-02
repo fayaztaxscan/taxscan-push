@@ -163,6 +163,75 @@ describe('GET /api/campaigns', () => {
   });
 });
 
+describe('admin test-segment helpers', () => {
+  it('GET /api/admin/subscribers returns recent ACTIVE rows + the test topic', async () => {
+    const portal = uniquePortal('list-subs');
+    const subscription = {
+      endpoint: `${TEST_PREFIX}list-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+      keys: validKeys(),
+    };
+    createdSubscriberEndpoints.push(subscription.endpoint);
+    await request(app).post('/api/subscribe').send({ subscription, portal }).expect(201);
+
+    const res = await request(app)
+      .get('/api/admin/subscribers?limit=10')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.subscribers)).toBe(true);
+    expect(typeof res.body.testSegmentTopic).toBe('string');
+    const mine = res.body.subscribers.find(
+      (s: { endpoint: string }) => s.endpoint === subscription.endpoint,
+    );
+    expect(mine).toBeDefined();
+    expect(mine.topics).toEqual([]);
+  });
+
+  it('POST /api/admin/subscribers/:id/test-segment appends the test topic', async () => {
+    const portal = uniquePortal('add-test');
+    const subscription = {
+      endpoint: `${TEST_PREFIX}add-test-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+      keys: validKeys(),
+    };
+    createdSubscriberEndpoints.push(subscription.endpoint);
+    const create = await request(app)
+      .post('/api/subscribe')
+      .send({ subscription, portal, topics: ['gst'] });
+    expect(create.status).toBe(201);
+    const id = create.body.id as string;
+
+    const first = await request(app)
+      .post(`/api/admin/subscribers/${id}/test-segment`)
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(first.status).toBe(200);
+    expect(first.body.added).toBe(true);
+    expect(first.body.subscriber.topics).toContain('test');
+    expect(first.body.subscriber.topics).toContain('gst');
+
+    // Idempotent — second call doesn't duplicate.
+    const second = await request(app)
+      .post(`/api/admin/subscribers/${id}/test-segment`)
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(second.status).toBe(200);
+    expect(second.body.added).toBe(false);
+    const reloaded = await prisma.subscriber.findUnique({ where: { id } });
+    expect(reloaded?.topics.filter((t) => t === 'test').length).toBe(1);
+  });
+
+  it('POST /api/admin/subscribers/:id/test-segment returns 404 for unknown ids', async () => {
+    const res = await request(app)
+      .post('/api/admin/subscribers/does-not-exist/test-segment')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('admin endpoints require the bearer token', async () => {
+    const a = await request(app).get('/api/admin/subscribers');
+    expect(a.status).toBe(401);
+    const b = await request(app).post('/api/admin/subscribers/x/test-segment');
+    expect(b.status).toBe(401);
+  });
+});
+
 describe('GET /api/metrics', () => {
   it('requires the bearer token', async () => {
     const res = await request(app).get('/api/metrics');

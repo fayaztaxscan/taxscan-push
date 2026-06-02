@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 
@@ -33,10 +33,23 @@ const breaking = ref(false);
 const scheduleMode = ref<'now' | 'later'>('now');
 const scheduledAtLocal = ref('');
 
+type AdminSubscriber = {
+  id: string;
+  endpoint: string;
+  topics: string[];
+  userAgent: string | null;
+  createdAt: string;
+  portal: string;
+};
+
 const submitting = ref(false);
 const sendingTest = ref(false);
 const result = ref<DispatchResult | null>(null);
 const errorBanner = ref<string | null>(null);
+const testHint = ref<string | null>(null);
+const subscribers = ref<AdminSubscriber[]>([]);
+const loadingSubs = ref(false);
+const enrollingId = ref<string | null>(null);
 
 const target = computed(() => {
   if (targetMode.value === 'all') return { type: 'all' as const };
@@ -53,6 +66,46 @@ const canSend = computed(() => {
 function clearStatus() {
   result.value = null;
   errorBanner.value = null;
+  testHint.value = null;
+}
+
+async function loadSubscribers() {
+  loadingSubs.value = true;
+  try {
+    const data = await api.get<{ subscribers: AdminSubscriber[]; testSegmentTopic: string }>(
+      '/api/admin/subscribers?limit=10',
+    );
+    subscribers.value = data.subscribers;
+  } catch (e) {
+    errorBanner.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    loadingSubs.value = false;
+  }
+}
+
+async function addToTestSegment(s: AdminSubscriber) {
+  enrollingId.value = s.id;
+  try {
+    const data = await api.post<{ subscriber: { id: string; topics: string[] } }>(
+      `/api/admin/subscribers/${s.id}/test-segment`,
+      {},
+    );
+    // Patch local state so the button updates without a refetch.
+    const idx = subscribers.value.findIndex((x) => x.id === s.id);
+    if (idx >= 0) subscribers.value[idx].topics = data.subscriber.topics;
+  } catch (e) {
+    errorBanner.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    enrollingId.value = null;
+  }
+}
+
+function inTestSegment(s: AdminSubscriber): boolean {
+  return s.topics.includes(testSegmentTopic.value);
+}
+
+function endpointTail(endpoint: string): string {
+  return endpoint.length > 40 ? '…' + endpoint.slice(-40) : endpoint;
 }
 
 function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; scheduledAt?: string }> = {}) {
@@ -86,12 +139,23 @@ async function sendTest() {
       breaking: true,
     });
     result.value = res;
+    if (res.sent === 0) {
+      testHint.value =
+        `No subscriber has the '${testSegmentTopic.value}' topic yet, so nothing was delivered. ` +
+        `Use the "Test segment" panel below to enrol your browser, then try again.`;
+      // Refresh the subscriber list so the panel is ready when the user scrolls.
+      void loadSubscribers();
+    }
   } catch (e) {
     errorBanner.value = e instanceof Error ? e.message : String(e);
   } finally {
     sendingTest.value = false;
   }
 }
+
+onMounted(() => {
+  void loadSubscribers();
+});
 
 async function send() {
   clearStatus();
@@ -171,6 +235,7 @@ async function send() {
       </div>
 
       <div v-if="errorBanner" class="banner err">{{ errorBanner }}</div>
+      <div v-if="testHint" class="banner err">{{ testHint }}</div>
       <div v-if="result" class="banner ok">
         {{ result.status === 'SCHEDULED' ? 'Scheduled' : 'Dispatched' }} ·
         campaignId={{ result.campaignId }}
@@ -196,6 +261,58 @@ async function send() {
           {{ submitting ? 'Sending…' : scheduleMode === 'later' ? 'Schedule' : 'Send now' }}
         </button>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div class="toolbar-title">Test segment</div>
+        <button class="btn" :disabled="loadingSubs" @click="loadSubscribers">
+          {{ loadingSubs ? 'Loading…' : 'Refresh' }}
+        </button>
+      </div>
+      <p class="muted" style="margin-top: 0">
+        The "Send test" button targets <code>topics: ['{{ testSegmentTopic }}']</code>.
+        Add at least one subscriber below to that topic so test sends land somewhere.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Created</th>
+            <th>Endpoint</th>
+            <th>Topics</th>
+            <th>UA</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in subscribers" :key="s.id">
+            <td class="muted">{{ new Date(s.createdAt).toLocaleString() }}</td>
+            <td><code style="font-size: 11px">{{ endpointTail(s.endpoint) }}</code></td>
+            <td>{{ s.topics.join(', ') || '—' }}</td>
+            <td class="muted">{{ s.userAgent || '—' }}</td>
+            <td>
+              <button
+                class="btn"
+                :disabled="inTestSegment(s) || enrollingId === s.id"
+                @click="addToTestSegment(s)"
+              >
+                {{
+                  inTestSegment(s)
+                    ? 'In test segment'
+                    : enrollingId === s.id
+                    ? 'Adding…'
+                    : `Add '${testSegmentTopic}'`
+                }}
+              </button>
+            </td>
+          </tr>
+          <tr v-if="subscribers.length === 0 && !loadingSubs">
+            <td colspan="5" class="muted" style="text-align: center; padding: 24px">
+              No active subscribers yet. Open the demo page and accept the prompt to create one.
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </main>
 </template>

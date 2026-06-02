@@ -251,5 +251,46 @@ export function createApiRouter(opts: { sender?: Sender } = {}): Router {
     }
   });
 
+  router.get('/admin/subscribers', requireBearer, async (req, res, next) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
+      const subscribers = await prisma.subscriber.findMany({
+        where: { status: 'ACTIVE' },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          endpoint: true,
+          topics: true,
+          userAgent: true,
+          createdAt: true,
+          portal: true,
+        },
+      });
+      return res.json({ subscribers, testSegmentTopic: env.testSegmentTopic });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post('/admin/subscribers/:id/test-segment', requireBearer, async (req, res, next) => {
+    try {
+      const sub = await prisma.subscriber.findUnique({ where: { id: req.params.id } });
+      if (!sub) return res.status(404).json({ error: 'subscriber_not_found' });
+      const topic = env.testSegmentTopic;
+      if (sub.topics.includes(topic)) {
+        return res.json({ subscriber: { id: sub.id, topics: sub.topics }, added: false });
+      }
+      const updated = await prisma.subscriber.update({
+        where: { id: sub.id },
+        data: { topics: { push: topic } },
+        select: { id: true, topics: true },
+      });
+      return res.json({ subscriber: updated, added: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   return router;
 }
