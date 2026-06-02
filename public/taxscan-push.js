@@ -392,26 +392,54 @@
     showSoftPrompt();
   }
 
-  /* ---------------- cutover: unregister foreign service workers ---------------- */
+  /* ---------------- cutover: unregister iZooto's service worker ---------------- */
+
+  // Pure predicate: does a service-worker scriptURL belong to iZooto?
+  // Match by HOST (cdn.izooto.com or any *.izooto.com), then fall back to a
+  // case-insensitive substring check on the raw URL for safety. This must NEVER
+  // match the site's own PWA worker (e.g. https://www.taxscan.in/service-worker.js)
+  // or our worker (cfg.swPath on the page origin).
+  function isIzootoWorker(scriptURL) {
+    if (!scriptURL || typeof scriptURL !== 'string') return false;
+    try {
+      var u = new URL(scriptURL);
+      if (u.host === 'cdn.izooto.com') return true;
+      if (/(^|\.)izooto\.com$/i.test(u.host)) return true;
+    } catch (_) {
+      /* relative URL or malformed — fall through to substring check */
+    }
+    return /izooto/i.test(scriptURL);
+  }
 
   // When cutoverMode is on, walk every SW registration the page has and
-  // unregister anything that isn't ours. Path-agnostic, so we don't need to
-  // know iZooto's exact worker URL.
+  // unregister ONLY iZooto's worker (identified by host: cdn.izooto.com /
+  // *.izooto.com, or substring 'izooto'). Never unregister on a "not ours"
+  // basis — that would also kill the site's own PWA worker. Each registration
+  // is inspected across its active/installing/waiting scriptURL; if any of
+  // those is iZooto's, that registration is unregistered.
   async function maybeUnregisterForeignWorkers() {
     if (!cfg.cutoverMode) return;
     try {
-      var ourUrl = new URL(cfg.swPath, window.location.origin).href.split('?')[0];
       var regs = await navigator.serviceWorker.getRegistrations();
       for (var i = 0; i < regs.length; i++) {
         var reg = regs[i];
-        var sw = reg.active || reg.waiting || reg.installing;
-        if (!sw) continue;
-        var url = sw.scriptURL.split('?')[0];
-        if (url === ourUrl) continue;
+        var urls = [
+          reg.active && reg.active.scriptURL,
+          reg.installing && reg.installing.scriptURL,
+          reg.waiting && reg.waiting.scriptURL,
+        ];
+        var matchedUrl = null;
+        for (var j = 0; j < urls.length; j++) {
+          if (isIzootoWorker(urls[j])) {
+            matchedUrl = urls[j];
+            break;
+          }
+        }
+        if (!matchedUrl) continue;
         try {
           await reg.unregister();
           // eslint-disable-next-line no-console
-          console.log('[taxscan-push] unregistered foreign service worker:', url);
+          console.log('[taxscan-push] unregistered iZooto service worker:', matchedUrl);
         } catch (_) {
           /* best-effort */
         }
@@ -486,6 +514,18 @@
       };
     },
   };
+
+  // Test hook: when window.__TAXSCAN_PUSH_TESTS_ENABLE__ is set BEFORE this
+  // script runs, expose internals for unit tests and skip auto-init. Production
+  // pages never set that flag, so this is inert at runtime.
+  if (window.__TAXSCAN_PUSH_TESTS_ENABLE__) {
+    window.__taxscanPushTest__ = {
+      isIzootoWorker: isIzootoWorker,
+      maybeUnregisterForeignWorkers: maybeUnregisterForeignWorkers,
+      cfg: cfg,
+    };
+    return;
+  }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     init();
