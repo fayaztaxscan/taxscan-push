@@ -260,9 +260,65 @@ describe('GET /api/metrics', () => {
         sent: expect.any(Number),
         clicked: expect.any(Number),
         expired: expect.any(Number),
+        failed: expect.any(Number),
       }),
     );
+    // optInRate and deliveryRate are number | null (null when denominator is 0).
+    expect(['number', 'object']).toContain(typeof res.body.optInRate);
+    expect(['number', 'object']).toContain(typeof res.body.deliveryRate);
     expect(Array.isArray(res.body.campaigns)).toBe(true);
+  });
+
+  it('reports deliveryRate from SENT and FAILED event counts', async () => {
+    // Create a campaign + a SENT and a FAILED event to push the totals up by a
+    // known amount, then verify both totals.failed and the per-campaign
+    // deliveryRate field show our data.
+    const portal = uniquePortal('delivery-rate');
+    const sub = await prisma.subscriber.create({
+      data: {
+        endpoint: `${TEST_PREFIX}delivery-${Date.now()}`,
+        p256dh: validKeys().p256dh,
+        auth: validKeys().auth,
+        portal,
+        topics: [],
+      },
+    });
+    createdSubscriberEndpoints.push(sub.endpoint);
+
+    const campaign = await prisma.campaign.create({
+      data: {
+        portal,
+        title: 'delivery-rate-test',
+        body: 'b',
+        url: 'https://taxscan.in',
+        target: { type: 'all' },
+        status: 'SENT',
+      },
+    });
+    createdCampaignIds.push(campaign.id);
+    await prisma.event.create({
+      data: { type: 'SENT', campaignId: campaign.id, subscriberId: sub.id },
+    });
+    await prisma.event.create({
+      data: {
+        type: 'FAILED',
+        campaignId: campaign.id,
+        subscriberId: sub.id,
+        meta: { reason: 'expired', statusCode: 410 },
+      },
+    });
+
+    const res = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(res.status).toBe(200);
+    const ours = res.body.campaigns.find(
+      (c: { id: string }) => c.id === campaign.id,
+    );
+    expect(ours).toBeDefined();
+    expect(ours.sent).toBe(1);
+    expect(ours.failed).toBe(1);
+    expect(ours.deliveryRate).toBe(0.5); // 1 / (1 + 1)
   });
 
   it('funnel.subscribed only counts SUBSCRIBED events with meta.source = "soft-prompt"', async () => {

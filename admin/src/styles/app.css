@@ -162,7 +162,7 @@ label {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
 }
 @media (max-width: 720px) {
@@ -359,6 +359,56 @@ td .badge {
 .muted {
   color: var(--muted);
   font-size: 12px;
+}
+
+.band-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.band-dot.good {
+  background: #047857;
+}
+.band-dot.warn {
+  background: #d97706;
+}
+.band-dot.bad {
+  background: #b91c1c;
+}
+.band-dot.neutral {
+  background: #cbd5e1;
+}
+.band-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.band-pill.good {
+  background: #dcfce7;
+  color: #047857;
+}
+.band-pill.warn {
+  background: #fef3c7;
+  color: #b45309;
+}
+.band-pill.bad {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.band-pill.neutral {
+  background: #eef2f7;
+  color: var(--muted);
+}
+
+.thresholds-legend {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
 }
 
 .section-title {

@@ -318,6 +318,17 @@ describe('dispatchCampaign', () => {
       select: { id: true, status: true },
     });
     expect(stillActive.every((s) => s.status === 'ACTIVE')).toBe(true);
+
+    // FAILED events are recorded for both non-expired failures so the
+    // delivery-rate metric can count them.
+    const failedEvents = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, type: 'FAILED' },
+      select: { subscriberId: true, meta: true },
+    });
+    expect(failedEvents).toHaveLength(2);
+    expect(failedEvents.every((e) => (e.meta as { reason: string }).reason === 'error')).toBe(
+      true,
+    );
   });
 
   it('prunes EXPIRED subscribers on 410 and does not record SENT for them', async () => {
@@ -356,5 +367,13 @@ describe('dispatchCampaign', () => {
       where: { campaignId: result.campaignId, subscriberId: a.id, type: 'SENT' },
     });
     expect(sentForA).toHaveLength(1);
+
+    // The 410 also records a FAILED event tagged with reason:'expired'.
+    const failedForB = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, subscriberId: b.id, type: 'FAILED' },
+      select: { meta: true },
+    });
+    expect(failedForB).toHaveLength(1);
+    expect((failedForB[0].meta as { reason: string }).reason).toBe('expired');
   });
 });

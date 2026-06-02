@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
+import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
 
 type Campaign = {
   id: string;
@@ -8,7 +9,9 @@ type Campaign = {
   status: string;
   sent: number;
   clicked: number;
+  failed: number;
   ctr: number | null;
+  deliveryRate: number | null;
   createdAt: string;
   scheduledAt: string | null;
 };
@@ -33,10 +36,6 @@ async function load() {
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
-}
-function fmtCtr(c: Campaign): string {
-  if (c.ctr === null || c.sent === 0) return '—';
-  return (c.ctr * 100).toFixed(1) + '%';
 }
 
 onMounted(load);
@@ -63,6 +62,8 @@ onMounted(load);
             <th>Sent</th>
             <th>Clicked</th>
             <th>CTR</th>
+            <th>Failed</th>
+            <th>Delivery</th>
           </tr>
         </thead>
         <tbody>
@@ -72,10 +73,23 @@ onMounted(load);
             <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
             <td>{{ c.sent }}</td>
             <td>{{ c.clicked }}</td>
-            <td>{{ fmtCtr(c) }}</td>
+            <td>
+              <span :class="['band-pill', classify(c.ctr, THRESHOLDS.ctr)]" :title="bandTooltip('ctr')">
+                {{ pct(c.ctr) }}
+              </span>
+            </td>
+            <td>{{ c.failed }}</td>
+            <td>
+              <span
+                :class="['band-pill', classify(c.deliveryRate, THRESHOLDS.deliveryRate)]"
+                :title="bandTooltip('deliveryRate')"
+              >
+                {{ pct(c.deliveryRate) }}
+              </span>
+            </td>
           </tr>
           <tr v-if="campaigns.length === 0 && !loading">
-            <td colspan="6" class="muted" style="text-align: center; padding: 24px">
+            <td colspan="8" class="muted" style="text-align: center; padding: 24px">
               No campaigns yet.
             </td>
           </tr>

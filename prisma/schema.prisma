@@ -28,6 +28,7 @@ enum EventType {
   UNSUBSCRIBED
   PROMPT_SHOWN
   PROMPT_ACCEPTED
+  FAILED
 }
 
 model Subscriber {

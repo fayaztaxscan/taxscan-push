@@ -24,7 +24,9 @@ export type CampaignStat = {
   status: string;
   sent: number;
   clicked: number;
+  failed: number;
   ctr: number | null;
+  deliveryRate: number | null;
   createdAt: string;
   scheduledAt: string | null;
 };
@@ -34,7 +36,9 @@ export type Metrics = {
   growth: GrowthPoint[];
   funnel: { promptShown: number; promptAccepted: number; subscribed: number };
   unsubscribeRate: number | null;
-  totals: { sent: number; clicked: number; expired: number };
+  optInRate: number | null;
+  deliveryRate: number | null;
+  totals: { sent: number; clicked: number; expired: number; failed: number };
   campaigns: CampaignStat[];
 };
 
@@ -50,6 +54,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     softPromptSubscribed,
     sentEventCount,
     clickedEventCount,
+    failedEventCount,
     recentCampaigns,
   ] = await Promise.all([
     prisma.subscriber.count({ where: { status: 'ACTIVE' } }),
@@ -71,6 +76,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     }),
     prisma.event.count({ where: { type: 'SENT' } }),
     prisma.event.count({ where: { type: 'CLICKED' } }),
+    prisma.event.count({ where: { type: 'FAILED' } }),
     prisma.campaign.findMany({
       orderBy: { createdAt: 'desc' },
       take: 20,
@@ -109,43 +115,63 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   // can unsubscribe — the rate is a measure of churn against the whole base).
   const unsubscribeRate = totalSubscribed > 0 ? unsubscribed / totalSubscribed : null;
 
-  // Per-campaign sent/clicked. One groupBy keyed by campaignId + type, then assemble.
-  // Prisma handles `in: []` correctly (returns no rows) so no need to gate the query.
+  // Per-campaign sent/clicked/failed. One groupBy keyed by campaignId + type.
   const campaignIds = recentCampaigns.map((c) => c.id);
   const perCampaign = await prisma.event.groupBy({
     by: ['campaignId', 'type'],
-    where: { campaignId: { in: campaignIds }, type: { in: ['SENT', 'CLICKED'] } },
+    where: {
+      campaignId: { in: campaignIds },
+      type: { in: ['SENT', 'CLICKED', 'FAILED'] },
+    },
     _count: { _all: true },
   });
-  const sentByCampaign = new Map<string, number>();
-  const clickedByCampaign = new Map<string, number>();
+  const byCampaign = {
+    SENT: new Map<string, number>(),
+    CLICKED: new Map<string, number>(),
+    FAILED: new Map<string, number>(),
+  };
   for (const row of perCampaign) {
     if (!row.campaignId) continue;
-    const target = row.type === 'SENT' ? sentByCampaign : clickedByCampaign;
-    target.set(row.campaignId, row._count._all);
+    byCampaign[row.type as keyof typeof byCampaign]?.set(row.campaignId, row._count._all);
   }
 
   const campaigns: CampaignStat[] = recentCampaigns.map((c) => {
-    const sent = sentByCampaign.get(c.id) ?? 0;
-    const clicked = clickedByCampaign.get(c.id) ?? 0;
+    const sent = byCampaign.SENT.get(c.id) ?? 0;
+    const clicked = byCampaign.CLICKED.get(c.id) ?? 0;
+    const failed = byCampaign.FAILED.get(c.id) ?? 0;
     return {
       id: c.id,
       title: c.title,
       status: c.status,
       sent,
       clicked,
+      failed,
       ctr: sent > 0 ? clicked / sent : null,
+      deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
     };
   });
+
+  const optInRate = promptShown > 0 ? promptAccepted / promptShown : null;
+  const deliveryRate =
+    sentEventCount + failedEventCount > 0
+      ? sentEventCount / (sentEventCount + failedEventCount)
+      : null;
 
   return {
     activeSubscribers,
     growth,
     funnel: { promptShown, promptAccepted, subscribed: softPromptSubscribed },
     unsubscribeRate,
-    totals: { sent: sentEventCount, clicked: clickedEventCount, expired: expiredSubscribers },
+    optInRate,
+    deliveryRate,
+    totals: {
+      sent: sentEventCount,
+      clicked: clickedEventCount,
+      expired: expiredSubscribers,
+      failed: failedEventCount,
+    },
     campaigns,
   };
 }
@@ -161,26 +187,31 @@ export async function listCampaigns(limit = 50): Promise<CampaignStat[]> {
   const ids = campaigns.map((c) => c.id);
   const events = await prisma.event.groupBy({
     by: ['campaignId', 'type'],
-    where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED'] } },
+    where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED', 'FAILED'] } },
     _count: { _all: true },
   });
-  const sentByCampaign = new Map<string, number>();
-  const clickedByCampaign = new Map<string, number>();
+  const byCampaign = {
+    SENT: new Map<string, number>(),
+    CLICKED: new Map<string, number>(),
+    FAILED: new Map<string, number>(),
+  };
   for (const row of events) {
     if (!row.campaignId) continue;
-    const target = row.type === 'SENT' ? sentByCampaign : clickedByCampaign;
-    target.set(row.campaignId, row._count._all);
+    byCampaign[row.type as keyof typeof byCampaign]?.set(row.campaignId, row._count._all);
   }
   return campaigns.map((c) => {
-    const sent = sentByCampaign.get(c.id) ?? 0;
-    const clicked = clickedByCampaign.get(c.id) ?? 0;
+    const sent = byCampaign.SENT.get(c.id) ?? 0;
+    const clicked = byCampaign.CLICKED.get(c.id) ?? 0;
+    const failed = byCampaign.FAILED.get(c.id) ?? 0;
     return {
       id: c.id,
       title: c.title,
       status: c.status,
       sent,
       clicked,
+      failed,
       ctr: sent > 0 ? clicked / sent : null,
+      deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
     };

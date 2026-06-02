@@ -142,9 +142,32 @@ export async function executeCampaign(
           data: { type: 'SENT', campaignId: campaign.id, subscriberId: sub.id },
         });
       } else if (outcome.expired) {
+        // 404/410: the subscription is dead. sendToSubscriber has already
+        // flipped the subscriber to EXPIRED; record the FAILED event so the
+        // delivery-rate metric counts it as a non-delivery.
         expiredPruned++;
+        await prisma.event.create({
+          data: {
+            type: 'FAILED',
+            campaignId: campaign.id,
+            subscriberId: sub.id,
+            meta: { reason: 'expired', statusCode: outcome.statusCode },
+          },
+        });
       } else {
         failed++;
+        await prisma.event.create({
+          data: {
+            type: 'FAILED',
+            campaignId: campaign.id,
+            subscriberId: sub.id,
+            meta: {
+              reason: 'error',
+              statusCode: outcome.statusCode ?? null,
+              message: outcome.error ?? null,
+            },
+          },
+        });
         // eslint-disable-next-line no-console
         console.warn(
           `push failed for subscriber ${sub.id}: ${outcome.statusCode} ${outcome.error}`,

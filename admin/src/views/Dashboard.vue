@@ -4,20 +4,25 @@ import { useApi } from '../composables/useApi';
 import MetricCard from '../components/MetricCard.vue';
 import FunnelStat from '../components/FunnelStat.vue';
 import SparkLine from '../components/SparkLine.vue';
+import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
 
 type Metrics = {
   activeSubscribers: number;
   growth: { date: string; newSubscribers: number }[];
   funnel: { promptShown: number; promptAccepted: number; subscribed: number };
   unsubscribeRate: number | null;
-  totals: { sent: number; clicked: number; expired: number };
+  optInRate: number | null;
+  deliveryRate: number | null;
+  totals: { sent: number; clicked: number; expired: number; failed: number };
   campaigns: {
     id: string;
     title: string;
     status: string;
     sent: number;
     clicked: number;
+    failed: number;
     ctr: number | null;
+    deliveryRate: number | null;
     createdAt: string;
   }[];
 };
@@ -42,23 +47,15 @@ async function load() {
 const sparkPoints = computed(() =>
   (metrics.value?.growth ?? []).map((p) => ({ date: p.date, value: p.newSubscribers })),
 );
-const overallCtr = computed(() => {
+
+const overallCtrValue = computed(() => {
   const t = metrics.value?.totals;
-  if (!t || t.sent === 0) return '—';
-  return ((t.clicked / t.sent) * 100).toFixed(1) + '%';
-});
-const unsubLabel = computed(() => {
-  const r = metrics.value?.unsubscribeRate;
-  if (r === null || r === undefined) return '—';
-  return (r * 100).toFixed(1) + '%';
+  if (!t || t.sent === 0) return null;
+  return t.clicked / t.sent;
 });
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
-}
-function fmtCtr(c: { ctr: number | null; sent: number }): string {
-  if (c.ctr === null || c.sent === 0) return '—';
-  return (c.ctr * 100).toFixed(1) + '%';
 }
 
 onMounted(load);
@@ -84,14 +81,36 @@ onMounted(load);
         <MetricCard label="Total sent" :value="metrics.totals.sent.toLocaleString()" />
         <MetricCard
           label="Overall CTR"
-          :value="overallCtr"
+          :value="pct(overallCtrValue)"
           :hint="metrics.totals.clicked.toLocaleString() + ' clicks'"
+          :band="classify(overallCtrValue, THRESHOLDS.ctr)"
+          :band-title="bandTooltip('ctr')"
+        />
+        <MetricCard
+          label="Opt-in rate"
+          :value="pct(metrics.optInRate)"
+          :hint="metrics.funnel.promptAccepted.toLocaleString() + ' / ' + metrics.funnel.promptShown.toLocaleString() + ' prompts'"
+          :band="classify(metrics.optInRate, THRESHOLDS.optInRate)"
+          :band-title="bandTooltip('optInRate')"
+        />
+        <MetricCard
+          label="Delivery rate"
+          :value="pct(metrics.deliveryRate)"
+          :hint="metrics.totals.failed.toLocaleString() + ' failed'"
+          :band="classify(metrics.deliveryRate, THRESHOLDS.deliveryRate)"
+          :band-title="bandTooltip('deliveryRate')"
         />
         <MetricCard
           label="Unsubscribe rate"
-          :value="unsubLabel"
+          :value="pct(metrics.unsubscribeRate)"
           :hint="metrics.totals.expired.toLocaleString() + ' expired'"
+          :band="classify(metrics.unsubscribeRate, THRESHOLDS.unsubscribeRate)"
+          :band-title="bandTooltip('unsubscribeRate')"
         />
+      </div>
+      <div class="thresholds-legend">
+        Coloured dots reflect target thresholds — green = on target, amber = warning, red = below
+        target. See README → "What good looks like".
       </div>
 
       <div class="card" style="margin-top: 16px">
@@ -144,7 +163,11 @@ onMounted(load);
               <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
               <td>{{ c.sent }}</td>
               <td>{{ c.clicked }}</td>
-              <td>{{ fmtCtr(c) }}</td>
+              <td>
+                <span :class="['band-pill', classify(c.ctr, THRESHOLDS.ctr)]" :title="bandTooltip('ctr')">
+                  {{ pct(c.ctr) }}
+                </span>
+              </td>
             </tr>
             <tr v-if="metrics.campaigns.length === 0">
               <td colspan="6" class="muted" style="text-align: center; padding: 24px">

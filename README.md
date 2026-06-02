@@ -195,6 +195,34 @@ If a dispatch throws after the `FeedItem` row has been claimed, the row is left 
 "never re-send" inviolable across crashes, at the cost of permanently skipping one item per failed
 dispatch. Watch the logs.
 
+## What good looks like
+
+The dashboard surfaces four primary metrics as coloured indicators (green / amber / red). Targets
+are based on industry baselines for web push on news / publishing sites — treat them as
+benchmarks, not contractual SLOs.
+
+| Metric | What it measures | Target (green) | Warning (amber) | Below target (red) |
+|---|---|---|---|---|
+| **Opt-in rate** | `PROMPT_ACCEPTED ÷ PROMPT_SHOWN` — of readers who saw the soft prompt, how many granted notification permission. | **≥ 5%** | 3–5% | < 3% |
+| **CTR** (per campaign and overall) | `CLICKED ÷ SENT` — of notifications delivered, how many were clicked. | **≥ 6%** | 4–6% | < 4% |
+| **Unsubscribe rate** | `UNSUBSCRIBED ÷ SUBSCRIBED` (lifetime, all sources). | **< 0.5%** | 0.5–1% | ≥ 1% |
+| **Delivery rate** | `SENT ÷ (SENT + FAILED)` event counts. A FAILED event is recorded for every 404/410 (subscription dead) and every other transient failure during dispatch. | **≥ 95%** | 90–95% | < 90% |
+
+Notes on what each indicator means in practice:
+
+- **Opt-in below 3%** usually points at a prompt-fatigue problem — copy not compelling, timing
+  too aggressive, or the soft prompt firing on the wrong pages. Check `funnel.promptShown` is
+  reasonable (not zero, not the same as page views).
+- **CTR below 4%** suggests either notification copy / icon issues or that the audience isn't
+  well-matched to the content. Look at per-campaign CTR in the Campaigns view — a single bad
+  campaign can drag the overall down.
+- **Unsubscribe spike (≥ 1%)** is usually a content-quality or frequency-cap signal. The cap
+  defaults to 4/day per subscriber but you can tune `FREQ_CAP_PER_DAY`.
+- **Delivery rate below 95%** means the subscriber base has accumulated dead endpoints faster
+  than the natural prune cycle. The 410-handling path flips subscribers to EXPIRED automatically,
+  so this should self-heal over a few cycles. If it doesn't, check the `[rss] poll` and the
+  `dispatchCampaign` logs for repeating failure modes.
+
 ## Admin SPA
 
 A small Vue 3 + Vite app lives in `admin/`. Three screens: Compose & send, Campaigns, Dashboard,
