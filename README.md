@@ -129,20 +129,43 @@ The poller is off by default. To enable, set in `.env`:
 
 ```
 RSS_ENABLED=true
-RSS_FEED_URL=https://www.taxscan.in/feed
 RSS_POLL_CRON=*/5 * * * *
+RSS_FEED_CORPORATE=https://www.taxscan.in/corporate-laws/feed
+RSS_FEED_GST=https://www.taxscan.in/cst-vat-gst/feed
+RSS_FEED_INCOME_TAX=https://www.taxscan.in/income-tax/feed
+RSS_FEED_CUSTOMS=https://www.taxscan.in/excise-customs/feed
 ```
 
-The cron is interpreted in `Asia/Kolkata`. On each tick the poller fetches the feed and, for any
-item whose `(feedUrl, guid)` pair is not in the `FeedItem` table, creates a Campaign and dispatches
-it via the Task 5 service to the `taxscan` portal. Items with one or more `<category>` elements are
-sent to topic-targeted subscribers; otherwise the campaign targets `all`.
+The cron is interpreted in `Asia/Kolkata`. On each tick the poller iterates the configured feeds
+sequentially and, for any item whose `guid` isn't already in the `FeedItem` table, creates a
+Campaign and dispatches it via the Task 5 service to the `taxscan` portal.
 
-### Topic slug convention
+### Sections come from the feed source, not from `<category>`
 
-RSS categories are slugged with `s.toLowerCase().replace(/[^a-z0-9]+/g, '-')`. The subscribe form
-must use the same convention so subscriber `topics` line up with RSS category slugs.
-Examples: `Income Tax → income-tax`, `GST → gst`, `Customs & Trade → customs-trade`.
+Each feed is bound to one topic at configuration time. Every item from that feed dispatches to
+that topic (`target: { type: 'topics', topics: [<feed-topic>] }`). Individual `<category>` tags on
+items are ignored — taxscan packs editorial meta like "Top Stories" into every item, which would
+otherwise either flood or misroute.
+
+### Cross-feed dedupe (GUID-only)
+
+The same article shows up in multiple section feeds — e.g. an Income Tax piece on a GST topic
+also surfaces in `/cst-vat-gst/feed`. The `FeedItem` table's unique key is `guid` alone, so the
+first feed to claim a GUID sends it and any later feed seeing the same GUID skips it. The losing
+feed's poll counts it under `alreadySeen`. The winning feed's URL is recorded on the FeedItem row
+for debugging.
+
+### Adding or removing a section
+
+Add a line to `.env`:
+```
+RSS_FEED_SERVICE_TAX=https://www.taxscan.in/service-tax/feed
+```
+The topic slug `service-tax` is derived from the env var name (suffix lowercased,
+`_` → `-`). Remove the line to take it offline. No code change.
+
+`/service-tax/feed` and `/other-taxations/feed` are confirmed to return valid RSS but aren't in
+the default config — add them via env when needed.
 
 ### First-run behaviour
 
