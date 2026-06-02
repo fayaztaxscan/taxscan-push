@@ -257,6 +257,8 @@
       }, 220);
     }
 
+    // Product decision: Escape, × close, and No thanks ALL persist the 7-day
+    // dismissed flag. Consistency over leniency — three "no" actions, one outcome.
     function dismiss() {
       setDismissed();
       close();

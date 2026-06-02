@@ -87,7 +87,16 @@ its own URL query (`/sw.js?api=…`) so a cross-origin backend works without cod
 - **Never on landing.** The first page in a session is suppressed regardless of scroll or dwell.
 - On the 2nd+ page, the prompt shows after the earliest of: 50% scroll, 30s dwell, or a 2s grace
   delay (the "viewed a 2nd page" signal).
-- Dismissing the prompt (X / "No thanks" / Escape) sets a 7-day `localStorage` flag.
+- Dismissing the prompt sets a 7-day `localStorage` flag. **All three "no" actions are equivalent:**
+  the × close button, the "No thanks" button, and the Escape key each call the same dismiss path
+  and each persist the 7-day flag. We chose consistency over leniency on Escape — a keyboard user
+  hitting Esc and a mouse user clicking × should land in the same state. There's no session-only
+  close path; the only way to re-show within the 7-day window is the demo "Clear dismissed cookie"
+  button (`window.TaxscanPush.resetDismissed()` in the field).
+- **Focus trap:** while the banner is open, Tab and Shift+Tab cycle through its focusable elements
+  (close ×, the four topic checkboxes, No thanks, Allow notifications) with wrap-around at both
+  ends. Tab management is fully manual — Chrome's natural Tab leaks out of the banner at the close
+  button on some builds.
 
 ### Topic slugs
 
