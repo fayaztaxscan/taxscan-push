@@ -19,6 +19,7 @@
     "gen:vapid": "ts-node-dev --transpile-only --no-notify scripts/gen-vapid.ts",
     "db:cleanup-bad-keys": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/cleanup-bad-keys.ts",
     "db:cleanup-e2e": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/cleanup-e2e.ts",
+    "db:cleanup-test-portals": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/cleanup-test-portals.ts",
     "import:izooto": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/import-izooto.ts",
     "test": "jest"
   },

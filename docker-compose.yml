@@ -1,0 +1,23 @@
+# Local test database for jest. Optional — use this if you don't have a
+# Postgres around. After `docker compose up -d postgres-test` apply the schema:
+#
+#   DATABASE_URL=postgresql://taxscan:taxscan@localhost:5433/taxscan_test \
+#     npx prisma migrate deploy
+#
+# Then set DATABASE_URL_TEST in your .env to the same URL and run `npm test`.
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: taxscan-push-test-db
+    environment:
+      POSTGRES_USER: taxscan
+      POSTGRES_PASSWORD: taxscan
+      POSTGRES_DB: taxscan_test
+    ports:
+      - '5433:5432'
+    volumes:
+      - taxscan-test-data:/var/lib/postgresql/data
+
+volumes:
+  taxscan-test-data:
