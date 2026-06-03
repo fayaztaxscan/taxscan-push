@@ -21,44 +21,16 @@ npm run dev
 
 The server listens on `PORT` (default `3000`). Health check: `GET /healthz`.
 
-### Local test database
+### Tests touch the configured DATABASE_URL
 
-Tests need their own database — **never run jest against production**. The Task 10d security audit
-caught three jest-fixture subscribers that had leaked into the live Railway DB because tests had
-been pointed at the production connection string. The fix lives in two places:
+Integration tests write and read real rows via Prisma against whatever `DATABASE_URL` your `.env`
+points at. **Never run `npm test` with `DATABASE_URL` pointing at production.** The Task 10d
+security audit found three jest-fixture subscribers (`portal: test-sec`) that had leaked into the
+live Railway DB exactly that way. If it happens again, `npm run db:cleanup-test-portals` clears any
+`portal=test-*` rows + their events.
 
-1. `src/__tests__/setup.ts` refuses to run if `DATABASE_URL` is Railway-shaped
-   (`proxy.rlwy.net`, `railway.internal`, `*.rlwy.net`).
-2. When `DATABASE_URL_TEST` is set, the test setup copies it onto `DATABASE_URL` for the test
-   process so the Prisma client connects to your test DB.
-
-Two ways to set this up:
-
-**Option A — local Postgres via Docker** (fastest if you already have Docker installed):
-
-```bash
-docker compose up -d postgres-test
-DATABASE_URL=postgresql://taxscan:taxscan@localhost:5433/taxscan_test \
-  npx prisma migrate deploy
-# Add to your .env:
-echo 'DATABASE_URL_TEST=postgresql://taxscan:taxscan@localhost:5433/taxscan_test' >> .env
-npm test
-```
-
-The `docker-compose.yml` in the repo defines the `postgres-test` service. `docker compose down -v`
-when you're done.
-
-**Option B — separate Railway Postgres**: in your Railway project (or a new project), add a second
-Postgres service. From its **Connect** tab copy the public connection string and:
-
-```bash
-DATABASE_URL=<that-test-db-url> npx prisma migrate deploy   # one-time
-# Add to your .env:
-echo 'DATABASE_URL_TEST=<that-test-db-url>' >> .env
-npm test
-```
-
-Either way, `npm test` now runs against an isolated database, and production data stays untouched.
+When you bring on a second contributor (or wire up CI), revisit this — a separate test DB or a
+transactional test harness is the right Phase 2 fix.
 
 ### Local-dev notification gotcha (macOS Chrome)
 
