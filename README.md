@@ -21,6 +21,45 @@ npm run dev
 
 The server listens on `PORT` (default `3000`). Health check: `GET /healthz`.
 
+### Local test database
+
+Tests need their own database — **never run jest against production**. The Task 10d security audit
+caught three jest-fixture subscribers that had leaked into the live Railway DB because tests had
+been pointed at the production connection string. The fix lives in two places:
+
+1. `src/__tests__/setup.ts` refuses to run if `DATABASE_URL` is Railway-shaped
+   (`proxy.rlwy.net`, `railway.internal`, `*.rlwy.net`).
+2. When `DATABASE_URL_TEST` is set, the test setup copies it onto `DATABASE_URL` for the test
+   process so the Prisma client connects to your test DB.
+
+Two ways to set this up:
+
+**Option A — local Postgres via Docker** (fastest if you already have Docker installed):
+
+```bash
+docker compose up -d postgres-test
+DATABASE_URL=postgresql://taxscan:taxscan@localhost:5433/taxscan_test \
+  npx prisma migrate deploy
+# Add to your .env:
+echo 'DATABASE_URL_TEST=postgresql://taxscan:taxscan@localhost:5433/taxscan_test' >> .env
+npm test
+```
+
+The `docker-compose.yml` in the repo defines the `postgres-test` service. `docker compose down -v`
+when you're done.
+
+**Option B — separate Railway Postgres**: in your Railway project (or a new project), add a second
+Postgres service. From its **Connect** tab copy the public connection string and:
+
+```bash
+DATABASE_URL=<that-test-db-url> npx prisma migrate deploy   # one-time
+# Add to your .env:
+echo 'DATABASE_URL_TEST=<that-test-db-url>' >> .env
+npm test
+```
+
+Either way, `npm test` now runs against an isolated database, and production data stays untouched.
+
 ### Local-dev notification gotcha (macOS Chrome)
 
 On macOS, browser-pushed notifications only render on screen if Chrome itself is allowed to send
