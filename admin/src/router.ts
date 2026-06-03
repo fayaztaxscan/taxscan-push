@@ -5,8 +5,11 @@ import Compose from './views/Compose.vue';
 import Campaigns from './views/Campaigns.vue';
 import Dashboard from './views/Dashboard.vue';
 
+// Vite injects BASE_URL to match vite.config.ts → `/` in dev, `/admin/` in
+// prod build. Vue Router's base then matches the public path so links and
+// navigation work transparently in both modes.
 export const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     { path: '/', redirect: '/dashboard' },

@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
@@ -10,6 +11,9 @@ import type { Sender } from './services/send';
 export type CreateAppOptions = {
   sender?: Sender;
   rateLimit?: { publicPerMin?: number; loginPerMin?: number };
+  // Overrides the directory the admin SPA is served from. Production reads the
+  // real `admin/dist/`; tests pass a fixture path.
+  adminDistDir?: string;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -45,6 +49,22 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       loginPerMin: opts.rateLimit?.loginPerMin ?? env.rateLimit.loginPerMin,
     }),
   );
+
+  // Admin SPA at /admin/* — mounted AFTER /api so it can never shadow API
+  // routes. Only mounts when the built bundle exists, so tests (and dev
+  // sessions without a build) don't trip on a missing directory.
+  const adminDist = opts.adminDistDir ?? path.resolve(__dirname, '..', 'admin', 'dist');
+  const adminIndex = path.join(adminDist, 'index.html');
+  if (fs.existsSync(adminIndex)) {
+    app.use('/admin', express.static(adminDist));
+    app.get('/admin/*', (req, res, next) => {
+      // Only catch SPA client-side routes. Asset 404s stay 404 — otherwise
+      // a missing /admin/foo.png would 200 with HTML content.
+      if (path.extname(req.path)) return next();
+      res.sendFile(adminIndex);
+    });
+  }
+
   app.use(express.static(path.resolve(__dirname, '..', 'public')));
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

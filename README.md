@@ -318,10 +318,18 @@ soft prompt, and tick the topic that matches `TEST_SEGMENT_TOPIC` (default `test
 to the topic chooser in `public/taxscan-push.js` for a fully wired internal-test flow, or just
 include `test` in the array stored at `txn_push_topics` in localStorage from DevTools.
 
-### Production deploy (out of scope for Phase 1)
+### Production deploy
 
-`cd admin && npm run build` produces a static bundle in `admin/dist/`. A future task can mount it via
-`app.use('/admin', express.static('admin/dist'))` to serve at `/admin`.
+The root `npm run build` now chains `build:admin` automatically (Vite → `admin/dist/`). On deploy,
+Express serves the built SPA at `/admin/*` via `app.use('/admin', express.static(...))` with an
+SPA fallback so client-side routes (e.g. `/admin/campaigns`) return `index.html`. The mount lives
+AFTER `/api/*` so it can never shadow the API.
+
+Vite is configured with `base: '/admin/'` for builds (so asset paths line up with the Express
+mount) and `base: '/'` for dev (so Vite on `:5173` works unchanged). Vue Router reads the same
+base from `import.meta.env.BASE_URL`, so links work in both modes without code changes.
+
+In production, log in at `https://<your-domain>/admin/`.
 
 ### Playwright E2E (admin)
 
