@@ -1,5 +1,13 @@
-import { createApp } from './app';
+// IMPORTANT: env import runs dotenv.config() as a side effect — must happen
+// before the startup check so .env values are loaded into process.env first.
 import { env } from './lib/env';
+import { assertRequiredEnv } from './lib/startupCheck';
+
+// Fail-fast if any required deploy var is unset. Exits non-zero so Railway
+// (or any orchestrator) marks the deploy as failed instead of routing traffic.
+assertRequiredEnv();
+
+import { createApp } from './app';
 import { startPoller } from './services/poller';
 import { startSweeper } from './services/sweeper';
 import type { Sender } from './services/send';

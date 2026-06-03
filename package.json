@@ -4,10 +4,13 @@
   "private": true,
   "description": "Self-hosted web push notification service for taxscan.in",
   "main": "dist/index.js",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "start": "prisma migrate deploy && node dist/index.js",
     "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\"",
     "db:migrate": "prisma migrate dev",
