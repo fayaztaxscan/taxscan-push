@@ -1,8 +1,12 @@
 import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dispatchCampaign, type Sender } from '../services/send';
+import type { PushPayload } from '../lib/push';
 import { startOfTodayIST } from '../lib/quietHours';
 import { validKeys } from './helpers';
+
+const TAXSCAN_BRAND_ICON =
+  'https://www.taxscan.in/images/icons/icon-192x192.png';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -329,6 +333,69 @@ describe('dispatchCampaign', () => {
     expect(failedEvents.every((e) => (e.meta as { reason: string }).reason === 'error')).toBe(
       true,
     );
+  });
+
+  // Two assertions guard the icon fallback. The first locks in the default
+  // (taxscan.in's existing brand icon) so notifications never ship without
+  // an icon URL again — that 404 was the source of the "generic browser
+  // bell" mobile-UX finding. The second proves an explicit campaign icon
+  // is left alone, so admin-set or Phase 2 per-portal overrides still win.
+  it('defaults the icon + badge to the taxscan brand URL when campaign.icon is unset', async () => {
+    const portal = uniquePortal('icon-default');
+    await makeSubscriber(portal, 'icon-default');
+
+    const captured: PushPayload[] = [];
+    const sender: Sender = async (_sub, payload) => {
+      captured.push(payload);
+      return { ok: true, statusCode: 201 };
+    };
+
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'No icon set',
+        body: 'b',
+        url: 'https://taxscan.in/x',
+        target: { type: 'all' },
+        breaking: true,
+      },
+      { sender, now: ist(2026, 6, 1, 12, 0), cap: 100 },
+    );
+    campaignIds.push(result.campaignId);
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].icon).toBe(TAXSCAN_BRAND_ICON);
+    expect(captured[0].badge).toBe(TAXSCAN_BRAND_ICON);
+  });
+
+  it('preserves an explicit campaign.icon when set', async () => {
+    const portal = uniquePortal('icon-explicit');
+    await makeSubscriber(portal, 'icon-explicit');
+
+    const captured: PushPayload[] = [];
+    const sender: Sender = async (_sub, payload) => {
+      captured.push(payload);
+      return { ok: true, statusCode: 201 };
+    };
+
+    const explicitIcon = 'https://www.taxscan.in/images/special-icon.png';
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'Custom icon',
+        body: 'b',
+        url: 'https://taxscan.in/x',
+        icon: explicitIcon,
+        target: { type: 'all' },
+        breaking: true,
+      },
+      { sender, now: ist(2026, 6, 1, 12, 0), cap: 100 },
+    );
+    campaignIds.push(result.campaignId);
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].icon).toBe(explicitIcon);
+    expect(captured[0].badge).toBe(explicitIcon);
   });
 
   it('prunes EXPIRED subscribers on 410 and does not record SENT for them', async () => {
