@@ -26,7 +26,12 @@ const BCRYPT_COST = 12;
 
 const CreateUserSchema = z.object({
   email: z.string().email().max(320),
-  password: z.string().min(1).max(512),
+  // Password is optional. When the admin SPA's "Create user" modal omits
+  // it, the server generates a 16-char temp password meeting policy and
+  // returns it in the response so the admin can share it out-of-band.
+  // Either way the created row carries passwordResetRequired = true, so
+  // the new user has to change it on first login.
+  password: z.string().min(1).max(512).optional(),
   role: z.enum(['ADMIN', 'PUBLISHER']),
 });
 
@@ -95,8 +100,14 @@ export function createUsersRouter(): Router {
         return res.status(400).json({ error: 'invalid_request', issues: parsed.error.issues });
       }
       const email = parsed.data.email.toLowerCase().trim();
-      const password = parsed.data.password;
       const role = parsed.data.role;
+      // Server-generated when missing. The temp password is returned in
+      // the response only in that case; if the admin passed an explicit
+      // password the response stays minimal (matches Phase 3's behaviour).
+      const generatedTemp = parsed.data.password
+        ? undefined
+        : generateTemporaryPassword(16);
+      const password = parsed.data.password ?? generatedTemp!;
 
       const pwIssue = passwordIssue(password);
       if (pwIssue) {
@@ -110,7 +121,18 @@ export function createUsersRouter(): Router {
 
       const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
       const created = await prisma.user.create({
-        data: { email, passwordHash, role, isActive: true },
+        data: {
+          email,
+          passwordHash,
+          role,
+          isActive: true,
+          // Admin-created accounts always need a password change on
+          // first login — that's the OOB-share-then-rotate model the
+          // plan baked in. The admin's own account (which is created
+          // via the npm run create-admin CLI, not via this route) does
+          // NOT get this flag.
+          passwordResetRequired: true,
+        },
       });
 
       await recordAudit({
@@ -122,7 +144,10 @@ export function createUsersRouter(): Router {
         ipAddress: req.ip ?? null,
       });
 
-      return res.status(201).json({ user: publicUserShape(created) });
+      return res.status(201).json({
+        user: publicUserShape(created),
+        ...(generatedTemp ? { temporaryPassword: generatedTemp } : {}),
+      });
     } catch (err) {
       return next(err);
     }

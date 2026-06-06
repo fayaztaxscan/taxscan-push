@@ -88,6 +88,12 @@ describe('POST /api/users', () => {
     expect(res.body.user.role).toBe('PUBLISHER');
     expect(res.body.user.isActive).toBe(true);
     expect(res.body.user.passwordHash).toBeUndefined();
+    // Phase 6 invariant: admin-created users always start with the forced-
+    // change-on-first-login flag, regardless of whether the admin passed
+    // an explicit password or let the server generate one.
+    expect(res.body.user.passwordResetRequired).toBe(true);
+    // No temporaryPassword in the response when the admin supplied one.
+    expect(res.body.temporaryPassword).toBeUndefined();
 
     // Track for cleanup.
     userIds.push(res.body.user.id);
@@ -97,6 +103,39 @@ describe('POST /api/users', () => {
       where: { userId: admin.id, action: 'USER_CREATED', resourceId: res.body.user.id },
     });
     expect(audit).toBe(1);
+  });
+
+  it('admin can create a user without supplying a password — server generates a temp one', async () => {
+    const admin = await makeUser('gen-admin', 'GenAdminPw1Aa', { role: 'ADMIN' });
+    const cookie = await loginAs(admin, 'GenAdminPw1Aa');
+
+    const newEmail = `created-gen-${Date.now()}-${Math.floor(
+      Math.random() * 1e9,
+    )}@example.com`.toLowerCase();
+    emails.push(newEmail);
+
+    const res = await request(app)
+      .post('/api/users')
+      .set('Cookie', cookie)
+      .send({ email: newEmail, role: 'PUBLISHER' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.user.passwordResetRequired).toBe(true);
+    expect(typeof res.body.temporaryPassword).toBe('string');
+    // Same shape as the reset-password temp: 16 chars, all four classes.
+    expect(res.body.temporaryPassword.length).toBe(16);
+    expect(/[a-z]/.test(res.body.temporaryPassword)).toBe(true);
+    expect(/[A-Z]/.test(res.body.temporaryPassword)).toBe(true);
+    expect(/[0-9]/.test(res.body.temporaryPassword)).toBe(true);
+
+    userIds.push(res.body.user.id);
+
+    // The new user can log in with the temp password right away.
+    const loginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ email: newEmail, password: res.body.temporaryPassword });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user.passwordResetRequired).toBe(true);
   });
 
   it('PUBLISHER is forbidden (403)', async () => {
