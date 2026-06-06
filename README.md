@@ -381,15 +381,24 @@ navigation to refresh the user's role / `passwordResetRequired` flag.
 
 ### Adding team members
 
-Once logged in as an ADMIN, additional users will be managed from the **Users** screen that
-Phase 6 of `USER_MANAGEMENT_PLAN.md` will land. Until then, run `npm run create-admin` again for
-each new admin, or call `POST /api/users` directly (cookie-authenticated, ADMIN-only — full
-details in the [Admin-managed user lifecycle](#admin-managed-user-lifecycle-phase-3) section).
+Once logged in as an ADMIN, the **Users** screen at `/admin/users` lets you create, deactivate,
+change the role of, and reset passwords for the rest of the team. The PUBLISHER nav doesn't
+show the link; a direct visit to `/admin/users` redirects to `/admin/dashboard`.
 
-When an admin resets a user's password via `POST /api/users/:id/reset-password`, the next time
-that user logs in the SPA will route them straight to `/change-password` with a forced-flow
-modal that cannot be dismissed. Once they change the password the `passwordResetRequired` flag
-is cleared and normal navigation resumes.
+The "Create user" modal asks only for email + role — the server generates a 16-character
+temporary password, returns it in the modal with a copy button, and stamps the new row with
+`passwordResetRequired=true` so the recipient is forced to choose their own on first login.
+Reset password works the same way (server generates → modal shows → admin shares OOB).
+
+The last-active-admin guard is enforced both on the API (`PATCH /api/users/:id` returns 409 with
+a human-readable message if the change would leave zero active admins) and surfaced cleanly in
+the confirm modal — the modal stays open with the error in red until the admin cancels.
+
+When an admin resets a user's password via `POST /api/users/:id/reset-password` (or via the
+Users screen's "Reset password" action), the next time that user logs in the SPA will route
+them straight to `/change-password` with a forced-flow modal that cannot be dismissed. Once
+they change the password the `passwordResetRequired` flag is cleared and normal navigation
+resumes.
 
 ### Send test to internal segment
 

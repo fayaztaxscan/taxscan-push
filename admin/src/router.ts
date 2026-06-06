@@ -5,6 +5,7 @@ import Compose from './views/Compose.vue';
 import Campaigns from './views/Campaigns.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
+import Users from './views/Users.vue';
 
 // Vite injects BASE_URL to match vite.config.ts → `/` in dev, `/admin/`
 // in prod build. Vue Router's base then matches the public path so links
@@ -22,6 +23,12 @@ export const router = createRouter({
     { path: '/dashboard', name: 'dashboard', component: Dashboard },
     { path: '/compose', name: 'compose', component: Compose },
     { path: '/campaigns', name: 'campaigns', component: Campaigns },
+    {
+      path: '/users',
+      name: 'users',
+      component: Users,
+      meta: { roles: ['ADMIN'] },
+    },
   ],
 });
 
@@ -57,6 +64,17 @@ router.beforeEach(async (to: RouteLocationNormalized) => {
   // they can complete the flow.
   if (user.value?.passwordResetRequired && to.name !== 'change-password') {
     return { name: 'change-password' };
+  }
+
+  // Role gate (Phase 6): routes with meta.roles only admit users whose
+  // role is in the list. A PUBLISHER visiting /users gets bounced to
+  // the dashboard rather than seeing a forbidden error.
+  const routeRoles = to.meta.roles as string[] | undefined;
+  if (routeRoles && routeRoles.length > 0) {
+    const role = user.value?.role ?? '';
+    if (!routeRoles.includes(role)) {
+      return { name: 'dashboard' };
+    }
   }
 
   return true;

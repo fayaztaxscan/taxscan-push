@@ -59,6 +59,99 @@ button {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.btn-mini {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.btn-danger {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+}
+.btn-danger:hover {
+  background: #fee2e2;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.status-pill {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.status-pill.active {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+.status-pill.inactive {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #4b5563;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 0;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 2147483000;
+}
+.modal-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 100%;
+  max-width: 460px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+}
+.modal-card h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.temp-pw {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+.temp-pw code {
+  font-family: 'SFMono-Regular', Menlo, monospace;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  flex: 1;
+  user-select: all;
+  word-break: break-all;
+}
 
 input,
 textarea,
