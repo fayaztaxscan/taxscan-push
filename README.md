@@ -131,8 +131,17 @@ endpoint churn, but it guarantees we can deliver.
 
 ### Notification icon
 
-Drop a 192×192 PNG at `public/icon-192.png`. If missing, browsers fall back to a default. The
-service worker reads `payload.icon` from each push first, then `/icon-192.png`.
+The dispatch path (`src/services/send.ts`) defaults every push payload's `icon` and `badge` to
+`https://www.taxscan.in/images/icons/icon-192x192.png` — the existing PWA brand icon already on
+taxscan.in, declared in its `manifest.json`. To override per campaign, set the admin Compose UI's
+"Icon URL" field (or pass `icon` on `POST /api/send`); explicit values are passed through
+untouched. Phase 2 (academy / shop portals) should make the default per-portal — env-var map
+keyed by portal slug or a column on a new `Portal` model; the constant's call site in `send.ts`
+names the refactor point.
+
+The SW also reads `payload.icon` first and `payload.badge` second; the legacy `/icon-192.png`
+fallback in `public/sw.js` is now dead code (every dispatched payload carries the brand URL
+explicitly) and can be removed in a future SW update if the vendor re-uploads.
 
 ## Reliable SDK delivery
 
