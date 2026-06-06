@@ -99,9 +99,6 @@ export const env = {
       30,
     ),
   },
-  admin: {
-    password: process.env.ADMIN_PASSWORD ?? '',
-  },
   testSegmentTopic: process.env.TEST_SEGMENT_TOPIC ?? 'test',
   allowedPushHosts,
   rateLimit: {

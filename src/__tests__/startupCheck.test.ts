@@ -12,7 +12,6 @@ const REQUIRED = [
   'VAPID_PRIVATE_KEY',
   'VAPID_SUBJECT',
   'ADMIN_TOKEN',
-  'ADMIN_PASSWORD',
   'SESSION_COOKIE_SECRET',
 ] as const;
 
@@ -32,8 +31,8 @@ describe('startup self-check: missing required vars', () => {
 
   it('reports a single missing variable', () => {
     const env = fullEnv();
-    delete env.ADMIN_PASSWORD;
-    expect(findMissingRequiredEnv(env)).toEqual(['ADMIN_PASSWORD']);
+    delete env.ADMIN_TOKEN;
+    expect(findMissingRequiredEnv(env)).toEqual(['ADMIN_TOKEN']);
   });
 
   it('treats empty string and whitespace as missing', () => {

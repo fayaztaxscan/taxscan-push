@@ -120,7 +120,12 @@ export function createAuthRouter(
       });
 
       return res.json({
-        user: { id: user.id, email: user.email, role: user.role },
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          passwordResetRequired: user.passwordResetRequired,
+        },
       });
     } catch (err) {
       return next(err);

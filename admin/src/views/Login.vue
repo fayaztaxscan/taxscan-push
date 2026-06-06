@@ -1,24 +1,36 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { useAuth } from '../composables/useAuth';
+import { useAuth, AuthError } from '../composables/useAuth';
 
+const email = ref('');
 const password = ref('');
 const error = ref<string | null>(null);
 const submitting = ref(false);
+
 const router = useRouter();
 const route = useRoute();
-const { login } = useAuth();
+const { login, user } = useAuth();
 
 async function onSubmit() {
   error.value = null;
   submitting.value = true;
   try {
-    await login(password.value);
+    await login(email.value, password.value);
+    // First-login funnel — if the admin reset this user's password and
+    // hasn't changed it yet, force the change before letting them roam.
+    if (user.value?.passwordResetRequired) {
+      router.push('/change-password');
+      return;
+    }
     const next = (route.query.next as string) || '/dashboard';
     router.push(next);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Login failed';
+    if (e instanceof AuthError) {
+      error.value = e.message;
+    } else {
+      error.value = 'Sign in failed. Please try again.';
+    }
   } finally {
     submitting.value = false;
   }
@@ -30,13 +42,23 @@ async function onSubmit() {
     <form class="login-card" @submit.prevent="onSubmit">
       <h1>Taxscan Push admin</h1>
       <div class="form-row">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          v-model="email"
+          type="email"
+          autocomplete="email"
+          required
+          autofocus
+        />
+      </div>
+      <div class="form-row">
         <label for="pw">Password</label>
         <input
           id="pw"
           v-model="password"
           type="password"
           autocomplete="current-password"
-          autofocus
           required
         />
       </div>

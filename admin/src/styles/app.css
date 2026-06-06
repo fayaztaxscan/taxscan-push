@@ -124,6 +124,41 @@ label {
   border: 0;
   cursor: pointer;
 }
+.nav-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.nav-email {
+  font-weight: 500;
+}
+.role-badge {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #f1f5f9;
+  color: #475569;
+}
+.role-badge.admin {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+.role-badge.publisher {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1e40af;
+}
+.nav-secondary {
+  font-size: 12px !important;
+  color: var(--muted) !important;
+}
 
 .page {
   padding: 24px;

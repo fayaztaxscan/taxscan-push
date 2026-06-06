@@ -10,7 +10,9 @@ const REQUIRED_VARS = [
   'VAPID_PRIVATE_KEY',
   'VAPID_SUBJECT',
   'ADMIN_TOKEN',
-  'ADMIN_PASSWORD',
+  // ADMIN_PASSWORD was retired in Phase 5 — the single-shared-password
+  // admin SPA login was replaced by per-user cookie sessions. Bearer
+  // auth via ADMIN_TOKEN remains for cron / external scripts.
   'SESSION_COOKIE_SECRET',
 ] as const;
 
