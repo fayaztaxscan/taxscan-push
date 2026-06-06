@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { randomBytes } from 'crypto';
 import { PrismaClient, type User } from '@prisma/client';
 import bcrypt from 'bcrypt';
@@ -42,7 +42,7 @@ test.afterAll(async () => {
 });
 
 async function loginViaUi(
-  page: Parameters<typeof test>[1]['page'] extends never ? never : import('@playwright/test').Page,
+  page: Page,
   email: string,
   password: string,
 ): Promise<void> {
@@ -50,7 +50,7 @@ async function loginViaUi(
   await page.fill('input[type=email]', email);
   await page.fill('input[type=password]', password);
   await Promise.all([
-    page.waitForURL((u) => !u.pathname.endsWith('/login')),
+    page.waitForURL((url: URL) => !url.pathname.endsWith('/login')),
     page.click('button[type=submit]'),
   ]);
 }
