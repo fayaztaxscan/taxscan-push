@@ -18,6 +18,11 @@ function startOfDayIST(d: Date): Date {
 }
 
 export type GrowthPoint = { date: string; newSubscribers: number };
+export type CampaignCreator = {
+  id: string;
+  email: string;
+  role: 'ADMIN' | 'PUBLISHER';
+} | null;
 export type CampaignStat = {
   id: string;
   title: string;
@@ -29,6 +34,8 @@ export type CampaignStat = {
   deliveryRate: number | null;
   createdAt: string;
   scheduledAt: string | null;
+  createdByUserId: string | null;
+  createdBy: CampaignCreator;
 };
 
 export type SubscriberSource =
@@ -108,6 +115,8 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
         status: true,
         createdAt: true,
         scheduledAt: true,
+        createdByUserId: true,
+        createdBy: { select: { id: true, email: true, role: true } },
       },
     }),
   ]);
@@ -172,6 +181,10 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
+      createdByUserId: c.createdByUserId,
+      createdBy: c.createdBy
+        ? { id: c.createdBy.id, email: c.createdBy.email, role: c.createdBy.role }
+        : null,
     };
   });
 
@@ -203,11 +216,23 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   };
 }
 
-export async function listCampaigns(limit = 50): Promise<CampaignStat[]> {
+export async function listCampaigns(
+  limit = 50,
+  opts: { createdByUserId?: string } = {},
+): Promise<CampaignStat[]> {
   const campaigns = await prisma.campaign.findMany({
+    where: opts.createdByUserId ? { createdByUserId: opts.createdByUserId } : undefined,
     orderBy: { createdAt: 'desc' },
     take: limit,
-    select: { id: true, title: true, status: true, createdAt: true, scheduledAt: true },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      createdAt: true,
+      scheduledAt: true,
+      createdByUserId: true,
+      createdBy: { select: { id: true, email: true, role: true } },
+    },
   });
   if (campaigns.length === 0) return [];
 
@@ -241,6 +266,10 @@ export async function listCampaigns(limit = 50): Promise<CampaignStat[]> {
       deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
+      createdByUserId: c.createdByUserId,
+      createdBy: c.createdBy
+        ? { id: c.createdBy.id, email: c.createdBy.email, role: c.createdBy.role }
+        : null,
     };
   });
 }

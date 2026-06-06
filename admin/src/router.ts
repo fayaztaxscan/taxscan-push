@@ -6,6 +6,7 @@ import Campaigns from './views/Campaigns.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
 import Users from './views/Users.vue';
+import Activity from './views/Activity.vue';
 
 // Vite injects BASE_URL to match vite.config.ts → `/` in dev, `/admin/`
 // in prod build. Vue Router's base then matches the public path so links
@@ -29,6 +30,7 @@ export const router = createRouter({
       component: Users,
       meta: { roles: ['ADMIN'] },
     },
+    { path: '/activity', name: 'activity', component: Activity },
   ],
 });
 

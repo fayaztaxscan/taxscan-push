@@ -236,6 +236,38 @@ describe('GET /api/users', () => {
   });
 });
 
+describe('GET /api/users/picker', () => {
+  it('returns 401 without a session', async () => {
+    const res = await request(app).get('/api/users/picker');
+    expect(res.status).toBe(401);
+  });
+
+  it('any logged-in role can read the picker (admin)', async () => {
+    const admin = await makeUser('pick-admin', 'PickAdminPw1Aa', { role: 'ADMIN' });
+    const cookie = await loginAs(admin, 'PickAdminPw1Aa');
+    const res = await request(app).get('/api/users/picker').set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    // The admin themselves should appear in the picker.
+    const me = res.body.items.find((u: { id: string }) => u.id === admin.id);
+    expect(me).toBeDefined();
+    expect(me.email).toBe(admin.email);
+    expect(me.role).toBe('ADMIN');
+    // Picker must NOT leak passwordHash / timestamps / lastLoginAt.
+    expect(me.passwordHash).toBeUndefined();
+    expect(me.createdAt).toBeUndefined();
+    expect(me.lastLoginAt).toBeUndefined();
+  });
+
+  it('any logged-in role can read the picker (publisher)', async () => {
+    const pub = await makeUser('pick-pub', 'PickPubPw1Aa', { role: 'PUBLISHER' });
+    const cookie = await loginAs(pub, 'PickPubPw1Aa');
+    const res = await request(app).get('/api/users/picker').set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.items)).toBe(true);
+  });
+});
+
 describe('GET /api/users/:id', () => {
   it('returns the user, no passwordHash', async () => {
     const admin = await makeUser('get-admin', 'GetAdminPw1Aa', { role: 'ADMIN' });

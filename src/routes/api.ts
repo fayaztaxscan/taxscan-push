@@ -256,7 +256,14 @@ export function createApiRouter(
   router.get('/campaigns', requireBearerOrUser(), async (req, res, next) => {
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
-      const campaigns = await listCampaigns(limit);
+      // ?createdByUserId=<id> backs the Activity / "Show only mine" filter
+      // in the SPA (Phase 7). Free-form string; non-matching values just
+      // return an empty list rather than 400.
+      const createdByUserId =
+        typeof req.query.createdByUserId === 'string'
+          ? req.query.createdByUserId
+          : undefined;
+      const campaigns = await listCampaigns(limit, { createdByUserId });
       return res.json({ campaigns });
     } catch (err) {
       return next(err);
