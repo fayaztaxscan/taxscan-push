@@ -92,14 +92,15 @@ model Campaign {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  role         UserRole
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  lastLoginAt  DateTime?
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  passwordHash          String
+  role                  UserRole
+  isActive              Boolean   @default(true)
+  passwordResetRequired Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  lastLoginAt           DateTime?
 
   sessions  UserSession[]
   auditLogs AuditLog[]

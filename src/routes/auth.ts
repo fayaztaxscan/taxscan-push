@@ -7,6 +7,14 @@ import { env } from '../lib/env';
 import { createSession, revokeSession } from '../lib/sessions';
 import { requireUser, SESSION_COOKIE_NAME } from '../lib/auth';
 import { makeLoginLimiter } from '../lib/rateLimit';
+import { passwordIssue } from '../lib/passwordPolicy';
+
+const BCRYPT_COST = 12;
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(512),
+  newPassword: z.string().min(1).max(512),
+});
 
 const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
@@ -168,7 +176,61 @@ export function createAuthRouter(
       email: u.email,
       role: u.role,
       lastLoginAt: u.lastLoginAt,
+      passwordResetRequired: u.passwordResetRequired,
     });
+  });
+
+  /**
+   * Change the calling user's password. Any role.
+   *
+   * Sliding session model: revokes every OTHER session for this user
+   * (keeping the calling session live) so a stolen cookie elsewhere is
+   * cut off as soon as the legitimate user changes their password. If
+   * `passwordResetRequired` was true, this call clears it.
+   */
+  router.post('/change-password', requireUser(), async (req, res, next) => {
+    try {
+      const parsed = ChangePasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const u = req.user!;
+      const sessionId = req.session!.id;
+
+      const currentOk = await bcrypt.compare(parsed.data.currentPassword, u.passwordHash);
+      if (!currentOk) {
+        return res.status(401).json({ error: 'invalid_current_password' });
+      }
+
+      const issue = passwordIssue(parsed.data.newPassword);
+      if (issue) {
+        return res.status(400).json({ error: 'invalid_password', message: issue });
+      }
+
+      const newHash = await bcrypt.hash(parsed.data.newPassword, BCRYPT_COST);
+      await prisma.user.update({
+        where: { id: u.id },
+        data: {
+          passwordHash: newHash,
+          passwordResetRequired: false,
+        },
+      });
+      // Revoke OTHER sessions; keep the calling one.
+      await prisma.userSession.deleteMany({
+        where: { userId: u.id, id: { not: sessionId } },
+      });
+      await recordAudit({
+        userId: u.id,
+        action: 'PASSWORD_CHANGED',
+        ipAddress: req.ip ?? null,
+      });
+
+      return res.status(204).end();
+    } catch (err) {
+      return next(err);
+    }
   });
 
   return router;

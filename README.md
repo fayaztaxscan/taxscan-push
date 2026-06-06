@@ -451,6 +451,35 @@ chars, mixed case + digit), hashes with `bcrypt` cost 12, creates a single `User
 After that first user exists, log in at `/admin/` and create additional users via the admin
 UI (Phase 6 will add this screen) or via repeated `npm run create-admin` runs.
 
+### Admin-managed user lifecycle (Phase 3)
+
+Once the first admin is in place, additional users are added via the API (Phase 6 will surface
+this in the SPA). The lifecycle is **admin-creates → out-of-band password share → user changes
+on first login**, deliberately keeping email-sending out of v1.
+
+- **`POST /api/users`** (ADMIN only) — body `{ email, password, role }`. Returns 201 with the
+  new user (no `passwordHash`). 409 if email is taken; 400 if password fails policy.
+- **`GET /api/users?limit=20&offset=0&includeInactive=false`** (ADMIN only) — paginated list +
+  total. `includeInactive=true` shows deactivated rows.
+- **`GET /api/users/:id`** (ADMIN only) — one user, 404 if missing.
+- **`PATCH /api/users/:id`** (ADMIN only) — body may include `role` and/or `isActive`. The
+  **last-active-admin guard** returns 409 if the change would leave zero active admins (e.g.
+  the only admin trying to deactivate themselves, or demote themselves to PUBLISHER).
+  Deactivating a user also revokes all their active sessions immediately.
+- **`POST /api/users/:id/reset-password`** (ADMIN only) — generates a 16-character temporary
+  password meeting policy (lowercase + uppercase + digit + symbol), updates the user's
+  `passwordHash`, sets `passwordResetRequired=true`, revokes all the user's sessions, and
+  returns the temp password in the response so the admin can share it through their usual
+  out-of-band channel (Slack DM, in-person, etc.). The user can log in immediately with the
+  temp password.
+- **`POST /api/auth/change-password`** (any role) — body `{ currentPassword, newPassword }`.
+  Verifies the current password, applies the new one, **revokes all the user's other sessions
+  but keeps the calling session live**, and clears `passwordResetRequired` if it was set. 401
+  if the current password is wrong, 400 if the new password fails policy.
+
+A `passwordResetRequired=true` flag is exposed on `GET /api/auth/me` so the SPA (Phase 5+) can
+gate navigation behind a "change your temp password" modal on first login.
+
 ### `SESSION_COOKIE_SECRET`
 
 Required env var. Signs the session cookie. Minimum 32 characters; startup self-check refuses to

@@ -7,6 +7,7 @@ import { corsMiddleware } from './lib/cors';
 import { healthRouter } from './routes/health';
 import { createApiRouter } from './routes/api';
 import { createAuthRouter } from './routes/auth';
+import { createUsersRouter } from './routes/users';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
 
@@ -53,6 +54,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       loginPerMin: opts.rateLimit?.loginPerMin ?? env.rateLimit.loginPerMin,
     }),
   );
+  app.use('/api/users', createUsersRouter());
   app.use(
     '/api',
     createApiRouter({
