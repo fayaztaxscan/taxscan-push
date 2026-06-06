@@ -1,13 +1,13 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcrypt';
-import type { AuditAction, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { createSession, revokeSession } from '../lib/sessions';
 import { requireUser, SESSION_COOKIE_NAME } from '../lib/auth';
 import { makeLoginLimiter } from '../lib/rateLimit';
 import { passwordIssue } from '../lib/passwordPolicy';
+import { recordAudit } from '../lib/audit';
 
 const BCRYPT_COST = 12;
 
@@ -44,26 +44,6 @@ function setSessionCookie(res: Response, token: string): void {
 
 function clearSessionCookie(res: Response): void {
   res.clearCookie(SESSION_COOKIE_NAME, cookieOptions());
-}
-
-async function recordAudit(args: {
-  userId?: string | null;
-  action: AuditAction;
-  metadata?: Record<string, unknown>;
-  ipAddress?: string | null;
-}): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
-      userId: args.userId ?? null,
-      action: args.action,
-      // Pass undefined when there's no metadata so Prisma omits the column
-      // (defaults to NULL); otherwise pass the object. Cast to satisfy
-      // Prisma's InputJsonValue union — `Record<string, unknown>` doesn't
-      // narrow correctly against the array variant of the union.
-      metadata: args.metadata as Prisma.InputJsonValue | undefined,
-      ipAddress: args.ipAddress ?? null,
-    },
-  });
 }
 
 async function recentFailedAttempts(email: string, now: Date): Promise<number> {

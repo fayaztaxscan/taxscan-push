@@ -2,7 +2,7 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
-import { requireBearer } from '../lib/auth';
+import { requireBearerOrUser } from '../lib/auth';
 import { dispatchCampaign, type Sender } from '../services/send';
 import { buildMetrics, listCampaigns } from '../services/metrics';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -203,11 +203,17 @@ export function createApiRouter(
     return res.json({ vapidPublicKey: env.vapid.publicKey });
   });
 
-  router.post('/send', requireBearer, async (req, res, next) => {
+  router.post('/send', requireBearerOrUser(), async (req, res, next) => {
     try {
       const parsed = SendSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
       const { scheduledAt, ...input } = parsed.data;
+      // Bearer-authenticated requests have no req.user (intentional —
+      // RSS poller / cron). Cookie-authenticated requests have it set
+      // by requireUser inside requireBearerOrUser. Either way we just
+      // forward the optional id; dispatchCampaign writes it onto
+      // Campaign.createdByUserId and the audit row.
+      const createdByUserId = req.user?.id ?? null;
 
       if (scheduledAt) {
         const when = new Date(scheduledAt);
@@ -222,6 +228,7 @@ export function createApiRouter(
               target: input.target as object,
               status: 'SCHEDULED',
               scheduledAt: when,
+              createdByUserId,
             },
           });
           return res.status(200).json({
@@ -236,14 +243,17 @@ export function createApiRouter(
         }
       }
 
-      const result = await dispatchCampaign(input, { sender: opts.sender });
+      const result = await dispatchCampaign(
+        { ...input, createdByUserId },
+        { sender: opts.sender },
+      );
       return res.status(200).json(result);
     } catch (err) {
       return next(err);
     }
   });
 
-  router.get('/campaigns', requireBearer, async (req, res, next) => {
+  router.get('/campaigns', requireBearerOrUser(), async (req, res, next) => {
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
       const campaigns = await listCampaigns(limit);
@@ -253,7 +263,7 @@ export function createApiRouter(
     }
   });
 
-  router.get('/metrics', requireBearer, async (_req, res, next) => {
+  router.get('/metrics', requireBearerOrUser(), async (_req, res, next) => {
     try {
       const metrics = await buildMetrics();
       return res.json(metrics);
@@ -262,7 +272,7 @@ export function createApiRouter(
     }
   });
 
-  router.get('/admin/subscribers', requireBearer, async (req, res, next) => {
+  router.get('/admin/subscribers', requireBearerOrUser(), async (req, res, next) => {
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
       const subscribers = await prisma.subscriber.findMany({
@@ -284,7 +294,7 @@ export function createApiRouter(
     }
   });
 
-  router.post('/admin/subscribers/:id/test-segment', requireBearer, async (req, res, next) => {
+  router.post('/admin/subscribers/:id/test-segment', requireBearerOrUser(), async (req, res, next) => {
     try {
       const sub = await prisma.subscriber.findUnique({ where: { id: req.params.id } });
       if (!sub) return res.status(404).json({ error: 'subscriber_not_found' });

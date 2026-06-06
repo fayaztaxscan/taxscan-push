@@ -88,6 +88,17 @@ export const env = {
     enabled: process.env.SWEEPER_ENABLED === 'true',
     cron: process.env.SWEEPER_CRON ?? '* * * * *',
   },
+  audit: {
+    // Default ON so a deploy without the env var still gets retention
+    // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.
+    sweeperEnabled: process.env.AUDIT_LOG_SWEEPER_ENABLED !== 'false',
+    sweeperCron: process.env.AUDIT_LOG_SWEEPER_CRON ?? '0 3 * * *', // 03:00 IST daily
+    retentionDays: intEnv('AUDIT_LOG_RETENTION_DAYS', 90),
+    failedLoginRetentionDays: intEnv(
+      'AUDIT_LOG_FAILED_LOGIN_RETENTION_DAYS',
+      30,
+    ),
+  },
   admin: {
     password: process.env.ADMIN_PASSWORD ?? '',
   },

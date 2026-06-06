@@ -8,6 +8,7 @@ import { healthRouter } from './routes/health';
 import { createApiRouter } from './routes/api';
 import { createAuthRouter } from './routes/auth';
 import { createUsersRouter } from './routes/users';
+import { createAuditRouter } from './routes/audit';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
 
@@ -55,6 +56,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     }),
   );
   app.use('/api/users', createUsersRouter());
+  app.use('/api/audit', createAuditRouter());
   app.use(
     '/api',
     createApiRouter({

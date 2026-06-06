@@ -4,6 +4,7 @@ import { env } from '../lib/env';
 import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/push';
 import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { filterByCap } from '../lib/cap';
+import { recordAudit } from '../lib/audit';
 
 // Phase 1 fallback for the notification icon + badge when a campaign
 // doesn't specify its own. Points at taxscan.in's existing PWA brand
@@ -25,6 +26,13 @@ export type CampaignInput = {
   icon?: string | null;
   target: Target;
   breaking?: boolean;
+  /**
+   * Set by the /api/send route handler when the call came from a cookie-
+   * authenticated user (Phase 4+). Null when the call came via bearer
+   * token (RSS poller, cron, external curl) — those calls have no
+   * `req.user` to attribute to.
+   */
+  createdByUserId?: string | null;
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -222,6 +230,7 @@ export async function dispatchCampaign(
       icon: input.icon ?? null,
       target: input.target as object,
       status: 'DRAFT',
+      createdByUserId: input.createdByUserId ?? null,
     },
   });
 
@@ -242,6 +251,39 @@ export async function dispatchCampaign(
     };
   }
 
-  const result = await executeCampaign(campaign, deps);
-  return { ...result, status: 'SENT' };
+  try {
+    const result = await executeCampaign(campaign, deps);
+    await recordAudit({
+      userId: input.createdByUserId ?? null,
+      action: 'CAMPAIGN_DISPATCHED',
+      resourceType: 'campaign',
+      resourceId: campaign.id,
+      metadata: {
+        campaignId: campaign.id,
+        portal: campaign.portal,
+        target: input.target,
+        sent: result.sent,
+        capped: result.capped,
+        expiredPruned: result.expiredPruned,
+        failed: result.failed,
+        status: 'SENT',
+      },
+    });
+    return { ...result, status: 'SENT' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await recordAudit({
+      userId: input.createdByUserId ?? null,
+      action: 'CAMPAIGN_DISPATCH_FAILED',
+      resourceType: 'campaign',
+      resourceId: campaign.id,
+      metadata: {
+        campaignId: campaign.id,
+        portal: campaign.portal,
+        target: input.target,
+        error: message,
+      },
+    });
+    throw err;
+  }
 }
