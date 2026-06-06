@@ -153,6 +153,21 @@ export function createUsersRouter(): Router {
     }
   });
 
+  // Minimal user list for any logged-in role — used by the Activity
+  // page's user-filter dropdown. Returns only id + email + role + isActive
+  // so it doesn't leak anything not already visible on the audit log.
+  router.get('/picker', requireUser(), async (_req, res, next) => {
+    try {
+      const items = await prisma.user.findMany({
+        orderBy: { email: 'asc' },
+        select: { id: true, email: true, role: true, isActive: true },
+      });
+      return res.json({ items });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   router.get('/', requireUser(['ADMIN']), async (req, res, next) => {
     try {
       const parsed = ListQuerySchema.safeParse(req.query);

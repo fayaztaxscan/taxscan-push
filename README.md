@@ -560,6 +560,31 @@ the trigger error — no leak.
 so the activity feed and any per-user dashboards can answer "who sent this campaign?". If the
 dispatch throws, a `CAMPAIGN_DISPATCH_FAILED` row is written instead and the throw propagates.
 
+#### Where to find it in the UI (Phase 7)
+
+The admin SPA has an **Activity** page (visible to every logged-in user, ADMIN + PUBLISHER)
+showing the audit log with five filters: action, user, since / until, and a free-text resource-id
+search. Rows that reference a campaign are clickable and open a side-by-side detail modal
+showing that campaign's metrics block + the audit subset for that single campaign — useful for
+answering "who sent that one, and how did it go?".
+
+The **Campaigns** page got two Phase 7 additions:
+- a **Created by** column showing the dispatcher's email + role badge, or `via bearer / system`
+  for cron / RSS-poller dispatches with no attached user
+- a **Show only mine** filter (uses `?createdByUserId=<me>` on `GET /api/campaigns`)
+- rows are clickable → the same campaign detail modal as on the Activity page
+
+Retention defaults are tuned for ~90 days of operational signal. To extend (e.g. for a longer
+compliance window):
+
+```
+AUDIT_LOG_RETENTION_DAYS=180                       # everything except LOGIN_FAILED
+AUDIT_LOG_FAILED_LOGIN_RETENTION_DAYS=30           # noisy noise gets the short window
+```
+
+Set these on Railway (or `.env` locally), restart, and the next 03:00 IST tick honours the
+new windows.
+
 ### `SESSION_COOKIE_SECRET`
 
 Required env var. Signs the session cookie. Minimum 32 characters; startup self-check refuses to

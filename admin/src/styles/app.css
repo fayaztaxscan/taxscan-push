@@ -153,6 +153,122 @@ button {
   word-break: break-all;
 }
 
+/* Phase 7: Activity page filters */
+.filters-card {
+  padding: 14px 18px;
+}
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.filter-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+.filter-col.grow {
+  flex: 1;
+  min-width: 200px;
+}
+.filter-col label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.link-button {
+  background: transparent;
+  border: 0;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+.link-button:hover {
+  color: var(--primary-hover);
+}
+
+.row-clickable {
+  cursor: pointer;
+}
+.row-clickable:hover {
+  background: #f8fafc;
+}
+
+/* Phase 7: Campaign detail modal */
+.modal-wide {
+  max-width: 680px;
+  position: relative;
+}
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 10px;
+}
+.modal-close:hover {
+  color: var(--text);
+}
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.metric-tile {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.metric-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.metric-value {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.audit-list {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.audit-row {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 0;
+}
+.audit-row:last-child {
+  border-bottom: 0;
+}
+.audit-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.audit-meta {
+  margin: 4px 0 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #475569;
+}
+
 input,
 textarea,
 select {

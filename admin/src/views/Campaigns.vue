@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
+import { useAuth } from '../composables/useAuth';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
+import CampaignDetail from '../components/CampaignDetail.vue';
+
+type CampaignCreator = {
+  id: string;
+  email: string;
+  role: 'ADMIN' | 'PUBLISHER';
+} | null;
 
 type Campaign = {
   id: string;
@@ -14,18 +22,31 @@ type Campaign = {
   deliveryRate: number | null;
   createdAt: string;
   scheduledAt: string | null;
+  createdByUserId: string | null;
+  createdBy: CampaignCreator;
 };
 
 const api = useApi();
+const { user: meUser } = useAuth();
+
 const campaigns = ref<Campaign[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const showOnlyMine = ref(false);
 
-async function load() {
+const detailCampaignId = ref<string | null>(null);
+
+async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const data = await api.get<{ campaigns: Campaign[] }>('/api/campaigns?limit=100');
+    const qs = new URLSearchParams({ limit: '100' });
+    if (showOnlyMine.value && meUser.value) {
+      qs.set('createdByUserId', meUser.value.id);
+    }
+    const data = await api.get<{ campaigns: Campaign[] }>(
+      `/api/campaigns?${qs.toString()}`,
+    );
     campaigns.value = data.campaigns;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -38,6 +59,17 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
 }
 
+function openDetail(id: string): void {
+  detailCampaignId.value = id;
+}
+function closeDetail(): void {
+  detailCampaignId.value = null;
+}
+
+function toggleMine(): void {
+  load();
+}
+
 onMounted(load);
 </script>
 
@@ -45,6 +77,15 @@ onMounted(load);
   <main class="page">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">Campaigns</h1>
+      <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px">
+        <input
+          v-model="showOnlyMine"
+          type="checkbox"
+          style="width: auto"
+          @change="toggleMine"
+        />
+        Show only mine
+      </label>
       <button class="btn" :disabled="loading" @click="load">
         {{ loading ? 'Loading…' : 'Refresh' }}
       </button>
@@ -58,6 +99,7 @@ onMounted(load);
           <tr>
             <th>Created</th>
             <th>Title</th>
+            <th>Created by</th>
             <th>Status</th>
             <th>Sent</th>
             <th>Clicked</th>
@@ -67,9 +109,27 @@ onMounted(load);
           </tr>
         </thead>
         <tbody>
-          <tr v-for="c in campaigns" :key="c.id">
+          <tr
+            v-for="c in campaigns"
+            :key="c.id"
+            class="row-clickable"
+            @click="openDetail(c.id)"
+          >
             <td class="muted">{{ fmtDate(c.createdAt) }}</td>
             <td>{{ c.title }}</td>
+            <td>
+              <template v-if="c.createdBy">
+                <span style="font-size: 12px">{{ c.createdBy.email }}</span>
+                <span
+                  class="role-badge"
+                  :class="c.createdBy.role.toLowerCase()"
+                  style="margin-left: 4px"
+                >
+                  {{ c.createdBy.role }}
+                </span>
+              </template>
+              <span v-else class="muted" style="font-size: 12px">via bearer / system</span>
+            </td>
             <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
             <td>{{ c.sent }}</td>
             <td>{{ c.clicked }}</td>
@@ -89,12 +149,18 @@ onMounted(load);
             </td>
           </tr>
           <tr v-if="campaigns.length === 0 && !loading">
-            <td colspan="8" class="muted" style="text-align: center; padding: 24px">
-              No campaigns yet.
+            <td colspan="9" class="muted" style="text-align: center; padding: 24px">
+              {{ showOnlyMine ? "You haven't sent any campaigns yet." : 'No campaigns yet.' }}
             </td>
           </tr>
         </tbody>
       </table>
     </div>
+
+    <CampaignDetail
+      v-if="detailCampaignId"
+      :campaign-id="detailCampaignId"
+      @close="closeDetail"
+    />
   </main>
 </template>

@@ -1,6 +1,7 @@
 import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { dispatchCampaign, type Sender } from '../services/send';
+import { listCampaigns } from '../services/metrics';
 import type { PushPayload } from '../lib/push';
 import { startOfTodayIST } from '../lib/quietHours';
 import { validKeys } from './helpers';
@@ -450,6 +451,24 @@ describe('dispatchCampaign', () => {
         },
       });
       expect(auditCount).toBe(1);
+
+      // Phase 7: listCampaigns now joins the creator. The campaign we
+      // just dispatched should come back with createdBy populated.
+      const listed = await listCampaigns(200);
+      const ours = listed.find((c) => c.id === result.campaignId);
+      expect(ours).toBeDefined();
+      expect(ours?.createdByUserId).toBe(actor.id);
+      expect(ours?.createdBy?.id).toBe(actor.id);
+      expect(ours?.createdBy?.email).toBe(actor.email);
+      expect(ours?.createdBy?.role).toBe('ADMIN');
+
+      // Phase 7: createdByUserId filter narrows to this user only.
+      const onlyMine = await listCampaigns(200, { createdByUserId: actor.id });
+      expect(onlyMine.find((c) => c.id === result.campaignId)).toBeDefined();
+      const onlyOther = await listCampaigns(200, {
+        createdByUserId: 'nobody-with-this-id',
+      });
+      expect(onlyOther.find((c) => c.id === result.campaignId)).toBeUndefined();
 
       // Cleanup the bespoke User row created here.
       await prisma.$transaction(async (tx) => {

@@ -17,6 +17,7 @@ async function onLogout() {
     <router-link to="/dashboard">Dashboard</router-link>
     <router-link to="/compose">Compose</router-link>
     <router-link to="/campaigns">Campaigns</router-link>
+    <router-link to="/activity">Activity</router-link>
     <router-link v-if="user?.role === 'ADMIN'" to="/users">Users</router-link>
     <span class="spacer" />
     <span v-if="user" class="nav-user">
