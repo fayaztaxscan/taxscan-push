@@ -22,6 +22,7 @@ export type PushPayload = {
   body: string;
   url?: string;
   icon?: string;
+  badge?: string;
   campaignId?: string;
   [key: string]: unknown;
 };

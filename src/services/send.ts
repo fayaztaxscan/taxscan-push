@@ -5,6 +5,16 @@ import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/pus
 import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { filterByCap } from '../lib/cap';
 
+// Phase 1 fallback for the notification icon + badge when a campaign
+// doesn't specify its own. Points at taxscan.in's existing PWA brand
+// icon (declared in its manifest.json icons array). Without this we'd
+// fall through to the SW's old /icon-192.png path which 404s on
+// taxscan.in and shows a generic browser icon on subscribers' devices.
+// Phase 2 (academy/shop portals) should make this per-portal — either an
+// env-var map keyed by portal slug, or a Portal model column.
+const DEFAULT_NOTIFICATION_ICON =
+  'https://www.taxscan.in/images/icons/icon-192x192.png';
+
 export type Target = { type: 'all' } | { type: 'topics'; topics: string[] };
 
 export type CampaignInput = {
@@ -105,11 +115,17 @@ export async function executeCampaign(
     const candidates = await resolveTargets(campaign.portal, target);
     const { kept, capped } = await filterByCap(candidates, cap, now);
 
+    const icon = campaign.icon ?? DEFAULT_NOTIFICATION_ICON;
     const payload: PushPayload = {
       title: campaign.title,
       body: campaign.body,
       url: campaign.url,
-      icon: campaign.icon ?? undefined,
+      icon,
+      // Same URL as the badge for Phase 1: rendering the brand icon
+      // (Android desaturates it for the status-bar badge) is better than
+      // letting the SW fall back to its 404'd /icon-192.png. Phase 2 can
+      // ship a dedicated monochrome badge URL.
+      badge: icon,
       campaignId: campaign.id,
     };
 
