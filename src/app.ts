@@ -84,9 +84,16 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   const sdkPath = path.join(publicDir, 'taxscan-push.js');
   const swPath = path.join(publicDir, 'sw.js');
 
+  // Both files are designed to be loaded cross-origin: taxscan.in embeds
+  // the SDK via Hocalwire's Utils.loadScripts(); the SW path serves the
+  // demo origin in dev and any future portal in Phase 2. helmet's default
+  // `Cross-Origin-Resource-Policy: same-origin` would make the browser
+  // refuse the response with ERR_BLOCKED_BY_RESPONSE.NotSameOrigin (exact
+  // failure mode that broke the iZooto cutover) — override per route.
   app.get('/taxscan-push.js', (_req, res, next) => {
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.sendFile(sdkPath, (err) => {
       if (err) next(err);
     });
@@ -95,6 +102,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.get('/sw.js', (_req, res, next) => {
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.sendFile(swPath, (err) => {
       if (err) next(err);
     });
