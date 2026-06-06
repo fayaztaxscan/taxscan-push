@@ -85,6 +85,46 @@ describe('AuditLog immutability — DB-level trigger', () => {
     expect(remaining).toHaveLength(0);
   });
 
+  // The Prisma client extension added in Phase 4 throws BEFORE any SQL is
+  // sent to the database, so we don't need to actually hit the trigger to
+  // prove this guard works. Belt; the DB trigger is the suspenders.
+  it('Prisma client extension blocks auditLog.update at the app layer', async () => {
+    await expect(
+      prisma.auditLog.update({
+        where: { id: 'irrelevant' },
+        data: { action: 'LOGIN_SUCCESS' },
+      }),
+    ).rejects.toThrow(/auditLog\.update is forbidden/);
+  });
+
+  it('Prisma client extension blocks auditLog.updateMany', async () => {
+    await expect(
+      prisma.auditLog.updateMany({ where: {}, data: { action: 'LOGIN_SUCCESS' } }),
+    ).rejects.toThrow(/auditLog\.updateMany is forbidden/);
+  });
+
+  it('Prisma client extension blocks auditLog.delete', async () => {
+    await expect(prisma.auditLog.delete({ where: { id: 'x' } })).rejects.toThrow(
+      /auditLog\.delete is forbidden/,
+    );
+  });
+
+  it('Prisma client extension blocks auditLog.deleteMany', async () => {
+    await expect(prisma.auditLog.deleteMany({ where: {} })).rejects.toThrow(
+      /auditLog\.deleteMany is forbidden/,
+    );
+  });
+
+  it('Prisma client extension blocks auditLog.upsert', async () => {
+    await expect(
+      prisma.auditLog.upsert({
+        where: { id: 'x' },
+        update: { action: 'LOGIN_SUCCESS' },
+        create: { action: 'LOGIN_SUCCESS' },
+      }),
+    ).rejects.toThrow(/auditLog\.upsert is forbidden/);
+  });
+
   it('SET LOCAL carve-out does not leak across transactions', async () => {
     const id = await insertOne('leak-check');
 

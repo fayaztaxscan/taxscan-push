@@ -10,6 +10,7 @@ assertRequiredEnv();
 import { createApp } from './app';
 import { startPoller } from './services/poller';
 import { startSweeper } from './services/sweeper';
+import { startAuditRetentionSweeper } from './sweepers/auditRetention';
 import type { Sender } from './services/send';
 
 // When E2E_MOCK_SENDER=true, swap web-push for an in-memory success sender so
@@ -28,4 +29,5 @@ app.listen(env.port, () => {
   );
   startPoller();
   startSweeper();
+  startAuditRetentionSweeper();
 });

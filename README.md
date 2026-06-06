@@ -480,6 +480,59 @@ on first login**, deliberately keeping email-sending out of v1.
 A `passwordResetRequired=true` flag is exposed on `GET /api/auth/me` so the SPA (Phase 5+) can
 gate navigation behind a "change your temp password" modal on first login.
 
+### Audit log (Phase 4)
+
+Every authentication event, user-management action, and campaign dispatch writes an `AuditLog`
+row through the centralised `src/lib/audit.ts` helper. Writes are **non-throwing** — if the DB
+write fails the underlying action still succeeds and a `[audit]` warning is logged.
+
+- **`GET /api/audit`** (any logged-in user — ADMIN or PUBLISHER). Query params:
+  `action`, `userId`, `since`, `until` (ISO datetimes), `limit` (default 50, max 200), `offset`.
+  Returns `{ items, total }` with each item joined to the actor's `{ id, email, role }` so the UI
+  doesn't have to look up users separately. The plan deliberately chose "everyone on the team can
+  see who did what" over "ADMINs only" — change the middleware to `requireUser(['ADMIN'])` if you
+  ever want to restrict it.
+
+#### Append-only guarantee — two defence layers
+
+`AuditLog` rows cannot be edited or deleted by any normal application code path:
+
+1. **DB-level trigger** (Phase 1) — `BEFORE UPDATE OR DELETE` on `AuditLog` raises an
+   exception unless the deleting transaction has set `audit_log.allow_purge = 'true'` via
+   `SET LOCAL`. This catches `psql`, ORM bypasses, and any future code path that goes through
+   raw SQL.
+2. **Prisma client extension** (Phase 4) — `prisma.auditLog.update / updateMany / delete /
+   deleteMany / upsert` throw immediately at the application layer, before any SQL is sent.
+   Catches accidental usage in PR review.
+
+The only legitimate code path that purges audit rows is the retention sweeper below — it opens
+a single transaction, sets the session variable, and uses `$executeRaw` (bypassing the Prisma
+extension by going around it).
+
+#### Retention sweeper
+
+A `node-cron` job runs daily at `03:00` IST and deletes rows past two windows:
+
+```
+AUDIT_LOG_SWEEPER_ENABLED=true                    # default true
+AUDIT_LOG_SWEEPER_CRON=0 3 * * *                  # 03:00 IST daily
+AUDIT_LOG_RETENTION_DAYS=90                       # everything else
+AUDIT_LOG_FAILED_LOGIN_RETENTION_DAYS=30          # LOGIN_FAILED rows are noisier
+```
+
+Each tick logs how many rows it deleted in each window. The carve-out (`SET LOCAL`) is scoped to
+the sweeper's transaction so a concurrent connection trying `DELETE` on `AuditLog` still hits
+the trigger error — no leak.
+
+#### Campaign attribution + dispatch audit
+
+`dispatchCampaign` (in `src/services/send.ts`) accepts an optional `createdByUserId`. The
+`/api/send` route handler passes `req.user.id` when the call came via a cookie session,
+`null` when via bearer (RSS poller, sweeper, external curl). The value is persisted on
+`Campaign.createdByUserId` and copied into the `CAMPAIGN_DISPATCHED` audit row's `userId`,
+so the activity feed and any per-user dashboards can answer "who sent this campaign?". If the
+dispatch throws, a `CAMPAIGN_DISPATCH_FAILED` row is written instead and the throw propagates.
+
 ### `SESSION_COOKIE_SECRET`
 
 Required env var. Signs the session cookie. Minimum 32 characters; startup self-check refuses to

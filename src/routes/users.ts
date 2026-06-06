@@ -15,11 +15,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcrypt';
-import type { AuditAction, Prisma, User, UserRole } from '@prisma/client';
+import type { AuditAction, User, UserRole } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { requireUser } from '../lib/auth';
 import { revokeAllSessionsForUser } from '../lib/sessions';
 import { generateTemporaryPassword, passwordIssue } from '../lib/passwordPolicy';
+import { recordAudit } from '../lib/audit';
 
 const BCRYPT_COST = 12;
 
@@ -58,26 +59,6 @@ function publicUserShape(u: User) {
     updatedAt: u.updatedAt,
     lastLoginAt: u.lastLoginAt,
   };
-}
-
-async function recordAudit(args: {
-  userId?: string | null;
-  action: AuditAction;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  metadata?: Record<string, unknown>;
-  ipAddress?: string | null;
-}): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
-      userId: args.userId ?? null,
-      action: args.action,
-      resourceType: args.resourceType ?? null,
-      resourceId: args.resourceId ?? null,
-      metadata: args.metadata as Prisma.InputJsonValue | undefined,
-      ipAddress: args.ipAddress ?? null,
-    },
-  });
 }
 
 /**

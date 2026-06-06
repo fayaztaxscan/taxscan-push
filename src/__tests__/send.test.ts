@@ -56,7 +56,13 @@ function expiredSenderFor(endpoints: Set<string>): Sender {
 }
 
 afterAll(async () => {
+  // Phase 4: dispatchCampaign writes audit rows; sweep ours via the
+  // carve-out before deleting the Campaign rows the audits reference.
   if (campaignIds.length) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL audit_log.allow_purge = 'true'`);
+      await tx.$executeRaw`DELETE FROM "AuditLog" WHERE "resourceType" = 'campaign' AND "resourceId" = ANY(${campaignIds}::text[])`;
+    });
     await prisma.event.deleteMany({ where: { campaignId: { in: campaignIds } } });
     await prisma.campaign.deleteMany({ where: { id: { in: campaignIds } } });
   }
@@ -396,6 +402,95 @@ describe('dispatchCampaign', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0].icon).toBe(explicitIcon);
     expect(captured[0].badge).toBe(explicitIcon);
+  });
+
+  // Phase 4: dispatchCampaign attributes the campaign to a user when one
+  // is passed (cookie-authenticated /api/send), leaves it NULL otherwise
+  // (bearer / RSS poller / sweeper). Plus an audit row is written either
+  // way so the activity feed sees the dispatch.
+  describe('createdByUserId attribution + audit row', () => {
+    it('persists createdByUserId on the Campaign when provided', async () => {
+      const portal = uniquePortal('attribution');
+      await makeSubscriber(portal, 'attr');
+      const actor = await prisma.user.create({
+        data: {
+          email: `attr-actor-${Date.now()}-${Math.floor(
+            Math.random() * 1e9,
+          )}@example.com`.toLowerCase(),
+          passwordHash: 'unused',
+          role: 'ADMIN',
+        },
+      });
+
+      const result = await dispatchCampaign(
+        {
+          portal,
+          title: 'attributed',
+          body: 'b',
+          url: 'https://taxscan.in',
+          target: { type: 'all' },
+          breaking: true,
+          createdByUserId: actor.id,
+        },
+        { sender: okSender(), now: ist(2026, 6, 1, 12, 0), cap: 100 },
+      );
+      campaignIds.push(result.campaignId);
+
+      const reloaded = await prisma.campaign.findUnique({
+        where: { id: result.campaignId },
+      });
+      expect(reloaded?.createdByUserId).toBe(actor.id);
+
+      const auditCount = await prisma.auditLog.count({
+        where: {
+          userId: actor.id,
+          action: 'CAMPAIGN_DISPATCHED',
+          resourceType: 'campaign',
+          resourceId: result.campaignId,
+        },
+      });
+      expect(auditCount).toBe(1);
+
+      // Cleanup the bespoke User row created here.
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL audit_log.allow_purge = 'true'`);
+        await tx.$executeRaw`DELETE FROM "AuditLog" WHERE "userId" = ${actor.id}`;
+      });
+      await prisma.user.delete({ where: { id: actor.id } });
+    });
+
+    it('leaves createdByUserId NULL on bearer / RSS-poller-style dispatches and writes audit with no userId', async () => {
+      const portal = uniquePortal('no-actor');
+      await makeSubscriber(portal, 'no-actor');
+
+      const result = await dispatchCampaign(
+        {
+          portal,
+          title: 'no-actor',
+          body: 'b',
+          url: 'https://taxscan.in',
+          target: { type: 'all' },
+          breaking: true,
+        },
+        { sender: okSender(), now: ist(2026, 6, 1, 12, 0), cap: 100 },
+      );
+      campaignIds.push(result.campaignId);
+
+      const reloaded = await prisma.campaign.findUnique({
+        where: { id: result.campaignId },
+      });
+      expect(reloaded?.createdByUserId).toBeNull();
+
+      const audit = await prisma.auditLog.findFirst({
+        where: {
+          action: 'CAMPAIGN_DISPATCHED',
+          resourceType: 'campaign',
+          resourceId: result.campaignId,
+        },
+      });
+      expect(audit).not.toBeNull();
+      expect(audit?.userId).toBeNull();
+    });
   });
 
   it('prunes EXPIRED subscribers on 410 and does not record SENT for them', async () => {
