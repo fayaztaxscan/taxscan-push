@@ -61,6 +61,7 @@ export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   allowedOrigins,
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  sessionCookieSecret: process.env.SESSION_COOKIE_SECRET ?? '',
   vapid: {
     publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
     privateKey: process.env.VAPID_PRIVATE_KEY ?? '',
