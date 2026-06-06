@@ -3,18 +3,27 @@ import { useAuth } from './useAuth';
 export type ApiError = Error & { status?: number; body?: unknown };
 
 export function useApi() {
-  const { token, logout } = useAuth();
+  const { user } = useAuth();
 
   async function request<T = unknown>(
     path: string,
     init: RequestInit = {},
   ): Promise<T> {
     const headers = new Headers(init.headers);
-    headers.set('Content-Type', 'application/json');
-    if (token.value) headers.set('Authorization', `Bearer ${token.value}`);
-    const res = await fetch(path, { ...init, headers });
+    if (!headers.has('Content-Type') && init.body !== undefined) {
+      headers.set('Content-Type', 'application/json');
+    }
+    const res = await fetch(path, {
+      ...init,
+      headers,
+      // Cookies are the source of truth — `credentials: 'include'` lets
+      // the browser send tx_push_session on every API call.
+      credentials: 'include',
+    });
     if (res.status === 401) {
-      logout();
+      // Session vanished server-side (expired / revoked). Clear local
+      // state so the router guard bounces to /login on next navigation.
+      user.value = null;
       const err: ApiError = new Error('Unauthorized — please log in again');
       err.status = 401;
       throw err;

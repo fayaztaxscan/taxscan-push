@@ -358,20 +358,38 @@ Notes on what each indicator means in practice:
 A small Vue 3 + Vite app lives in `admin/`. Three screens: Compose & send, Campaigns, Dashboard,
 behind a password login that exchanges for the bearer token.
 
-### Run it locally
+### First-time setup
 
 ```bash
-# in one terminal — backend
-ADMIN_PASSWORD=your-pw npm run dev
+# 1. Create the first ADMIN user against your dev database.
+npm run create-admin    # interactive prompt: email + password (12+ chars,
+                        #                     mixed case + digit)
 
-# in another — Vite dev server, proxies /api → :3000
+# 2. In one terminal — backend.
+npm run dev
+
+# 3. In another terminal — Vite dev server (proxies /api → :3000).
 cd admin
-npm install        # first time only
-npm run dev        # opens on http://localhost:5173
+npm install            # first time only
+npm run dev            # opens on http://localhost:5173
 ```
 
-Sign in with `ADMIN_PASSWORD`; the SPA stores the issued bearer token in `localStorage` and attaches
-it to every subsequent `/api/*` call.
+Open `http://localhost:5173/login`, sign in with the email + password you just created. The backend
+sets a signed `tx_push_session` cookie (HTTP-only, 8h sliding expiry). The SPA stores nothing —
+the cookie is the source of truth — and the router guard pings `GET /api/auth/me` on every
+navigation to refresh the user's role / `passwordResetRequired` flag.
+
+### Adding team members
+
+Once logged in as an ADMIN, additional users will be managed from the **Users** screen that
+Phase 6 of `USER_MANAGEMENT_PLAN.md` will land. Until then, run `npm run create-admin` again for
+each new admin, or call `POST /api/users` directly (cookie-authenticated, ADMIN-only — full
+details in the [Admin-managed user lifecycle](#admin-managed-user-lifecycle-phase-3) section).
+
+When an admin resets a user's password via `POST /api/users/:id/reset-password`, the next time
+that user logs in the SPA will route them straight to `/change-password` with a forced-flow
+modal that cannot be dismissed. Once they change the password the `passwordResetRequired` flag
+is cleared and normal navigation resumes.
 
 ### Send test to internal segment
 

@@ -85,6 +85,7 @@ describe('POST /api/auth/login', () => {
       id: user.id,
       email: user.email,
       role: user.role,
+      passwordResetRequired: false,
     });
 
     const setCookie = res.headers['set-cookie'];

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
-import { useAuth } from '../composables/useAuth';
 
 type DispatchResult = {
   campaignId: string;
@@ -14,7 +13,10 @@ type DispatchResult = {
 };
 
 const api = useApi();
-const { testSegmentTopic } = useAuth();
+// testSegmentTopic comes back on the /api/admin/subscribers response.
+// We default to 'test' until the first fetch lands so the UI doesn't
+// render an empty placeholder on first paint.
+const testSegmentTopic = ref<string>('test');
 
 const TOPICS = [
   { label: 'GST', slug: 'gst' },
@@ -76,6 +78,7 @@ async function loadSubscribers() {
       '/api/admin/subscribers?limit=10',
     );
     subscribers.value = data.subscribers;
+    if (data.testSegmentTopic) testSegmentTopic.value = data.testSegmentTopic;
   } catch (e) {
     errorBanner.value = e instanceof Error ? e.message : String(e);
   } finally {

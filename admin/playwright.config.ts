@@ -2,8 +2,9 @@ import { defineConfig } from '@playwright/test';
 
 // Each E2E run boots the backend with a mock sender + the Vite dev server.
 // The mock-sender flag is what makes the dispatch path succeed without touching
-// real push services; tests that need a "delivered" outcome use it.
-const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? 'e2e-pw';
+// real push services; tests that need a "delivered" outcome use it. The spec
+// itself seeds an ADMIN User row via Prisma (Phase 5+) and logs in through the
+// new email + password flow.
 const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN ?? 'e2e-token';
 
 export default defineConfig({
@@ -27,11 +28,11 @@ export default defineConfig({
       timeout: 60_000,
       reuseExistingServer: false,
       env: {
-        ADMIN_PASSWORD,
         ADMIN_TOKEN,
         E2E_MOCK_SENDER: 'true',
         RSS_ENABLED: 'false',
         SWEEPER_ENABLED: 'false',
+        AUDIT_LOG_SWEEPER_ENABLED: 'false',
         NODE_ENV: 'development',
       },
     },
