@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 enum SubscriberStatus {
@@ -31,6 +32,25 @@ enum EventType {
   FAILED
 }
 
+enum UserRole {
+  ADMIN
+  PUBLISHER
+}
+
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+  PASSWORD_CHANGED
+  USER_CREATED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+  USER_ROLE_CHANGED
+  USER_PASSWORD_RESET
+  CAMPAIGN_DISPATCHED
+  CAMPAIGN_DISPATCH_FAILED
+}
+
 model Subscriber {
   id        String           @id @default(cuid())
   portal    String           @default("taxscan")
@@ -50,23 +70,70 @@ model Subscriber {
 }
 
 model Campaign {
-  id          String         @id @default(cuid())
-  portal      String
-  title       String
-  body        String
-  url         String
-  icon        String?
-  target      Json
-  scheduledAt DateTime?
-  status      CampaignStatus @default(DRAFT)
-  createdAt   DateTime       @default(now())
+  id              String         @id @default(cuid())
+  portal          String
+  title           String
+  body            String
+  url             String
+  icon            String?
+  target          Json
+  scheduledAt     DateTime?
+  status          CampaignStatus @default(DRAFT)
+  createdAt       DateTime       @default(now())
+  createdByUserId String?
 
+  createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]
   feedItems FeedItem[]
 
   @@index([portal])
   @@index([status])
   @@index([scheduledAt])
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  role         UserRole
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+
+  sessions  UserSession[]
+  auditLogs AuditLog[]
+  campaigns Campaign[]
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?
+  ipAddress String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       AuditAction
+  resourceType String?
+  resourceId   String?
+  metadata     Json?
+  ipAddress    String?
+  createdAt    DateTime    @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
 }
 
 model FeedItem {
