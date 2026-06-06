@@ -5,31 +5,22 @@
  * Usage:
  *   npm run create-admin
  *
- * Prompts for email + password (password is masked on TTY). Validates,
- * bcrypts at cost 12, inserts a single User row with role=ADMIN,
- * isActive=true. Refuses to overwrite if a user with the same email
- * already exists. No flags, no automation hooks — deliberately interactive.
+ * Prompts for email + password (password is masked on TTY). Validates via
+ * the shared passwordPolicy module, bcrypts at cost 12, inserts a single
+ * User row with role=ADMIN, isActive=true. Refuses to overwrite if a user
+ * with the same email already exists. No flags, no automation hooks —
+ * deliberately interactive.
  */
 
 import { createInterface } from 'readline';
 import bcrypt from 'bcrypt';
 import { prisma } from '../src/lib/prisma';
+import { passwordIssue } from '../src/lib/passwordPolicy';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PASSWORD_MIN_LENGTH = 12;
 
 const CTRL_C = '';
 const BACKSPACE_DEL = '';
-
-function passwordIssue(p: string): string | null {
-  if (p.length < PASSWORD_MIN_LENGTH) {
-    return `password must be at least ${PASSWORD_MIN_LENGTH} characters`;
-  }
-  if (!/[a-z]/.test(p)) return 'password must contain a lowercase letter';
-  if (!/[A-Z]/.test(p)) return 'password must contain an uppercase letter';
-  if (!/[0-9]/.test(p)) return 'password must contain a digit';
-  return null;
-}
 
 function promptLine(question: string): Promise<string> {
   return new Promise((resolve) => {
@@ -55,7 +46,6 @@ function promptPassword(question: string): Promise<string> {
     const onData = (input: string): void => {
       for (const ch of input) {
         if (ch === CTRL_C) {
-          // Restore terminal mode before exiting on Ctrl-C.
           process.stdin.setRawMode(false);
           process.stdin.pause();
           process.stdin.removeListener('data', onData);
