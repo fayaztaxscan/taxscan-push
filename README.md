@@ -134,6 +134,60 @@ endpoint churn, but it guarantees we can deliver.
 Drop a 192×192 PNG at `public/icon-192.png`. If missing, browsers fall back to a default. The
 service worker reads `payload.icon` from each push first, then `/icon-192.png`.
 
+## Reliable SDK delivery
+
+The Hocalwire-rendered `<script src="…/taxscan-push.js" defer>` on every taxscan.in page is the
+single point of failure for the whole opt-in funnel: if that asset doesn't load, no prompt shows,
+no recapture runs, and no iZooto cleanup happens. `VENDOR_CHANGES_VERIFY.md` traced a real
+incident to that asset failing at page time even though `fetch()` of the same URL succeeded
+seconds later — consistent with Railway's free/hobby tier cold-starting under low traffic.
+
+Two complementary mitigations, in increasing order of cost:
+
+### (a) Keep the backend warm
+
+Point a free uptime monitor at the unauthenticated `/healthz` endpoint at a 5-minute interval:
+
+```
+GET https://taxscan-push-production.up.railway.app/healthz
+```
+
+The endpoint does no DB work and returns `Cache-Control: no-store`, so every ping reaches the
+live worker. On Railway's free/hobby tier, workers idle out after a quiet period and the first
+request back in pays a cold-start tax that the browser's `<script>` tag can't survive; a 5-min
+ping keeps the worker hot enough that the first real request after a quiet stretch is warm too.
+
+Free options that all cover the single-endpoint case at no cost:
+
+- **UptimeRobot** — 50 monitors free, 5-min interval, zero-setup signup.
+- **cron-job.org** — unlimited cron jobs down to 1-min interval.
+- **GitHub Actions** — a `*/5 * * * *` workflow that `curl`s the URL. Free on public repos.
+
+This is the fastest mitigation — minutes of setup, no DNS or code change required.
+
+### (b) Front the deployment with a CDN (long-term fix)
+
+A CDN edge cache makes `/taxscan-push.js` and `/sw.js` resilient to any future Railway hiccup —
+once the file is cached at an edge, page-time loads don't depend on the backend's warm/cold
+state at all. Recommended path: **Cloudflare on a custom domain** (e.g. `push.taxscan.in`),
+proxying to the Railway origin.
+
+Cloudflare-side sketch (assumes Cloudflare basics):
+
+- Add `push.taxscan.in` as a CNAME → `taxscan-push-production.up.railway.app`, **proxy enabled
+  (orange cloud)**.
+- Caching → Configuration → Cache Level: **Standard**.
+- Caching → Configuration → Browser Cache TTL: **Respect Existing Headers** (we already set the
+  right `Cache-Control` per asset in `src/app.ts` — Cloudflare follows it).
+- Edge Cache TTL for `/taxscan-push.js` and `/sw.js`: **honour origin Cache-Control** — origin
+  sends `max-age=300, stale-while-revalidate=86400` for the SDK and `no-cache` for the SW;
+  Cloudflare respects both, so the SW still revalidates every fetch.
+- Flip `TAXSCAN_PUSH_CONFIG.apiBase` on taxscan.in to `https://push.taxscan.in` and update the
+  vendor `<script src>` URL to match.
+
+The SW reads `?api=…` from its own URL (`/sw.js?api=…`), so a cross-origin backend works without
+SDK or SW code changes — the SDK passes the apiBase through to SW registration's query string.
+
 ## RSS poller
 
 The poller is off by default. To enable, set in `.env`:
