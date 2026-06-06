@@ -6,8 +6,7 @@ import { requireBearer } from '../lib/auth';
 import { dispatchCampaign, type Sender } from '../services/send';
 import { buildMetrics, listCampaigns } from '../services/metrics';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
-import { makeLoginLimiter, makePublicLimiter } from '../lib/rateLimit';
-import { timingSafeEqual } from 'crypto';
+import { makePublicLimiter } from '../lib/rateLimit';
 
 function base64urlByteLength(s: string): number {
   const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
@@ -77,24 +76,19 @@ const SendSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
 });
 
-const LoginSchema = z.object({
-  password: z.string().min(1),
-});
-
 function badRequest(res: Response, err: z.ZodError) {
   return res.status(400).json({ error: 'invalid_request', issues: err.issues });
 }
 
 export function createApiRouter(
-  opts: { sender?: Sender; publicPerMin?: number; loginPerMin?: number } = {},
+  opts: { sender?: Sender; publicPerMin?: number } = {},
 ): Router {
   const router = Router();
 
-  // Per-IP rate limiters. The public limiter wraps the four public endpoints
-  // (subscribe / unsubscribe / track / config). The login limiter is tighter,
-  // gating brute-force on the admin password.
+  // Per-IP rate limiter for the four public endpoints (subscribe /
+  // unsubscribe / track / config). The login limiter lives on the auth
+  // router instead (src/routes/auth.ts).
   const publicLimiter = makePublicLimiter(opts.publicPerMin ?? env.rateLimit.publicPerMin);
-  const loginLimiter = makeLoginLimiter(opts.loginPerMin ?? env.rateLimit.loginPerMin);
 
   router.post('/subscribe', publicLimiter, async (req, res, next) => {
     try {
@@ -247,20 +241,6 @@ export function createApiRouter(
     } catch (err) {
       return next(err);
     }
-  });
-
-  router.post('/auth/login', loginLimiter, (req, res) => {
-    const parsed = LoginSchema.safeParse(req.body);
-    if (!parsed.success) return badRequest(res, parsed.error);
-    if (!env.admin.password || !env.adminToken) {
-      return res.status(503).json({ error: 'admin_unconfigured' });
-    }
-    const provided = Buffer.from(parsed.data.password);
-    const expected = Buffer.from(env.admin.password);
-    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-      return res.status(401).json({ error: 'invalid_password' });
-    }
-    return res.json({ token: env.adminToken, testSegmentTopic: env.testSegmentTopic });
   });
 
   router.get('/campaigns', requireBearer, async (req, res, next) => {

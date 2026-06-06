@@ -410,6 +410,61 @@ root, which deletes anything whose subscriber endpoint starts with `https://e2e-
 or whose campaign title starts with `E2E `. If a run crashes hard you can run that cleanup script
 manually.
 
+## Authentication
+
+The backend supports two auth methods that coexist deliberately:
+
+### Bearer token — for scripts, cron, external clients
+
+Send `Authorization: Bearer $ADMIN_TOKEN` on any admin endpoint. The RSS poller, sweeper, ad-hoc
+`curl` calls, and any future cron use this path. The bearer token never expires, never changes
+between deploys (unless you rotate it), and bypasses per-user role checks — it represents the
+"service" identity. **`ADMIN_TOKEN` is the load-bearing secret here; treat it like a database
+password.**
+
+### Cookie sessions — for the admin SPA and human users
+
+Per-user accounts authenticated via `POST /api/auth/login` with `{ email, password }`. The
+response sets a signed, HTTP-only, `SameSite=Lax`, 8-hour sliding-expiry cookie named
+`tx_push_session`. Subsequent calls to `/api/auth/me`, `/api/auth/logout`, and admin endpoints
+(after Phase 4 wires them) read the cookie automatically.
+
+Endpoints:
+
+- `POST /api/auth/login` — body `{ email, password }`. 200 + `Set-Cookie` on success. 401 on
+  bad credentials. 423 after 5 failed attempts for that email in 15 minutes (resets after the
+  window). 429 on per-IP rate-limit breach (default 5/min).
+- `POST /api/auth/logout` — revokes the session row and clears the cookie. Returns 204.
+- `GET /api/auth/me` — returns `{ id, email, role, lastLoginAt }` for the current session. 401
+  without a valid cookie.
+
+### Creating the first admin
+
+```bash
+npm run create-admin
+```
+
+Interactive prompt: email + password (password is masked on a TTY). Validates password (min 12
+chars, mixed case + digit), hashes with `bcrypt` cost 12, creates a single `User` row with
+`role=ADMIN`, `isActive=true`. Refuses to overwrite an existing email.
+
+After that first user exists, log in at `/admin/` and create additional users via the admin
+UI (Phase 6 will add this screen) or via repeated `npm run create-admin` runs.
+
+### `SESSION_COOKIE_SECRET`
+
+Required env var. Signs the session cookie. Minimum 32 characters; startup self-check refuses to
+boot if missing or too short. Generate with:
+
+```bash
+openssl rand -hex 32
+```
+
+Rotating it invalidates every existing session cookie (users must log in again). It does NOT
+invalidate the session rows in the DB — those stay until expiry or explicit revoke — but they
+become unreachable because no valid signed cookie maps to them. The retention sweeper (Phase 4)
+will eventually clean expired session rows.
+
 ## Admin send endpoint
 
 `POST /api/send` is the admin-only dispatch endpoint. Authenticate with a static bearer token:

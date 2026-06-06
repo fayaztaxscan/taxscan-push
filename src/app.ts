@@ -2,9 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { corsMiddleware } from './lib/cors';
 import { healthRouter } from './routes/health';
 import { createApiRouter } from './routes/api';
+import { createAuthRouter } from './routes/auth';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
 
@@ -39,14 +41,23 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   app.use(corsMiddleware);
   app.use(express.json({ limit: '64kb' }));
+  // Signs cookies with SESSION_COOKIE_SECRET. Phase 2's auth router uses the
+  // signed-cookie path; the helper reads from req.signedCookies and ignores
+  // unsigned cookies entirely.
+  app.use(cookieParser(env.sessionCookieSecret));
 
   app.use(healthRouter);
+  app.use(
+    '/api/auth',
+    createAuthRouter({
+      loginPerMin: opts.rateLimit?.loginPerMin ?? env.rateLimit.loginPerMin,
+    }),
+  );
   app.use(
     '/api',
     createApiRouter({
       sender: opts.sender,
       publicPerMin: opts.rateLimit?.publicPerMin ?? env.rateLimit.publicPerMin,
-      loginPerMin: opts.rateLimit?.loginPerMin ?? env.rateLimit.loginPerMin,
     }),
   );
 

@@ -34,26 +34,9 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('POST /api/auth/login', () => {
-  it('returns the bearer token and the test segment topic for the right password', async () => {
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ password: process.env.ADMIN_PASSWORD });
-    expect(res.status).toBe(200);
-    expect(res.body.token).toBe(process.env.ADMIN_TOKEN);
-    expect(typeof res.body.testSegmentTopic).toBe('string');
-  });
-
-  it('rejects the wrong password with 401', async () => {
-    const res = await request(app).post('/api/auth/login').send({ password: 'definitely-wrong' });
-    expect(res.status).toBe(401);
-  });
-
-  it('rejects a malformed body with 400', async () => {
-    const res = await request(app).post('/api/auth/login').send({});
-    expect(res.status).toBe(400);
-  });
-});
+// Legacy POST /api/auth/login (the `{password}` → bearer flow) was retired
+// in Phase 2 of USER_MANAGEMENT_PLAN.md. The cookie-session replacement is
+// covered comprehensively in src/__tests__/auth.test.ts.
 
 describe('POST /api/send — scheduledAt', () => {
   it('persists a campaign as SCHEDULED when scheduledAt is in the future and does not dispatch', async () => {
