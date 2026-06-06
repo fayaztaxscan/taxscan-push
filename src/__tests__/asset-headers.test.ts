@@ -21,6 +21,17 @@ describe('Asset delivery headers', () => {
       expect(cc).toMatch(/max-age=300/);
       expect(cc).toMatch(/stale-while-revalidate=86400/);
     });
+
+    // The cutover-blocker test. helmet defaults this to same-origin, which
+    // makes the browser drop the response with ERR_BLOCKED_BY_RESPONSE
+    // .NotSameOrigin when Hocalwire's loader injects the script tag into
+    // taxscan.in. If anyone reverts this back to same-origin, the iZooto
+    // cutover breaks for every visitor — this assertion is the guard rail.
+    it('is loadable cross-origin (CORP: cross-origin, not helmet default)', async () => {
+      const res = await request(app).get('/taxscan-push.js');
+      expect(res.status).toBe(200);
+      expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    });
   });
 
   describe('GET /sw.js', () => {
@@ -38,6 +49,12 @@ describe('Asset delivery headers', () => {
       const res = await request(app).get('/sw.js');
       expect(res.status).toBe(200);
       expect(res.headers['cache-control']).toBe('no-cache');
+    });
+
+    it('is loadable cross-origin (CORP: cross-origin, not helmet default)', async () => {
+      const res = await request(app).get('/sw.js');
+      expect(res.status).toBe(200);
+      expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
     });
   });
 
