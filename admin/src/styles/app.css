@@ -312,6 +312,24 @@ label {
   font-weight: 700;
   margin-right: 16px;
 }
+/* On desktop the menu wrapper is transparent to layout: its children behave as
+   direct flex children of .nav (brand · links · spacer · user · utils), so the
+   bar looks exactly as before. The hamburger is hidden until the mobile
+   breakpoint below flips these. */
+.nav-menu {
+  display: contents;
+}
+.nav-toggle {
+  display: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 12px;
+  cursor: pointer;
+}
 .nav a {
   text-decoration: none;
   color: var(--muted);
@@ -602,6 +620,8 @@ td .badge {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   margin-bottom: 12px;
 }
 .toolbar .toolbar-title {
@@ -666,4 +686,88 @@ td .badge {
 .section-title {
   font-size: 16px;
   margin: 0 0 12px;
+}
+
+/* ----------------------------------------------------------------------------
+   Mobile / narrow viewports. Everything above is the desktop layout; these
+   blocks adapt it for phones. The nav collapses to a hamburger, dense rows
+   wrap, and padding tightens so content isn't cramped or clipped.
+   ------------------------------------------------------------------------- */
+@media (max-width: 720px) {
+  /* Collapsible nav: brand + hamburger on the top row; the menu drops below as
+     a full-width vertical list when toggled open. */
+  .nav {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+  .nav-toggle {
+    display: inline-block;
+    margin-left: auto;
+  }
+  .nav-menu {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 2px;
+    margin-top: 10px;
+  }
+  .nav-menu.open {
+    display: flex;
+  }
+  .nav-menu .spacer {
+    display: none;
+  }
+  /* Bigger tap targets + a divider above the account row. */
+  .nav a,
+  .nav .nav-secondary,
+  .nav .logout {
+    padding: 10px 8px;
+    font-size: 14px;
+    text-align: left;
+  }
+  .nav-user {
+    margin: 8px 0 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .nav-email {
+    overflow-wrap: anywhere;
+  }
+
+  /* Tighter outer + card padding so content uses the full width. */
+  .page {
+    padding: 16px 12px;
+  }
+  .card {
+    padding: 14px;
+  }
+  .modal-overlay {
+    padding: 12px;
+  }
+
+  /* Denser tables so more columns fit before horizontal scroll kicks in
+     (the .card already provides overflow-x: auto). */
+  th,
+  td {
+    padding: 8px 6px;
+  }
+
+  /* Funnel rows: shrink the fixed label column on small screens. */
+  .funnel-row {
+    grid-template-columns: 96px 1fr auto;
+    gap: 8px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  /* The dashboard metric values are large; scale them down so they don't
+     overflow their tiles on the smallest phones. */
+  .metric .value {
+    font-size: 22px;
+  }
+  .radio-row {
+    gap: 12px;
+  }
 }
