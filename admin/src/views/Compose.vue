@@ -7,6 +7,7 @@ type DispatchResult = {
   status: string;
   sent: number;
   capped: number;
+  cooled: number;
   expiredPruned: number;
   failed: number;
   deferred?: { scheduledAt: string };

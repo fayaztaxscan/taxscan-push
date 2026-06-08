@@ -56,6 +56,15 @@ function intEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+// Like intEnv but allows 0 (used where 0 is a meaningful "disabled" value, e.g.
+// the per-subscriber cooldown). Empty/invalid falls back; negatives fall back.
+function nonNegIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -76,6 +85,12 @@ export const env = {
     // as DRAFT campaigns without dispatching, so iZooto and our system can
     // run in parallel without double-sending. Flip to 'live' to take over.
     mode: process.env.SEND_MODE === 'live' ? ('live' as const) : ('capture_only' as const),
+    // Minimum minutes between two notifications to the SAME subscriber. Guards
+    // against burst fatigue (and the unsubscribes it causes) when several
+    // articles publish close together: a subscriber who got a push inside this
+    // window is skipped for the next campaign. Complements the daily freq cap
+    // (which limits volume, not spacing). 0 disables the cooldown.
+    minGapMinutes: nonNegIntEnv('MIN_GAP_MINUTES', 30),
   },
   rss: {
     enabled: process.env.RSS_ENABLED === 'true',

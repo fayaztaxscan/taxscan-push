@@ -77,6 +77,53 @@ describe('filterByCap', () => {
 
   it('returns empty arrays for an empty input', async () => {
     const result = await filterByCap([], 4, new Date());
-    expect(result).toEqual({ kept: [], capped: [] });
+    expect(result).toEqual({ kept: [], capped: [], cooled: [] });
+  });
+});
+
+describe('filterByCap — per-subscriber cooldown (minGapMs)', () => {
+  const THIRTY_MIN = 30 * 60 * 1000;
+
+  it('cools subscribers pushed within the window; keeps those outside it', async () => {
+    const now = new Date();
+    const recent = await makeSubscriber('cool-recent');
+    const old = await makeSubscriber('cool-old');
+
+    // `recent` got a push 5 min ago (inside the 30-min window) → cooled.
+    await seedSentEvent(recent.id, new Date(now.getTime() - 5 * 60 * 1000));
+    // `old` got a push 45 min ago (outside the window) → still eligible.
+    await seedSentEvent(old.id, new Date(now.getTime() - 45 * 60 * 1000));
+
+    const { kept, capped, cooled } = await filterByCap([recent, old], 4, now, THIRTY_MIN);
+    expect(kept.map((s) => s.id)).toEqual([old.id]);
+    expect(cooled.map((s) => s.id)).toEqual([recent.id]);
+    expect(capped).toHaveLength(0);
+  });
+
+  it('disables the cooldown when minGapMs is 0 (default)', async () => {
+    const now = new Date();
+    const s = await makeSubscriber('cool-disabled');
+    await seedSentEvent(s.id, new Date(now.getTime() - 60 * 1000)); // 1 min ago
+
+    // No minGap arg → cooldown off → still kept despite the very recent send.
+    const { kept, cooled } = await filterByCap([s], 4, now);
+    expect(kept.map((x) => x.id)).toEqual([s.id]);
+    expect(cooled).toHaveLength(0);
+  });
+
+  it('daily cap takes precedence over the cooldown', async () => {
+    const now = new Date();
+    const todayStart = startOfTodayIST(now);
+    const s = await makeSubscriber('cool-and-capped');
+
+    // Two SENT today (one of them recent) with cap=2 → over cap. Even though
+    // the recent one would also trip the cooldown, it's reported as capped.
+    await seedSentEvent(s.id, todayStart);
+    await seedSentEvent(s.id, new Date(now.getTime() - 2 * 60 * 1000));
+
+    const { kept, capped, cooled } = await filterByCap([s], 2, now, THIRTY_MIN);
+    expect(kept).toHaveLength(0);
+    expect(capped.map((x) => x.id)).toEqual([s.id]);
+    expect(cooled).toHaveLength(0);
   });
 });

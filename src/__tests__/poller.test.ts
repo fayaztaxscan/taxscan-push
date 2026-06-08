@@ -52,6 +52,7 @@ function recordingDispatcher(result?: Partial<DispatchResult>): DispatcherSpy {
       status: 'SENT',
       sent: 1,
       capped: 0,
+      cooled: 0,
       expiredPruned: 0,
       failed: 0,
       ...result,
