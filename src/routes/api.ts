@@ -236,6 +236,7 @@ export function createApiRouter(
             status: 'SCHEDULED',
             sent: 0,
             capped: 0,
+            cooled: 0,
             expiredPruned: 0,
             failed: 0,
             deferred: { scheduledAt: when.toISOString() },

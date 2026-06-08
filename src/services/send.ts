@@ -42,6 +42,8 @@ export type DispatchResult = {
   status: 'SENT' | 'SCHEDULED' | 'FAILED';
   sent: number;
   capped: number;
+  /** Skipped because they were within the per-subscriber cooldown window. */
+  cooled: number;
   expiredPruned: number;
   failed: number;
   deferred?: { scheduledAt: string };
@@ -54,6 +56,7 @@ export type DispatchDeps = {
   concurrency?: number;
   quietStart?: string;
   quietEnd?: string;
+  minGapMinutes?: number;
 };
 
 export type ExecuteDeps = {
@@ -61,12 +64,14 @@ export type ExecuteDeps = {
   now?: Date;
   cap?: number;
   concurrency?: number;
+  minGapMinutes?: number;
 };
 
 export type ExecuteResult = {
   campaignId: string;
   sent: number;
   capped: number;
+  cooled: number;
   expiredPruned: number;
   failed: number;
 };
@@ -116,12 +121,14 @@ export async function executeCampaign(
   const sender = deps.sender ?? sendToSubscriber;
   const cap = deps.cap ?? env.send.freqCapPerDay;
   const concurrency = deps.concurrency ?? env.send.concurrency;
+  const minGapMinutes = deps.minGapMinutes ?? env.send.minGapMinutes;
+  const minGapMs = Math.max(0, minGapMinutes) * 60 * 1000;
 
   const target = campaign.target as unknown as Target;
 
   try {
     const candidates = await resolveTargets(campaign.portal, target);
-    const { kept, capped } = await filterByCap(candidates, cap, now);
+    const { kept, capped, cooled } = await filterByCap(candidates, cap, now, minGapMs);
 
     const icon = campaign.icon ?? DEFAULT_NOTIFICATION_ICON;
     const payload: PushPayload = {
@@ -204,7 +211,14 @@ export async function executeCampaign(
       data: { status: 'SENT' },
     });
 
-    return { campaignId: campaign.id, sent, capped: capped.length, expiredPruned, failed };
+    return {
+      campaignId: campaign.id,
+      sent,
+      capped: capped.length,
+      cooled: cooled.length,
+      expiredPruned,
+      failed,
+    };
   } catch (err) {
     await prisma.campaign
       .update({ where: { id: campaign.id }, data: { status: 'FAILED' } })
@@ -245,6 +259,7 @@ export async function dispatchCampaign(
       status: 'SCHEDULED',
       sent: 0,
       capped: 0,
+      cooled: 0,
       expiredPruned: 0,
       failed: 0,
       deferred: { scheduledAt: scheduledAt.toISOString() },
@@ -264,6 +279,7 @@ export async function dispatchCampaign(
         target: input.target,
         sent: result.sent,
         capped: result.capped,
+        cooled: result.cooled,
         expiredPruned: result.expiredPruned,
         failed: result.failed,
         status: 'SENT',
