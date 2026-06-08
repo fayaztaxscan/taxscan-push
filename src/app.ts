@@ -11,9 +11,13 @@ import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
+import type { EmailSender } from './lib/email';
 
 export type CreateAppOptions = {
   sender?: Sender;
+  // Injectable transactional-email sender for the invite flow. Tests pass an
+  // in-memory stub; production uses the ElasticEmail default.
+  emailSender?: EmailSender;
   rateLimit?: { publicPerMin?: number; loginPerMin?: number };
   // Overrides the directory the admin SPA is served from. Production reads the
   // real `admin/dist/`; tests pass a fixture path.
@@ -55,7 +59,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       loginPerMin: opts.rateLimit?.loginPerMin ?? env.rateLimit.loginPerMin,
     }),
   );
-  app.use('/api/users', createUsersRouter());
+  app.use('/api/users', createUsersRouter({ emailSender: opts.emailSender }));
   app.use('/api/audit', createAuditRouter());
   app.use(
     '/api',

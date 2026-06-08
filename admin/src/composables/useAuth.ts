@@ -111,5 +111,68 @@ export function useAuth() {
     }
   }
 
-  return { user, isAuthed, ready, checkSession, login, logout, changePassword };
+  // ---- Invite acceptance (Phase 8) ----
+
+  /** Validates an invite token; returns who it's for, or throws AuthError. */
+  async function fetchInvite(
+    token: string,
+  ): Promise<{ email: string; role: 'ADMIN' | 'PUBLISHER'; expiresAt: string }> {
+    const res = await fetch(`/api/auth/invite?token=${encodeURIComponent(token)}`, {
+      credentials: 'include',
+    });
+    if (res.status === 410) {
+      throw new AuthError(410, 'This invitation has expired. Ask an admin to send a new one.');
+    }
+    if (res.status === 404) {
+      throw new AuthError(404, 'This invitation link is invalid or has already been used.');
+    }
+    if (!res.ok) {
+      throw new AuthError(res.status, 'Could not load this invitation. Please try again.');
+    }
+    return res.json();
+  }
+
+  /** Accepts an invite: sets the user's chosen password and logs them in. */
+  async function acceptInvite(token: string, password: string): Promise<void> {
+    const res = await fetch('/api/auth/accept-invite', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    });
+    if (res.status === 410) {
+      throw new AuthError(410, 'This invitation has expired. Ask an admin to send a new one.');
+    }
+    if (res.status === 404) {
+      throw new AuthError(404, 'This invitation link is invalid or has already been used.');
+    }
+    if (res.status === 409) {
+      throw new AuthError(409, 'An account with this email already exists. Try signing in.');
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const message =
+        body && typeof body === 'object' && 'message' in body && typeof body.message === 'string'
+          ? body.message
+          : 'Could not accept the invitation. Please try again.';
+      throw new AuthError(res.status, message);
+    }
+    // The cookie is set; hydrate the full user object from /me so the shape
+    // matches UserSummary exactly (the accept payload is minimal).
+    ready.value = false;
+    inFlightCheck = null;
+    await checkSession();
+  }
+
+  return {
+    user,
+    isAuthed,
+    ready,
+    checkSession,
+    login,
+    logout,
+    changePassword,
+    fetchInvite,
+    acceptInvite,
+  };
 }

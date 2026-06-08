@@ -400,6 +400,37 @@ them straight to `/change-password` with a forced-flow modal that cannot be dism
 they change the password the `passwordResetRequired` flag is cleared and normal navigation
 resumes.
 
+### Inviting team members by email (Phase 8)
+
+Alongside "Create user" (which mints a temp password the admin shares out-of-band), the Users
+screen has an **Invite user** flow. The admin enters an email + role; the backend creates a
+single-use, hashed, time-limited invite (no `User` row yet) and emails the recipient a link.
+The recipient clicks it, lands on `/admin/accept-invite?token=…`, sets their own password, and
+is logged straight in — the `User` row is created only at that point. Pending invites appear in
+a "Pending invites" panel on the Users screen with **Resend** (regenerates the token, kills the
+old link) and **Revoke** (deletes the invite) actions.
+
+Email is sent via [ElasticEmail](https://elasticemail.com)'s transactional API, configured by
+the `ELASTICEMAIL_API_KEY` / `EMAIL_FROM` env vars (see `.env.example`). **Email is optional
+infrastructure:** if it isn't configured, or a send fails, the invite is still created and the
+admin is shown the accept link to copy and share manually — the flow never hard-depends on the
+mail provider. Invite links expire after `INVITE_TTL_HOURS` (default 72). The link origin comes
+from `APP_BASE_URL` (falling back to the request origin), so set it to the deployed URL.
+
+Endpoints (all admin-only except the two public accept routes):
+
+- `POST /api/users/invite` — body `{ email, role }`. 201 with `{ invite, inviteUrl, emailSent }`.
+  409 if a real user already owns that email.
+- `GET /api/users/invites` — pending (un-accepted, un-expired) invites with the inviter's email.
+- `POST /api/users/invites/:id/resend` — new token + expiry, re-sends; old link dies.
+- `DELETE /api/users/invites/:id` — revoke a pending invite.
+- `GET /api/auth/invite?token=…` *(public)* — validate a link; returns `{ email, role }`, 404 if
+  invalid/used, 410 if expired.
+- `POST /api/auth/accept-invite` *(public)* — body `{ token, password }`. Creates the active user,
+  sets the session cookie (auto-login), records `USER_INVITE_ACCEPTED`. 201 on success.
+
+Two new audit actions, `USER_INVITED` and `USER_INVITE_ACCEPTED`, land in the Activity feed.
+
 ### Send test to internal segment
 
 The Compose screen's "Send test" button posts a campaign with `target: { type: 'topics', topics: [TEST_SEGMENT_TOPIC] }`
@@ -475,8 +506,10 @@ Interactive prompt: email + password (password is masked on a TTY). Validates pa
 chars, mixed case + digit), hashes with `bcrypt` cost 12, creates a single `User` row with
 `role=ADMIN`, `isActive=true`. Refuses to overwrite an existing email.
 
-After that first user exists, log in at `/admin/` and create additional users via the admin
-UI (Phase 6 will add this screen) or via repeated `npm run create-admin` runs.
+After that first user exists, log in at `/admin/` and add the rest of the team from the **Users**
+screen — either "Create user" (temp password, shared out-of-band) or "Invite user" (emailed
+accept link; see "Inviting team members by email" above). Repeated `npm run create-admin` runs
+also work for bootstrapping more admins from the CLI.
 
 ### Admin-managed user lifecycle (Phase 3)
 

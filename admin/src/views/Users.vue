@@ -165,6 +165,100 @@ function closeReset(): void {
   load();
 }
 
+// ---- Pending invites (Phase 8) ----
+type InviteRow = {
+  id: string;
+  email: string;
+  role: 'ADMIN' | 'PUBLISHER';
+  expiresAt: string;
+  createdAt: string;
+  invitedByEmail: string | null;
+};
+type InviteResult = { inviteUrl: string; emailSent: boolean; emailError?: string };
+
+const invites = ref<InviteRow[]>([]);
+const invitesLoading = ref(false);
+const invitesError = ref<string | null>(null);
+const inviteActionId = ref<string | null>(null);
+
+async function loadInvites(): Promise<void> {
+  invitesLoading.value = true;
+  invitesError.value = null;
+  try {
+    const data = await api.get<{ items: InviteRow[] }>('/api/users/invites');
+    invites.value = data.items;
+  } catch (e) {
+    invitesError.value = apiErrorMessage(e);
+  } finally {
+    invitesLoading.value = false;
+  }
+}
+
+// ---- Invite user modal ----
+const inviteOpen = ref(false);
+const inviteForm = ref({ email: '', role: 'PUBLISHER' as 'ADMIN' | 'PUBLISHER' });
+const inviteSubmitting = ref(false);
+const inviteError = ref<string | null>(null);
+const inviteResult = ref<InviteResult | null>(null);
+
+function openInvite(): void {
+  inviteForm.value = { email: '', role: 'PUBLISHER' };
+  inviteResult.value = null;
+  inviteError.value = null;
+  inviteOpen.value = true;
+}
+
+async function submitInvite(): Promise<void> {
+  inviteError.value = null;
+  inviteSubmitting.value = true;
+  try {
+    inviteResult.value = await api.post<InviteResult>('/api/users/invite', {
+      email: inviteForm.value.email.trim().toLowerCase(),
+      role: inviteForm.value.role,
+    });
+  } catch (e) {
+    inviteError.value = apiErrorMessage(e);
+  } finally {
+    inviteSubmitting.value = false;
+  }
+}
+
+function closeInvite(): void {
+  const ok = !!inviteResult.value;
+  inviteOpen.value = false;
+  if (ok) loadInvites();
+}
+
+async function resendInvite(inv: InviteRow): Promise<void> {
+  inviteActionId.value = inv.id;
+  invitesError.value = null;
+  try {
+    const res = await api.post<InviteResult>(`/api/users/invites/${inv.id}/resend`, {});
+    // Surface the fresh link in the same result modal so an admin without
+    // email configured can copy it.
+    inviteResult.value = res;
+    inviteOpen.value = true;
+    await loadInvites();
+  } catch (e) {
+    invitesError.value = apiErrorMessage(e);
+  } finally {
+    inviteActionId.value = null;
+  }
+}
+
+async function revokeInvite(inv: InviteRow): Promise<void> {
+  inviteActionId.value = inv.id;
+  invitesError.value = null;
+  try {
+    await api.del(`/api/users/invites/${inv.id}`);
+    await loadInvites();
+  } catch (e) {
+    invitesError.value = apiErrorMessage(e);
+  } finally {
+    inviteActionId.value = null;
+  }
+}
+
 // ---- Confirm modal (toggle isActive + change role) ----
 type ConfirmAction =
   | { kind: 'deactivate'; user: UserRow }
@@ -230,7 +324,10 @@ function cancelConfirm(): void {
   confirm.value = null;
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  loadInvites();
+});
 </script>
 
 <template>
@@ -249,6 +346,7 @@ onMounted(load);
       <button class="btn" :disabled="loading" @click="load">
         {{ loading ? 'Loading…' : 'Refresh' }}
       </button>
+      <button class="btn" @click="openInvite">Invite user</button>
       <button class="btn btn-primary" @click="openCreate">Create user</button>
     </div>
 
@@ -321,6 +419,134 @@ onMounted(load);
         <button class="btn btn-mini" :disabled="!canNext" @click="nextPage">Next</button>
       </div>
     </div>
+
+    <!-- Pending invites -->
+    <div class="card" style="margin-top: 18px">
+      <div class="toolbar" style="margin-bottom: 8px">
+        <h2 class="section-title" style="margin: 0; font-size: 15px">Pending invites</h2>
+        <button class="btn btn-mini" :disabled="invitesLoading" @click="loadInvites">
+          {{ invitesLoading ? 'Loading…' : 'Refresh' }}
+        </button>
+      </div>
+      <div v-if="invitesError" class="banner err">{{ invitesError }}</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Invited by</th>
+            <th>Expires</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="inv in invites" :key="inv.id">
+            <td>{{ inv.email }}</td>
+            <td>
+              <span class="role-badge" :class="inv.role.toLowerCase()">{{ inv.role }}</span>
+            </td>
+            <td class="muted">{{ inv.invitedByEmail ?? '—' }}</td>
+            <td class="muted">{{ fmtDate(inv.expiresAt) }}</td>
+            <td class="row-actions">
+              <button
+                class="btn btn-mini"
+                :disabled="inviteActionId === inv.id"
+                @click="resendInvite(inv)"
+              >
+                Resend
+              </button>
+              <button
+                class="btn btn-mini btn-danger"
+                :disabled="inviteActionId === inv.id"
+                @click="revokeInvite(inv)"
+              >
+                Revoke
+              </button>
+            </td>
+          </tr>
+          <tr v-if="invites.length === 0 && !invitesLoading">
+            <td colspan="5" class="muted" style="text-align: center; padding: 18px">
+              No pending invites.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Invite user modal -->
+    <Teleport to="body">
+      <div v-if="inviteOpen" class="modal-overlay" @click.self="closeInvite">
+        <div class="modal-card" role="dialog" aria-labelledby="invite-title">
+          <h2 id="invite-title">Invite user</h2>
+
+          <template v-if="!inviteResult">
+            <p class="muted">
+              We'll email an invitation link. The recipient sets their own password and the
+              account activates when they accept.
+            </p>
+            <div class="form-row">
+              <label for="iv-email">Email</label>
+              <input
+                id="iv-email"
+                v-model="inviteForm.email"
+                type="email"
+                autocomplete="off"
+                required
+                autofocus
+              />
+            </div>
+            <div class="form-row">
+              <label>Role</label>
+              <div class="radio-row">
+                <label
+                  ><input v-model="inviteForm.role" type="radio" value="PUBLISHER" />
+                  Publisher</label
+                >
+                <label
+                  ><input v-model="inviteForm.role" type="radio" value="ADMIN" /> Admin</label
+                >
+              </div>
+            </div>
+            <div v-if="inviteError" class="banner err">{{ inviteError }}</div>
+            <div class="modal-actions">
+              <button type="button" class="btn" @click="closeInvite">Cancel</button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="inviteSubmitting || !inviteForm.email"
+                @click="submitInvite"
+              >
+                {{ inviteSubmitting ? 'Sending…' : 'Send invite' }}
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div v-if="inviteResult.emailSent" class="banner ok">
+              Invitation emailed. The link is also below if you'd like to share it directly.
+            </div>
+            <div v-else class="banner err">
+              Couldn't send the email{{
+                inviteResult.emailError ? ` (${inviteResult.emailError})` : ''
+              }}. Share this invite link with the recipient directly:
+            </div>
+            <div class="temp-pw" data-testid="invite-url">
+              <code style="word-break: break-all">{{ inviteResult.inviteUrl }}</code>
+              <button
+                type="button"
+                class="btn btn-mini"
+                @click="copyText('invite', inviteResult.inviteUrl)"
+              >
+                {{ copyFlash['invite'] ? 'Copied!' : 'Copy' }}
+              </button>
+            </div>
+            <div class="modal-actions">
+              <button type="button" class="btn btn-primary" @click="closeInvite">Done</button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Create user modal -->
     <Teleport to="body">
