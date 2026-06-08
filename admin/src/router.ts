@@ -5,6 +5,7 @@ import Compose from './views/Compose.vue';
 import Campaigns from './views/Campaigns.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
+import AcceptInvite from './views/AcceptInvite.vue';
 import Users from './views/Users.vue';
 import Activity from './views/Activity.vue';
 
@@ -15,6 +16,12 @@ export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
+    {
+      path: '/accept-invite',
+      name: 'accept-invite',
+      component: AcceptInvite,
+      meta: { public: true },
+    },
     {
       path: '/change-password',
       name: 'change-password',

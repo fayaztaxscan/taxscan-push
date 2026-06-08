@@ -99,6 +99,21 @@ export const env = {
       30,
     ),
   },
+  // Absolute origin the admin SPA is reachable at — used to build invite
+  // links (`<appBaseUrl>/admin/accept-invite?token=…`). Falls back to the
+  // request origin at call time when unset (dev / preview).
+  appBaseUrl: (process.env.APP_BASE_URL ?? '').replace(/\/+$/, ''),
+  email: {
+    // ElasticEmail transactional API. Optional: when apiKey or from is
+    // absent the invite flow degrades to handing the admin a copyable link
+    // instead of sending mail. See src/lib/email.ts.
+    apiKey: process.env.ELASTICEMAIL_API_KEY ?? '',
+    from: process.env.EMAIL_FROM ?? '',
+    fromName: process.env.EMAIL_FROM_NAME ?? 'Taxscan Push',
+  },
+  invite: {
+    ttlHours: intEnv('INVITE_TTL_HOURS', 72),
+  },
   testSegmentTopic: process.env.TEST_SEGMENT_TOPIC ?? 'test',
   allowedPushHosts,
   rateLimit: {

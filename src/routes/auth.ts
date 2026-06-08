@@ -8,12 +8,18 @@ import { requireUser, SESSION_COOKIE_NAME } from '../lib/auth';
 import { makeLoginLimiter } from '../lib/rateLimit';
 import { passwordIssue } from '../lib/passwordPolicy';
 import { recordAudit } from '../lib/audit';
+import { hashInviteToken } from '../lib/invites';
 
 const BCRYPT_COST = 12;
 
 const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(1).max(512),
   newPassword: z.string().min(1).max(512),
+});
+
+const AcceptInviteSchema = z.object({
+  token: z.string().min(1).max(512),
+  password: z.string().min(1).max(512),
 });
 
 const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
@@ -213,6 +219,114 @@ export function createAuthRouter(
       });
 
       return res.status(204).end();
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // ---- Invite acceptance (Phase 8) — public, token-gated ----
+
+  /**
+   * GET /api/auth/invite?token=… — validate an invite link and return who
+   * it's for, so the accept page can render the email + role. Public: the
+   * 256-bit token is the credential. Does not leak whether an email exists.
+   */
+  router.get('/invite', async (req, res, next) => {
+    try {
+      const token = typeof req.query.token === 'string' ? req.query.token : '';
+      if (!token) return res.status(400).json({ error: 'missing_token' });
+      const invite = await prisma.userInvite.findUnique({
+        where: { tokenHash: hashInviteToken(token) },
+      });
+      if (!invite || invite.acceptedAt) {
+        return res.status(404).json({ error: 'invalid_token' });
+      }
+      if (invite.expiresAt <= new Date()) {
+        return res.status(410).json({ error: 'expired' });
+      }
+      return res.json({ email: invite.email, role: invite.role, expiresAt: invite.expiresAt });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /**
+   * POST /api/auth/accept-invite — body { token, password }. Consumes the
+   * invite, creates the real User (active, no forced reset — they just chose
+   * their own password), and logs them in by setting the session cookie.
+   */
+  router.post('/accept-invite', async (req, res, next) => {
+    try {
+      const parsed = AcceptInviteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const now = new Date();
+      const ipAddress = req.ip ?? null;
+
+      const invite = await prisma.userInvite.findUnique({
+        where: { tokenHash: hashInviteToken(parsed.data.token) },
+      });
+      if (!invite || invite.acceptedAt) {
+        return res.status(404).json({ error: 'invalid_token' });
+      }
+      if (invite.expiresAt <= now) {
+        return res.status(410).json({ error: 'expired' });
+      }
+
+      const issue = passwordIssue(parsed.data.password);
+      if (issue) {
+        return res.status(400).json({ error: 'invalid_password', message: issue });
+      }
+
+      // Guard the race where someone was created with this email between
+      // invite and accept (e.g. the admin also used Create user).
+      const clash = await prisma.user.findUnique({ where: { email: invite.email } });
+      if (clash) {
+        return res.status(409).json({ error: 'email_exists' });
+      }
+
+      const passwordHash = await bcrypt.hash(parsed.data.password, BCRYPT_COST);
+      const user = await prisma.user.create({
+        data: {
+          email: invite.email,
+          passwordHash,
+          role: invite.role,
+          isActive: true,
+          passwordResetRequired: false,
+          lastLoginAt: now,
+        },
+      });
+
+      await prisma.userInvite.update({
+        where: { id: invite.id },
+        data: { acceptedAt: now, acceptedUserId: user.id },
+      });
+
+      const { token } = await createSession(user.id, {
+        userAgent: req.header('user-agent') ?? null,
+        ipAddress,
+      });
+      setSessionCookie(res, token);
+
+      await recordAudit({
+        userId: user.id,
+        action: 'USER_INVITE_ACCEPTED',
+        resourceType: 'user_invite',
+        resourceId: invite.id,
+        metadata: { email: user.email, role: user.role, invitedByUserId: invite.invitedByUserId },
+        ipAddress,
+      });
+      await recordAudit({
+        userId: user.id,
+        action: 'LOGIN_SUCCESS',
+        metadata: { email: user.email, via: 'invite' },
+        ipAddress,
+      });
+
+      return res.status(201).json({
+        user: { id: user.id, email: user.email, role: user.role },
+      });
     } catch (err) {
       return next(err);
     }

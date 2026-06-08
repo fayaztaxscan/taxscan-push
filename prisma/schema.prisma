@@ -47,6 +47,8 @@ enum AuditAction {
   USER_REACTIVATED
   USER_ROLE_CHANGED
   USER_PASSWORD_RESET
+  USER_INVITED
+  USER_INVITE_ACCEPTED
   CAMPAIGN_DISPATCHED
   CAMPAIGN_DISPATCH_FAILED
 }
@@ -102,9 +104,31 @@ model User {
   updatedAt             DateTime  @updatedAt
   lastLoginAt           DateTime?
 
-  sessions  UserSession[]
-  auditLogs AuditLog[]
-  campaigns Campaign[]
+  sessions    UserSession[]
+  auditLogs   AuditLog[]
+  campaigns   Campaign[]
+  invitesSent UserInvite[]  @relation("InvitesSent")
+}
+
+// A pending invitation to join the admin. The real `User` row is created
+// only when the recipient accepts (Phase 8). Until then this is the sole
+// record of the invite — keyed by a single-use token whose SHA-256 hash is
+// stored (same model as UserSession.tokenHash). `acceptedAt` is set when the
+// invite is consumed; revoking deletes the row outright.
+model UserInvite {
+  id              String    @id @default(cuid())
+  email           String
+  role            UserRole
+  tokenHash       String    @unique
+  expiresAt       DateTime
+  invitedByUserId String?
+  invitedBy       User?     @relation("InvitesSent", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  acceptedAt      DateTime?
+  acceptedUserId  String?
+  createdAt       DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
 }
 
 model UserSession {

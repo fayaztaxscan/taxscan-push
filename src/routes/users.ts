@@ -17,10 +17,13 @@ import { z } from 'zod';
 import bcrypt from 'bcrypt';
 import type { AuditAction, User, UserRole } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { env } from '../lib/env';
 import { requireUser } from '../lib/auth';
 import { revokeAllSessionsForUser } from '../lib/sessions';
 import { generateTemporaryPassword, passwordIssue } from '../lib/passwordPolicy';
 import { recordAudit } from '../lib/audit';
+import { createInviteToken, buildInviteUrl } from '../lib/invites';
+import { buildInviteEmail, defaultEmailSender, type EmailSender } from '../lib/email';
 
 const BCRYPT_COST = 12;
 
@@ -42,6 +45,11 @@ const ListQuerySchema = z.object({
     .union([z.literal('true'), z.literal('false'), z.literal(true), z.literal(false)])
     .optional()
     .transform((v) => v === true || v === 'true'),
+});
+
+const InviteSchema = z.object({
+  email: z.string().email().max(320),
+  role: z.enum(['ADMIN', 'PUBLISHER']),
 });
 
 const PatchUserSchema = z
@@ -90,8 +98,94 @@ async function wouldDropLastAdmin(
   return others === 0;
 }
 
-export function createUsersRouter(): Router {
+function publicInviteShape(i: {
+  id: string;
+  email: string;
+  role: UserRole;
+  expiresAt: Date;
+  createdAt: Date;
+  invitedByUserId: string | null;
+}) {
+  return {
+    id: i.id,
+    email: i.email,
+    role: i.role,
+    expiresAt: i.expiresAt,
+    createdAt: i.createdAt,
+    invitedByUserId: i.invitedByUserId,
+  };
+}
+
+export function createUsersRouter(
+  opts: { emailSender?: EmailSender } = {},
+): Router {
   const router = Router();
+  const emailSender = opts.emailSender ?? defaultEmailSender;
+
+  // Origin for invite links. Prefer the configured APP_BASE_URL; fall back to
+  // the request's own origin (honours x-forwarded-proto behind the proxy).
+  function originFor(req: { protocol: string; get(name: string): string | undefined }): string {
+    if (env.appBaseUrl) return env.appBaseUrl;
+    return `${req.protocol}://${req.get('host') ?? ''}`;
+  }
+
+  /**
+   * Mints a fresh invite row for `email`/`role`, superseding any existing
+   * pending invite for that email, sends the email best-effort, and records
+   * the audit row. Shared by POST /invite and POST /invites/:id/resend.
+   */
+  async function issueInvite(
+    email: string,
+    role: UserRole,
+    invitedByUserId: string,
+    origin: string,
+    ipAddress: string | null,
+  ): Promise<{
+    invite: ReturnType<typeof publicInviteShape>;
+    inviteUrl: string;
+    emailSent: boolean;
+    emailError?: string;
+  }> {
+    const { token, tokenHash, expiresAt } = createInviteToken();
+
+    // One live invite per email: drop any prior un-accepted invite so an old
+    // link can't be used after a re-invite.
+    await prisma.userInvite.deleteMany({ where: { email, acceptedAt: null } });
+
+    const invite = await prisma.userInvite.create({
+      data: { email, role, tokenHash, expiresAt, invitedByUserId },
+    });
+
+    const inviteUrl = buildInviteUrl(token, origin);
+
+    // Always hand off to the sender. The default ElasticEmail sender reports
+    // `ok: false, error: 'email provider not configured'` when unconfigured,
+    // which surfaces as the manual-link fallback — no separate config gate.
+    const inviter = await prisma.user.findUnique({
+      where: { id: invitedByUserId },
+      select: { email: true },
+    });
+    const mail = buildInviteEmail({
+      inviteUrl,
+      role,
+      inviterEmail: inviter?.email ?? null,
+      expiresAt,
+    });
+    const result = await emailSender({ to: email, ...mail });
+    const emailSent = result.ok;
+    const emailError = result.ok ? undefined : result.error;
+
+    await recordAudit({
+      userId: invitedByUserId,
+      action: 'USER_INVITED',
+      resourceType: 'user_invite',
+      resourceId: invite.id,
+      metadata: { email, role, emailSent },
+      ipAddress,
+    });
+
+    return { invite: publicInviteShape(invite), inviteUrl, emailSent, emailError };
+  }
 
   router.post('/', requireUser(['ADMIN']), async (req, res, next) => {
     try {
@@ -193,6 +287,97 @@ export function createUsersRouter(): Router {
         items: items.map(publicUserShape),
         total,
       });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // ---- Invite flow (Phase 8) ----
+  // Registered BEFORE the `/:id` routes: `GET /invites` would otherwise be
+  // captured by `GET /:id` (id="invites") and 404. Same reason `/picker` sits
+  // ahead of `/:id` above.
+
+  // POST /api/users/invite — admin invites a teammate by email. Creates a
+  // single-use invite (no User row yet) and emails the accept link. If email
+  // isn't configured, the link is returned so the admin can share it manually.
+  router.post('/invite', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const parsed = InviteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const email = parsed.data.email.toLowerCase().trim();
+
+      // A real account already owns this email — invites are for new people.
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) {
+        return res.status(409).json({ error: 'email_exists' });
+      }
+
+      const out = await issueInvite(
+        email,
+        parsed.data.role,
+        req.user!.id,
+        originFor(req),
+        req.ip ?? null,
+      );
+      return res.status(201).json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // GET /api/users/invites — pending (un-accepted, un-expired) invites.
+  router.get('/invites', requireUser(['ADMIN']), async (_req, res, next) => {
+    try {
+      const now = new Date();
+      const invites = await prisma.userInvite.findMany({
+        where: { acceptedAt: null, expiresAt: { gt: now } },
+        orderBy: { createdAt: 'desc' },
+        include: { invitedBy: { select: { email: true } } },
+      });
+      return res.json({
+        items: invites.map((i) => ({
+          ...publicInviteShape(i),
+          invitedByEmail: i.invitedBy?.email ?? null,
+        })),
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // POST /api/users/invites/:id/resend — regenerate token + expiry, re-send.
+  // The old link is invalidated (issueInvite deletes prior pending invites
+  // for the email).
+  router.post('/invites/:id/resend', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const invite = await prisma.userInvite.findUnique({ where: { id: req.params.id } });
+      if (!invite || invite.acceptedAt) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+      const out = await issueInvite(
+        invite.email,
+        invite.role,
+        req.user!.id,
+        originFor(req),
+        req.ip ?? null,
+      );
+      return res.json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // DELETE /api/users/invites/:id — revoke a pending invite.
+  router.delete('/invites/:id', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const invite = await prisma.userInvite.findUnique({ where: { id: req.params.id } });
+      if (!invite || invite.acceptedAt) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+      await prisma.userInvite.delete({ where: { id: invite.id } });
+      return res.status(204).end();
     } catch (err) {
       return next(err);
     }
