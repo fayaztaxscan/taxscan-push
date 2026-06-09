@@ -461,6 +461,44 @@ describe('dispatchCampaign', () => {
     }
   });
 
+  // GA attribution: the push click URL is UTM-tagged so Google Analytics
+  // attributes notification clicks to `taxscan-push / push_notifications`
+  // (mirrors how iZooto tagged its pushes). The stored Campaign.url stays clean.
+  it('UTM-tags the outbound click URL for GA, preserves host + existing query, keeps stored url clean', async () => {
+    const portal = uniquePortal('utm');
+    await makeSubscriber(portal, 'utm');
+
+    const captured: PushPayload[] = [];
+    const sender: Sender = async (_sub, payload) => {
+      captured.push(payload);
+      return { ok: true, statusCode: 201 };
+    };
+
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'utm',
+        body: 'b',
+        url: 'https://www.taxscan.in/article/123?ref=home',
+        target: { type: 'all' },
+        breaking: true,
+      },
+      { sender, now: ist(2026, 6, 1, 12, 0), cap: 100 },
+    );
+    campaignIds.push(result.campaignId);
+
+    expect(captured).toHaveLength(1);
+    const u = new URL(captured[0].url!);
+    expect(u.searchParams.get('utm_source')).toBe('taxscan-push');
+    expect(u.searchParams.get('utm_medium')).toBe('push_notifications');
+    expect(u.searchParams.get('ref')).toBe('home'); // existing query preserved
+    expect(u.hostname).toBe('www.taxscan.in'); // host unchanged -> allowlist (M1) still passes
+
+    // Stored campaign URL is the clean article link (no UTM) — UTM is outbound-only.
+    const camp = await prisma.campaign.findUnique({ where: { id: result.campaignId } });
+    expect(camp?.url).toBe('https://www.taxscan.in/article/123?ref=home');
+  });
+
   // Phase 4: dispatchCampaign attributes the campaign to a user when one
   // is passed (cookie-authenticated /api/send), leaves it NULL otherwise
   // (bearer / RSS poller / sweeper). Plus an audit row is written either

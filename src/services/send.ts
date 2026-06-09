@@ -30,6 +30,27 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * Append UTM params to the push click URL so Google Analytics attributes the
+ * click to this channel (e.g. `taxscan-push / push_notifications`). Applied only
+ * to the outbound payload URL, NOT to the stored Campaign.url — the stored value
+ * stays the clean article link, and the allowlist check (M1) runs on that clean
+ * URL. The host is unchanged here, so a UTM-tagged URL still satisfies the
+ * allowlist. Existing query params (and any UTM already present) are preserved.
+ */
+function appendUtm(rawUrl: string): string {
+  const { source, medium } = env.analytics.utm;
+  if (!source && !medium) return rawUrl; // tagging disabled
+  try {
+    const u = new URL(rawUrl);
+    if (source && !u.searchParams.has('utm_source')) u.searchParams.set('utm_source', source);
+    if (medium && !u.searchParams.has('utm_medium')) u.searchParams.set('utm_medium', medium);
+    return u.toString();
+  } catch {
+    return rawUrl; // unparseable — leave as-is (the allowlist would have rejected it)
+  }
+}
+
 // Phase 1 fallback for the notification icon + badge when a campaign
 // doesn't specify its own. Points at taxscan.in's existing PWA brand
 // icon (declared in its manifest.json icons array). Without this we'd
@@ -165,7 +186,8 @@ export async function executeCampaign(
     const payload: PushPayload = {
       title: campaign.title,
       body: campaign.body,
-      url: campaign.url,
+      // UTM-tag the click URL for GA attribution; stored campaign.url stays clean.
+      url: appendUtm(campaign.url),
       icon,
       // Same URL as the badge for Phase 1: rendering the brand icon
       // (Android desaturates it for the status-bar badge) is better than

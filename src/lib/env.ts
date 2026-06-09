@@ -137,4 +137,18 @@ export const env = {
     publicPerMin: intEnv('RATE_LIMIT_PUBLIC_PER_MIN', 60),
     loginPerMin: intEnv('RATE_LIMIT_LOGIN_PER_MIN', 5),
   },
+  analytics: {
+    // UTM tags appended to the push click URL so Google Analytics attributes
+    // the click to this channel (mirrors how iZooto tagged its pushes as
+    // `izooto / push_notifications`). Without this, notification-click traffic
+    // has no referrer and GA lumps it into `(direct) / (none)`. Default medium
+    // matches iZooto's so the new `taxscan-push / push_notifications` row is
+    // directly comparable in the same Traffic-acquisition report. Set either to
+    // an empty string to disable that tag. `??` keeps the default only when the
+    // var is unset, so `UTM_SOURCE=` (empty) intentionally turns it off.
+    utm: {
+      source: process.env.UTM_SOURCE ?? 'taxscan-push',
+      medium: process.env.UTM_MEDIUM ?? 'push_notifications',
+    },
+  },
 };
