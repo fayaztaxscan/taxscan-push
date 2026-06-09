@@ -5,6 +5,30 @@ import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/pus
 import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { filterByCap } from '../lib/cap';
 import { recordAudit } from '../lib/audit';
+import { isAllowedPushUrl } from '../lib/urlAllowlist';
+
+/**
+ * Thrown when a campaign's click URL points at a host outside
+ * `ALLOWED_PUSH_HOSTS`. The manual `/api/send` route already rejects such URLs
+ * in its zod SendSchema, but the RSS poller and the sweeper reach the dispatch
+ * code without that check — this error closes those paths so the allowlist is
+ * enforced on EVERY send, not just the admin one.
+ */
+export class DisallowedPushUrlError extends Error {
+  constructor(url: string) {
+    super(`push url host not allowed: ${hostOf(url)}`);
+    this.name = 'DisallowedPushUrlError';
+  }
+}
+
+/** Hostname for logging/audit — never echo the full URL. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '(unparseable)';
+  }
+}
 
 // Phase 1 fallback for the notification icon + badge when a campaign
 // doesn't specify its own. Points at taxscan.in's existing PWA brand
@@ -127,6 +151,13 @@ export async function executeCampaign(
   const target = campaign.target as unknown as Target;
 
   try {
+    // Last-line allowlist enforcement. Covers BOTH the immediate dispatch and
+    // the sweeper's deferred (SCHEDULED → due) path, since both run the send
+    // loop through here. dispatchCampaign rejects earlier (before persisting),
+    // but a SCHEDULED campaign comes due via the sweeper without re-running it.
+    if (!isAllowedPushUrl(campaign.url)) {
+      throw new DisallowedPushUrlError(campaign.url);
+    }
     const candidates = await resolveTargets(campaign.portal, target);
     const { kept, capped, cooled } = await filterByCap(candidates, cap, now, minGapMs);
 
@@ -234,6 +265,24 @@ export async function dispatchCampaign(
   const now = deps.now ?? new Date();
   const quietStart = deps.quietStart ?? env.send.quietStart;
   const quietEnd = deps.quietEnd ?? env.send.quietEnd;
+
+  // Primary chokepoint for the RSS-poller path: item.link is trusted-but-not-
+  // controlled (a poisoned/edited feed item or an open-redirect on taxscan.in
+  // could point subscribers off-site). Reject BEFORE persisting a doomed
+  // Campaign row. executeCampaign re-checks as defense-in-depth for the sweeper.
+  if (!isAllowedPushUrl(input.url)) {
+    await recordAudit({
+      userId: input.createdByUserId ?? null,
+      action: 'CAMPAIGN_DISPATCH_FAILED',
+      resourceType: 'campaign',
+      metadata: {
+        portal: input.portal,
+        reason: 'url_not_allowed',
+        host: hostOf(input.url),
+      },
+    });
+    throw new DisallowedPushUrlError(input.url);
+  }
 
   const campaign = await prisma.campaign.create({
     data: {

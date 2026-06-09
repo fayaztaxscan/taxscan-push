@@ -22,8 +22,6 @@ const AcceptInviteSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
-const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
-const MAX_FAILED_ATTEMPTS = 5;
 const SESSION_COOKIE_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 const LoginSchema = z.object({
@@ -52,18 +50,6 @@ function clearSessionCookie(res: Response): void {
   res.clearCookie(SESSION_COOKIE_NAME, cookieOptions());
 }
 
-async function recentFailedAttempts(email: string, now: Date): Promise<number> {
-  const since = new Date(now.getTime() - LOCKOUT_WINDOW_MS);
-  return prisma.auditLog.count({
-    where: {
-      action: 'LOGIN_FAILED',
-      createdAt: { gte: since },
-      // Postgres JSONB path filter on metadata.email.
-      metadata: { path: ['email'], equals: email },
-    },
-  });
-}
-
 export function createAuthRouter(
   opts: { loginPerMin?: number } = {},
 ): Router {
@@ -81,28 +67,27 @@ export function createAuthRouter(
       const ipAddress = req.ip ?? null;
       const now = new Date();
 
-      // Email-based throttle — independent of the per-IP rate limit above.
-      // Stops slow brute-force from a rotating IP set.
-      if ((await recentFailedAttempts(email, now)) >= MAX_FAILED_ATTEMPTS) {
-        return res.status(423).json({ error: 'locked' });
-      }
-
+      // Verify the password FIRST: a correct, active credential always succeeds
+      // and is never collaterally blocked by failed attempts against this email.
+      // This replaces the former per-email lockout, which let an attacker lock
+      // any known admin out of the console (a targeted DoS) — and was itself
+      // bypassable via IP rotation. Brute-force is bounded instead by the per-IP
+      // login limiter (makeLoginLimiter, above) plus the bcrypt cost. Every
+      // failure returns an identical generic 401 so neither account existence
+      // nor any throttle state is advertised.
       const user = await prisma.user.findUnique({ where: { email } });
-      if (!user || !user.isActive) {
+      if (
+        !user ||
+        !user.isActive ||
+        !(await bcrypt.compare(password, user.passwordHash))
+      ) {
         await recordAudit({
+          userId: user?.id,
           action: 'LOGIN_FAILED',
-          metadata: { email, reason: user ? 'inactive' : 'no_such_user' },
-          ipAddress,
-        });
-        return res.status(401).json({ error: 'invalid_credentials' });
-      }
-
-      const passwordOk = await bcrypt.compare(password, user.passwordHash);
-      if (!passwordOk) {
-        await recordAudit({
-          userId: user.id,
-          action: 'LOGIN_FAILED',
-          metadata: { email, reason: 'wrong_password' },
+          metadata: {
+            email,
+            reason: !user ? 'no_such_user' : !user.isActive ? 'inactive' : 'wrong_password',
+          },
           ipAddress,
         });
         return res.status(401).json({ error: 'invalid_credentials' });

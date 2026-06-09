@@ -1,9 +1,11 @@
 /**
  * Phase 2 tests for the cookie-session auth routes (/api/auth/*).
  *
- * Covers: login happy path + sets cookie, wrong-password 401, email-based
- * throttle 423 after 5 fails, /me 401 without cookie, /me 200 with valid
- * cookie, /logout 204 + subsequent /me 401.
+ * Covers: login happy path + sets cookie, wrong-password 401, verify-first
+ * (a correct password is never locked out — the DoS-prone per-email lockout
+ * was removed, M3), server-side passwordResetRequired enforcement (M2), /me
+ * 401 without cookie, /me 200 with valid cookie, /logout 204 + subsequent
+ * /me 401.
  */
 
 import request from 'supertest';
@@ -24,7 +26,7 @@ const emails: string[] = [];
 async function makeUser(
   suffix: string,
   password: string,
-  opts: { role?: UserRole; isActive?: boolean } = {},
+  opts: { role?: UserRole; isActive?: boolean; passwordResetRequired?: boolean } = {},
 ): Promise<User> {
   const email = `auth-${suffix}-${Date.now()}-${Math.floor(
     Math.random() * 1e9,
@@ -36,6 +38,7 @@ async function makeUser(
       passwordHash,
       role: opts.role ?? 'PUBLISHER',
       isActive: opts.isActive ?? true,
+      passwordResetRequired: opts.passwordResetRequired ?? false,
     },
   });
   userIds.push(u.id);
@@ -149,23 +152,29 @@ describe('POST /api/auth/login', () => {
     expect(fail).toBe(1);
   });
 
-  it('locks the account with 423 after 5 failed attempts in the window', async () => {
+  // M3: the former per-email lockout returned 423 and blocked the legitimate
+  // owner too — a targeted account-lockout DoS. After the fix, repeated wrong
+  // attempts never lock the account: a correct password still authenticates,
+  // and every failure returns a generic 401 (never 423).
+  it('verify-first: a correct password still logs in after repeated failures (no lockout DoS)', async () => {
     const user = await makeUser('lockout', 'RealPassword789');
 
-    // 5 failures.
-    for (let i = 0; i < 5; i++) {
+    // 6 failures — more than the old MAX_FAILED_ATTEMPTS of 5.
+    for (let i = 0; i < 6; i++) {
       const res = await request(app)
         .post('/api/auth/login')
         .send({ email: user.email, password: 'NopeNopeNope' });
       expect(res.status).toBe(401);
+      expect(res.body.error).toBe('invalid_credentials'); // never 423/'locked'
     }
 
-    // 6th attempt — even with the CORRECT password — locked out.
+    // The correct password STILL authenticates — the owner is not locked out.
     const res = await request(app)
       .post('/api/auth/login')
       .send({ email: user.email, password: 'RealPassword789' });
-    expect(res.status).toBe(423);
-    expect(res.body.error).toBe('locked');
+    expect(res.status).toBe(200);
+    expect(res.body.user.id).toBe(user.id);
+    expect(res.headers['set-cookie']).toBeDefined();
   });
 
   it('returns 400 for invalid request body (missing email)', async () => {
@@ -174,6 +183,45 @@ describe('POST /api/auth/login', () => {
       .send({ password: 'anything' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_request');
+  });
+});
+
+// M2: passwordResetRequired must be enforced server-side, not only by the SPA
+// router guard. A session for a user who still owes a forced password change
+// may reach change-password / logout / me, but is 403'd on every other route —
+// so an admin-issued temp/reset password can't be used as a normal credential
+// via the API (e.g. curl).
+describe('passwordResetRequired server-side enforcement (M2)', () => {
+  it('blocks a reset-required session from normal routes until the password is rotated', async () => {
+    const user = await makeUser('reset', 'TempPassword12345', {
+      passwordResetRequired: true,
+    });
+
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'TempPassword12345' });
+    expect(login.status).toBe(200);
+    expect(login.body.user.passwordResetRequired).toBe(true);
+    const cookie = setCookieToCookieHeader(login.headers['set-cookie']);
+
+    // Allowlisted route still works so the SPA can read state and rotate.
+    const me = await request(app).get('/api/auth/me').set('Cookie', cookie);
+    expect(me.status).toBe(200);
+
+    // A normal requireUser route (any role) is blocked server-side.
+    const blocked = await request(app).get('/api/audit').set('Cookie', cookie);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toBe('password_change_required');
+
+    // Rotating the password clears the flag and unblocks the same session.
+    const change = await request(app)
+      .post('/api/auth/change-password')
+      .set('Cookie', cookie)
+      .send({ currentPassword: 'TempPassword12345', newPassword: 'BrandNewPass67890' });
+    expect(change.status).toBe(204);
+
+    const after = await request(app).get('/api/audit').set('Cookie', cookie);
+    expect(after.status).toBe(200);
   });
 });
 
