@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "prisma generate && tsc -p tsconfig.json && npm run build:admin",
-    "build:admin": "cd admin && npm ci --no-audit --no-fund && npm run build",
+    "build:admin": "cd admin && npm ci --include=dev --no-audit --no-fund && npm run build",
     "start": "prisma migrate deploy && node dist/index.js",
     "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\"",
