@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { requireBearerOrUser } from '../lib/auth';
 import { dispatchCampaign, type Sender } from '../services/send';
-import { buildMetrics, listCampaigns } from '../services/metrics';
+import { getMetrics, listCampaigns } from '../services/metrics';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
 
@@ -273,7 +273,7 @@ export function createApiRouter(
 
   router.get('/metrics', requireBearerOrUser(), async (_req, res, next) => {
     try {
-      const metrics = await buildMetrics();
+      const metrics = await getMetrics();
       return res.json(metrics);
     } catch (err) {
       return next(err);
