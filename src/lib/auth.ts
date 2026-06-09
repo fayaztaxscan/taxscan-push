@@ -18,6 +18,24 @@ declare global {
 
 export const SESSION_COOKIE_NAME = 'tx_push_session';
 
+// Requests a user who still owes a forced password change (passwordResetRequired)
+// is allowed to make. Everything else is blocked server-side so an admin-issued
+// temp/reset password can't be used as a normal credential via the API. The SPA
+// router guard (admin/src/router.ts) is a UX nicety, NOT the security control —
+// a non-browser client (curl) ignores it.
+const PASSWORD_RESET_ALLOWED_REQUESTS = new Set([
+  'POST /api/auth/change-password',
+  'POST /api/auth/logout',
+  'GET /api/auth/me',
+]);
+
+function isPasswordResetAllowedRequest(req: Request): boolean {
+  // originalUrl is the full path regardless of which router mounted this
+  // middleware (req.path/req.url are stripped to the mount inside a sub-router).
+  const path = (req.originalUrl ?? req.url).split('?')[0];
+  return PASSWORD_RESET_ALLOWED_REQUESTS.has(`${req.method} ${path}`);
+}
+
 export function requireBearer(req: Request, res: Response, next: NextFunction): void {
   const header = req.header('authorization') ?? '';
   const match = /^Bearer (.+)$/.exec(header);
@@ -60,6 +78,16 @@ export function requireUser(roles?: UserRole[]) {
       }
       if (roles && roles.length > 0 && !roles.includes(session.user.role)) {
         res.status(403).json({ error: 'forbidden' });
+        return;
+      }
+      // Forced password rotation is enforced HERE (server-side), not only in the
+      // SPA. A session for a user who still owes a password change may reach only
+      // change-password / logout / me until they rotate — otherwise a leaked
+      // temp/reset password is effectively a permanent full-access credential.
+      // Inherited by requireBearerOrUser's cookie path; the bearer (service)
+      // path never populates req.user, so cron/curl are unaffected.
+      if (session.user.passwordResetRequired && !isPasswordResetAllowedRequest(req)) {
+        res.status(403).json({ error: 'password_change_required' });
         return;
       }
       req.user = session.user;

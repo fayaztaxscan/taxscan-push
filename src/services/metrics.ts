@@ -67,59 +67,57 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   const today = startOfDayIST(now);
   const windowStart = new Date(today.getTime() - 29 * MS_PER_DAY);
 
-  const [
-    activeSubscribers,
-    expiredSubscribers,
-    recentSubs,
-    eventTypeCounts,
-    softPromptSubscribed,
-    sentEventCount,
-    clickedEventCount,
-    failedEventCount,
-    bySourceCounts,
-    recentCampaigns,
-  ] = await Promise.all([
-    prisma.subscriber.count({ where: { status: 'ACTIVE' } }),
-    prisma.subscriber.count({ where: { status: 'EXPIRED' } }),
-    prisma.subscriber.findMany({
-      where: { createdAt: { gte: windowStart } },
-      select: { createdAt: true },
-    }),
-    prisma.event.groupBy({
-      by: ['type'],
-      _count: { _all: true },
-      where: { type: { in: ['PROMPT_SHOWN', 'PROMPT_ACCEPTED', 'SUBSCRIBED', 'UNSUBSCRIBED'] } },
-    }),
-    // Funnel `subscribed` is scoped to the soft-prompt path so it lines up with
-    // PROMPT_SHOWN / PROMPT_ACCEPTED. Recapture and pushsubscriptionchange
-    // SUBSCRIBED events inflate the raw type count but never see the prompt.
-    prisma.event.count({
-      where: { type: 'SUBSCRIBED', meta: { path: ['source'], equals: 'soft-prompt' } },
-    }),
-    prisma.event.count({ where: { type: 'SENT' } }),
-    prisma.event.count({ where: { type: 'CLICKED' } }),
-    prisma.event.count({ where: { type: 'FAILED' } }),
-    Promise.all(
-      KNOWN_SOURCES.map((s) =>
-        prisma.event.count({
-          where: { type: 'SUBSCRIBED', meta: { path: ['source'], equals: s } },
-        }),
-      ),
-    ),
-    prisma.campaign.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        createdAt: true,
-        scheduledAt: true,
-        createdByUserId: true,
-        createdBy: { select: { id: true, email: true, role: true } },
-      },
-    }),
-  ]);
+  // Wave 1: five queries in parallel (was thirteen). Consolidations:
+  //  - subscriber ACTIVE/EXPIRED counts → one groupBy on status.
+  //  - PROMPT_*/SUBSCRIBED/UNSUBSCRIBED/SENT/CLICKED/FAILED counts → one
+  //    groupBy on event type (we read the buckets we need off the result).
+  //  - the soft-prompt funnel count + the four per-source counts (five JSONB
+  //    event.count queries) → one grouped raw scan on meta->>'source'.
+  // Fewer round-trips is the win: data volume is tiny, so per-query latency to
+  // Postgres dominated the old 13-query fan-out.
+  const [subscriberStatusCounts, recentSubs, eventTypeCounts, subscribedBySource, recentCampaigns] =
+    await Promise.all([
+      prisma.subscriber.groupBy({ by: ['status'], _count: { _all: true } }),
+      prisma.subscriber.findMany({
+        where: { createdAt: { gte: windowStart } },
+        select: { createdAt: true },
+      }),
+      prisma.event.groupBy({ by: ['type'], _count: { _all: true } }),
+      // One grouped scan replaces five separate JSONB event.count queries.
+      // Static SQL, no user input — not an injection surface. COUNT(*) comes
+      // back as bigint, so coerce with Number() below.
+      prisma.$queryRaw<Array<{ source: string | null; count: bigint }>>`
+        SELECT meta->>'source' AS source, COUNT(*)::bigint AS count
+        FROM "Event"
+        WHERE type = 'SUBSCRIBED'
+        GROUP BY meta->>'source'
+      `,
+      prisma.campaign.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          createdAt: true,
+          scheduledAt: true,
+          createdByUserId: true,
+          createdBy: { select: { id: true, email: true, role: true } },
+        },
+      }),
+    ]);
+
+  const statusCount = new Map<string, number>();
+  for (const row of subscriberStatusCounts) statusCount.set(row.status, row._count._all);
+  const activeSubscribers = statusCount.get('ACTIVE') ?? 0;
+  const expiredSubscribers = statusCount.get('EXPIRED') ?? 0;
+
+  // Per-source SUBSCRIBED counts. Funnel `subscribed` is scoped to the
+  // soft-prompt path so it lines up with PROMPT_SHOWN / PROMPT_ACCEPTED;
+  // recapture / pushsubscriptionchange SUBSCRIBED events never see the prompt.
+  const sourceCount = new Map<string, number>();
+  for (const row of subscribedBySource) sourceCount.set(row.source ?? '', Number(row.count));
+  const softPromptSubscribed = sourceCount.get('soft-prompt') ?? 0;
 
   // 30-day growth bucketed by IST date.
   const buckets = new Map<string, number>();
@@ -142,6 +140,9 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   const promptAccepted = byType.get('PROMPT_ACCEPTED') ?? 0;
   const totalSubscribed = byType.get('SUBSCRIBED') ?? 0;
   const unsubscribed = byType.get('UNSUBSCRIBED') ?? 0;
+  const sentEventCount = byType.get('SENT') ?? 0;
+  const clickedEventCount = byType.get('CLICKED') ?? 0;
+  const failedEventCount = byType.get('FAILED') ?? 0;
   // Unsubscribe rate uses the total subscribed denominator (any user, any source,
   // can unsubscribe — the rate is a measure of churn against the whole base).
   const unsubscribeRate = totalSubscribed > 0 ? unsubscribed / totalSubscribed : null;
@@ -195,7 +196,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       : null;
 
   const subscribersBySource = Object.fromEntries(
-    KNOWN_SOURCES.map((s, i) => [s, bySourceCounts[i]]),
+    KNOWN_SOURCES.map((s) => [s, sourceCount.get(s) ?? 0]),
   ) as Record<SubscriberSource, number>;
 
   return {
@@ -214,6 +215,52 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     subscribersBySource,
     campaigns,
   };
+}
+
+// ---- Short-TTL cache for /api/metrics ----
+//
+// The dashboard polls /api/metrics on open and on every "refresh" click; the
+// data does not need to be fresh to the second. A small in-process cache makes
+// repeat loads instant and shields Postgres from redundant aggregation —
+// important post-go-live, when the Event table (a row per SENT/CLICKED/FAILED)
+// grows fast. Single-instance only (in-memory); revisit if we scale out.
+//
+// TTL is read per-call from METRICS_CACHE_TTL_MS (default 20s; 0 disables).
+// It defaults to 0 under NODE_ENV=test so suites that assert on /api/metrics
+// always see freshly-computed values.
+let metricsCache: { at: number; data: Metrics } | null = null;
+
+function defaultMetricsTtlMs(): number {
+  const raw = process.env.METRICS_CACHE_TTL_MS;
+  if (raw !== undefined && raw !== '') return Number(raw);
+  return process.env.NODE_ENV === 'test' ? 0 : 20_000;
+}
+
+/** Test hook — clears the in-process metrics cache. */
+export function __resetMetricsCache(): void {
+  metricsCache = null;
+}
+
+/**
+ * Cached wrapper around buildMetrics. Returns the cached payload when it is
+ * younger than the TTL, otherwise recomputes and refreshes the cache. The
+ * route handler uses this; call buildMetrics directly for an uncached read.
+ */
+export async function getMetrics(
+  now: Date = new Date(),
+  opts: { ttlMs?: number; builder?: (now: Date) => Promise<Metrics> } = {},
+): Promise<Metrics> {
+  const ttlMs = opts.ttlMs ?? defaultMetricsTtlMs();
+  const build = opts.builder ?? buildMetrics;
+  if (ttlMs <= 0) return build(now);
+
+  const t = now.getTime();
+  if (metricsCache && t - metricsCache.at < ttlMs) {
+    return metricsCache.data;
+  }
+  const data = await build(now);
+  metricsCache = { at: t, data };
+  return data;
 }
 
 export async function listCampaigns(

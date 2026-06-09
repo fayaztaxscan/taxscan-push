@@ -1,6 +1,6 @@
 import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { dispatchCampaign, type Sender } from '../services/send';
+import { dispatchCampaign, DisallowedPushUrlError, type Sender } from '../services/send';
 import { listCampaigns } from '../services/metrics';
 import type { PushPayload } from '../lib/push';
 import { startOfTodayIST } from '../lib/quietHours';
@@ -403,6 +403,62 @@ describe('dispatchCampaign', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0].icon).toBe(explicitIcon);
     expect(captured[0].badge).toBe(explicitIcon);
+  });
+
+  // Security (M1): the click-URL allowlist must be enforced on the dispatch
+  // path, not just the manual /api/send zod schema. The RSS poller calls
+  // dispatchCampaign() directly with item.link (trusted-but-not-controlled),
+  // so an off-allowlist URL must be rejected here — before any push or row.
+  it('rejects an off-allowlist click URL: throws, sends nothing, persists no campaign', async () => {
+    const portal = uniquePortal('disallowed-url');
+    await makeSubscriber(portal, 'disallowed');
+
+    let senderCalls = 0;
+    const spySender: Sender = async () => {
+      senderCalls++;
+      return { ok: true, statusCode: 201 };
+    };
+
+    const before = await prisma.campaign.count({ where: { portal } });
+
+    await expect(
+      dispatchCampaign(
+        {
+          portal,
+          title: 'phish',
+          body: 'b',
+          url: 'https://evil.example.com/landing',
+          target: { type: 'all' },
+          breaking: true, // prove it's the URL check, not quiet-hours, that blocks
+        },
+        { sender: spySender, now: ist(2026, 6, 1, 12, 0), cap: 100 },
+      ),
+    ).rejects.toBeInstanceOf(DisallowedPushUrlError);
+
+    // No push attempted and — because we reject before prisma.campaign.create —
+    // no Campaign row was persisted for this portal.
+    expect(senderCalls).toBe(0);
+    const after = await prisma.campaign.count({ where: { portal } });
+    expect(after).toBe(before);
+
+    // A CAMPAIGN_DISPATCH_FAILED audit row was written with the rejection
+    // reason and only the host (never the full URL).
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'CAMPAIGN_DISPATCH_FAILED', resourceType: 'campaign' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit).not.toBeNull();
+    const meta = audit?.metadata as { reason?: string; host?: string } | null;
+    expect(meta?.reason).toBe('url_not_allowed');
+    expect(meta?.host).toBe('evil.example.com');
+
+    // Clean up the audit row (no Campaign/resourceId to key on).
+    if (audit) {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL audit_log.allow_purge = 'true'`);
+        await tx.$executeRaw`DELETE FROM "AuditLog" WHERE "id" = ${audit.id}`;
+      });
+    }
   });
 
   // Phase 4: dispatchCampaign attributes the campaign to a user when one

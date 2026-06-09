@@ -1,7 +1,65 @@
 # Security audit & posture
 
+> **Two audits on record.** The **pre-go-live re-audit (2026-06-09)** below is
+> the current state — it covers the user-management stack (Phases 1–8) that
+> landed *after* the original pass. The **Task 10d audit (2026-06-02)** further
+> down is retained for history but is partially superseded (e.g. it audits
+> `ADMIN_PASSWORD`, which was retired in Phase 5; its "0 vulnerabilities" line
+> was stale until the 2026-06-09 bcrypt bump restored it).
+
+---
+
+## Pre-go-live re-audit — 2026-06-09
+
+Multi-agent audit (8 dimensions, every finding adversarially verified) of the
+post-Task-10d surface: cookie-session auth, user management, audit-log
+immutability, email invites, CSRF, and the live-dispatch path. **No critical or
+high findings.** 28 raw findings → 24 confirmed, 4 false positives. Verified
+clean by the audit: 256-bit session/invite tokens stored only as SHA-256 hashes,
+fail-closed startup check, correct cookie flags (HttpOnly/Secure-in-prod/SameSite/
+signed), CORP override correctly scoped to the two SDK routes, no SQLi/XSS sink,
+no SSRF (feed URLs are env-only), secrets not committed.
+
+### Fixed before go-live (the 4 mediums)
+
+| ID | Finding | Fix | Test |
+|----|---------|-----|------|
+| **M1** | Push click-URL allowlist (`isAllowedPushUrl`) was only wired into the `/api/send` zod schema — the **RSS poller / sweeper dispatch path bypassed it**, and that path carries ~all traffic once `SEND_MODE=live`. | Enforce in `dispatchCampaign` (reject before persisting) **and** `executeCampaign` (covers the sweeper). New `DisallowedPushUrlError`; audit row logs host only. | `send.test.ts` "rejects an off-allowlist click URL" |
+| **M2** | `passwordResetRequired` was enforced **only in the Vue router** — a temp/reset password worked as a permanent full-access credential via the API (curl). | Server-side gate in `requireUser`: a reset-required session may only hit change-password / logout / me; `403 password_change_required` elsewhere. Bearer/service path unaffected. | `auth.test.ts` "passwordResetRequired server-side enforcement (M2)" |
+| **M3** | Per-email login lockout (5 fails/15 min, no IP scoping, pre-password-check) let an attacker **lock any known admin out** (targeted DoS) and blocked the real owner even with the right password. | Verify-password-**first**: a correct credential always authenticates; removed the weaponizable per-email 423 lockout; generic 401 on all failures. Brute-force bounded by the per-IP login limiter + bcrypt cost. | `auth.test.ts` "verify-first: a correct password still logs in after repeated failures" |
+| **M4** | `bcrypt@5.1.1` pulled `@mapbox/node-pre-gyp → tar` with 3 high-severity advisories (build/CI-host supply-chain; not request-time reachable). Contradicted the old "0 vulnerabilities". | Bumped `bcrypt` → `^6.0.0` (patched chain; 35 transitive pkgs removed). `npm audit` = **0** (prod + dev). | full suite (hash/compare paths) + `npm audit` |
+
+Full suite after fixes: **198/198 green** (`jest --runInBand`); `tsc --noEmit` + eslint clean.
+
+### Deferred to a hardening backlog (decided 2026-06-09 — none block go-live)
+
+**Low (12):** no absolute session lifetime cap (sliding 8h idle) · last-active-admin
+guard is non-transactional (TOCTOU) · `/api/users/picker` leaks full roster+roles to
+PUBLISHER · CSRF rests solely on SameSite=Lax (safe today — no GET mutators) · login
+timing user-enumeration (bcrypt skipped for unknown email) · invite endpoints
+unthrottled · `allow_purge` trigger authorizes any DELETE in its txn · `recordAudit`
+swallows write failures silently · unbounded `subscribe` topics/portal · CSP disabled
+app-wide · invite response reflects raw ElasticEmail error body · change-password
+unthrottled / allows same-password reuse.
+
+**Info / accept-as-designed:** audit log readable by PUBLISHER (deliberate
+transparency, documented in `audit.ts` header) · immutability trigger disable-able
+by a DB owner + TRUNCATE uncovered (requires DB creds) · login limiter counts
+successes.
+
+**Operator follow-ups (not code):** rotate the Railway DB password if it was ever
+shared outside `.env` (still flagged from Task 10d) · the privacy-policy disclosure
+items below remain the operator's responsibility.
+
+---
+
+## Task 10d audit (2026-06-02) — historical
+
 Snapshot of the Task 10d audit. Each item lists what was checked, the
-outcome, and where the fix lives in the codebase.
+outcome, and where the fix lives in the codebase. **Partially superseded** —
+see the 2026-06-09 re-audit above (notably: `ADMIN_PASSWORD` was retired in
+Phase 5, so item 4's password-login details no longer apply; item 8's "0
+vulnerabilities" was restored by the bcrypt 6 bump).
 
 | # | Area | Status |
 |---|---|---|
