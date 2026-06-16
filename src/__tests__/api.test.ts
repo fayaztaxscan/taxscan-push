@@ -292,3 +292,18 @@ describe('POST /api/send', () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('GET /api/guide (auth-gated admin guide PDF)', () => {
+  it('rejects an unauthenticated request', async () => {
+    const res = await request(app).get('/api/guide');
+    expect(res.status).toBe(401);
+  });
+
+  it('serves the PDF to an authenticated request', async () => {
+    const res = await request(app)
+      .get('/api/guide')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+  });
+});

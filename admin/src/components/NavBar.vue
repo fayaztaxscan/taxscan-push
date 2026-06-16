@@ -46,6 +46,14 @@ async function onLogout() {
         <span class="nav-email">{{ user.email }}</span>
         <span class="role-badge" :class="user.role.toLowerCase()">{{ user.role }}</span>
       </span>
+      <a
+        href="/api/guide"
+        target="_blank"
+        rel="noopener"
+        class="nav-secondary"
+        @click="closeMenu"
+        >Guide</a
+      >
       <router-link to="/change-password" class="nav-secondary" @click="closeMenu"
         >Change password</router-link
       >
