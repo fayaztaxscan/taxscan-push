@@ -222,6 +222,45 @@ describe('dispatchCampaign', () => {
     expect(events.map((e) => e.subscriberId)).toEqual([fresh.id]);
   });
 
+  it('force:true bypasses both the daily cap and the per-subscriber cooldown (full reach)', async () => {
+    const now = ist(2026, 6, 1, 12, 0);
+    const todayStart = startOfTodayIST(now);
+    const portal = uniquePortal('force');
+
+    const maxed = await makeSubscriber(portal, 'force-maxed');
+    // 2 SENT today → at cap:2; the most recent is at `now` so it is also inside
+    // a 30-min cooldown. Without force this subscriber is both capped AND cooled.
+    await prisma.event.create({
+      data: { type: 'SENT', subscriberId: maxed.id, createdAt: todayStart },
+    });
+    await prisma.event.create({
+      data: { type: 'SENT', subscriberId: maxed.id, createdAt: now },
+    });
+
+    const result = await dispatchCampaign(
+      {
+        portal,
+        title: 'force run',
+        body: '...',
+        url: 'https://taxscan.in',
+        target: { type: 'all' },
+        force: true,
+      },
+      // Finite cap + cooldown passed deliberately to prove force overrides them.
+      { sender: okSender(), now, cap: 2, minGapMinutes: 30 },
+    );
+    campaignIds.push(result.campaignId);
+
+    expect(result.sent).toBe(1);
+    expect(result.capped).toBe(0);
+    expect(result.cooled).toBe(0);
+
+    const events = await prisma.event.findMany({
+      where: { campaignId: result.campaignId, type: 'SENT' },
+    });
+    expect(events.map((e) => e.subscriberId)).toEqual([maxed.id]);
+  });
+
   it('defers during quiet hours and marks SCHEDULED', async () => {
     const portal = uniquePortal('quiet');
     await makeSubscriber(portal, 'quiet');

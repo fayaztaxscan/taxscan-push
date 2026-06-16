@@ -408,3 +408,134 @@ describe('pollAllFeeds iteration', () => {
     expect(result.totals.sent).toBe(3);
   });
 });
+
+describe('editorial classifier routing (Stage 1)', () => {
+  // FeedItem dedupe is by GUID globally and the dev DB is not reset between
+  // runs, so GUIDs + URLs must be unique per run or a second run sees them as
+  // already-claimed and skips them.
+  function uid(): string {
+    return `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  }
+
+  it('editorialFilter on + live: dispatches only QUALIFIED, holds FALLBACK + REVIEW as DRAFT', async () => {
+    const feedUrl = freshFeedUrl('editorial');
+    const u = uid();
+    const scUrl = `https://taxscan.in/sc1-${u}`;
+    const cestatUrl = `https://taxscan.in/cestat1-${u}`;
+    const explainerUrl = `https://taxscan.in/explainer1-${u}`;
+    const fetcher = fakeFetcher([
+      { guid: `q-${u}`, title: 'Supreme Court upholds reassessment [Read Judgment]', link: scUrl },
+      { guid: `f-${u}`, title: 'Refund allowed: CESTAT [Read Order]', link: cestatUrl },
+      { guid: `r-${u}`, title: 'Understanding GST on Renting of Property', link: explainerUrl },
+    ]);
+    const { dispatcher, calls } = recordingDispatcher();
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'live',
+      editorialFilter: true,
+      fetcher,
+      dispatcher,
+    });
+
+    expect(result.sent).toBe(1);
+    expect(result.held).toBe(2);
+    expect(result.captured).toBe(0);
+    // Only the Supreme Court item reached the dispatcher, tagged QUALIFIED.
+    expect(calls.map((c) => c.title)).toEqual([
+      'Supreme Court upholds reassessment [Read Judgment]',
+    ]);
+    expect(calls[0].sendQueue).toBe('QUALIFIED');
+    expect(calls[0].authority).toBe('Supreme Court');
+
+    // Held items persisted as DRAFT with their queue + authority.
+    const drafts = await prisma.campaign.findMany({
+      where: { url: { in: [cestatUrl, explainerUrl] } },
+      select: { status: true, sendQueue: true, authority: true, url: true },
+    });
+    const byUrl = Object.fromEntries(drafts.map((d) => [d.url, d]));
+    expect(byUrl[cestatUrl]).toMatchObject({
+      status: 'DRAFT',
+      sendQueue: 'FALLBACK',
+      authority: 'CESTAT',
+    });
+    expect(byUrl[explainerUrl]).toMatchObject({
+      status: 'DRAFT',
+      sendQueue: 'REVIEW',
+      authority: null,
+    });
+  });
+
+  it('editorialFilter off + live: dispatches everything (legacy) but still stamps classification', async () => {
+    const feedUrl = freshFeedUrl('editorial-off');
+    const u = uid();
+    const fetcher = fakeFetcher([
+      { guid: `off-q-${u}`, title: 'CBDT notifies new TDS rates [Read Notification]', link: `https://taxscan.in/cbdt1-${u}` },
+      { guid: `off-f-${u}`, title: 'Penalty set aside: CESTAT [Read Order]', link: `https://taxscan.in/cestat2-${u}` },
+    ]);
+    const { dispatcher, calls } = recordingDispatcher();
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'live',
+      editorialFilter: false,
+      fetcher,
+      dispatcher,
+    });
+
+    expect(result.sent).toBe(2);
+    expect(result.held).toBe(0);
+    expect(calls.map((c) => c.authority).sort()).toEqual(['CBDT', 'CESTAT']);
+    expect(calls.find((c) => c.authority === 'CESTAT')?.sendQueue).toBe('FALLBACK');
+  });
+
+  it('editorialFilter + pacerEnabled: QUALIFIED is queued as DRAFT (held), nothing dispatched', async () => {
+    const feedUrl = freshFeedUrl('editorial-pacer');
+    const u = uid();
+    const scUrl = `https://taxscan.in/scp-${u}`;
+    const fetcher = fakeFetcher([
+      { guid: `pq-${u}`, title: 'Supreme Court ruling [Read Judgment]', link: scUrl },
+    ]);
+    const { dispatcher, calls } = recordingDispatcher();
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher,
+      dispatcher,
+    });
+
+    expect(calls).toHaveLength(0); // pacer will release it later, not the poller
+    expect(result.sent).toBe(0);
+    expect(result.held).toBe(1);
+    const draft = await prisma.campaign.findFirst({
+      where: { url: scUrl },
+      select: { status: true, sendQueue: true, authority: true },
+    });
+    expect(draft).toMatchObject({ status: 'DRAFT', sendQueue: 'QUALIFIED', authority: 'Supreme Court' });
+  });
+
+  it('capture_only ignores the filter — everything captured (not held), nothing dispatched', async () => {
+    const feedUrl = freshFeedUrl('editorial-capture');
+    const u = uid();
+    const fetcher = fakeFetcher([
+      { guid: `cap-q-${u}`, title: 'Supreme Court ruling [Read Judgment]', link: `https://taxscan.in/sc2-${u}` },
+    ]);
+    const { dispatcher, calls } = recordingDispatcher();
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'capture_only',
+      editorialFilter: true,
+      fetcher,
+      dispatcher,
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(result.captured).toBe(1);
+    expect(result.held).toBe(0);
+    expect(result.sent).toBe(0);
+  });
+});

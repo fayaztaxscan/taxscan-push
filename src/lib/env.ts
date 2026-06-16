@@ -98,10 +98,30 @@ export const env = {
     cron: process.env.RSS_POLL_CRON ?? '*/5 * * * *',
     tz: 'Asia/Kolkata',
     portal: 'taxscan',
+    // Editorial classifier (SEND_PACING_PLAN.md Stage 1). When true, the poller
+    // classifies each article by title and, in `live` mode, dispatches only
+    // QUALIFIED (allow-list) items; FALLBACK (ITAT/CESTAT/NCLAT/NCLT) and REVIEW
+    // (unclassified) items are captured as DRAFT and held, not sent. Default
+    // false = legacy "send everything" behaviour, so the code can ship dark and
+    // be switched on deliberately. Classification is recorded on every item
+    // regardless of this flag; only the hold/route behaviour is gated.
+    editorialFilter: process.env.RSS_EDITORIAL_FILTER === 'true',
   },
   sweeper: {
     enabled: process.env.SWEEPER_ENABLED === 'true',
     cron: process.env.SWEEPER_CRON ?? '* * * * *',
+  },
+  // Editorial pacer (SEND_PACING_PLAN.md Stage 2). Releases one queued article
+  // per global spacing slot, best-first, up to a daily ceiling. Requires the
+  // editorial filter (RSS_EDITORIAL_FILTER) — when the pacer is on the poller
+  // QUEUES qualified articles as DRAFT instead of sending them immediately, and
+  // the pacer dispatches them on the slot schedule. Default off = no pacing
+  // (Stage-1 behaviour: qualified sends immediately on capture).
+  pacer: {
+    enabled: process.env.PACER_ENABLED === 'true',
+    cron: process.env.PACER_CRON ?? '* * * * *',
+    spacingMinutes: nonNegIntEnv('SEND_SPACING_MINUTES', 45),
+    dailyCeiling: nonNegIntEnv('DAILY_SEND_CEILING', 20),
   },
   audit: {
     // Default ON so a deploy without the env var still gets retention

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { dispatchCampaign, type CampaignInput, type DispatchResult } from './send';
+import { classify } from './classify';
 
 type FeedItem = Parser.Item & { categories?: string[] };
 type FeedOutput = { items: FeedItem[] };
@@ -22,6 +23,10 @@ export type PollDeps = {
   dispatcher?: Dispatcher;
   portal?: string;
   mode?: SendMode;
+  /** Override env.rss.editorialFilter (Stage 1). Defaults to the env value. */
+  editorialFilter?: boolean;
+  /** Override env.pacer.enabled (Stage 2). Defaults to the env value. */
+  pacerEnabled?: boolean;
 };
 
 export type PollResult = {
@@ -32,6 +37,8 @@ export type PollResult = {
   newItems: number;
   sent: number;
   captured: number;
+  /** Classified non-QUALIFIED and held as DRAFT (editorial filter, live mode). */
+  held: number;
   errors: number;
   durationMs: number;
   mode: SendMode;
@@ -93,6 +100,8 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const dispatcher = deps.dispatcher ?? dispatchCampaign;
   const portal = deps.portal ?? env.rss.portal;
   const mode = deps.mode ?? env.send.mode;
+  const editorialFilter = deps.editorialFilter ?? env.rss.editorialFilter;
+  const pacerEnabled = deps.pacerEnabled ?? env.pacer.enabled;
   const startedAt = Date.now();
 
   let itemsFound = 0;
@@ -100,6 +109,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   let newItems = 0;
   let sent = 0;
   let captured = 0;
+  let held = 0;
   let errors = 0;
 
   try {
@@ -136,6 +146,10 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
       }
       newItems++;
 
+      // Editorial classification by title (SEND_PACING_PLAN.md Stage 1).
+      // Stamped on every item for ranking/analytics, regardless of the filter.
+      const c = classify(item.title!.trim());
+
       const input: CampaignInput = {
         portal,
         title: item.title!.trim(),
@@ -145,12 +159,25 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
         // are ignored — the source URL is the source of truth.
         target: { type: 'topics', topics: [topic] },
         breaking: false,
+        sendQueue: c.queue,
+        authority: c.authority,
       };
 
-      if (mode === 'capture_only') {
-        // Capture-only: write the Campaign as DRAFT and link the FeedItem,
-        // but skip dispatch. iZooto stays in charge of notifications while
-        // we passively build the migrated subscriber base.
+      // Dispatch only in `live` mode. With the editorial filter off, live mode
+      // dispatches everything (legacy). With it on:
+      //   - QUALIFIED sends immediately ONLY when the pacer is off (Stage-1
+      //     interim); when the pacer is on, QUALIFIED is captured as DRAFT and
+      //     released later by the pacer on its slot schedule (Stage 2).
+      //   - FALLBACK / REVIEW are always captured as DRAFT and held.
+      // capture_only never dispatches.
+      const shouldSend =
+        mode === 'live' &&
+        (!editorialFilter ? true : c.queue === 'QUALIFIED' && !pacerEnabled);
+
+      if (!shouldSend) {
+        // Write the Campaign as DRAFT and link the FeedItem, but skip dispatch.
+        // (capture_only mode, or the editorial filter holding a non-qualified
+        // item.) The classifier decision is persisted for the pacer/review queue.
         try {
           const campaign = await prisma.campaign.create({
             data: {
@@ -161,13 +188,16 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
               icon: input.icon ?? null,
               target: input.target as object,
               status: 'DRAFT',
+              sendQueue: input.sendQueue ?? null,
+              authority: input.authority ?? null,
             },
           });
           await prisma.feedItem.update({
             where: { id: claim.id },
             data: { campaignId: campaign.id },
           });
-          captured++;
+          if (mode === 'capture_only') captured++;
+          else held++;
         } catch (err) {
           errors++;
           // eslint-disable-next-line no-console
@@ -208,9 +238,9 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const durationMs = Date.now() - startedAt;
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] poll topic=${topic} feed=${feedUrl} mode=${mode} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} captured=${captured} errors=${errors} ms=${durationMs}`,
+    `[rss] poll topic=${topic} feed=${feedUrl} mode=${mode} filter=${editorialFilter} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} captured=${captured} held=${held} errors=${errors} ms=${durationMs}`,
   );
-  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, captured, errors, durationMs, mode };
+  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, captured, held, errors, durationMs, mode };
 }
 
 export async function pollAllFeeds(
@@ -231,12 +261,13 @@ export async function pollAllFeeds(
     newItems: results.reduce((s, r) => s + r.newItems, 0),
     sent: results.reduce((s, r) => s + r.sent, 0),
     captured: results.reduce((s, r) => s + r.captured, 0),
+    held: results.reduce((s, r) => s + r.held, 0),
     errors: results.reduce((s, r) => s + r.errors, 0),
     durationMs: Date.now() - startedAt,
   };
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} captured=${totals.captured} errors=${totals.errors} ms=${totals.durationMs}`,
+    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} captured=${totals.captured} held=${totals.held} errors=${totals.errors} ms=${totals.durationMs}`,
   );
   return { feeds: results, totals };
 }
