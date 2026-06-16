@@ -25,6 +25,8 @@ export type PollDeps = {
   mode?: SendMode;
   /** Override env.rss.editorialFilter (Stage 1). Defaults to the env value. */
   editorialFilter?: boolean;
+  /** Override env.pacer.enabled (Stage 2). Defaults to the env value. */
+  pacerEnabled?: boolean;
 };
 
 export type PollResult = {
@@ -99,6 +101,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const portal = deps.portal ?? env.rss.portal;
   const mode = deps.mode ?? env.send.mode;
   const editorialFilter = deps.editorialFilter ?? env.rss.editorialFilter;
+  const pacerEnabled = deps.pacerEnabled ?? env.pacer.enabled;
   const startedAt = Date.now();
 
   let itemsFound = 0;
@@ -160,12 +163,16 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
         authority: c.authority,
       };
 
-      // Dispatch only in `live` mode, and — when the editorial filter is on —
-      // only for QUALIFIED (allow-list) articles. FALLBACK (ITAT/CESTAT/NCLAT/
-      // NCLT) and REVIEW (unclassified) items are captured as DRAFT and held for
-      // the pacer / review queue (Stages 2-3). With the filter off, live mode
-      // dispatches everything (legacy). capture_only never dispatches.
-      const shouldSend = mode === 'live' && (!editorialFilter || c.queue === 'QUALIFIED');
+      // Dispatch only in `live` mode. With the editorial filter off, live mode
+      // dispatches everything (legacy). With it on:
+      //   - QUALIFIED sends immediately ONLY when the pacer is off (Stage-1
+      //     interim); when the pacer is on, QUALIFIED is captured as DRAFT and
+      //     released later by the pacer on its slot schedule (Stage 2).
+      //   - FALLBACK / REVIEW are always captured as DRAFT and held.
+      // capture_only never dispatches.
+      const shouldSend =
+        mode === 'live' &&
+        (!editorialFilter ? true : c.queue === 'QUALIFIED' && !pacerEnabled);
 
       if (!shouldSend) {
         // Write the Campaign as DRAFT and link the FeedItem, but skip dispatch.

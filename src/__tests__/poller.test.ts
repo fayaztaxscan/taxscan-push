@@ -489,6 +489,34 @@ describe('editorial classifier routing (Stage 1)', () => {
     expect(calls.find((c) => c.authority === 'CESTAT')?.sendQueue).toBe('FALLBACK');
   });
 
+  it('editorialFilter + pacerEnabled: QUALIFIED is queued as DRAFT (held), nothing dispatched', async () => {
+    const feedUrl = freshFeedUrl('editorial-pacer');
+    const u = uid();
+    const scUrl = `https://taxscan.in/scp-${u}`;
+    const fetcher = fakeFetcher([
+      { guid: `pq-${u}`, title: 'Supreme Court ruling [Read Judgment]', link: scUrl },
+    ]);
+    const { dispatcher, calls } = recordingDispatcher();
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher,
+      dispatcher,
+    });
+
+    expect(calls).toHaveLength(0); // pacer will release it later, not the poller
+    expect(result.sent).toBe(0);
+    expect(result.held).toBe(1);
+    const draft = await prisma.campaign.findFirst({
+      where: { url: scUrl },
+      select: { status: true, sendQueue: true, authority: true },
+    });
+    expect(draft).toMatchObject({ status: 'DRAFT', sendQueue: 'QUALIFIED', authority: 'Supreme Court' });
+  });
+
   it('capture_only ignores the filter — everything captured (not held), nothing dispatched', async () => {
     const feedUrl = freshFeedUrl('editorial-capture');
     const u = uid();

@@ -111,6 +111,18 @@ export const env = {
     enabled: process.env.SWEEPER_ENABLED === 'true',
     cron: process.env.SWEEPER_CRON ?? '* * * * *',
   },
+  // Editorial pacer (SEND_PACING_PLAN.md Stage 2). Releases one queued article
+  // per global spacing slot, best-first, up to a daily ceiling. Requires the
+  // editorial filter (RSS_EDITORIAL_FILTER) — when the pacer is on the poller
+  // QUEUES qualified articles as DRAFT instead of sending them immediately, and
+  // the pacer dispatches them on the slot schedule. Default off = no pacing
+  // (Stage-1 behaviour: qualified sends immediately on capture).
+  pacer: {
+    enabled: process.env.PACER_ENABLED === 'true',
+    cron: process.env.PACER_CRON ?? '* * * * *',
+    spacingMinutes: nonNegIntEnv('SEND_SPACING_MINUTES', 45),
+    dailyCeiling: nonNegIntEnv('DAILY_SEND_CEILING', 20),
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.

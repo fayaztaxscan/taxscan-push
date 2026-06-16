@@ -10,6 +10,7 @@ assertRequiredEnv();
 import { createApp } from './app';
 import { startPoller } from './services/poller';
 import { startSweeper } from './services/sweeper';
+import { startPacer } from './services/pacer';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
 import type { Sender } from './services/send';
 
@@ -29,5 +30,6 @@ app.listen(env.port, () => {
   );
   startPoller();
   startSweeper();
+  startPacer();
   startAuditRetentionSweeper();
 });
