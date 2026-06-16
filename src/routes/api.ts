@@ -1,3 +1,4 @@
+import path from 'path';
 import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
@@ -369,6 +370,17 @@ export function createApiRouter(
     } catch (err) {
       return next(err);
     }
+  });
+
+  // Admin user guide (PDF). Auth-gated so it is NOT public — the SPA's session
+  // cookie satisfies requireBearerOrUser on a same-origin navigation. The file
+  // is committed under <repo>/docs and ships with the deploy.
+  router.get('/guide', requireBearerOrUser(), (_req, res) => {
+    const pdfPath = path.resolve(__dirname, '..', '..', 'docs', 'Taxscan-Push-Admin-Guide.pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="Taxscan-Push-Admin-Guide.pdf"');
+    res.sendFile(pdfPath, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'guide_not_found' });
+    });
   });
 
   router.get('/campaigns', requireBearerOrUser(), async (req, res, next) => {
