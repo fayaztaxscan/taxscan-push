@@ -4,7 +4,33 @@ import { useApi } from '../composables/useApi';
 import MetricCard from '../components/MetricCard.vue';
 import FunnelStat from '../components/FunnelStat.vue';
 import SparkLine from '../components/SparkLine.vue';
+import InfoTip from '../components/InfoTip.vue';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
+
+// Plain-language explanations shown behind each card's ⓘ icon: what it means
+// and what to expect from the numbers.
+const INFO = {
+  activeSubscribers:
+    'How many people are signed up to get your notifications right now — your live audience. It grows as people opt in and dips when dead subscriptions are cleaned out. Expect steady growth; a sudden drop is usually a one-time cleanup, not lost readers.',
+  totalSent:
+    'Total individual notifications delivered since launch — sending one article to 1,000 people counts as 1,000. It only ever goes up. A faster climb means more articles going out and/or a bigger audience.',
+  ctr:
+    'Click-through rate: of all notifications sent, the share people actually clicked. The best gauge of how interesting and relevant your pushes are. Higher is better — aim for about 4–6%. Low means the content or who it is sent to needs work.',
+  optInRate:
+    'Of the people shown the “Allow notifications?” prompt, the share who said yes. Measures how convincing the prompt is. Aim for 5% or more. Low usually means the prompt shows at the wrong moment.',
+  deliveryRate:
+    'Of the notifications we tried to send, the share that actually reached the device. The rest bounce off dead or expired subscriptions. Aim for 95%+. A dip means many dead subscriptions and usually self-heals as they are pruned.',
+  unsubscribeRate:
+    'The share of subscribers who opted out or whose subscription died. Lower is better — keep it under 0.5%. A spike is a fatigue warning: too many notifications, or content people do not want.',
+  sources:
+    'Where your subscribers came from. “Soft prompt” = clicked Allow on your site. “Recaptured” = returning visitors who had already allowed notifications and were re-registered automatically. “SW endpoint rotation” = a technical re-registration of an existing subscriber (not a new person). “Bulk import” = added from a file.',
+  growth:
+    'New subscribers added each day over the last 30 days — your growth trend at a glance. A rising or steady line is healthy; a flat line near zero means sign-ups have stalled.',
+  funnel:
+    'The journey from prompt to subscriber: how many saw the “Allow?” prompt, how many accepted, and how many ended up subscribed. A big drop between two steps shows where you are losing people.',
+  campaigns:
+    'Your most recent notifications and how each did — who it reached, how many clicked, and the click rate (CTR). Use it to spot which headlines land best.',
+};
 
 type Metrics = {
   activeSubscribers: number;
@@ -35,7 +61,7 @@ type Metrics = {
 
 const SOURCE_LABELS: Record<string, string> = {
   'soft-prompt': 'Soft prompt (organic opt-in)',
-  recapture: 'Recaptured (iZooto migration)',
+  recapture: 'Recaptured (returning opt-ins)',
   pushsubscriptionchange: 'SW endpoint rotation',
   import: 'Bulk import',
 };
@@ -100,14 +126,20 @@ onMounted(load);
         <MetricCard
           label="Active subscribers"
           :value="metrics.activeSubscribers.toLocaleString()"
+          :info="INFO.activeSubscribers"
         />
-        <MetricCard label="Total sent" :value="metrics.totals.sent.toLocaleString()" />
+        <MetricCard
+          label="Total sent"
+          :value="metrics.totals.sent.toLocaleString()"
+          :info="INFO.totalSent"
+        />
         <MetricCard
           label="Overall CTR"
           :value="pct(overallCtrValue)"
           :hint="metrics.totals.clicked.toLocaleString() + ' clicks'"
           :band="classify(overallCtrValue, THRESHOLDS.ctr)"
           :band-title="bandTooltip('ctr')"
+          :info="INFO.ctr"
         />
         <MetricCard
           label="Opt-in rate"
@@ -115,6 +147,7 @@ onMounted(load);
           :hint="metrics.funnel.promptAccepted.toLocaleString() + ' / ' + metrics.funnel.promptShown.toLocaleString() + ' prompts'"
           :band="classify(metrics.optInRate, THRESHOLDS.optInRate)"
           :band-title="bandTooltip('optInRate')"
+          :info="INFO.optInRate"
         />
         <MetricCard
           label="Delivery rate"
@@ -122,6 +155,7 @@ onMounted(load);
           :hint="metrics.totals.failed.toLocaleString() + ' failed'"
           :band="classify(metrics.deliveryRate, THRESHOLDS.deliveryRate)"
           :band-title="bandTooltip('deliveryRate')"
+          :info="INFO.deliveryRate"
         />
         <MetricCard
           label="Unsubscribe rate"
@@ -129,6 +163,7 @@ onMounted(load);
           :hint="metrics.totals.expired.toLocaleString() + ' expired'"
           :band="classify(metrics.unsubscribeRate, THRESHOLDS.unsubscribeRate)"
           :band-title="bandTooltip('unsubscribeRate')"
+          :info="INFO.unsubscribeRate"
         />
       </div>
       <div class="thresholds-legend">
@@ -137,7 +172,7 @@ onMounted(load);
       </div>
 
       <div class="card" style="margin-top: 16px">
-        <h2>Subscriber sources</h2>
+        <h2>Subscriber sources <InfoTip heading="Subscriber sources" :text="INFO.sources" /></h2>
         <table>
           <thead>
             <tr><th>Source</th><th>Subscribers</th></tr>
@@ -150,13 +185,14 @@ onMounted(load);
           </tbody>
         </table>
         <div class="muted" style="margin-top: 6px">
-          Watch <strong>Recaptured</strong> grow during iZooto cutover. Once comfortable, flip
-          <code>SEND_MODE=live</code> and <code>CUTOVER_MODE=true</code> together.
+          <strong>Recaptured</strong> is the main growth source and should climb steadily — these
+          are returning visitors who had already allowed notifications and re-register
+          automatically. <strong>Soft prompt</strong> tracks new opt-ins from the on-site prompt.
         </div>
       </div>
 
       <div class="card">
-        <h2>30-day subscriber growth</h2>
+        <h2>30-day subscriber growth <InfoTip heading="30-day subscriber growth" :text="INFO.growth" /></h2>
         <SparkLine :points="sparkPoints" />
         <div class="muted" style="margin-top: 6px">
           {{ sparkPoints.reduce((s, p) => s + p.value, 0).toLocaleString() }} new subscribers in the
@@ -165,7 +201,7 @@ onMounted(load);
       </div>
 
       <div class="card">
-        <h2>Opt-in funnel</h2>
+        <h2>Opt-in funnel <InfoTip heading="Opt-in funnel" :text="INFO.funnel" /></h2>
         <div class="funnel">
           <FunnelStat
             label="Prompt shown"
@@ -186,7 +222,7 @@ onMounted(load);
       </div>
 
       <div class="card">
-        <h2>Recent campaigns</h2>
+        <h2>Recent campaigns <InfoTip heading="Recent campaigns" :text="INFO.campaigns" /></h2>
         <table>
           <thead>
             <tr>
