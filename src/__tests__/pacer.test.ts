@@ -191,4 +191,32 @@ describe('runPacerTick', () => {
     expect(r.reason).toBe('empty');
     expect(r.campaignId).toBeNull();
   });
+
+  it('an approved analytical item (QUALIFIED, null authority) beats a FALLBACK item', async () => {
+    const portal = uniquePortal('approved');
+    const now = ist(2026, 6, 16, 12, 0);
+    await makeSubscriber(portal);
+    const approved = await draft(portal, {
+      title: 'Understanding GST on Renting of Property',
+      queue: 'QUALIFIED',
+      authority: null,
+      createdAt: ist(2026, 6, 16, 9, 0),
+    });
+    await draft(portal, { title: 'ITAT order [Read Order]', queue: 'FALLBACK', authority: 'ITAT', createdAt: ist(2026, 6, 16, 10, 0) });
+
+    const r = await runPacerTick({ ...BASE, now, portal, sender: okSender() });
+    expect(r.campaignId).toBe(approved.id);
+    expect(r.released).toBe('QUALIFIED');
+  });
+
+  it('within the same day, Supreme Court (tier 1) outranks an approved analytical item (tier 3)', async () => {
+    const portal = uniquePortal('approved-tier');
+    const now = ist(2026, 6, 16, 12, 0);
+    await makeSubscriber(portal);
+    await draft(portal, { title: 'Understanding GST on Renting', queue: 'QUALIFIED', authority: null, createdAt: ist(2026, 6, 16, 10, 0) });
+    const sc = await draft(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', createdAt: ist(2026, 6, 16, 9, 0) });
+
+    const r = await runPacerTick({ ...BASE, now, portal, sender: okSender() });
+    expect(r.campaignId).toBe(sc.id);
+  });
 });

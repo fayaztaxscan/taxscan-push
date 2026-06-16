@@ -51,6 +51,9 @@ enum AuditAction {
   USER_INVITE_ACCEPTED
   CAMPAIGN_DISPATCHED
   CAMPAIGN_DISPATCH_FAILED
+  REVIEW_APPROVED
+  REVIEW_REJECTED
+  REVIEW_PUSHED
 }
 
 model Subscriber {
@@ -91,6 +94,9 @@ model Campaign {
   // (e.g. "CESTAT", "Supreme Court") for ranking + display.
   sendQueue SendQueue?
   authority String?
+  // Set when an editor handles a REVIEW item (approve / reject / push-now). A
+  // REVIEW DRAFT with reviewedAt = null is still pending in the review queue.
+  reviewedAt DateTime?
 
   createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]

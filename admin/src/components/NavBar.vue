@@ -35,6 +35,7 @@ async function onLogout() {
     <div class="nav-menu" :class="{ open: menuOpen }">
       <router-link to="/dashboard" @click="closeMenu">Dashboard</router-link>
       <router-link to="/compose" @click="closeMenu">Compose</router-link>
+      <router-link to="/review" @click="closeMenu">Review</router-link>
       <router-link to="/campaigns" @click="closeMenu">Campaigns</router-link>
       <router-link to="/activity" @click="closeMenu">Activity</router-link>
       <router-link v-if="user?.role === 'ADMIN'" to="/users" @click="closeMenu"

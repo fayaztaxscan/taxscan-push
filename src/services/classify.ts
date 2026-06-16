@@ -75,3 +75,15 @@ export function classify(title: string): Classification {
   }
   return { queue: 'REVIEW', authority: null, tier: REVIEW_TIER };
 }
+
+/**
+ * Slot-selection priority for a QUALIFIED item, derived from its stored
+ * `authority` (lower = more important): Supreme Court → High Court → everything
+ * else (other allow-list authorities AND editor-approved analytical items,
+ * which carry a null authority — decision D5: they rank in the regulatory tier).
+ */
+export function authorityTier(authority: string | null): number {
+  if (authority === 'Supreme Court') return 1;
+  if (authority === 'High Court') return 2;
+  return 3;
+}

@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { requireBearerOrUser } from '../lib/auth';
-import { dispatchCampaign, type Sender } from '../services/send';
+import { dispatchCampaign, executeCampaign, type Sender } from '../services/send';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
+import { recordAudit } from '../lib/audit';
 
 function base64urlByteLength(s: string): number {
   const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
@@ -264,6 +265,107 @@ export function createApiRouter(
         { sender: opts.sender },
       );
       return res.status(200).json(result);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // --- Editorial review queue (SEND_PACING_PLAN.md §6 / Stage 3) -------------
+  // Unclassified (REVIEW) articles held by the poller surface here for an editor
+  // to Approve (→ QUALIFIED, the pacer sends it on the next slot), Reject (drop,
+  // never sent) or Push now (immediate full-reach send). A pending item is a
+  // DRAFT campaign with sendQueue=REVIEW and reviewedAt=null.
+
+  router.get('/review', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+      const items = await prisma.campaign.findMany({
+        where: { status: 'DRAFT', sendQueue: 'REVIEW', reviewedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: { id: true, title: true, body: true, url: true, authority: true, createdAt: true },
+      });
+      return res.json({ items });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Atomic claim helper: only acts on a still-pending REVIEW item, so two
+  // editors (or an editor + a retry) can't double-handle the same row.
+  async function claimReviewItem(id: string): Promise<boolean> {
+    const claim = await prisma.campaign.updateMany({
+      where: { id, status: 'DRAFT', sendQueue: 'REVIEW', reviewedAt: null },
+      data: { reviewedAt: new Date() },
+    });
+    return claim.count > 0;
+  }
+
+  router.post('/review/:id/approve', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const userId = req.user?.id ?? null;
+      const ok = await claimReviewItem(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'review_item_not_found' });
+      // Promote into the QUALIFIED pool; the pacer ranks it in the regulatory
+      // tier (null authority) and sends it on the next available slot.
+      await prisma.campaign.update({
+        where: { id: req.params.id },
+        data: { sendQueue: 'QUALIFIED' },
+      });
+      await recordAudit({
+        userId,
+        action: 'REVIEW_APPROVED',
+        resourceType: 'campaign',
+        resourceId: req.params.id,
+      });
+      return res.json({ ok: true, id: req.params.id, queue: 'QUALIFIED' });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post('/review/:id/reject', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const userId = req.user?.id ?? null;
+      const ok = await claimReviewItem(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'review_item_not_found' });
+      // reviewedAt is now set, so it leaves the queue; it stays a REVIEW DRAFT
+      // which the pacer never selects → effectively dropped, record preserved.
+      await recordAudit({
+        userId,
+        action: 'REVIEW_REJECTED',
+        resourceType: 'campaign',
+        resourceId: req.params.id,
+      });
+      return res.json({ ok: true, id: req.params.id });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post('/review/:id/push', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const userId = req.user?.id ?? null;
+      const ok = await claimReviewItem(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'review_item_not_found' });
+      const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });
+      if (!campaign) return res.status(404).json({ error: 'review_item_not_found' });
+      // Immediate full-reach send (bypasses the per-subscriber cap/cooldown,
+      // like force). Its SENT events count toward the pacer's daily ceiling and
+      // reset the spacing clock, exactly as a manual force push does.
+      const result = await executeCampaign(campaign, {
+        sender: opts.sender,
+        cap: Infinity,
+        minGapMinutes: 0,
+      });
+      await recordAudit({
+        userId,
+        action: 'REVIEW_PUSHED',
+        resourceType: 'campaign',
+        resourceId: campaign.id,
+        metadata: { sent: result.sent, failed: result.failed, expiredPruned: result.expiredPruned },
+      });
+      return res.json({ ok: true, id: campaign.id, ...result });
     } catch (err) {
       return next(err);
     }

@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { isQuietHours, startOfTodayIST } from '../lib/quietHours';
 import { executeCampaign, type Sender } from './send';
-import { classify } from './classify';
+import { authorityTier } from './classify';
 
 /**
  * The editorial pacer (SEND_PACING_PLAN.md §4–§5). Replaces "send each article
@@ -68,8 +68,8 @@ async function selectNext(portal: string): Promise<Campaign | null> {
     qualified.sort((a, b) => {
       const dk = dayKey(b.createdAt) - dayKey(a.createdAt); // newer IST day first
       if (dk !== 0) return dk;
-      const ta = classify(a.title).tier;
-      const tb = classify(b.title).tier;
+      const ta = authorityTier(a.authority);
+      const tb = authorityTier(b.authority);
       if (ta !== tb) return ta - tb; // lower tier = higher priority
       return b.createdAt.getTime() - a.createdAt.getTime(); // newer first
     });
