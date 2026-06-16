@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Taxscan Push — Admin User Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1f2937; font-size: 11.5px; line-height: 1.55; margin: 0;
+  }
+  h1, h2, h3 { color: #0b2545; line-height: 1.2; }
+  h2 {
+    font-size: 19px; margin: 0 0 12px; padding-bottom: 7px;
+    border-bottom: 3px solid #0b2545;
+  }
+  h3 { font-size: 14px; margin: 18px 0 6px; }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 10px; padding-left: 20px; }
+  li { margin: 0 0 4px; }
+  strong { color: #0b2545; }
+  code {
+    background: #eef2f7; color: #0b2545; padding: 1px 5px; border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 10.5px;
+  }
+  a { color: #13315c; }
+
+  /* Cover */
+  .cover { height: 261mm; display: flex; flex-direction: column; }
+  .cover-band {
+    background: #0b2545; color: #fff; padding: 46px 40px; border-radius: 14px;
+  }
+  .cover-band .kicker { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #9fc2e8; margin: 0 0 14px; }
+  .cover-band h1 { color: #fff; font-size: 40px; margin: 0 0 10px; line-height: 1.05; }
+  .cover-band .sub { font-size: 16px; color: #d6e4f3; margin: 0; }
+  .cover-meta { margin-top: auto; color: #64748b; font-size: 11px; border-top: 1px solid #e2e8f0; padding-top: 14px; }
+  .cover-summary { margin-top: 30px; }
+  .cover-summary .lead { font-size: 13.5px; color: #334155; }
+
+  .page-break { break-before: page; }
+  section { break-inside: avoid-page; }
+
+  /* Callouts */
+  .box { border-radius: 10px; padding: 12px 14px; margin: 12px 0; border: 1px solid; }
+  .box .box-t { font-weight: 700; margin: 0 0 4px; display: block; }
+  .tip { background: #ecfdf5; border-color: #a7f3d0; }
+  .tip .box-t { color: #047857; }
+  .warn { background: #fffbeb; border-color: #fde68a; }
+  .warn .box-t { color: #b45309; }
+  .info { background: #eff6ff; border-color: #bfdbfe; }
+  .info .box-t { color: #1d4ed8; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 11px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  thead th { background: #0b2545; color: #fff; border-bottom: none; }
+  thead th:first-child { border-radius: 6px 0 0 0; }
+  thead th:last-child { border-radius: 0 6px 0 0; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+
+  /* Status dots */
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 5px; }
+  .g { background: #16a34a; } .a { background: #d97706; } .r { background: #dc2626; }
+
+  .toc { font-size: 12.5px; }
+  .toc li { margin: 6px 0; }
+  .toc .n { display: inline-block; width: 22px; color: #0b2545; font-weight: 700; }
+  .muted { color: #64748b; }
+  .pill { display: inline-block; background: #0b2545; color: #fff; border-radius: 999px; padding: 2px 9px; font-size: 10px; font-weight: 600; }
+  .step { background: #f1f5f9; border-radius: 8px; padding: 8px 12px; margin: 6px 0; }
+  .step b { color: #0b2545; }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <div class="cover-band">
+    <p class="kicker">Taxscan Push · Notification Platform</p>
+    <h1>Admin User Guide</h1>
+    <p class="sub">How to run, read, and get the most out of your web-push notification system.</p>
+  </div>
+  <div class="cover-summary">
+    <p class="lead">This guide is written for editors and administrators — no technical background needed.
+    It explains, in plain language, what every screen does, what the numbers mean, what to expect when
+    you see certain values, and exactly how to send a notification yourself.</p>
+    <div class="box info">
+      <span class="box-t">The 30-second version</span>
+      The system reads Taxscan's articles automatically and pushes only the important ones to your readers'
+      browsers, paced sensibly so nobody is annoyed. Your job is light: <strong>glance at the Dashboard</strong>
+      to check things are healthy, and <strong>clear the Review queue</strong> (decide on the few articles the
+      system wasn't sure about). You can also <strong>send anything yourself, instantly</strong>, whenever you want.
+    </div>
+  </div>
+  <div class="cover-meta">
+    Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
+    &nbsp;·&nbsp; Version 1.0
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="page-break"></div>
+<section>
+<h2>What's inside</h2>
+<ol class="toc" style="list-style:none; padding-left:0">
+  <li><span class="n">1</span> What this tool is (in one minute)</li>
+  <li><span class="n">2</span> Logging in &amp; your account</li>
+  <li><span class="n">3</span> The big picture: how notifications go out</li>
+  <li><span class="n">4</span> Your daily routine — the 5-minute check</li>
+  <li><span class="n">5</span> Reading the Dashboard (what every number means)</li>
+  <li><span class="n">6</span> The Review queue — your main task</li>
+  <li><span class="n">7</span> Sending a notification yourself (Compose)</li>
+  <li><span class="n">8</span> The other screens</li>
+  <li><span class="n">9</span> Quick reference card</li>
+  <li><span class="n">10</span> Frequently asked questions</li>
+</ol>
+</section>
+
+<!-- 1 -->
+<section style="margin-top:26px">
+<h2>1 &nbsp;What this tool is (in one minute)</h2>
+<p><strong>Taxscan Push</strong> sends short notifications straight to your readers' web browsers — even when
+they aren't on the Taxscan website — to tell them about important new updates. A reader "subscribes" once by
+clicking <em>Allow</em> on a prompt; after that, the notifications appear on their device.</p>
+<p>The platform does most of the work on its own:</p>
+<ul>
+  <li>It <strong>watches Taxscan's articles</strong> as they're published.</li>
+  <li>It <strong>automatically sends the important ones</strong> (e.g. Supreme Court &amp; High Court rulings,
+      ICAI, CBDT, CBIC, DGFT, IBBI, GSTAT, PMLA updates).</li>
+  <li>It <strong>holds back the less important ones</strong> and <strong>spaces sends out</strong> so readers
+      aren't overwhelmed.</li>
+  <li>It <strong>asks you to decide</strong> on the few articles it isn't sure about (analysis/explainer pieces).</li>
+</ul>
+<p>So your role is simple: <strong>review and supervise</strong>, and <strong>send things manually</strong> when
+you want to. This guide shows you how.</p>
+</section>
+
+<!-- 2 -->
+<section class="page-break">
+<h2>2 &nbsp;Logging in &amp; your account</h2>
+<div class="step"><b>1.</b> Go to <code>https://push.taxscan.in/admin/</code> in any browser.</div>
+<div class="step"><b>2.</b> Enter your <strong>email</strong> and <strong>password</strong>, then click <em>Log in</em>.</div>
+<div class="step"><b>3.</b> If this is your first time, you'll be given a temporary password and asked to set your own.
+  Pick something strong and private.</div>
+
+<h3>Two kinds of account</h3>
+<table>
+  <thead><tr><th style="width:25%">Role</th><th>What they can do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Administrator</strong></td><td>Everything below, <em>plus</em> add/remove team members and change roles (the <strong>Users</strong> screen).</td></tr>
+    <tr><td><strong>Publisher</strong></td><td>Use the Dashboard, Review queue, Compose/send, Campaigns and Activity. Cannot manage other users.</td></tr>
+  </tbody>
+</table>
+<div class="box tip"><span class="box-t">Tip — changing your password</span>
+  You can change your password any time from the <strong>Change password</strong> link in the top menu.</div>
+<div class="box warn"><span class="box-t">Keep your login private</span>
+  Every action you take (sending, approving, rejecting) is recorded against your name in the
+  <strong>Activity</strong> log. Don't share your account.</div>
+</section>
+
+<!-- 3 -->
+<section class="page-break">
+<h2>3 &nbsp;The big picture: how notifications go out</h2>
+<p>Understanding this makes everything else obvious. There are <strong>three things</strong> the system does
+with every new article:</p>
+
+<h3>① It decides whether the article is worth a notification</h3>
+<table>
+  <thead><tr><th style="width:33%">Category</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill">SEND</span> &nbsp;Major authorities<br><span class="muted">Supreme Court, High Court, ICAI, CBDT, CBIC, DGFT, IBBI, GSTAT, PMLA</span></td>
+        <td>Queued to be sent automatically.</td></tr>
+    <tr><td><span class="pill" style="background:#64748b">HOLD</span> &nbsp;Tribunal orders<br><span class="muted">ITAT, CESTAT, NCLAT, NCLT</span></td>
+        <td>Not sent (these were never pushed historically). Used only as filler if there's genuinely nothing else to send.</td></tr>
+    <tr><td><span class="pill" style="background:#b45309">REVIEW</span> &nbsp;Everything else<br><span class="muted">Analysis &amp; explainer articles</span></td>
+        <td>Sent to the <strong>Review queue</strong> for <em>you</em> to approve, push, or reject.</td></tr>
+  </tbody>
+</table>
+
+<h3>② It paces the sending so readers aren't spammed</h3>
+<ul>
+  <li><strong>At most one push every ~45 minutes.</strong></li>
+  <li><strong>Up to ~20 notifications per day</strong> in total.</li>
+  <li><strong>Quiet hours overnight</strong> (roughly 11&nbsp;pm–7&nbsp;am) — nothing sends while people sleep.</li>
+  <li>When several articles are waiting, it sends the <strong>most important one first</strong> (Supreme Court
+      &gt; High Court &gt; regulatory), and the others <strong>wait their turn</strong> — they are never lost.</li>
+</ul>
+
+<h3>③ It lets you override, instantly, whenever you want</h3>
+<p>Automatic pacing is for the routine flow. For anything urgent, you are always in control — use
+<strong>Push now</strong> in the Review queue, or <strong>Force send</strong> in Compose (both explained later).
+These go out immediately to everyone.</p>
+
+<div class="box info"><span class="box-t">Why an article didn't go out the second it was published</span>
+  This is normal and intended — the system spaces sends ~45 minutes apart to protect readers. The article isn't
+  lost; it's waiting its turn. If it's urgent, send it yourself with <strong>Push now</strong> / <strong>Force send</strong>.</div>
+</section>
+
+<!-- 4 -->
+<section class="page-break">
+<h2>4 &nbsp;Your daily routine — the 5-minute check</h2>
+<p>You don't need to babysit the system. A short daily glance is enough:</p>
+<div class="step"><b>1. Open the Dashboard.</b> Look at the coloured dots next to each number.
+  <span class="dot g"></span><strong>green</strong> = healthy. If everything's green, you're done with this part.</div>
+<div class="step"><b>2. Open the Review queue.</b> Decide on anything waiting there — <em>Approve</em> the good
+  analysis pieces, <em>Push now</em> the urgent ones, <em>Reject</em> the rest. Aim to leave it empty.</div>
+<div class="step"><b>3. (Optional) Send anything special.</b> Big breaking story? Use Compose to send it yourself.</div>
+<div class="box tip"><span class="box-t">That's the whole job</span>
+  Glance at the Dashboard, clear the Review queue. Everything else runs automatically.</div>
+</section>
+
+<!-- 5 -->
+<section class="page-break">
+<h2>5 &nbsp;Reading the Dashboard</h2>
+<p>The Dashboard is your health monitor. Each metric card has a small <strong>(i)</strong> icon — hover it for a
+plain explanation. Cards that have a target show a <strong>coloured dot</strong>:</p>
+<p>
+  <span class="dot g"></span><strong>Green</strong> — on target &nbsp;&nbsp;
+  <span class="dot a"></span><strong>Amber</strong> — warning, keep an eye on it &nbsp;&nbsp;
+  <span class="dot r"></span><strong>Red</strong> — below target, needs attention
+</p>
+
+<h3>What every number means &amp; what to expect</h3>
+<table>
+  <thead><tr><th style="width:20%">Card</th><th style="width:18%">Good looks like</th><th>What it means &amp; what to do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Active subscribers</strong></td><td>Steadily rising</td>
+        <td>How many people are signed up to receive notifications right now — your live audience. Expect steady growth. A small sudden drop is usually just dead subscriptions being cleaned out, not lost readers.</td></tr>
+    <tr><td><strong>Total sent</strong></td><td>Always rising</td>
+        <td>The running total of notifications delivered since launch. It only ever goes up. A faster climb means more is going out and/or your audience is bigger.</td></tr>
+    <tr><td><strong>Overall CTR</strong><br><span class="muted">click-through rate</span></td><td><span class="dot g"></span>≥ 6% &nbsp; <span class="dot a"></span>4–6%</td>
+        <td>Of the notifications sent, the share that people actually <strong>clicked</strong>. The best gauge of how interesting and relevant your pushes are. If it's low, the headlines or the choice of what to send need work.</td></tr>
+    <tr><td><strong>Opt-in rate</strong></td><td><span class="dot g"></span>≥ 5% &nbsp; <span class="dot a"></span>3–5%</td>
+        <td>Of the people shown the "Allow notifications?" prompt, the share who said <strong>yes</strong>. Measures how convincing the prompt is. Low usually means it appears at an awkward moment.</td></tr>
+    <tr><td><strong>Delivery rate</strong></td><td><span class="dot g"></span>≥ 95% &nbsp; <span class="dot a"></span>90–95%</td>
+        <td>Of the notifications we tried to send, the share that actually <strong>reached the device</strong>. The rest bounce off dead/expired subscriptions. A dip usually self-heals as dead ones are removed.</td></tr>
+    <tr><td><strong>Unsubscribe rate</strong></td><td><span class="dot g"></span>&lt; 0.5%</td>
+        <td>The share of subscribers who opted out or whose subscription died. <strong>Lower is better.</strong> A spike is a fatigue warning — usually too many notifications or content people didn't want.</td></tr>
+  </tbody>
+</table>
+
+<h3>The lower sections</h3>
+<ul>
+  <li><strong>Subscriber sources</strong> — where your audience came from. <em>Recaptured</em> (returning visitors
+      who already allowed notifications) is normally the biggest and should keep climbing. <em>Soft prompt</em> =
+      fresh opt-ins from the on-site prompt.</li>
+  <li><strong>30-day subscriber growth</strong> — a simple line of new sign-ups per day. Rising or steady = healthy;
+      flat near zero = sign-ups have stalled.</li>
+  <li><strong>Opt-in funnel</strong> — the journey from "prompt shown" → "accepted" → "subscribed". A big drop
+      between two steps shows where readers are being lost.</li>
+  <li><strong>Recent campaigns</strong> — your latest notifications and how each performed (who it reached, clicks,
+      CTR). Great for spotting which headlines land best.</li>
+</ul>
+<div class="box tip"><span class="box-t">Don't over-react to one number</span>
+  Rates need a reasonable volume to be meaningful. One slow day, or a tiny send, can swing a percentage. Look at the
+  trend over several days, not a single reading.</div>
+</section>
+
+<!-- 6 -->
+<section class="page-break">
+<h2>6 &nbsp;The Review queue — your main task</h2>
+<p>Open the <strong>Review</strong> tab daily. It lists the articles the system wasn't sure about — almost always
+<strong>analysis and explainer pieces</strong> that don't name a specific court. For each one you have three choices:</p>
+<table>
+  <thead><tr><th style="width:22%">Button</th><th>What it does</th><th style="width:28%">Use it when…</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill" style="background:#16a34a">Approve</span></td>
+        <td>Adds it to the normal send queue. It goes out on the next available slot, alongside everything else.</td>
+        <td>It's a good piece worth sending, but not urgent.</td></tr>
+    <tr><td><span class="pill">Push now</span></td>
+        <td><strong>Sends it immediately to everyone</strong>, skipping the wait.</td>
+        <td>It's important and you want it out right away.</td></tr>
+    <tr><td><span class="pill" style="background:#dc2626">Reject</span></td>
+        <td>Drops it — it will never be sent.</td>
+        <td>It's not worth a notification.</td></tr>
+  </tbody>
+</table>
+<div class="box tip"><span class="box-t">Goal: leave the queue empty</span>
+  Clearing it daily keeps the channel fresh and means no good article sits unsent. There's no penalty for rejecting —
+  when in doubt, reject; you're curating quality.</div>
+<div class="box info"><span class="box-t">Good to know</span>
+  Tribunal orders (ITAT, CESTAT, NCLAT, NCLT) do <strong>not</strong> appear here — they're held automatically and
+  need no action from you.</div>
+</section>
+
+<!-- 7 -->
+<section class="page-break">
+<h2>7 &nbsp;Sending a notification yourself (Compose)</h2>
+<p>Use the <strong>Compose</strong> screen to write and send a notification by hand — for a big story, an
+announcement, or anything you want out on your own terms.</p>
+
+<h3>The fields</h3>
+<table>
+  <thead><tr><th style="width:24%">Field</th><th>What to put</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Title</strong></td><td>The headline the reader sees. Keep it short and punchy — this is what makes them click.</td></tr>
+    <tr><td><strong>Body</strong></td><td>One line of detail under the title.</td></tr>
+    <tr><td><strong>Click URL</strong></td><td>The page that opens when they tap the notification — usually the article on taxscan.in.</td></tr>
+    <tr><td><strong>Icon URL</strong> <span class="muted">(optional)</span></td><td>Leave blank to use the Taxscan logo.</td></tr>
+    <tr><td><strong>Target</strong></td><td><strong>All subscribers</strong>, or <strong>By topic</strong> (GST, Income Tax, Customs, Corporate) to reach only people interested in that area.</td></tr>
+  </tbody>
+</table>
+
+<h3>The two important switches</h3>
+<table>
+  <thead><tr><th style="width:24%">Switch</th><th>What it does &amp; when to use it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Breaking</strong></td>
+        <td>Lets the notification go out <strong>even during quiet hours</strong> (overnight). Use only for genuinely urgent news. It does <em>not</em> change who receives it.</td></tr>
+    <tr><td><strong>Force send</strong><br><span class="muted">(full reach)</span></td>
+        <td><strong>Reaches every eligible subscriber right now</strong>, ignoring the normal spacing and frequency limits. Use for a major story you want everyone to get immediately. (Without this, a hand-send still respects the usual pacing.)</td></tr>
+  </tbody>
+</table>
+
+<h3>Scheduling &amp; testing</h3>
+<ul>
+  <li><strong>Send now</strong> or <strong>Schedule for later</strong> (pick a date &amp; time). <span class="muted">Note: Force send is immediate only.</span></li>
+  <li><strong>Send test</strong> — sends only to your internal test group so you can see exactly how it looks before
+      sending for real. Use the "Test segment" panel below to add your own browser first.</li>
+</ul>
+<div class="box warn"><span class="box-t">Before you hit send</span>
+  Double-check the <strong>Title</strong> (no typos — readers see it instantly) and the <strong>Click URL</strong>
+  (open it once to be sure it's the right page). A notification can't be "unsent".</div>
+<div class="box tip"><span class="box-t">Good push, in 3 rules</span>
+  Short, specific title · link straight to the article · send only what's genuinely worth interrupting someone for.</div>
+</section>
+
+<!-- 8 -->
+<section class="page-break">
+<h2>8 &nbsp;The other screens</h2>
+<table>
+  <thead><tr><th style="width:22%">Screen</th><th>What it's for</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks and click-rate. Use it to review performance over time.</td></tr>
+    <tr><td><strong>Activity</strong></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
+    <tr><td><strong>Users</strong> <span class="muted">(Admins only)</span></td><td>Add teammates by email invite or with a temporary password, change their role, or deactivate them. New members get a link to set their own password.</td></tr>
+    <tr><td><strong>Change password</strong></td><td>Update your own password at any time.</td></tr>
+  </tbody>
+</table>
+<div class="box info"><span class="box-t">Adding a teammate (Admins)</span>
+  On the <strong>Users</strong> screen choose <em>Invite user</em> (emails them a sign-up link) or <em>Create user</em>
+  (gives you a temporary password to share). Pick <strong>Publisher</strong> for editors, <strong>Administrator</strong>
+  only for people who also need to manage the team.</div>
+</section>
+
+<!-- 9 -->
+<section class="page-break">
+<h2>9 &nbsp;Quick reference card</h2>
+
+<h3>Daily checklist</h3>
+<ul>
+  <li>☐ Dashboard — all dots green? (note anything amber/red)</li>
+  <li>☐ Review queue — cleared? (Approve / Push now / Reject)</li>
+  <li>☐ Anything urgent to send by hand?</li>
+</ul>
+
+<h3>Target numbers at a glance</h3>
+<table>
+  <thead><tr><th>Metric</th><th><span class="dot g"></span>Good</th><th><span class="dot a"></span>Warning</th><th><span class="dot r"></span>Below target</th></tr></thead>
+  <tbody>
+    <tr><td>Click-through rate (CTR)</td><td>≥ 6%</td><td>4–6%</td><td>&lt; 4%</td></tr>
+    <tr><td>Opt-in rate</td><td>≥ 5%</td><td>3–5%</td><td>&lt; 3%</td></tr>
+    <tr><td>Delivery rate</td><td>≥ 95%</td><td>90–95%</td><td>&lt; 90%</td></tr>
+    <tr><td>Unsubscribe rate</td><td>&lt; 0.5%</td><td>0.5–1%</td><td>&gt; 1%</td></tr>
+  </tbody>
+</table>
+
+<h3>If you see this → do this</h3>
+<table>
+  <thead><tr><th style="width:40%">Situation</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td>An article didn't send the instant it published</td><td>Normal — it's waiting its ~45-min turn. If urgent, <strong>Push now</strong> / <strong>Force send</strong>.</td></tr>
+    <tr><td>CTR is drifting down</td><td>Be choosier about what's sent; sharpen headlines. Don't send more — send better.</td></tr>
+    <tr><td>Unsubscribe rate ticking up</td><td>A fatigue signal — ease off volume; make sure only genuinely useful items go out.</td></tr>
+    <tr><td>Delivery rate dipped</td><td>Usually dead subscriptions; it self-heals. Only worry if it stays low for days.</td></tr>
+    <tr><td>A big story breaks</td><td>Compose → write it → <strong>Force send</strong> (add <strong>Breaking</strong> if overnight).</td></tr>
+    <tr><td>Review queue is piling up</td><td>Clear it: Approve the good pieces, Reject the rest.</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- 10 -->
+<section class="page-break">
+<h2>10 &nbsp;Frequently asked questions</h2>
+
+<h3>Why didn't my article go out immediately?</h3>
+<p>To protect readers, the system sends about one notification every 45 minutes. Your article is in the queue and
+will go out on its turn — it isn't lost. For urgent items, use <strong>Push now</strong> or <strong>Force send</strong>.</p>
+
+<h3>Why aren't ITAT / CESTAT / NCLAT / NCLT stories being sent?</h3>
+<p>By long-standing editorial policy these tribunal orders aren't pushed — they'd dilute the channel. The system
+applies this automatically. If you ever want to send one, you can do it by hand in Compose.</p>
+
+<h3>How do I send something to everyone, right now?</h3>
+<p>In <strong>Compose</strong>, write it and tick <strong>Force send</strong>. Or, for an item already in the Review
+queue, click <strong>Push now</strong>.</p>
+
+<h3>A reader says they didn't receive a notification.</h3>
+<p>Common reasons: they never subscribed (or unsubscribed), their browser blocked notifications at the OS level, or
+their subscription expired (counted in the delivery rate). This is normal — no system reaches 100%.</p>
+
+<h3>Can I undo a send?</h3>
+<p>No — once a notification is out, it's out. Always double-check the title and link before sending.</p>
+
+<h3>What's the difference between "Breaking" and "Force send"?</h3>
+<p><strong>Breaking</strong> only lets a send happen during overnight quiet hours. <strong>Force send</strong> makes it
+reach everyone immediately, ignoring the normal spacing/frequency limits. They're independent — you can use either or both.</p>
+
+<h3>How often should I check in?</h3>
+<p>Once a day is plenty: a quick Dashboard glance and clearing the Review queue. The system handles the rest.</p>
+
+<div class="box info" style="margin-top:22px"><span class="box-t">Need help?</span>
+  For anything this guide doesn't cover — a number that looks wrong, a screen behaving oddly, or a question about
+  strategy — reach out to your administrator.</div>
+
+<p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
+  Taxscan Push · Admin User Guide · Version 1.0
+</p>
+</section>
+
+</body>
+</html>
