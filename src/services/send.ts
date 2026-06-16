@@ -78,6 +78,15 @@ export type CampaignInput = {
    * `req.user` to attribute to.
    */
   createdByUserId?: string | null;
+  /**
+   * Manual full-reach override. When true, this dispatch bypasses BOTH
+   * frequency throttles — the daily volume cap (`FREQ_CAP_PER_DAY`) and the
+   * per-subscriber cooldown (`MIN_GAP_MINUTES`) — so the campaign reaches every
+   * eligible ACTIVE subscriber. Intended for hand-picked important articles
+   * sent from the admin Compose screen; the RSS poller never sets it. Distinct
+   * from `breaking` (which only bypasses quiet hours, not the cap/cooldown).
+   */
+  force?: boolean;
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -338,7 +347,14 @@ export async function dispatchCampaign(
   }
 
   try {
-    const result = await executeCampaign(campaign, deps);
+    // `force` lifts both throttles for this dispatch: cap → Infinity (nobody
+    // over the daily cap) and minGapMinutes → 0 (cooldown disabled), so the
+    // send reaches every eligible subscriber. It overrides any cap/minGap in
+    // deps — full reach means full reach. `sender`/`now`/`concurrency` are kept.
+    const effectiveDeps: ExecuteDeps = input.force
+      ? { ...deps, cap: Infinity, minGapMinutes: 0 }
+      : deps;
+    const result = await executeCampaign(campaign, effectiveDeps);
     await recordAudit({
       userId: input.createdByUserId ?? null,
       action: 'CAMPAIGN_DISPATCHED',
@@ -348,6 +364,7 @@ export async function dispatchCampaign(
         campaignId: campaign.id,
         portal: campaign.portal,
         target: input.target,
+        force: input.force ?? false,
         sent: result.sent,
         capped: result.capped,
         cooled: result.cooled,

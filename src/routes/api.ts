@@ -73,6 +73,9 @@ const SendSchema = z.object({
   icon: z.string().optional(),
   target: TargetSchema,
   breaking: z.boolean().optional(),
+  // Manual full-reach override: bypasses the daily cap + per-subscriber
+  // cooldown so the send reaches every eligible subscriber. See CampaignInput.
+  force: z.boolean().optional(),
   scheduledAt: z.string().datetime().optional(),
 });
 
@@ -208,6 +211,18 @@ export function createApiRouter(
       const parsed = SendSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
       const { scheduledAt, ...input } = parsed.data;
+
+      // `force` is only honored on immediate dispatch. A future-scheduled send
+      // is persisted as a SCHEDULED Campaign and later run by the sweeper, which
+      // has no `force` to read (it's not a Campaign column) — so it would
+      // silently fall back to the normal cap/cooldown. Reject the combination
+      // rather than mislead the sender.
+      if (input.force && scheduledAt && new Date(scheduledAt).getTime() > Date.now()) {
+        return res.status(400).json({
+          error: 'invalid_request',
+          message: 'force is only supported for immediate sends, not scheduled ones',
+        });
+      }
       // Bearer-authenticated requests have no req.user (intentional —
       // RSS poller / cron). Cookie-authenticated requests have it set
       // by requireUser inside requireBearerOrUser. Either way we just

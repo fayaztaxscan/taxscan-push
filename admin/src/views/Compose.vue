@@ -33,6 +33,10 @@ const icon = ref('');
 const targetMode = ref<'all' | 'topics'>('all');
 const selectedTopics = ref<string[]>([]);
 const breaking = ref(false);
+// Full-reach override: bypasses the daily cap + per-subscriber cooldown so the
+// send reaches every eligible subscriber. Only valid for immediate sends, so it
+// is mutually exclusive with scheduling (the "later" option is disabled while on).
+const force = ref(false);
 const scheduleMode = ref<'now' | 'later'>('now');
 const scheduledAtLocal = ref('');
 
@@ -122,9 +126,13 @@ function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; s
     breaking: overrides.breaking ?? breaking.value,
   };
   if (icon.value) payload.icon = icon.value;
-  if (overrides.scheduledAt) payload.scheduledAt = overrides.scheduledAt;
-  else if (scheduleMode.value === 'later' && scheduledAtLocal.value) {
-    payload.scheduledAt = new Date(scheduledAtLocal.value).toISOString();
+  if (force.value) payload.force = true;
+  // force is immediate-only — never attach a schedule when it's on.
+  if (!force.value) {
+    if (overrides.scheduledAt) payload.scheduledAt = overrides.scheduledAt;
+    else if (scheduleMode.value === 'later' && scheduledAtLocal.value) {
+      payload.scheduledAt = new Date(scheduledAtLocal.value).toISOString();
+    }
   }
   return payload;
 }
@@ -222,15 +230,25 @@ async function send() {
             <input v-model="breaking" type="checkbox" style="width: auto" /> Breaking (bypass quiet
             hours)
           </label>
+          <label style="display: inline-flex; gap: 6px; text-transform: none; letter-spacing: 0; margin-top: 6px;">
+            <input v-model="force" type="checkbox" style="width: auto" /> Force send (ignore
+            frequency limits — full reach)
+          </label>
         </div>
         <div class="form-row">
           <label>Scheduling</label>
           <div class="radio-row">
             <label><input v-model="scheduleMode" type="radio" value="now" /> Send now</label>
-            <label><input v-model="scheduleMode" type="radio" value="later" /> Schedule for</label>
+            <label>
+              <input v-model="scheduleMode" type="radio" value="later" :disabled="force" />
+              Schedule for
+            </label>
           </div>
+          <p v-if="force" class="muted" style="margin: 6px 0 0; font-size: 12px">
+            Force send is immediate only — scheduling is disabled.
+          </p>
           <input
-            v-if="scheduleMode === 'later'"
+            v-if="scheduleMode === 'later' && !force"
             v-model="scheduledAtLocal"
             type="datetime-local"
             style="margin-top: 8px"
