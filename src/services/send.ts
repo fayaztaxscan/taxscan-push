@@ -6,6 +6,7 @@ import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { filterByCap } from '../lib/cap';
 import { recordAudit } from '../lib/audit';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
+import type { SendQueue } from './classify';
 
 /**
  * Thrown when a campaign's click URL points at a host outside
@@ -87,6 +88,12 @@ export type CampaignInput = {
    * from `breaking` (which only bypasses quiet hours, not the cap/cooldown).
    */
   force?: boolean;
+  /**
+   * Editorial classification, stamped by the RSS poller (SEND_PACING_PLAN.md).
+   * Persisted on the Campaign for ranking/analytics. Null for manual /api/send.
+   */
+  sendQueue?: SendQueue | null;
+  authority?: string | null;
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -325,6 +332,8 @@ export async function dispatchCampaign(
       target: input.target as object,
       status: 'DRAFT',
       createdByUserId: input.createdByUserId ?? null,
+      sendQueue: input.sendQueue ?? null,
+      authority: input.authority ?? null,
     },
   });
 

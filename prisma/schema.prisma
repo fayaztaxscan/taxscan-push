@@ -84,6 +84,14 @@ model Campaign {
   createdAt       DateTime       @default(now())
   createdByUserId String?
 
+  // Editorial pacing (SEND_PACING_PLAN.md). Set by the RSS poller's classifier:
+  // QUALIFIED (allow-list, auto-eligible) / FALLBACK (ITAT/CESTAT/NCLAT/NCLT —
+  // filler only) / REVIEW (unclassified, awaiting an editor). Null for manual
+  // /api/send campaigns and legacy rows. `authority` is the matched source
+  // (e.g. "CESTAT", "Supreme Court") for ranking + display.
+  sendQueue SendQueue?
+  authority String?
+
   createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]
   feedItems FeedItem[]
@@ -91,6 +99,13 @@ model Campaign {
   @@index([portal])
   @@index([status])
   @@index([scheduledAt])
+  @@index([sendQueue])
+}
+
+enum SendQueue {
+  QUALIFIED
+  FALLBACK
+  REVIEW
 }
 
 model User {
