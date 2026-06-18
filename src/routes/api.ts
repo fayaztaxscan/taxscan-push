@@ -13,6 +13,7 @@ import {
 } from '../services/send';
 import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
+import { buildReport, reportWindow } from '../services/reports';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
@@ -539,6 +540,19 @@ export function createApiRouter(
     try {
       const metrics = await getMetrics();
       return res.json(metrics);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Coverage & Quality report (weekly default; ?period=monthly). Counts every
+  // captured article in the window — the basis for the in-app view + emails.
+  router.get('/reports', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const period = req.query.period === 'monthly' ? 'monthly' : 'weekly';
+      const { start, end } = reportWindow(period, new Date());
+      const report = await buildReport({ portal: env.rss.portal, period, start, end });
+      return res.json(report);
     } catch (err) {
       return next(err);
     }
