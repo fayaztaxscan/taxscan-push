@@ -33,6 +33,8 @@ export type CampaignStat = {
   ctr: number | null;
   deliveryRate: number | null;
   createdAt: string;
+  /** When the push actually fired (earliest SENT event); null until sent. */
+  sentAt: string | null;
   scheduledAt: string | null;
   createdByUserId: string | null;
   createdBy: CampaignCreator;
@@ -156,15 +158,20 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       type: { in: ['SENT', 'CLICKED', 'FAILED'] },
     },
     _count: { _all: true },
+    _min: { createdAt: true },
   });
   const byCampaign = {
     SENT: new Map<string, number>(),
     CLICKED: new Map<string, number>(),
     FAILED: new Map<string, number>(),
   };
+  const sentAtByCampaign = new Map<string, Date>();
   for (const row of perCampaign) {
     if (!row.campaignId) continue;
     byCampaign[row.type as keyof typeof byCampaign]?.set(row.campaignId, row._count._all);
+    if (row.type === 'SENT' && row._min.createdAt) {
+      sentAtByCampaign.set(row.campaignId, row._min.createdAt);
+    }
   }
 
   const campaigns: CampaignStat[] = recentCampaigns.map((c) => {
@@ -181,6 +188,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       ctr: sent > 0 ? clicked / sent : null,
       deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
+      sentAt: sentAtByCampaign.get(c.id)?.toISOString() ?? null,
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
       createdByUserId: c.createdByUserId,
       createdBy: c.createdBy
@@ -288,15 +296,20 @@ export async function listCampaigns(
     by: ['campaignId', 'type'],
     where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED', 'FAILED'] } },
     _count: { _all: true },
+    _min: { createdAt: true },
   });
   const byCampaign = {
     SENT: new Map<string, number>(),
     CLICKED: new Map<string, number>(),
     FAILED: new Map<string, number>(),
   };
+  const sentAtByCampaign = new Map<string, Date>();
   for (const row of events) {
     if (!row.campaignId) continue;
     byCampaign[row.type as keyof typeof byCampaign]?.set(row.campaignId, row._count._all);
+    if (row.type === 'SENT' && row._min.createdAt) {
+      sentAtByCampaign.set(row.campaignId, row._min.createdAt);
+    }
   }
   return campaigns.map((c) => {
     const sent = byCampaign.SENT.get(c.id) ?? 0;
@@ -312,6 +325,7 @@ export async function listCampaigns(
       ctr: sent > 0 ? clicked / sent : null,
       deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
+      sentAt: sentAtByCampaign.get(c.id)?.toISOString() ?? null,
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
       createdByUserId: c.createdByUserId,
       createdBy: c.createdBy

@@ -21,6 +21,7 @@ type Campaign = {
   ctr: number | null;
   deliveryRate: number | null;
   createdAt: string;
+  sentAt: string | null;
   scheduledAt: string | null;
   createdByUserId: string | null;
   createdBy: CampaignCreator;
@@ -97,7 +98,8 @@ onMounted(load);
       <table>
         <thead>
           <tr>
-            <th>Created</th>
+            <th>Captured</th>
+            <th>Pushed</th>
             <th>Title</th>
             <th>Created by</th>
             <th>Status</th>
@@ -116,6 +118,7 @@ onMounted(load);
             @click="openDetail(c.id)"
           >
             <td class="muted">{{ fmtDate(c.createdAt) }}</td>
+            <td :class="c.sentAt ? '' : 'muted'">{{ c.sentAt ? fmtDate(c.sentAt) : '—' }}</td>
             <td>{{ c.title }}</td>
             <td>
               <template v-if="c.createdBy">
@@ -149,7 +152,7 @@ onMounted(load);
             </td>
           </tr>
           <tr v-if="campaigns.length === 0 && !loading">
-            <td colspan="9" class="muted" style="text-align: center; padding: 24px">
+            <td colspan="10" class="muted" style="text-align: center; padding: 24px">
               {{ showOnlyMine ? "You haven't sent any campaigns yet." : 'No campaigns yet.' }}
             </td>
           </tr>

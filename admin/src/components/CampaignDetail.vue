@@ -19,6 +19,7 @@ type Campaign = {
   ctr: number | null;
   deliveryRate: number | null;
   createdAt: string;
+  sentAt: string | null;
   scheduledAt: string | null;
   createdByUserId: string | null;
   createdBy: CampaignCreator;
@@ -95,6 +96,7 @@ const summary = computed(() => {
   const c = campaign.value;
   return [
     { label: 'Status', value: c.status },
+    { label: 'Pushed', value: fmtDate(c.sentAt) },
     { label: 'Sent', value: c.sent.toLocaleString() },
     { label: 'Clicked', value: c.clicked.toLocaleString() },
     { label: 'Failed', value: c.failed.toLocaleString() },
@@ -133,8 +135,9 @@ onMounted(load);
         <template v-else-if="campaign">
           <h2 id="campaign-detail-title">{{ campaign.title }}</h2>
           <p class="muted" style="font-size: 12px; margin: 0 0 12px">
-            Campaign id <code>{{ campaign.id }}</code> · created
+            Campaign id <code>{{ campaign.id }}</code> · captured
             {{ fmtDate(campaign.createdAt) }}
+            <template v-if="campaign.sentAt"> · pushed {{ fmtDate(campaign.sentAt) }}</template>
           </p>
 
           <div class="metrics-grid">
