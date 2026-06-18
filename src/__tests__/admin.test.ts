@@ -349,6 +349,32 @@ describe('GET /api/metrics', () => {
     expect(ours.sent).toBe(1);
     expect(ours.failed).toBe(1);
     expect(ours.deliveryRate).toBe(0.5); // 1 / (1 + 1)
+    // sentAt = the earliest SENT event time (when the push fired).
+    expect(typeof ours.sentAt).toBe('string');
+    expect(Number.isNaN(Date.parse(ours.sentAt))).toBe(false);
+  });
+
+  it('campaigns never pushed report sentAt = null', async () => {
+    const portal = uniquePortal('sentat-null');
+    const campaign = await prisma.campaign.create({
+      data: {
+        portal,
+        title: 'draft-never-sent',
+        body: 'b',
+        url: 'https://taxscan.in',
+        target: { type: 'all' },
+        status: 'DRAFT',
+        sendQueue: 'QUALIFIED',
+      },
+    });
+    createdCampaignIds.push(campaign.id);
+
+    const res = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    const ours = res.body.campaigns.find((c: { id: string }) => c.id === campaign.id);
+    expect(ours).toBeDefined();
+    expect(ours.sentAt).toBeNull();
   });
 
   it('funnel.subscribed only counts SUBSCRIBED events with meta.source = "soft-prompt"', async () => {

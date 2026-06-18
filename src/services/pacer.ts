@@ -22,7 +22,7 @@ import { authorityTier } from './classify';
  *   - a pending article exists.
  *
  * Selection (decision D2/D3, §5): top QUALIFIED (today-before-older, then
- * authority tier, then recency); if none pending, top FALLBACK (most-recent
+ * authority tier, then oldest-published-first); if none pending, top FALLBACK (most-recent
  * ITAT/CESTAT/NCLAT/NCLT) so the channel never sits idle. REVIEW items are NOT
  * auto-sent — an editor approves them into QUALIFIED first (Stage 3).
  *
@@ -57,22 +57,50 @@ function dayKey(d: Date): number {
 }
 
 /**
- * Pick the single best pending article for a slot. QUALIFIED first
- * (today-before-older → authority tier → recency), else most-recent FALLBACK.
+ * Rank two pending QUALIFIED articles for slot selection (lower sorts first):
+ *   1. Newer IST calendar day first — today's news before older backlog (D3).
+ *   2. Authority tier — Supreme Court → High Court → regulatory/approved (§5).
+ *   3. Publish time — OLDEST first, so a cluster of same-day, same-tier articles
+ *      goes out in the order it was published (decision D3, revised 2026-06-18:
+ *      was newest-first; the first-published ruling should not send last).
+ */
+export function rankQualified(a: Campaign, b: Campaign): number {
+  const dk = dayKey(b.createdAt) - dayKey(a.createdAt); // newer IST day first
+  if (dk !== 0) return dk;
+  const ta = authorityTier(a.authority);
+  const tb = authorityTier(b.authority);
+  if (ta !== tb) return ta - tb; // lower tier = higher priority
+  return a.createdAt.getTime() - b.createdAt.getTime(); // oldest published first
+}
+
+/**
+ * The full pending auto-queue, in the exact order the pacer will release it:
+ * all QUALIFIED (ranked by `rankQualified`) ahead of all FALLBACK (most-recent
+ * first — filler that only sends once nothing qualified is left, decision D2).
+ * Backs the admin Queue screen and its "Push now" action.
+ */
+export async function pendingQueue(portal: string): Promise<Campaign[]> {
+  const qualified = await prisma.campaign.findMany({
+    where: { portal, status: 'DRAFT', sendQueue: 'QUALIFIED' },
+  });
+  qualified.sort(rankQualified);
+  const fallback = await prisma.campaign.findMany({
+    where: { portal, status: 'DRAFT', sendQueue: 'FALLBACK' },
+    orderBy: { createdAt: 'desc' },
+  });
+  return [...qualified, ...fallback];
+}
+
+/**
+ * Pick the single best pending article for a slot: top QUALIFIED
+ * (`rankQualified`), else most-recent FALLBACK filler.
  */
 async function selectNext(portal: string): Promise<Campaign | null> {
   const qualified = await prisma.campaign.findMany({
     where: { portal, status: 'DRAFT', sendQueue: 'QUALIFIED' },
   });
   if (qualified.length > 0) {
-    qualified.sort((a, b) => {
-      const dk = dayKey(b.createdAt) - dayKey(a.createdAt); // newer IST day first
-      if (dk !== 0) return dk;
-      const ta = authorityTier(a.authority);
-      const tb = authorityTier(b.authority);
-      if (ta !== tb) return ta - tb; // lower tier = higher priority
-      return b.createdAt.getTime() - a.createdAt.getTime(); // newer first
-    });
+    qualified.sort(rankQualified);
     return qualified[0];
   }
   // Fallback filler — only reached when nothing qualified is pending.

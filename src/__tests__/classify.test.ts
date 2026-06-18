@@ -60,6 +60,29 @@ describe('classify (editorial push policy)', () => {
     expect(c.authority).toBe('High Court');
   });
 
+  it('detects Bombay High Court as a priority bench (tier 2, distinct authority)', () => {
+    const full = classify('Bombay High Court quashes reassessment notice [Read Order]');
+    expect(full.queue).toBe('QUALIFIED');
+    expect(full.authority).toBe('Bombay High Court');
+    expect(full.tier).toBe(2);
+
+    const abbrev = classify('Sanction for Reopening Invalid: Bombay HC Quashes Notices [Read Order]');
+    expect(abbrev.authority).toBe('Bombay High Court');
+    expect(abbrev.tier).toBe(2);
+  });
+
+  it('a non-priority High Court stays generic (tier 3)', () => {
+    const c = classify('Karnataka HC dismisses tax appeal over delay [Read Order]');
+    expect(c.authority).toBe('High Court');
+    expect(c.tier).toBe(3);
+  });
+
+  it('Supreme Court still wins over a priority High Court in a mixed title', () => {
+    const c = classify('Supreme Court sets aside Bombay HC order on Section 148 [Read Judgment]');
+    expect(c.authority).toBe('Supreme Court');
+    expect(c.tier).toBe(1);
+  });
+
   it('Supreme Court outranks a tribunal mention', () => {
     const c = classify('Supreme Court reverses ITAT order on Section 263 revision');
     expect(c.authority).toBe('Supreme Court');

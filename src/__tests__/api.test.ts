@@ -299,11 +299,31 @@ describe('GET /api/guide (auth-gated admin guide PDF)', () => {
     expect(res.status).toBe(401);
   });
 
-  it('serves the PDF to an authenticated request', async () => {
+  it('serves the PDF inline to an authenticated request', async () => {
     const res = await request(app)
       .get('/api/guide')
       .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('application/pdf');
+    expect(res.headers['content-disposition']).toContain('inline');
+  });
+
+  it('forces a download with ?download', async () => {
+    const res = await request(app)
+      .get('/api/guide?download=1')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toContain('attachment');
+  });
+
+  it('serves the HTML version (auth-gated)', async () => {
+    const unauth = await request(app).get('/api/guide.html');
+    expect(unauth.status).toBe(401);
+
+    const res = await request(app)
+      .get('/api/guide.html')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
   });
 });

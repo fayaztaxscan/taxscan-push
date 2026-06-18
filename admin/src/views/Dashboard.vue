@@ -56,6 +56,7 @@ type Metrics = {
     ctr: number | null;
     deliveryRate: number | null;
     createdAt: string;
+    sentAt: string | null;
   }[];
 };
 
@@ -226,7 +227,8 @@ onMounted(load);
         <table>
           <thead>
             <tr>
-              <th>Created</th>
+              <th>Captured</th>
+              <th>Pushed</th>
               <th>Title</th>
               <th>Status</th>
               <th>Sent</th>
@@ -237,6 +239,7 @@ onMounted(load);
           <tbody>
             <tr v-for="c in metrics.campaigns.slice(0, 5)" :key="c.id">
               <td class="muted">{{ fmtDate(c.createdAt) }}</td>
+              <td :class="c.sentAt ? '' : 'muted'">{{ c.sentAt ? fmtDate(c.sentAt) : '—' }}</td>
               <td>{{ c.title }}</td>
               <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
               <td>{{ c.sent }}</td>
@@ -248,7 +251,7 @@ onMounted(load);
               </td>
             </tr>
             <tr v-if="metrics.campaigns.length === 0">
-              <td colspan="6" class="muted" style="text-align: center; padding: 24px">
+              <td colspan="7" class="muted" style="text-align: center; padding: 24px">
                 No campaigns yet.
               </td>
             </tr>

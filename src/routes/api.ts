@@ -6,6 +6,7 @@ import { env } from '../lib/env';
 import { requireBearerOrUser } from '../lib/auth';
 import { dispatchCampaign, executeCampaign, type Sender } from '../services/send';
 import { getMetrics, listCampaigns } from '../services/metrics';
+import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
 import { recordAudit } from '../lib/audit';
@@ -372,12 +373,86 @@ export function createApiRouter(
     }
   });
 
+  // --- Send queue (SEND_PACING_PLAN.md §5) -----------------------------------
+  // The QUALIFIED/FALLBACK articles the poller has captured and the pacer will
+  // release on its 45-min slots, listed in the exact order they will send. An
+  // editor can "Push now" any of them to jump it ahead of its slot (a full-reach
+  // force send, like the Review queue's Push-now).
+
+  router.get('/queue', requireBearerOrUser(), async (_req, res, next) => {
+    try {
+      const items = await pendingQueue(env.rss.portal);
+      return res.json({
+        items: items.map((c) => ({
+          id: c.id,
+          title: c.title,
+          body: c.body,
+          url: c.url,
+          authority: c.authority,
+          sendQueue: c.sendQueue,
+          createdAt: c.createdAt,
+        })),
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post('/queue/:id/push', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const userId = req.user?.id ?? null;
+      // Atomic claim: flip a still-pending auto-queue DRAFT to SCHEDULED, exactly
+      // as the pacer does, so a concurrent pacer tick can't also send it.
+      const claim = await prisma.campaign.updateMany({
+        where: { id: req.params.id, status: 'DRAFT', sendQueue: { in: ['QUALIFIED', 'FALLBACK'] } },
+        data: { status: 'SCHEDULED' },
+      });
+      if (claim.count === 0) return res.status(404).json({ error: 'queue_item_not_found' });
+      const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });
+      if (!campaign) return res.status(404).json({ error: 'queue_item_not_found' });
+      // Immediate full-reach send (bypasses the per-subscriber cap/cooldown). Its
+      // SENT events count toward the pacer's daily ceiling and reset the spacing
+      // clock, exactly like a manual force push or a Review "Push now".
+      const result = await executeCampaign(campaign, {
+        sender: opts.sender,
+        cap: Infinity,
+        minGapMinutes: 0,
+      });
+      await recordAudit({
+        userId,
+        action: 'CAMPAIGN_DISPATCHED',
+        resourceType: 'campaign',
+        resourceId: campaign.id,
+        metadata: {
+          sent: result.sent,
+          failed: result.failed,
+          expiredPruned: result.expiredPruned,
+          source: 'queue_push',
+        },
+      });
+      return res.json({ ok: true, id: campaign.id, ...result });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   // Admin user guide (PDF). Auth-gated so it is NOT public — the SPA's session
   // cookie satisfies requireBearerOrUser on a same-origin navigation. The file
   // is committed under <repo>/docs and ships with the deploy.
-  router.get('/guide', requireBearerOrUser(), (_req, res) => {
+  // HTML version — the SPA's /guide route embeds this in an iframe so the guide
+  // reads inline (the authored doc is self-contained with its own styles).
+  router.get('/guide.html', requireBearerOrUser(), (_req, res) => {
+    const htmlPath = path.resolve(__dirname, '..', '..', 'docs', 'Taxscan-Push-Admin-Guide.html');
+    res.sendFile(htmlPath, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'guide_not_found' });
+    });
+  });
+
+  // PDF version — opens inline by default, or forces a download with ?download.
+  router.get('/guide', requireBearerOrUser(), (req, res) => {
     const pdfPath = path.resolve(__dirname, '..', '..', 'docs', 'Taxscan-Push-Admin-Guide.pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="Taxscan-Push-Admin-Guide.pdf"');
+    const disposition = req.query.download !== undefined ? 'attachment' : 'inline';
+    res.setHeader('Content-Disposition', `${disposition}; filename="Taxscan-Push-Admin-Guide.pdf"`);
     res.sendFile(pdfPath, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'guide_not_found' });
     });

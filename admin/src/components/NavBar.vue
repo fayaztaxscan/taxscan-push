@@ -36,6 +36,7 @@ async function onLogout() {
       <router-link to="/dashboard" @click="closeMenu">Dashboard</router-link>
       <router-link to="/compose" @click="closeMenu">Compose</router-link>
       <router-link to="/review" @click="closeMenu">Review</router-link>
+      <router-link to="/queue" @click="closeMenu">Queue</router-link>
       <router-link to="/campaigns" @click="closeMenu">Campaigns</router-link>
       <router-link to="/activity" @click="closeMenu">Activity</router-link>
       <router-link v-if="user?.role === 'ADMIN'" to="/users" @click="closeMenu"
@@ -46,14 +47,7 @@ async function onLogout() {
         <span class="nav-email">{{ user.email }}</span>
         <span class="role-badge" :class="user.role.toLowerCase()">{{ user.role }}</span>
       </span>
-      <a
-        href="/api/guide"
-        target="_blank"
-        rel="noopener"
-        class="nav-secondary"
-        @click="closeMenu"
-        >Guide</a
-      >
+      <router-link to="/guide" class="nav-secondary" @click="closeMenu">Guide</router-link>
       <router-link to="/change-password" class="nav-secondary" @click="closeMenu"
         >Change password</router-link
       >

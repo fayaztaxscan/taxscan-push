@@ -4,6 +4,8 @@ import Login from './views/Login.vue';
 import Compose from './views/Compose.vue';
 import Campaigns from './views/Campaigns.vue';
 import Review from './views/Review.vue';
+import Queue from './views/Queue.vue';
+import Guide from './views/Guide.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
 import AcceptInvite from './views/AcceptInvite.vue';
@@ -32,6 +34,7 @@ export const router = createRouter({
     { path: '/dashboard', name: 'dashboard', component: Dashboard },
     { path: '/compose', name: 'compose', component: Compose },
     { path: '/review', name: 'review', component: Review },
+    { path: '/queue', name: 'queue', component: Queue },
     { path: '/campaigns', name: 'campaigns', component: Campaigns },
     {
       path: '/users',
@@ -40,6 +43,7 @@ export const router = createRouter({
       meta: { roles: ['ADMIN'] },
     },
     { path: '/activity', name: 'activity', component: Activity },
+    { path: '/guide', name: 'guide', component: Guide },
   ],
 });
 
