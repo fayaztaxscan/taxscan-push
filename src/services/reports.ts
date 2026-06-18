@@ -103,6 +103,17 @@ export function detectBench(title: string): string {
   return 'Unspecified';
 }
 
+// Canonical bench order for the heatmap (NOT by volume): Supreme Court first,
+// then priority High Courts (Bombay …), then the other named High Courts, the
+// generic High Court, then tribunals (ITAT/CESTAT/…), with 'Unspecified' last.
+// This is exactly the order BENCHES is declared in (priority HCs sit right after
+// the Supreme Court), so the heatmap reads top-down by judicial hierarchy.
+const BENCH_ORDER = BENCHES.map((b) => b.bench);
+export function benchRank(label: string): number {
+  const i = BENCH_ORDER.indexOf(label);
+  return i === -1 ? BENCH_ORDER.length : i; // unknown / 'Unspecified' → last
+}
+
 export type HeatmapRow = { label: string; perDay: number[]; total: number };
 export type Heatmap = { rows: HeatmapRow[]; dates: string[]; dayTotals: number[]; grandTotal: number };
 export type Report = {
@@ -122,6 +133,7 @@ function buildHeatmap(
   rowKeyOf: (c: { title: string; categories: string[] }) => string,
   rows: { title: string; categories: string[]; day: string }[],
   dates: string[],
+  compare?: (a: HeatmapRow, b: HeatmapRow) => number,
 ): Heatmap {
   const dayIndex = new Map(dates.map((d, i) => [d, i]));
   const byRow = new Map<string, number[]>();
@@ -137,7 +149,7 @@ function buildHeatmap(
     perDay,
     total: perDay.reduce((a, b) => a + b, 0),
   }));
-  out.sort((a, b) => b.total - a.total || a.label.localeCompare(b.label)); // busiest first
+  out.sort(compare ?? ((a, b) => b.total - a.total || a.label.localeCompare(b.label))); // default: busiest first
   const dayTotals = dates.map((_, i) => out.reduce((s, r) => s + r.perDay[i], 0));
   const grandTotal = dayTotals.reduce((a, b) => a + b, 0);
   return { rows: out, dates, dayTotals, grandTotal };
@@ -174,7 +186,14 @@ export async function buildReport(opts: {
   }));
 
   const byCategory = buildHeatmap((c) => reportCategory(c.categories), rows, dates);
-  const byBench = buildHeatmap((c) => detectBench(c.title), rows, dates);
+  // Bench heatmap is ordered by judicial hierarchy (SC → priority HCs → other
+  // HCs → tribunals → Unspecified), not by volume.
+  const byBench = buildHeatmap(
+    (c) => detectBench(c.title),
+    rows,
+    dates,
+    (a, b) => benchRank(a.label) - benchRank(b.label) || b.total - a.total,
+  );
 
   const quality = { qualified: 0, fallback: 0, review: 0, uncategorized: 0 };
   for (const r of rows) {
@@ -261,8 +280,8 @@ Open the Taxscan Push admin → Reports for the full heatmaps.`;
     <div style="font-size:13px;color:#475569">Quality: ${report.quality.qualified} court rulings ·
       ${report.quality.fallback} tribunal filler · ${report.quality.review} in review${report.quality.uncategorized ? ` · ${report.quality.uncategorized} unclassified` : ''}</div>
     ${gaps.length ? `<div style="font-size:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;margin-top:12px"><strong>No coverage this ${report.period === 'weekly' ? 'week' : 'month'}:</strong> ${gaps.join(', ')}${report.gaps.benchesWithNothing.length > gaps.length ? ' …' : ''}</div>` : ''}
-    ${emailHeatTable('Categories × dates', 'Category', report.byCategory)}
     ${emailHeatTable('Courts / benches × dates', 'Bench', report.byBench)}
+    ${emailHeatTable('Categories × dates', 'Category', report.byCategory)}
     <div style="margin-top:16px;font-size:11px;color:#94a3b8">Generated automatically by Taxscan Push · internal report — please don't forward outside the team.</div>
   </div></body></html>`;
   return { subject, html, text };

@@ -218,29 +218,6 @@ onMounted(() => {
         {{ topGaps.join(', ') }}<span v-if="report.gaps.benchesWithNothing.length > topGaps.length"> …</span>
       </div>
 
-      <h3 class="heat-h">Categories × dates</h3>
-      <table class="heat">
-        <thead>
-          <tr>
-            <th class="heat-label">Category</th>
-            <th v-for="d in report.byCategory.dates" :key="d">{{ shortDate(d) }}</th>
-            <th class="heat-total">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in report.byCategory.rows" :key="row.label">
-            <td class="heat-label">{{ row.label }}</td>
-            <td v-for="(n, i) in row.perDay" :key="i" :style="{ background: cellColor(n, catMax) }">{{ n }}</td>
-            <td class="heat-total">{{ row.total }}</td>
-          </tr>
-          <tr class="heat-foot">
-            <td class="heat-label">Total</td>
-            <td v-for="(t, i) in report.byCategory.dayTotals" :key="i">{{ t }}</td>
-            <td class="heat-total">{{ report.byCategory.grandTotal }}</td>
-          </tr>
-        </tbody>
-      </table>
-
       <h3 class="heat-h">Courts / benches × dates</h3>
       <table class="heat">
         <thead>
@@ -260,6 +237,29 @@ onMounted(() => {
             <td class="heat-label">Total</td>
             <td v-for="(t, i) in report.byBench.dayTotals" :key="i">{{ t }}</td>
             <td class="heat-total">{{ report.byBench.grandTotal }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 class="heat-h">Categories × dates</h3>
+      <table class="heat">
+        <thead>
+          <tr>
+            <th class="heat-label">Category</th>
+            <th v-for="d in report.byCategory.dates" :key="d">{{ shortDate(d) }}</th>
+            <th class="heat-total">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in report.byCategory.rows" :key="row.label">
+            <td class="heat-label">{{ row.label }}</td>
+            <td v-for="(n, i) in row.perDay" :key="i" :style="{ background: cellColor(n, catMax) }">{{ n }}</td>
+            <td class="heat-total">{{ row.total }}</td>
+          </tr>
+          <tr class="heat-foot">
+            <td class="heat-label">Total</td>
+            <td v-for="(t, i) in report.byCategory.dayTotals" :key="i">{{ t }}</td>
+            <td class="heat-total">{{ report.byCategory.grandTotal }}</td>
           </tr>
         </tbody>
       </table>
