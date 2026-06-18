@@ -28,7 +28,8 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/
   shop click URLs, **Test on this device** isolated preview), **Review queue**, **Send queue**
-  (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time), **Reports**,
+  (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
+  Manual/Automatic — Push-now sets `createdByUserId`), **Reports**,
   **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit
   log, push-URL allowlist (`ALLOWED_PUSH_HOSTS`, incl. academy/shop), rate limits, helmet.
