@@ -26,6 +26,17 @@ behind the existing `PACER_ENABLED`/`RSS_EDITORIAL_FILTER` flags:
   default Pushed desc). The Queue screen stays the pure upcoming-in-send-order view.
 - **Guide** menu now opens an in-app HTML reader (`/guide`) with a Download-PDF option
   (`GET /api/guide.html`; `/api/guide?download`). Was: opened the PDF directly.
+- **Campaigns table**: clickable sortable columns (Captured / Pushed / Sent / CTR / …), and a
+  fix for the last column (Delivery) being clipped (wider `.page-wide` + compact dates).
+- **Review & Queue clarity**: a `Captured → Review → Queue → Sent` pipeline strip on both
+  screens (current stage highlighted) + cross-referencing descriptions, so their roles are obvious.
+- **Job / recruitment posts → Review.** Job-scan titles (vacancy/hiring/recruitment/walk-in/
+  internship/job opening) classify to REVIEW *before* the authority rules, so even "ICAI
+  Recruitment" never auto-sends — an editor decides. ("Job Work under GST" is NOT a job post.)
+  The **job-scan feed is wired** (`RSS_FEED_JOBS=https://www.taxscan.in/job-scan/feed` on
+  Railway; poller now watches **5 feeds**), and job posts **target ALL subscribers** (no "jobs"
+  topic exists). Verified live ~15:10 — vacancies now land in the Review queue. NOTE: enabling a
+  brand-new feed captures its whole current list on the first poll (all REVIEW drafts — expected).
 - Tracked the previously-untracked root state docs (+ `docs/archive/`), added a manual-push
   "leave Target on **All subscribers**" checklist to the admin guide, and an
   `npm run build:guide` script (Chrome headless HTML→PDF).
