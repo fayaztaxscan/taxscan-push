@@ -71,7 +71,10 @@ const SendSchema = z.object({
     .string()
     .min(1)
     .refine(isAllowedPushUrl, {
-      message: 'url host is not in ALLOWED_PUSH_HOSTS',
+      message:
+        env.allowedPushHosts.length > 0
+          ? `Click URL must link to one of these sites: ${env.allowedPushHosts.join(', ')}. Update ALLOWED_PUSH_HOSTS to add another.`
+          : 'Invalid Click URL.',
     }),
   icon: z.string().optional(),
   target: TargetSchema,

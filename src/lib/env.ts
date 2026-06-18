@@ -45,7 +45,8 @@ const parsedCap = Number(process.env.FREQ_CAP_PER_DAY);
 const parsedConcurrency = Number(process.env.SEND_CONCURRENCY);
 
 const allowedPushHosts = (
-  process.env.ALLOWED_PUSH_HOSTS ?? 'taxscan.in,www.taxscan.in'
+  process.env.ALLOWED_PUSH_HOSTS ??
+  'taxscan.in,www.taxscan.in,academy.taxscan.in,shop.taxscan.in'
 )
   .split(',')
   .map((h) => h.trim().toLowerCase())
