@@ -5,6 +5,41 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
+## ✅ 2026-06-18 — Editorial UX batch SHIPPED & LIVE (verified on Railway)
+
+The editorial send-pacing pipeline is **confirmed live and working** — this supersedes any
+"rollout pending" framing further down. Today's batch is merged to `main` and deployed
+(PRs #5 `6b54cab`, #6 `a3a47fe`), 257/257 tests, **no DB migration, no new env vars**, all
+behind the existing `PACER_ENABLED`/`RSS_EDITORIAL_FILTER` flags:
+
+- **Send order = oldest-published-first** within the same day + authority tier (was
+  newest-first), so a same-day cluster of qualified rulings goes out in publish order.
+  Today-before-backlog and SC→HC→regulatory precedence unchanged. (`pacer.ts` `rankQualified`.)
+- **Priority high courts** — Bombay HC auto-jumps ahead of other High Courts (just below the
+  Supreme Court). Config list `PRIORITY_HIGH_COURTS` in `classify.ts` — add Delhi etc. to extend.
+  Tiers: 1 SC · 2 priority HC · 3 other HC · 4 regulatory/approved.
+- **Queue screen** (`/queue`) — pending qualified/fallback articles in send order, each with
+  **Push now** (full-reach force). `GET /api/queue`, `POST /api/queue/:id/push`.
+- **"Pushed" time** everywhere campaigns show (Dashboard, Campaigns, detail) — distinct from
+  "Captured" (capture time). `CampaignStat.sentAt` = earliest SENT event.
+- **Campaigns table = clickable sortable columns** (Captured / Pushed / Sent / CTR / …;
+  default Pushed desc). The Queue screen stays the pure upcoming-in-send-order view.
+- **Guide** menu now opens an in-app HTML reader (`/guide`) with a Download-PDF option
+  (`GET /api/guide.html`; `/api/guide?download`). Was: opened the PDF directly.
+- Tracked the previously-untracked root state docs (+ `docs/archive/`), added a manual-push
+  "leave Target on **All subscribers**" checklist to the admin guide, and an
+  `npm run build:guide` script (Chrome headless HTML→PDF).
+
+**Verified live ~14:00 IST:** pacer firing ~1 push / ~46 min (11 by 14:00, < 20/day ceiling);
+Bombay HC sent ahead of Karnataka HC (priority working); active **2,213**, delivery **97.5%**,
+unsub **0.03%**, recapture **3,076**, CTR **~0.64%**. `develop` and `main` are IN SYNC.
+
+**Editor notes:** manual force-pushes (e.g. ICAI results) reset the 45-min spacing clock and
+count toward the 20/day ceiling. Capture time ≠ push time — sort Campaigns by **Pushed** to
+see real send activity. iZooto stays (see below — base not migratable).
+
+---
+
 ## ⛔ 2026-06-16 — DECOMMISSION CANCELLED / recapture assumption corrected
 
 **Do NOT decommission iZooto. The "7-day watch → cancel iZooto" plan below is VOID.**

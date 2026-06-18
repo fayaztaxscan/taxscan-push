@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
+import PipelineStrip from '../components/PipelineStrip.vue';
 
 type QueueItem = {
   id: string;
@@ -53,10 +54,12 @@ onMounted(load);
 <template>
   <main class="page">
     <h1 class="section-title">Send queue</h1>
+    <PipelineStrip current="queue" />
     <p class="muted" style="margin-top: 0">
-      Articles waiting for their automatic send slot (about one every 45 minutes), listed in the
-      order they’ll go out — <strong>oldest published first</strong>. Use <strong>Push now</strong>
-      to send any of them immediately instead of waiting its turn.
+      Articles already approved to send, waiting their automatic slot (about one every 45 minutes),
+      in the order they’ll go out — <strong>oldest published first</strong>. Unclassified articles
+      sit in <strong>Review</strong> until you approve them. Use <strong>Push now</strong> to send
+      one immediately instead of waiting its turn.
     </p>
 
     <div v-if="error" class="banner err">{{ error }}</div>
