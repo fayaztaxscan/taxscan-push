@@ -3,7 +3,7 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
-import { requireBearerOrUser } from '../lib/auth';
+import { requireBearerOrUser, requireUser } from '../lib/auth';
 import type { Subscriber } from '@prisma/client';
 import {
   dispatchCampaign,
@@ -14,6 +14,7 @@ import {
 import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { buildReport, reportWindow } from '../services/reports';
+import { sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
@@ -553,6 +554,63 @@ export function createApiRouter(
       const { start, end } = reportWindow(period, new Date());
       const report = await buildReport({ portal: env.rss.portal, period, start, end });
       return res.json(report);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Preview the report email — sends it to the requesting user only, so they can
+  // check how it looks before the scheduled run reaches everyone.
+  router.post('/reports/test-email', requireUser(), async (req, res, next) => {
+    try {
+      const period = req.body?.period === 'monthly' ? 'monthly' : 'weekly';
+      const u = req.user?.id
+        ? await prisma.user.findUnique({ where: { id: req.user.id }, select: { email: true } })
+        : null;
+      if (!u?.email) return res.status(400).json({ error: 'no_email_for_user' });
+      const result = await sendScheduledReport({ period, recipients: [u.email] });
+      if (result.failed > 0) {
+        return res.status(502).json({ error: 'email_failed', message: 'Email could not be sent — check email config.' });
+      }
+      return res.json({ ok: true, to: u.email, articles: result.total });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Report-only recipients (internal emails that get the weekly/monthly report
+  // but have no login or push). Admin-managed. App users always receive it too.
+  const ReportRecipientSchema = z.object({ email: z.string().email() });
+
+  router.get('/report-recipients', requireUser(['ADMIN']), async (_req, res, next) => {
+    try {
+      const items = await prisma.reportRecipient.findMany({ orderBy: { createdAt: 'desc' } });
+      return res.json({ items });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post('/report-recipients', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const parsed = ReportRecipientSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const email = parsed.data.email.trim().toLowerCase();
+      const item = await prisma.reportRecipient.upsert({
+        where: { email },
+        update: { active: true },
+        create: { email },
+      });
+      return res.status(201).json({ item });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.delete('/report-recipients/:id', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      await prisma.reportRecipient.delete({ where: { id: req.params.id } }).catch(() => undefined);
+      return res.status(204).end();
     } catch (err) {
       return next(err);
     }

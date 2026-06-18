@@ -134,6 +134,13 @@ export const env = {
     enabled: process.env.MORNING_BACKFILL_ENABLED === 'true',
     until: process.env.MORNING_BACKFILL_UNTIL ?? '12:00',
   },
+  // Weekly/monthly coverage report emails (internal). Default off; needs email
+  // configured. Crons are IST (env.rss.tz): Monday 08:00 weekly, 1st 08:00 monthly.
+  reports: {
+    enabled: process.env.REPORTS_ENABLED === 'true',
+    weeklyCron: process.env.REPORT_WEEKLY_CRON ?? '0 8 * * 1',
+    monthlyCron: process.env.REPORT_MONTHLY_CRON ?? '0 8 1 * *',
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.
