@@ -141,6 +141,20 @@ export const env = {
     weeklyCron: process.env.REPORT_WEEKLY_CRON ?? '0 8 * * 1',
     monthlyCron: process.env.REPORT_MONTHLY_CRON ?? '0 8 1 * *',
   },
+  // No-miss backstop: periodically reconcile against taxscan's complete daily
+  // sitemap and capture any article the RSS feeds missed (feeds only show the
+  // latest ~11 per poll). Default off.
+  reconciler: {
+    enabled: process.env.RECONCILER_ENABLED === 'true',
+    cron: process.env.RECONCILER_CRON ?? '*/20 * * * *',
+    sitemapUrl: process.env.RECONCILER_SITEMAP ?? 'https://www.taxscan.in/news-sitemap-daily.xml',
+  },
+  // Retention: auto-archive (status EXPIRED) DRAFT articles never sent within
+  // RETENTION_DAYS, so the Queue/Review backlog stays bounded. 0 = disabled.
+  retention: {
+    days: intEnv('RETENTION_DAYS', 0),
+    cron: process.env.RETENTION_CRON ?? '30 3 * * *',
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.

@@ -47,14 +47,38 @@ const CATEGORY_ALIASES: { re: RegExp; label: string }[] = [
   { re: /job[\s-]*scan/i, label: 'JobScan' },
 ];
 
-/** The report-category row for an article from its RSS category tags. */
-export function reportCategory(categories: string[]): string {
+// Title-based category inference — the fallback when an article has no usable
+// RSS category tag (e.g. reconciler back-fills from the sitemap, or older rows
+// captured before category storage). Keeps the heatmap in known buckets instead
+// of "Uncategorized". First match wins.
+const TITLE_CATEGORY: { label: string; re: RegExp }[] = [
+  { label: 'Income Tax', re: /income[\s-]*tax|\bITAT\b|\bCBDT\b|\bITR\b|\bTDS\b/i },
+  { label: 'GST', re: /\bGST\b|\bGSTAT\b|\bCST\b|\bVAT\b|input tax credit|e-?way bill/i },
+  { label: 'Customs', re: /\bcustoms\b|\bexcise\b|\bCESTAT\b|\bDGFT\b/i },
+  { label: 'SEBI/RBI', re: /\bSEBI\b|\bRBI\b/i },
+  { label: 'Corporate Law', re: /\bNCLAT\b|\bNCLT\b|\binsolvency\b|\bIBC\b|companies act|\bcorporate\b/i },
+  { label: 'Service Tax', re: /\bservice tax\b/i },
+];
+
+export function categoryFromTitle(title: string): string | null {
+  const t = title ?? '';
+  for (const { label, re } of TITLE_CATEGORY) if (re.test(t)) return label;
+  return null;
+}
+
+/**
+ * The report-category row for an article: its RSS category tags first (most
+ * accurate), else inferred from the title, else the raw tag, else Uncategorized.
+ */
+export function reportCategory(categories: string[], title = ''): string {
   const subjects = (categories ?? []).map((c) => c.trim()).filter((c) => c && !CROSS_CUTTING.test(c));
   for (const c of subjects) {
     const alias = CATEGORY_ALIASES.find((a) => a.re.test(c));
     if (alias) return alias.label;
   }
-  if (subjects.length > 0) return subjects[0]; // unknown subject tag → show it as-is
+  const inferred = categoryFromTitle(title);
+  if (inferred) return inferred;
+  if (subjects.length > 0) return subjects[0]; // unknown subject tag → show as-is
   return 'Uncategorized';
 }
 
@@ -185,7 +209,7 @@ export async function buildReport(opts: {
     sendQueue: c.sendQueue,
   }));
 
-  const byCategory = buildHeatmap((c) => reportCategory(c.categories), rows, dates);
+  const byCategory = buildHeatmap((c) => reportCategory(c.categories, c.title), rows, dates);
   // Bench heatmap is ordered by judicial hierarchy (SC → priority HCs → other
   // HCs → tribunals → Unspecified), not by volume.
   const byBench = buildHeatmap(

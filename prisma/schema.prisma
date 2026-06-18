@@ -18,6 +18,7 @@ enum CampaignStatus {
   SCHEDULED
   SENT
   FAILED
+  EXPIRED
 }
 
 enum EventType {
