@@ -62,3 +62,16 @@ export function startOfTodayIST(now: Date): Date {
   const c = getISTComponents(now);
   return makeISTInstant(c.year, c.month, c.day, 0, 0);
 }
+
+/** IST minutes-since-midnight for an instant (e.g. 07:30 IST → 450). */
+export function istMinutesOfDay(now: Date): number {
+  const c = getISTComponents(now);
+  return c.hours * 60 + c.minutes;
+}
+
+/** True if `now` (IST) is at or after midnight and strictly before HH:MM. */
+export function isBeforeIST(now: Date, hhmm: string): boolean {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!m) throw new Error(`Invalid HH:MM value: ${hhmm}`);
+  return istMinutesOfDay(now) < Number(m[1]) * 60 + Number(m[2]);
+}

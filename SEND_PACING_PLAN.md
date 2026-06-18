@@ -98,6 +98,26 @@ today's SENT campaigns.
 
 ---
 
+## 5a. Morning backfill — fill empty morning slots from yesterday (2026-06-18)
+
+Flag: `MORNING_BACKFILL_ENABLED` (default off), window end `MORNING_BACKFILL_UNTIL`
+(default `12:00` IST). When ON, a slot that would otherwise sit empty in the morning
+(after quiet hours, before the window end, and **only while today has produced no
+qualified article yet**) is filled from **yesterday's** articles:
+
+1. **Court rulings** — SC → Bombay HC → other HC. **Re-send allowed even if sent
+   yesterday** (ties break by most clicks, then recency).
+2. else **unsent other-category** items (regulatory/approved before tribunal filler).
+3. else **other-category by most clicks** (re-send the best performers).
+
+Each yesterday URL is re-used **at most once per day** (deduped against today's sends,
+so the pacer rotates down the list). A re-send is a fresh clone (the original's stats
+stay intact; the clone keeps the original's yesterday `createdAt` so it is not mistaken
+for today's fresh content). Re-sends still respect the 45-min spacing and the 20/day
+ceiling. As soon as the first fresh qualified article of the day publishes, backfill
+switches off and normal selection (§5) resumes. Decided 2026-06-18: mornings-only;
+once-each-then-rotate; yesterday's SC/HC re-send beats a fresh tribunal.
+
 ## 5. Slot selection — priority ranking
 
 When a slot opens, pick the single best pending article by this sort:
