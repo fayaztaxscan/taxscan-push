@@ -17,7 +17,8 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of iZooto-granted
   browsers, `pushsubscriptionchange`); every subscriber tagged with a `portal` + topics.
 - **RSS → editorial classifier** (`classify.ts`) — polls 5 section feeds (corporate / gst /
-  income-tax / customs / jobs); classifies each article by TITLE into QUALIFIED (SC / priority
+  income-tax / customs / jobs) + the master feed (`RSS_FEED_NEWS` = taxscan.in/feed, all sections);
+  stores each article's RSS `<category>` tags; classifies by TITLE into QUALIFIED (SC / priority
   HC = Bombay / other HC / regulatory) · FALLBACK (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical +
   job/recruitment posts).
 - **Editorial pacer** (`pacer.ts`) — 1 push per global 45-min slot, ≤20/day, best-first (today →
@@ -29,6 +30,10 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Dashboard** (health metrics + recent campaigns by push time), **Campaigns** (full sortable
   history, captured-vs-pushed times), **Activity** (append-only audit), **Users** (RBAC, email
   invites, temp passwords).
+- **Coverage reports** (`reports.ts` + `reportScheduler.ts`) — weekly + monthly Category×dates and
+  Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting EVERY captured
+  article. In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 08:00 / 1st
+  08:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
 - **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
@@ -37,6 +42,29 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 
 Deeper detail lives in `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`, and the
 auto-memory (which loads into every Claude session in this folder). History continues below.
+
+---
+
+## ✅ 2026-06-18 (latest) — Coverage Report feature SHIPPED & LIVE (PRs #15–#17)
+
+Automates the manual weekly/monthly heatmap reports the team built by hand.
+- **Phase 1 / ingestion (PR #15):** poll the master feed (`RSS_FEED_NEWS` on Railway) + store each
+  article's RSS `<category>` tags (`Campaign.categories`, additive migration). Topic now derived from
+  categories with feed fallback. Fewer missed pushes + complete report data. (`categories` only fills
+  from 2026-06-18 onward, so the **category heatmap matures over ~a week**; the **bench heatmap is
+  accurate immediately** since it's title-derived.)
+- **Reports engine (PR #16):** `reports.ts` — Category×dates + Bench×dates heatmaps (`detectBench`
+  reads specific HCs/tribunals/AAR from titles), insights (totals, vs-prev, gaps, quality split),
+  counts EVERY captured article. `GET /api/reports?period=weekly|monthly`. In-app **Reports** screen
+  with **Download/Copy image** (html-to-image) for WhatsApp.
+- **Email delivery (PR #17):** `reportScheduler.ts` cron — **Mon 08:00 IST weekly + 1st 08:00 IST
+  monthly** → all active app users + a report-only email list (`ReportRecipient`, admin CRUD on the
+  Reports page), deduped. INTERNAL — never to push subscribers. `POST /api/reports/test-email` +
+  "Email me a test" button to preview. Behind `REPORTS_ENABLED` (now ON; email is configured).
+- Two additive migrations (`categories`, `report_recipients`). Suite 282/282.
+
+**Action for the team:** click **"Email me a test"** on the Reports page to verify the email before
+the first Monday run; add any report-only recipients there.
 
 ---
 
