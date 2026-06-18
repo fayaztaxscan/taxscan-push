@@ -20,7 +20,11 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical + job/recruitment posts, editor-decided).
 - **Editorial pacer** (`src/services/pacer.ts`) — 1 push per global 45-min slot, ≤20/day,
   best-first (today → authority tier → oldest-published-first), defer-not-drop; morning
-  backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`, default OFF).
+  backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`).
+- **No-miss reconciler + retention** (`src/services/reconciler.ts`) — feeds expose only ~11
+  items/poll, so a cron reconciles against taxscan's complete daily sitemap and captures any
+  missed article (behind `RECONCILER_ENABLED`); DRAFTs unsent within `RETENTION_DAYS` are
+  archived (EXPIRED status). Reports infer category from the title when no RSS tag.
 - **Coverage reports** (`src/services/reports.ts` + `reportScheduler.ts`) — weekly + monthly
   Category×dates and Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split),
   counting EVERY captured article. In-app **Reports** screen (Download/Copy image for
@@ -35,7 +39,11 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   log, push-URL allowlist (`ALLOWED_PUSH_HOSTS`, incl. academy/shop), rate limits, helmet.
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
-`RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=OFF.
+`RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
+`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=7.
+
+**Open next step:** a responsive-design audit of all admin pages across phone/tablet
+(the newer/wider screens — Reports, Campaigns, Queue — predate the mobile pass). See `NEXT_STEP.md`.
 
 **Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
 `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +

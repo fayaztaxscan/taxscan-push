@@ -5,6 +5,30 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
+## ▶️ NEXT STEPS / open items (as of 2026-06-18, end of day)
+
+1. **Responsive design audit across all devices (TOP priority next session).** The early
+   mobile work (hamburger nav + a `@media (max-width:720px)` block in `app.css`) predates the
+   newer screens. Audit and fix layout on phone (≈390px) and tablet (≈768px) for **every**
+   page — especially the wide/dense ones added since: **Reports** (two wide heatmaps + the
+   `.page-wide` 1280px container), **Campaigns** (10-column sortable table), **Queue**,
+   **Review** (pipeline strip), **Compose** (Test-on-this-device + flags), **Dashboard**.
+   Goal: no horizontal clipping/overflow; heatmaps scroll or scale cleanly; tap targets OK.
+2. **Confirm the reconciler closes the capture gap.** Pre-fix: 67 published vs 43 captured
+   (2026-06-18). After `RECONCILER_ENABLED=true`, captured-today should reach ≈ the daily
+   sitemap count. Spot-check `news-sitemap-daily.xml` `<loc>` count vs our captures for a day.
+3. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
+   for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
+4. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
+   first automated **Monday 08:00 IST** weekly + **1st 08:00 IST** monthly land. The category
+   heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
+5. **Retention tuning** — `RETENTION_DAYS=7` is one window for all DRAFTs; consider a shorter
+   window for tribunal/fallback (e.g. 3d) if that pile stays large.
+6. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
+   live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
+
+---
+
 ## What this system is + what's built (capability overview)
 
 **What it is:** a self-hosted web-push notification platform for taxscan.in (a GST/Income-Tax
@@ -21,6 +45,10 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
   stores each article's RSS `<category>` tags; classifies by TITLE into QUALIFIED (SC / priority
   HC = Bombay / other HC / regulatory) · FALLBACK (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical +
   job/recruitment posts).
+- **No-miss reconciler + retention** (`reconciler.ts`) — a cron reconciles against taxscan's
+  complete daily sitemap and captures any article the feeds missed (feeds show only ~11/poll);
+  DRAFTs unsent within `RETENTION_DAYS` are archived (EXPIRED status) to bound the backlog.
+  Reports infer category from the title when no RSS tag, so coverage stays accurate.
 - **Editorial pacer** (`pacer.ts`) — 1 push per global 45-min slot, ≤20/day, best-first (today →
   authority tier → oldest-published-first), defer-not-drop; morning backfill from yesterday (flagged off).
 - **Review queue** (`/review`) + **Send queue** (`/queue`) with **Push now**; a Captured → Review →
