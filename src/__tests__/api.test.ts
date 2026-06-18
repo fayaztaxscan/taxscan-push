@@ -327,3 +327,42 @@ describe('GET /api/guide (auth-gated admin guide PDF)', () => {
     expect(res.headers['content-type']).toContain('text/html');
   });
 });
+
+describe('POST /api/send/test-device (preview on the caller device only)', () => {
+  const AUTH = `Bearer ${process.env.ADMIN_TOKEN}`;
+  const sub = () => ({
+    endpoint: makeEndpoint('test-device'),
+    keys: { p256dh: validKeys().p256dh, auth: validKeys().auth },
+  });
+
+  it('requires auth', async () => {
+    const res = await request(app).post('/api/send/test-device').send({});
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a disallowed click URL with a clear message', async () => {
+    const res = await request(sendApp)
+      .post('/api/send/test-device')
+      .set('Authorization', AUTH)
+      .send({ subscription: sub(), title: 't', body: 'b', url: 'https://evil.example.com/x' });
+    expect(res.status).toBe(400);
+    const issue = (res.body.issues as { path: string[]; message: string }[]).find((i) =>
+      i.path.includes('url'),
+    );
+    expect(issue?.message).toContain('academy.taxscan.in');
+  });
+
+  it('delivers a preview to the provided device', async () => {
+    const res = await request(sendApp)
+      .post('/api/send/test-device')
+      .set('Authorization', AUTH)
+      .send({
+        subscription: sub(),
+        title: 'Preview',
+        body: 'Hello',
+        url: 'https://academy.taxscan.in/course/x',
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+});

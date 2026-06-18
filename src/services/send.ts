@@ -59,7 +59,7 @@ function appendUtm(rawUrl: string): string {
 // taxscan.in and shows a generic browser icon on subscribers' devices.
 // Phase 2 (academy/shop portals) should make this per-portal — either an
 // env-var map keyed by portal slug, or a Portal model column.
-const DEFAULT_NOTIFICATION_ICON =
+export const DEFAULT_NOTIFICATION_ICON =
   'https://www.taxscan.in/images/icons/icon-192x192.png';
 
 export type Target = { type: 'all' } | { type: 'topics'; topics: string[] };
