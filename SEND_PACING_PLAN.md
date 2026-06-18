@@ -103,8 +103,12 @@ When a slot opens, pick the single best pending article by this sort:
    **not discarded** — they wait and fill slots only when nothing from today is pending,
    draining **newest-day-first** until the queue empties. (So a day-old SC judgment is sent
    only on a slot where today produced nothing qualified.)
-3. **Authority tier, within the same day** — Supreme Court → High Court →
-   regulatory/announcement (ICAI/CBDT/CBIC/DGFT/IBBI/GSTAT/PMLA) + approved analytical.
+3. **Authority tier, within the same day** — Supreme Court → **priority High Court
+   (Bombay)** → any other High Court → regulatory/announcement
+   (ICAI/CBDT/CBIC/DGFT/IBBI/GSTAT/PMLA) + approved analytical. Priority benches are a
+   config list (`PRIORITY_HIGH_COURTS` in `classify.ts`, default Bombay); add a court
+   there to elevate it. A priority bench still ranks below today's Supreme Court and
+   never jumps the cross-day freshness rule.
 4. **Publish time — oldest first** (final tiebreak; revised 2026-06-18). A cluster
    of same-day, same-tier articles goes out **in the order it was published**, so the
    first-published ruling is sent first rather than last. (Was newest-first originally.)
@@ -190,6 +194,11 @@ This is the only routine human touch-point — the SC/HC/tribunal bulk is fully 
   news" subscribers), matching iZooto. See §4.
 - **D5 — approved-analytical ranking:** rank approved items in the normal regulatory/article
   tier with recency tiebreak (default). See §5.
+- **D6 — priority high courts (2026-06-18):** designated benches (default **Bombay High
+  Court**) automatically rank just below the Supreme Court and above all other High Courts,
+  so their rulings jump the publish-order queue. Handled in the classifier, not by hand;
+  the list (`PRIORITY_HIGH_COURTS`) is config so editors can add e.g. Delhi later. Tiers are
+  now: 1 SC · 2 priority HC · 3 other HC · 4 regulatory/approved. See §5.
 
 ---
 
