@@ -10,6 +10,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "html-to-image": "^1.11.13",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },

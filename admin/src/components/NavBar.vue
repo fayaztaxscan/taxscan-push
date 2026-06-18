@@ -38,6 +38,7 @@ async function onLogout() {
       <router-link to="/review" @click="closeMenu">Review</router-link>
       <router-link to="/queue" @click="closeMenu">Queue</router-link>
       <router-link to="/campaigns" @click="closeMenu">Campaigns</router-link>
+      <router-link to="/reports" @click="closeMenu">Reports</router-link>
       <router-link to="/activity" @click="closeMenu">Activity</router-link>
       <router-link v-if="user?.role === 'ADMIN'" to="/users" @click="closeMenu"
         >Users</router-link
