@@ -105,7 +105,13 @@ When a slot opens, pick the single best pending article by this sort:
    only on a slot where today produced nothing qualified.)
 3. **Authority tier, within the same day** — Supreme Court → High Court →
    regulatory/announcement (ICAI/CBDT/CBIC/DGFT/IBBI/GSTAT/PMLA) + approved analytical.
-4. **Publish time** — final tiebreak.
+4. **Publish time — oldest first** (final tiebreak; revised 2026-06-18). A cluster
+   of same-day, same-tier articles goes out **in the order it was published**, so the
+   first-published ruling is sent first rather than last. (Was newest-first originally.)
+
+An editor doesn't have to wait for the slot: the **Queue** screen (`/queue`) lists every
+pending QUALIFIED/FALLBACK article in this exact send order, each with a **Push now**
+button (full-reach force send — §7 semantics) to jump it ahead of its slot.
 
 **FALLBACK** items rank by recency, **most-recent first** (decision D2); old tribunal
 stories age out naturally and are not carried indefinitely.
@@ -177,7 +183,9 @@ This is the only routine human touch-point — the SC/HC/tribunal bulk is fully 
 - **D3 — freshness / carryover:** **today before yesterday.** Never pick an older qualified
   article while a today's qualified one is pending. Older qualified items are not discarded —
   they drain as filler (newest-day-first) only on slots where today has nothing qualified.
-  See §5.
+  See §5. **Revised 2026-06-18:** *within* a day+tier the order is now **oldest-published-first**
+  (was newest-first), so a same-day cluster sends in publish order. The cross-day rule
+  (today before older days) is unchanged.
 - **D4 — spacing scope:** the 45-min gap is **global across all topics** (protects "All
   news" subscribers), matching iZooto. See §4.
 - **D5 — approved-analytical ranking:** rank approved items in the normal regulatory/article

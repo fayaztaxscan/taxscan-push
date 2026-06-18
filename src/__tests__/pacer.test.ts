@@ -169,6 +169,28 @@ describe('runPacerTick', () => {
     expect(r.campaignId).not.toBe(gstat.id);
   });
 
+  it('within the same day and tier, sends the OLDEST-published article first', async () => {
+    const portal = uniquePortal('publish-order');
+    const now = ist(2026, 6, 18, 12, 0);
+    await makeSubscriber(portal);
+    const first = await draft(portal, {
+      title: 'Karnataka HC dismisses appeal [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'High Court',
+      createdAt: ist(2026, 6, 18, 10, 10),
+    });
+    const second = await draft(portal, {
+      title: 'Bombay HC quashes notice [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'High Court',
+      createdAt: ist(2026, 6, 18, 10, 25),
+    });
+
+    const r = await runPacerTick({ ...BASE, now, portal, sender: okSender() });
+    expect(r.campaignId).toBe(first.id); // first-published goes first
+    expect(r.campaignId).not.toBe(second.id);
+  });
+
   it('falls back to the most-recent FALLBACK only when no qualified is pending', async () => {
     const portal = uniquePortal('fallback');
     const now = ist(2026, 6, 16, 12, 0);
