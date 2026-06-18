@@ -28,8 +28,8 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Manual Compose** — All/topic targeting, Breaking + Force, schedule-for-later, taxscan/academy/shop
   click URLs, and **Test on this device** (isolated preview to your own browser).
 - **Dashboard** (health metrics + recent campaigns by push time), **Campaigns** (full sortable
-  history, captured-vs-pushed times), **Activity** (append-only audit), **Users** (RBAC, email
-  invites, temp passwords).
+  history, captured-vs-pushed times, **Source = Manual/Automatic** — Push-now is attributed to the
+  editor), **Activity** (append-only audit), **Users** (RBAC, email invites, temp passwords).
 - **Coverage reports** (`reports.ts` + `reportScheduler.ts`) — weekly + monthly Category×dates and
   Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting EVERY captured
   article. In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 08:00 / 1st
