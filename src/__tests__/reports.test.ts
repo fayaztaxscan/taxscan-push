@@ -58,6 +58,14 @@ describe('reportCategory', () => {
     expect(reportCategory([])).toBe('Uncategorized');
     expect(reportCategory(['Some New Section'])).toBe('Some New Section'); // unknown → as-is
   });
+
+  it('infers the category from the title when no usable RSS tag (back-fill fidelity)', () => {
+    expect(reportCategory([], 'Relief: ITAT deletes addition [Read Order]')).toBe('Income Tax');
+    expect(reportCategory([], 'CESTAT sets aside customs duty demand')).toBe('Customs');
+    expect(reportCategory(['Top Stories'], 'GST on rent: Bombay HC [Read Order]')).toBe('GST');
+    expect(reportCategory([], 'NCLT admits insolvency plea')).toBe('Corporate Law');
+    expect(reportCategory([], 'A generic update with no subject signal')).toBe('Uncategorized');
+  });
 });
 
 describe('buildReport', () => {
