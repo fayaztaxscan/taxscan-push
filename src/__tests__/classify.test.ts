@@ -92,4 +92,32 @@ describe('classify (editorial push policy)', () => {
   it('does not false-match ITAT inside GSTAT', () => {
     expect(classify('GSTAT confirms profiteering').authority).toBe('GSTAT');
   });
+
+  it('routes job / recruitment posts to REVIEW (never auto-sent)', () => {
+    for (const title of [
+      'MBA, B.com, CA Vacancy In Deloitte',
+      'Walk-in Interview for Accountants at XYZ Pvt Ltd',
+      'Internship Opportunity at ABC LLP for CA students',
+      'EY Hiring Tax Associates — Apply Now',
+    ]) {
+      const c = classify(title);
+      expect(c.queue).toBe('REVIEW');
+      expect(c.authority).toBeNull();
+    }
+  });
+
+  it('a recruitment post that names an authority still goes to REVIEW', () => {
+    // "ICAI Recruitment" would otherwise classify as QUALIFIED (ICAI); the job
+    // rule takes precedence so an editor decides.
+    const c = classify('ICAI Recruitment 2026: Apply for Various Officer Posts');
+    expect(c.queue).toBe('REVIEW');
+  });
+
+  it('does not treat "Job Work under GST" as a job post', () => {
+    // Bare "job"/"job work" is a GST concept, not a vacancy — must classify by
+    // its authority, not get swept into the job→REVIEW rule.
+    const c = classify('Job Work Charges Not Taxable under GST: CESTAT [Read Order]');
+    expect(c.queue).toBe('FALLBACK');
+    expect(c.authority).toBe('CESTAT');
+  });
 });
