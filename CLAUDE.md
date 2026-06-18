@@ -5,6 +5,35 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
+## Current state (updated 2026-06-18) — LIVE in production
+Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
+~2,200 active subscribers. **iZooto runs in parallel and stays** — its ~3M base is
+cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommission it.
+
+**What's been built:**
+- **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of
+  iZooto-granted browsers, `pushsubscriptionchange`).
+- **RSS → editorial classifier** (`src/services/classify.ts`) — polls 5 section feeds
+  (corporate / gst / income-tax / customs / jobs); routes each article by TITLE into
+  QUALIFIED (SC / Bombay-priority HC / other HC / regulatory) · FALLBACK
+  (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical + job/recruitment posts, editor-decided).
+- **Editorial pacer** (`src/services/pacer.ts`) — 1 push per global 45-min slot, ≤20/day,
+  best-first (today → authority tier → oldest-published-first), defer-not-drop; morning
+  backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`, default OFF).
+- **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/
+  shop click URLs, **Test on this device** isolated preview), **Review queue**, **Send queue**
+  (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time), **Activity**
+  (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
+- **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit
+  log, push-URL allowlist (`ALLOWED_PUSH_HOSTS`, incl. academy/shop), rate limits, helmet.
+
+**Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
+`MORNING_BACKFILL_ENABLED`=OFF.
+
+**Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
+`SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +
+`NEXT_STEP.md` current when shipping.
+
 ## Stack (do not change without asking)
 - Backend: Node.js (18+) + TypeScript + Express
 - DB: PostgreSQL via Prisma ORM, hosted on Railway (see section 0.6)
@@ -23,6 +52,8 @@ shop.taxscan.in (Shopify) can be added later without rework.
 
 ## Workflow
 - All work happens on the `develop` branch. NEVER commit directly to `main`.
+- Ship by opening a PR `develop` → `main` (`gh`) and merging it; Railway auto-deploys `main`.
+  Behaviour-changing features land behind a flag (default off) and are enabled deliberately.
 - Work one numbered task at a time. After each, run the acceptance check, then stop and summarize.
 - Commit to `develop` after each task with a clear message (e.g. "Task 3: VAPID config").
 - Write tests as you go. Keep functions small and documented.

@@ -5,6 +5,65 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
+## What this system is + what's built (capability overview)
+
+**What it is:** a self-hosted web-push notification platform for taxscan.in (a GST/Income-Tax
+legal-news site), replacing/paralleling the third-party iZooto. Backend = Node 20 + TypeScript +
+Express + Prisma/PostgreSQL on Railway; admin SPA = Vue 3 at `push.taxscan.in/admin`; push via the
+`web-push` library (VAPID); RSS polling via `node-cron`. Architecture is portal-tagged so
+academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 active subscribers.**
+
+**What's been built:**
+- **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of iZooto-granted
+  browsers, `pushsubscriptionchange`); every subscriber tagged with a `portal` + topics.
+- **RSS → editorial classifier** (`classify.ts`) — polls 5 section feeds (corporate / gst /
+  income-tax / customs / jobs); classifies each article by TITLE into QUALIFIED (SC / priority
+  HC = Bombay / other HC / regulatory) · FALLBACK (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical +
+  job/recruitment posts).
+- **Editorial pacer** (`pacer.ts`) — 1 push per global 45-min slot, ≤20/day, best-first (today →
+  authority tier → oldest-published-first), defer-not-drop; morning backfill from yesterday (flagged off).
+- **Review queue** (`/review`) + **Send queue** (`/queue`) with **Push now**; a Captured → Review →
+  Queue → Sent pipeline strip ties them together.
+- **Manual Compose** — All/topic targeting, Breaking + Force, schedule-for-later, taxscan/academy/shop
+  click URLs, and **Test on this device** (isolated preview to your own browser).
+- **Dashboard** (health metrics + recent campaigns by push time), **Campaigns** (full sortable
+  history, captured-vs-pushed times), **Activity** (append-only audit), **Users** (RBAC, email
+  invites, temp passwords).
+- **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
+- **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
+  push-URL allowlist, rate limits, helmet.
+- **iZooto** — KEPT (its ~3M base is cryptographically un-migratable; self-hosted is a parallel,
+  growing channel).
+
+Deeper detail lives in `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`, and the
+auto-memory (which loads into every Claude session in this folder). History continues below.
+
+---
+
+## ✅ 2026-06-18 (later) — more shipped & LIVE (PRs #10–#14)
+
+All merged to `main`, deployed + verified in production. Suite 274/274. `develop` = `main`.
+- **Academy & shop push links** (PR #11) — `ALLOWED_PUSH_HOSTS` widened (Railway + code default) to
+  include `academy.taxscan.in` + `shop.taxscan.in`, so editors can push course/product URLs.
+- **Clear send errors** (PR #11) — `/api/send` URL rejection now returns a human message listing the
+  allowed sites; the SPA surfaces it (`apiErrorMessage`) instead of "Request failed: 400".
+- **Test on this device** (PR #12) — replaces the old test-segment flow (which would've blasted the
+  whole base, since ~all subscribers are "All news"). Admin enables push on their OWN browser and
+  previews to only that device. `POST /api/send/test-device`, `admin/.../useTestDevice.ts`.
+- **Dashboard recent campaigns by PUSH time** (PR #13) — was capture time; Captured column dropped there.
+- **Morning backfill SHIPPED — FLAG OFF** (PR #10) — fills empty morning slots from yesterday (re-send
+  SC → Bombay HC → other HC, else unsent other-category, else best-clicked), mornings-only until fresh
+  arrives, once-each-then-rotate. `MORNING_BACKFILL_ENABLED` (default off) + `MORNING_BACKFILL_UNTIL`
+  (12:00). **To enable: set `MORNING_BACKFILL_ENABLED=true` on Railway; watch unsub (re-sends prior-day content).**
+- **Guide refreshed** (PR #14) for all of the above.
+
+**Key finding:** ~all subscribers carry only the **"All news"** topic, so any topic/"test" send folds
+into the full base — there is no small audience except the isolated on-device test. (Two harmless
+`[system] … URL check — ignore` campaigns from a live academy/shop verification sit in the Campaigns
+list, empty portal, 0 recipients.)
+
+---
+
 ## ✅ 2026-06-18 — Editorial UX batch SHIPPED & LIVE (verified on Railway)
 
 The editorial send-pacing pipeline is **confirmed live and working** — this supersedes any
