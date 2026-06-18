@@ -100,6 +100,27 @@ export function isJobPost(title: string): boolean {
   return JOB_RE.test((title ?? '').trim());
 }
 
+/**
+ * Map an article's RSS <category> tags to a subscriber topic slug. Lets the
+ * master feed (/feed, all sections) assign the same topic a section feed would
+ * (e.g. "Income Tax,Top Stories" → income-tax). Returns null when no subject
+ * category matches (caller falls back to the feed's configured topic).
+ */
+const CATEGORY_TOPIC: { topic: string; re: RegExp }[] = [
+  { topic: 'income-tax', re: /income[\s-]*tax/i },
+  { topic: 'gst', re: /\bgst\b|cst|\bvat\b/i },
+  { topic: 'customs', re: /customs|excise/i },
+  { topic: 'corporate', re: /corporate/i },
+  { topic: 'jobs', re: /job[\s-]*scan|vacanc/i },
+];
+
+export function topicFromCategories(categories: string[]): string | null {
+  for (const { topic, re } of CATEGORY_TOPIC) {
+    if (categories.some((c) => re.test(c))) return topic;
+  }
+  return null;
+}
+
 export function classify(title: string): Classification {
   const t = (title ?? '').trim();
   if (isJobPost(t)) return { queue: 'REVIEW', authority: null, tier: REVIEW_TIER };

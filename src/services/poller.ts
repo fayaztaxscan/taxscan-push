@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { dispatchCampaign, type CampaignInput, type DispatchResult } from './send';
-import { classify, isJobPost } from './classify';
+import { classify, isJobPost, topicFromCategories } from './classify';
 
 type FeedItem = Parser.Item & { categories?: string[] };
 type FeedOutput = { items: FeedItem[] };
@@ -149,25 +149,29 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
       // Editorial classification by title (SEND_PACING_PLAN.md Stage 1).
       // Stamped on every item for ranking/analytics, regardless of the filter.
       const title = item.title!.trim();
+      const categories = (item.categories ?? []).map((x) => String(x).trim()).filter(Boolean);
       const c = classify(title);
 
-      // Job/recruitment posts (the job-scan feed, or a job-titled item in any
-      // feed) target ALL subscribers — there is no "jobs" topic to opt into,
-      // and they're broadly relevant. They're REVIEW-gated either way, so an
-      // editor still decides before anything sends.
-      const jobPost = topic === 'jobs' || isJobPost(title);
+      // Derive the topic from the article's own RSS <category> tags, so an item
+      // pulled from the master /feed gets the same topic a section feed would
+      // (e.g. "Income Tax" → income-tax); fall back to this feed's configured topic.
+      const articleTopic = topicFromCategories(categories) ?? topic;
+
+      // Job/recruitment posts target ALL subscribers — there is no "jobs" topic
+      // to opt into, and they're broadly relevant. They're REVIEW-gated either
+      // way, so an editor still decides before anything sends.
+      const jobPost = articleTopic === 'jobs' || isJobPost(title);
 
       const input: CampaignInput = {
         portal,
         title,
         body: trimDescription(item),
         url: item.link!.trim(),
-        // The feed's configured topic IS the section. Categories on the item
-        // are ignored — the source URL is the source of truth.
-        target: jobPost ? { type: 'all' } : { type: 'topics', topics: [topic] },
+        target: jobPost ? { type: 'all' } : { type: 'topics', topics: [articleTopic] },
         breaking: false,
         sendQueue: c.queue,
         authority: c.authority,
+        categories,
       };
 
       // Dispatch only in `live` mode. With the editorial filter off, live mode
@@ -197,6 +201,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
               status: 'DRAFT',
               sendQueue: input.sendQueue ?? null,
               authority: input.authority ?? null,
+              categories: input.categories ?? [],
             },
           });
           await prisma.feedItem.update({

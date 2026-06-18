@@ -1,4 +1,4 @@
-import { classify } from '../services/classify';
+import { classify, topicFromCategories } from '../services/classify';
 
 describe('classify (editorial push policy)', () => {
   // Real taxscan titles pulled from the live feeds (2026-06-16).
@@ -91,6 +91,16 @@ describe('classify (editorial push policy)', () => {
 
   it('does not false-match ITAT inside GSTAT', () => {
     expect(classify('GSTAT confirms profiteering').authority).toBe('GSTAT');
+  });
+
+  it('maps RSS categories to a subscriber topic (master feed)', () => {
+    expect(topicFromCategories(['Income Tax', 'Top Stories'])).toBe('income-tax');
+    expect(topicFromCategories(['CST & VAT / GST'])).toBe('gst');
+    expect(topicFromCategories(['Excise & Customs'])).toBe('customs');
+    expect(topicFromCategories(['Corporate Law'])).toBe('corporate');
+    expect(topicFromCategories(['Job Scan'])).toBe('jobs');
+    expect(topicFromCategories(['News Updates'])).toBeNull(); // no subject match
+    expect(topicFromCategories([])).toBeNull();
   });
 
   it('routes job / recruitment posts to REVIEW (never auto-sent)', () => {
