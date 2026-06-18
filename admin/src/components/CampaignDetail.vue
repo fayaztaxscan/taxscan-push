@@ -148,15 +148,15 @@ onMounted(load);
           </div>
 
           <div class="form-row" style="margin-top: 16px">
-            <span class="muted" style="font-size: 12px">Created by</span>
+            <span class="muted" style="font-size: 12px">Source</span>
             <div>
               <template v-if="campaign.createdBy">
-                {{ campaign.createdBy.email }}
+                <strong>Manual</strong> — {{ campaign.createdBy.email }}
                 <span class="role-badge" :class="campaign.createdBy.role.toLowerCase()">
                   {{ campaign.createdBy.role }}
                 </span>
               </template>
-              <span v-else class="muted">via bearer / system</span>
+              <span v-else><strong>Automatic</strong> <span class="muted">(pacer / system)</span></span>
             </div>
           </div>
 

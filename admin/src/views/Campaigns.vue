@@ -167,7 +167,7 @@ onMounted(load);
               Pushed<span class="sort-ind">{{ sortInd('sentAt') }}</span>
             </th>
             <th>Title</th>
-            <th>Created by</th>
+            <th>Source</th>
             <th class="th-sort" @click="setSort('status')">
               Status<span class="sort-ind">{{ sortInd('status') }}</span>
             </th>
@@ -202,16 +202,10 @@ onMounted(load);
             <td>{{ c.title }}</td>
             <td>
               <template v-if="c.createdBy">
-                <span style="font-size: 12px">{{ c.createdBy.email }}</span>
-                <span
-                  class="role-badge"
-                  :class="c.createdBy.role.toLowerCase()"
-                  style="margin-left: 4px"
-                >
-                  {{ c.createdBy.role }}
-                </span>
+                <span class="tag-manual">Manual</span>
+                <span class="muted" style="font-size: 11px; margin-left: 4px">{{ c.createdBy.email }}</span>
               </template>
-              <span v-else class="muted" style="font-size: 12px">via bearer / system</span>
+              <span v-else class="tag-auto">Automatic</span>
             </td>
             <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
             <td>{{ c.sent }}</td>
@@ -260,5 +254,21 @@ onMounted(load);
 .sort-ind {
   font-size: 11px;
   opacity: 0.75;
+}
+.tag-manual {
+  background: #dcfce7;
+  color: #166534;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tag-auto {
+  background: #eef2f7;
+  color: #64748b;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
 }
 </style>

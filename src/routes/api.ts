@@ -412,6 +412,10 @@ export function createApiRouter(
       const userId = req.user?.id ?? null;
       const ok = await claimReviewItem(req.params.id);
       if (!ok) return res.status(404).json({ error: 'review_item_not_found' });
+      // Attribute the push to the editor who clicked → shows as Manual, not Automatic.
+      if (userId) {
+        await prisma.campaign.update({ where: { id: req.params.id }, data: { createdByUserId: userId } });
+      }
       const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });
       if (!campaign) return res.status(404).json({ error: 'review_item_not_found' });
       // Immediate full-reach send (bypasses the per-subscriber cap/cooldown,
@@ -464,10 +468,12 @@ export function createApiRouter(
     try {
       const userId = req.user?.id ?? null;
       // Atomic claim: flip a still-pending auto-queue DRAFT to SCHEDULED, exactly
-      // as the pacer does, so a concurrent pacer tick can't also send it.
+      // as the pacer does, so a concurrent pacer tick can't also send it. Attribute
+      // it to the editor who clicked (so the Campaigns list shows it as Manual,
+      // not Automatic).
       const claim = await prisma.campaign.updateMany({
         where: { id: req.params.id, status: 'DRAFT', sendQueue: { in: ['QUALIFIED', 'FALLBACK'] } },
-        data: { status: 'SCHEDULED' },
+        data: { status: 'SCHEDULED', createdByUserId: userId },
       });
       if (claim.count === 0) return res.status(404).json({ error: 'queue_item_not_found' });
       const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });
