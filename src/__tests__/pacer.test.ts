@@ -63,6 +63,48 @@ async function priorSend(portal: string, at: Date) {
   return c;
 }
 
+/**
+ * A campaign captured at `at` (createdAt) and SENT at `sentAt` (defaults to
+ * `at`), with `clicks` CLICKED events. `sentAt` lets a test model a re-send
+ * (dated yesterday, but sent today).
+ */
+async function sentCampaign(
+  portal: string,
+  opts: {
+    title: string;
+    queue: SendQueue;
+    authority?: string | null;
+    url: string;
+    at: Date;
+    sentAt?: Date;
+    clicks?: number;
+  },
+) {
+  const c = await prisma.campaign.create({
+    data: {
+      portal,
+      title: opts.title,
+      body: '...',
+      url: opts.url,
+      target: { type: 'all' },
+      status: 'SENT',
+      sendQueue: opts.queue,
+      authority: opts.authority ?? null,
+      createdAt: opts.at,
+    },
+  });
+  campaignIds.push(c.id);
+  await prisma.event.create({
+    data: { type: 'SENT', campaignId: c.id, createdAt: opts.sentAt ?? opts.at },
+  });
+  for (let i = 0; i < (opts.clicks ?? 0); i++) {
+    await prisma.event.create({ data: { type: 'CLICKED', campaignId: c.id, createdAt: opts.at } });
+  }
+  return c;
+}
+
+const BACKFILL = { ...{ spacingMinutes: 45, dailyCeiling: 20, quietStart: '23:00', quietEnd: '07:00' }, backfillEnabled: true, morningUntil: '12:00' };
+
 function okSender(): Sender {
   return async () => ({ ok: true, statusCode: 201 });
 }
@@ -262,5 +304,108 @@ describe('runPacerTick', () => {
 
     const r = await runPacerTick({ ...BASE, now, portal, sender: okSender() });
     expect(r.campaignId).toBe(sc.id);
+  });
+});
+
+describe('runPacerTick — morning backfill (§5a)', () => {
+  it('re-sends yesterday SC ahead of a fresh tribunal (clone, leaves original)', async () => {
+    const portal = uniquePortal('bf-court');
+    const now = ist(2026, 6, 18, 8, 0);
+    await makeSubscriber(portal);
+    const sc = await sentCampaign(portal, {
+      title: 'Supreme Court ruling [Read Judgment]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      url: 'https://taxscan.in/sc-y',
+      at: ist(2026, 6, 17, 10, 0),
+      clicks: 2,
+    });
+    const itat = await draft(portal, {
+      title: 'Fresh ITAT order [Read Order]',
+      queue: 'FALLBACK',
+      authority: 'ITAT',
+      createdAt: ist(2026, 6, 18, 7, 30),
+    });
+
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.reason).toBe('sent');
+    expect(r.backfill).toBe(true);
+    expect(r.campaignId).not.toBe(sc.id); // a clone, not the original
+    expect(r.campaignId).not.toBe(itat.id);
+    if (r.campaignId) campaignIds.push(r.campaignId);
+    const sent = await prisma.campaign.findUnique({ where: { id: r.campaignId! } });
+    expect(sent?.authority).toBe('Supreme Court');
+    const itatAfter = await prisma.campaign.findUnique({ where: { id: itat.id } });
+    expect(itatAfter?.status).toBe('DRAFT'); // fresh tribunal untouched
+  });
+
+  it('picks an unsent other-category item when no yesterday court (sent directly)', async () => {
+    const portal = uniquePortal('bf-other-unsent');
+    const now = ist(2026, 6, 18, 8, 0);
+    await makeSubscriber(portal);
+    const cbdt = await draft(portal, {
+      title: 'CBDT notification',
+      queue: 'QUALIFIED',
+      authority: 'CBDT',
+      createdAt: ist(2026, 6, 17, 10, 0),
+    });
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.reason).toBe('sent');
+    expect(r.backfill).toBe(true);
+    expect(r.campaignId).toBe(cbdt.id); // unsent → dispatched directly, no clone
+  });
+
+  it('re-sends the best-clicked other-category item when none are unsent', async () => {
+    const portal = uniquePortal('bf-clicks');
+    const now = ist(2026, 6, 18, 8, 0);
+    await makeSubscriber(portal);
+    await sentCampaign(portal, { title: 'ICAI notice', queue: 'QUALIFIED', authority: 'ICAI', url: 'https://taxscan.in/icai-y', at: ist(2026, 6, 17, 9, 0), clicks: 1 });
+    await sentCampaign(portal, { title: 'CBIC circular', queue: 'QUALIFIED', authority: 'CBIC', url: 'https://taxscan.in/cbic-y', at: ist(2026, 6, 17, 10, 0), clicks: 9 });
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.reason).toBe('sent');
+    expect(r.backfill).toBe(true);
+    if (r.campaignId) campaignIds.push(r.campaignId);
+    const sent = await prisma.campaign.findUnique({ where: { id: r.campaignId! } });
+    expect(sent?.authority).toBe('CBIC'); // most clicks
+  });
+
+  it('does not backfill after the morning window closes', async () => {
+    const portal = uniquePortal('bf-window');
+    const now = ist(2026, 6, 18, 13, 0); // after MORNING_BACKFILL_UNTIL 12:00
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url: 'https://taxscan.in/sc-late', at: ist(2026, 6, 17, 10, 0) });
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.backfill).toBe(false);
+    expect(r.reason).toBe('empty');
+  });
+
+  it('stops backfilling once today has produced a qualified article', async () => {
+    const portal = uniquePortal('bf-fresh-arrived');
+    const now = ist(2026, 6, 18, 8, 0);
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url: 'https://taxscan.in/sc-y2', at: ist(2026, 6, 17, 10, 0) });
+    await sentCampaign(portal, { title: 'High Court order [Read Order]', queue: 'QUALIFIED', authority: 'High Court', url: 'https://taxscan.in/hc-today', at: ist(2026, 6, 18, 7, 0) });
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.backfill).toBe(false);
+    expect(r.reason).toBe('empty');
+  });
+
+  it('does not re-send a URL already pushed today (once per day)', async () => {
+    const portal = uniquePortal('bf-dedup');
+    const now = ist(2026, 6, 18, 8, 0);
+    const url = 'https://taxscan.in/sc-dedup';
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url, at: ist(2026, 6, 17, 10, 0) });
+    // a re-send of the same URL already went out earlier today (dated yesterday).
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url, at: ist(2026, 6, 17, 10, 0), sentAt: ist(2026, 6, 18, 7, 0) });
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.backfill).toBe(false);
+    expect(r.reason).toBe('empty');
+  });
+
+  it('is inert when the flag is off (existing behaviour)', async () => {
+    const portal = uniquePortal('bf-off');
+    const now = ist(2026, 6, 18, 8, 0);
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url: 'https://taxscan.in/sc-off', at: ist(2026, 6, 17, 10, 0) });
+    const r = await runPacerTick({ ...BASE, backfillEnabled: false, now, portal, sender: okSender() });
+    expect(r.backfill).toBe(false);
+    expect(r.reason).toBe('empty'); // no fresh + backfill off → idle
   });
 });

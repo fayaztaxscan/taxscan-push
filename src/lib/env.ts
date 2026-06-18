@@ -123,6 +123,16 @@ export const env = {
     spacingMinutes: nonNegIntEnv('SEND_SPACING_MINUTES', 45),
     dailyCeiling: nonNegIntEnv('DAILY_SEND_CEILING', 20),
   },
+  // Morning backfill (SEND_PACING_PLAN.md §5a). When ON, otherwise-empty morning
+  // slots (after quiet hours, before MORNING_BACKFILL_UNTIL, and only while today
+  // has produced NO qualified article yet) are filled from YESTERDAY's articles:
+  // re-send yesterday's SC → Bombay HC → other HC first, else yesterday's unsent
+  // other-category items, else yesterday's best-clicked other-category items.
+  // Each yesterday article is re-used at most once per day. Default off.
+  backfill: {
+    enabled: process.env.MORNING_BACKFILL_ENABLED === 'true',
+    until: process.env.MORNING_BACKFILL_UNTIL ?? '12:00',
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.
