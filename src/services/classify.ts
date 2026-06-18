@@ -95,9 +95,14 @@ const RULES: Rule[] = [
 const JOB_RE =
   /\bvacanc(?:y|ies)\b|\bhiring\b|\brecruitment\b|\bwalk[- ]in\b|\binternship\b|\bjob opening/i;
 
+/** True for taxscan job-scan / recruitment titles (see JOB_RE). */
+export function isJobPost(title: string): boolean {
+  return JOB_RE.test((title ?? '').trim());
+}
+
 export function classify(title: string): Classification {
   const t = (title ?? '').trim();
-  if (JOB_RE.test(t)) return { queue: 'REVIEW', authority: null, tier: REVIEW_TIER };
+  if (isJobPost(t)) return { queue: 'REVIEW', authority: null, tier: REVIEW_TIER };
   for (const r of RULES) {
     if (r.re.test(t)) return { queue: r.queue, authority: r.authority, tier: r.tier };
   }

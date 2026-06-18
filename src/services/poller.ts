@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { dispatchCampaign, type CampaignInput, type DispatchResult } from './send';
-import { classify } from './classify';
+import { classify, isJobPost } from './classify';
 
 type FeedItem = Parser.Item & { categories?: string[] };
 type FeedOutput = { items: FeedItem[] };
@@ -148,16 +148,23 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
 
       // Editorial classification by title (SEND_PACING_PLAN.md Stage 1).
       // Stamped on every item for ranking/analytics, regardless of the filter.
-      const c = classify(item.title!.trim());
+      const title = item.title!.trim();
+      const c = classify(title);
+
+      // Job/recruitment posts (the job-scan feed, or a job-titled item in any
+      // feed) target ALL subscribers — there is no "jobs" topic to opt into,
+      // and they're broadly relevant. They're REVIEW-gated either way, so an
+      // editor still decides before anything sends.
+      const jobPost = topic === 'jobs' || isJobPost(title);
 
       const input: CampaignInput = {
         portal,
-        title: item.title!.trim(),
+        title,
         body: trimDescription(item),
         url: item.link!.trim(),
         // The feed's configured topic IS the section. Categories on the item
         // are ignored — the source URL is the source of truth.
-        target: { type: 'topics', topics: [topic] },
+        target: jobPost ? { type: 'all' } : { type: 'topics', topics: [topic] },
         breaking: false,
         sendQueue: c.queue,
         authority: c.authority,
