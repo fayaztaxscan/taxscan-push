@@ -24,6 +24,7 @@
     "db:expire-endpoints": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/expire-endpoints.ts",
     "import:izooto": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/import-izooto.ts",
     "create-admin": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/create-admin.ts",
+    "build:guide": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/build-guide.ts",
     "test": "jest"
   },
   "dependencies": {
