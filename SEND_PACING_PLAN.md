@@ -43,6 +43,12 @@ Supreme Court, High Court, ICAI, DGFT, IBBI, GSTAT, PMLA, CBDT, CBIC.
 
 **SKIP (fallback only — see §5):** ITAT, CESTAT, NCLAT, NCLT.
 
+**JOB / RECRUITMENT posts** (taxscan job-scan content — "… Vacancy in …", "…
+Hiring …", "… Recruitment …", walk-in/internship): → **review queue** (§6),
+matched *before* the authority rules so a recruitment post that also names an
+authority (e.g. "ICAI Recruitment") never auto-sends — an editor decides. Bare
+"job"/"job work" is NOT treated as a job post (it's a GST concept).
+
 **UNCLASSIFIED (no authority match):** mostly analytical/explanatory articles
 ("Understanding GST on …", "What S.58(3) Means …"). → **review queue** (§6).
 Note: the `[Read Order]` marker does **not** reliably separate judgment from analysis

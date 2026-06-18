@@ -539,3 +539,50 @@ describe('editorial classifier routing (Stage 1)', () => {
     expect(result.sent).toBe(0);
   });
 });
+
+describe('job-scan targeting', () => {
+  it('captures a job post to REVIEW and targets ALL subscribers', async () => {
+    const feedUrl = freshFeedUrl('jobs');
+    trackFeed(feedUrl);
+    const { dispatcher, calls } = recordingDispatcher();
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'jobs',
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher: fakeFetcher([
+        { guid: 'job1', title: 'MBA, B.com, CA Vacancy In Deloitte', link: 'https://taxscan.in/job-scan/x' },
+      ]),
+      dispatcher,
+    });
+    // Job posts are REVIEW → held for an editor, never auto-dispatched.
+    expect(calls).toHaveLength(0);
+    expect(result.held).toBe(1);
+
+    const row = await prisma.feedItem.findFirst({ where: { feedUrl } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: row!.campaignId! } });
+    expect(campaign?.sendQueue).toBe('REVIEW');
+    expect(campaign?.target).toEqual({ type: 'all' });
+  });
+
+  it('a normal section article still targets its topic', async () => {
+    const feedUrl = freshFeedUrl('section-target');
+    trackFeed(feedUrl);
+    const { dispatcher } = recordingDispatcher();
+    await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher: fakeFetcher([
+        { guid: 'sc1', title: 'Supreme Court ruling [Read Judgment]', link: 'https://taxscan.in/sc' },
+      ]),
+      dispatcher,
+    });
+    const row = await prisma.feedItem.findFirst({ where: { feedUrl } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: row!.campaignId! } });
+    expect(campaign?.target).toEqual({ type: 'topics', topics: ['income-tax'] });
+  });
+});

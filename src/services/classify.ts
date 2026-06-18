@@ -11,8 +11,10 @@
  *   - QUALIFIED : allow-list authority → auto-eligible for sending.
  *   - FALLBACK  : ITAT/CESTAT/NCLAT/NCLT → sent ONLY as filler when nothing
  *                 qualified is pending (decision D2 / §5).
- *   - REVIEW    : no authority matched (mostly analytical/explainer articles)
- *                 → held for an editor to approve (§6).
+ *   - REVIEW    : no authority matched (mostly analytical/explainer articles),
+ *                 OR a job/recruitment post (see JOB_RE) — held for an editor
+ *                 to decide (§6). Job posts never auto-send, even when the title
+ *                 also names an authority (e.g. "ICAI Recruitment").
  *
  * `tier` ranks QUALIFIED items for slot selection (lower = higher priority):
  *   1 Supreme Court, 2 priority High Court (Bombay), 3 any other High Court,
@@ -84,8 +86,23 @@ const RULES: Rule[] = [
   { authority: 'NCLT', queue: 'FALLBACK', tier: FALLBACK_TIER, re: /\bNCLT\b/i },
 ];
 
+/**
+ * Job / recruitment posts (taxscan's job-scan content). Matched on strong
+ * job-posting signals only — NOT bare "job" (avoids "Job Work under GST", a GST
+ * concept). Checked before the authority rules so a recruitment post that also
+ * names an authority still goes to an editor rather than auto-sending.
+ */
+const JOB_RE =
+  /\bvacanc(?:y|ies)\b|\bhiring\b|\brecruitment\b|\bwalk[- ]in\b|\binternship\b|\bjob opening/i;
+
+/** True for taxscan job-scan / recruitment titles (see JOB_RE). */
+export function isJobPost(title: string): boolean {
+  return JOB_RE.test((title ?? '').trim());
+}
+
 export function classify(title: string): Classification {
   const t = (title ?? '').trim();
+  if (isJobPost(t)) return { queue: 'REVIEW', authority: null, tier: REVIEW_TIER };
   for (const r of RULES) {
     if (r.re.test(t)) return { queue: r.queue, authority: r.authority, tier: r.tier };
   }
