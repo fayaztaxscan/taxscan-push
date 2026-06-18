@@ -108,6 +108,20 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString();
 }
 
+// Recent campaigns by PUSH time (most recently sent first); not-yet-sent drafts
+// fall to the bottom, ordered by capture time. Top 5 for the dashboard glance.
+const recentCampaigns = computed(() => {
+  const list = metrics.value?.campaigns ?? [];
+  return [...list]
+    .sort((a, b) => {
+      if (a.sentAt && b.sentAt) return Date.parse(b.sentAt) - Date.parse(a.sentAt);
+      if (a.sentAt) return -1;
+      if (b.sentAt) return 1;
+      return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    })
+    .slice(0, 5);
+});
+
 onMounted(load);
 </script>
 
@@ -227,7 +241,6 @@ onMounted(load);
         <table>
           <thead>
             <tr>
-              <th>Captured</th>
               <th>Pushed</th>
               <th>Title</th>
               <th>Status</th>
@@ -237,9 +250,10 @@ onMounted(load);
             </tr>
           </thead>
           <tbody>
-            <tr v-for="c in metrics.campaigns.slice(0, 5)" :key="c.id">
-              <td class="muted">{{ fmtDate(c.createdAt) }}</td>
-              <td :class="c.sentAt ? '' : 'muted'">{{ c.sentAt ? fmtDate(c.sentAt) : '—' }}</td>
+            <tr v-for="c in recentCampaigns" :key="c.id">
+              <td :class="c.sentAt ? '' : 'muted'" style="white-space: nowrap">
+                {{ c.sentAt ? fmtDate(c.sentAt) : '— not sent' }}
+              </td>
               <td>{{ c.title }}</td>
               <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
               <td>{{ c.sent }}</td>
@@ -250,8 +264,8 @@ onMounted(load);
                 </span>
               </td>
             </tr>
-            <tr v-if="metrics.campaigns.length === 0">
-              <td colspan="7" class="muted" style="text-align: center; padding: 24px">
+            <tr v-if="recentCampaigns.length === 0">
+              <td colspan="6" class="muted" style="text-align: center; padding: 24px">
                 No campaigns yet.
               </td>
             </tr>
