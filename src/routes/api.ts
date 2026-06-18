@@ -439,9 +439,20 @@ export function createApiRouter(
   // Admin user guide (PDF). Auth-gated so it is NOT public — the SPA's session
   // cookie satisfies requireBearerOrUser on a same-origin navigation. The file
   // is committed under <repo>/docs and ships with the deploy.
-  router.get('/guide', requireBearerOrUser(), (_req, res) => {
+  // HTML version — the SPA's /guide route embeds this in an iframe so the guide
+  // reads inline (the authored doc is self-contained with its own styles).
+  router.get('/guide.html', requireBearerOrUser(), (_req, res) => {
+    const htmlPath = path.resolve(__dirname, '..', '..', 'docs', 'Taxscan-Push-Admin-Guide.html');
+    res.sendFile(htmlPath, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'guide_not_found' });
+    });
+  });
+
+  // PDF version — opens inline by default, or forces a download with ?download.
+  router.get('/guide', requireBearerOrUser(), (req, res) => {
     const pdfPath = path.resolve(__dirname, '..', '..', 'docs', 'Taxscan-Push-Admin-Guide.pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="Taxscan-Push-Admin-Guide.pdf"');
+    const disposition = req.query.download !== undefined ? 'attachment' : 'inline';
+    res.setHeader('Content-Disposition', `${disposition}; filename="Taxscan-Push-Admin-Guide.pdf"`);
     res.sendFile(pdfPath, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'guide_not_found' });
     });

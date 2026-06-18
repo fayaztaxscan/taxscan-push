@@ -5,6 +5,7 @@ import Compose from './views/Compose.vue';
 import Campaigns from './views/Campaigns.vue';
 import Review from './views/Review.vue';
 import Queue from './views/Queue.vue';
+import Guide from './views/Guide.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
 import AcceptInvite from './views/AcceptInvite.vue';
@@ -42,6 +43,7 @@ export const router = createRouter({
       meta: { roles: ['ADMIN'] },
     },
     { path: '/activity', name: 'activity', component: Activity },
+    { path: '/guide', name: 'guide', component: Guide },
   ],
 });
 
