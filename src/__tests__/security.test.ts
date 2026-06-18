@@ -109,4 +109,16 @@ describe('security: push URL allowlist', () => {
       });
     expect(res.status).toBe(200);
   });
+
+  it.each([
+    'https://academy.taxscan.in/course/live-webinar',
+    'https://shop.taxscan.in/products/gst-handbook',
+  ])('accepts /api/send with an academy/shop url (%s)', async (url) => {
+    const app = createApp({ rateLimit: { publicPerMin: 1000, loginPerMin: 1000 } });
+    const res = await request(app)
+      .post('/api/send')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`)
+      .send({ portal: 'taxscan-allowlist', title: 'promo', body: 'b', url, target: { type: 'all' }, breaking: true });
+    expect(res.status).toBe(200);
+  });
 });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useApi } from '../composables/useApi';
+import { apiErrorMessage, useApi } from '../composables/useApi';
 
 type DispatchResult = {
   campaignId: string;
@@ -85,7 +85,7 @@ async function loadSubscribers() {
     subscribers.value = data.subscribers;
     if (data.testSegmentTopic) testSegmentTopic.value = data.testSegmentTopic;
   } catch (e) {
-    errorBanner.value = e instanceof Error ? e.message : String(e);
+    errorBanner.value = apiErrorMessage(e);
   } finally {
     loadingSubs.value = false;
   }
@@ -102,7 +102,7 @@ async function addToTestSegment(s: AdminSubscriber) {
     const idx = subscribers.value.findIndex((x) => x.id === s.id);
     if (idx >= 0) subscribers.value[idx].topics = data.subscriber.topics;
   } catch (e) {
-    errorBanner.value = e instanceof Error ? e.message : String(e);
+    errorBanner.value = apiErrorMessage(e);
   } finally {
     enrollingId.value = null;
   }
@@ -159,7 +159,7 @@ async function sendTest() {
       void loadSubscribers();
     }
   } catch (e) {
-    errorBanner.value = e instanceof Error ? e.message : String(e);
+    errorBanner.value = apiErrorMessage(e);
   } finally {
     sendingTest.value = false;
   }
@@ -176,7 +176,7 @@ async function send() {
     const res = await api.post<DispatchResult>('/api/send', buildPayload());
     result.value = res;
   } catch (e) {
-    errorBanner.value = e instanceof Error ? e.message : String(e);
+    errorBanner.value = apiErrorMessage(e);
   } finally {
     submitting.value = false;
   }
@@ -202,6 +202,9 @@ async function send() {
         <div class="form-row">
           <label for="url">Click URL</label>
           <input id="url" v-model="url" type="url" placeholder="https://www.taxscan.in/…" />
+          <small class="muted" style="font-size: 11px">
+            An article, a course (academy.taxscan.in) or a product (shop.taxscan.in) link.
+          </small>
         </div>
         <div class="form-row">
           <label for="icon">Icon URL (optional)</label>

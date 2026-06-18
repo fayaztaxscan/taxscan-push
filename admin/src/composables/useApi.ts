@@ -2,6 +2,20 @@ import { useAuth } from './useAuth';
 
 export type ApiError = Error & { status?: number; body?: unknown };
 
+/**
+ * A human-readable message from a failed request: prefers the server's
+ * validation issues / message over the generic "Request failed: 4xx".
+ */
+export function apiErrorMessage(e: unknown): string {
+  const err = e as ApiError | undefined;
+  const body = err?.body as
+    | { message?: string; error?: string; issues?: Array<{ message?: string }> }
+    | undefined;
+  const issues = body?.issues?.map((i) => i.message).filter(Boolean);
+  if (issues && issues.length > 0) return issues.join(' · ');
+  return body?.message ?? body?.error ?? err?.message ?? 'Request failed';
+}
+
 export function useApi() {
   const { user } = useAuth();
 
