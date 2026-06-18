@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { apiErrorMessage, useApi } from '../composables/useApi';
+import { useTestDevice } from '../composables/useTestDevice';
 
 type DispatchResult = {
   campaignId: string;
@@ -14,10 +15,15 @@ type DispatchResult = {
 };
 
 const api = useApi();
-// testSegmentTopic comes back on the /api/admin/subscribers response.
-// We default to 'test' until the first fetch lands so the UI doesn't
-// render an empty placeholder on first paint.
-const testSegmentTopic = ref<string>('test');
+const testDevice = useTestDevice();
+// Destructure so the refs auto-unwrap in the template (testDevice.x would stay a Ref).
+const {
+  supported: testSupported,
+  permission: testPermission,
+  ready: testReady,
+  busy: testBusy,
+  error: testError,
+} = testDevice;
 
 const TOPICS = [
   { label: 'GST', slug: 'gst' },
@@ -40,29 +46,17 @@ const force = ref(false);
 const scheduleMode = ref<'now' | 'later'>('now');
 const scheduledAtLocal = ref('');
 
-type AdminSubscriber = {
-  id: string;
-  endpoint: string;
-  topics: string[];
-  userAgent: string | null;
-  createdAt: string;
-  portal: string;
-};
-
 const submitting = ref(false);
-const sendingTest = ref(false);
 const result = ref<DispatchResult | null>(null);
 const errorBanner = ref<string | null>(null);
-const testHint = ref<string | null>(null);
-const subscribers = ref<AdminSubscriber[]>([]);
-const loadingSubs = ref(false);
-const enrollingId = ref<string | null>(null);
+const testNotice = ref<string | null>(null);
 
 const target = computed(() => {
   if (targetMode.value === 'all') return { type: 'all' as const };
   return { type: 'topics' as const, topics: selectedTopics.value };
 });
 
+// Enough to send the real campaign (audience + schedule must be valid too).
 const canSend = computed(() => {
   if (!title.value || !body.value || !url.value) return false;
   if (targetMode.value === 'topics' && selectedTopics.value.length === 0) return false;
@@ -70,50 +64,13 @@ const canSend = computed(() => {
   return true;
 });
 
+// Enough to preview on this device (audience/schedule don't apply to a preview).
+const canTest = computed(() => Boolean(title.value && body.value && url.value));
+
 function clearStatus() {
   result.value = null;
   errorBanner.value = null;
-  testHint.value = null;
-}
-
-async function loadSubscribers() {
-  loadingSubs.value = true;
-  try {
-    const data = await api.get<{ subscribers: AdminSubscriber[]; testSegmentTopic: string }>(
-      '/api/admin/subscribers?limit=10',
-    );
-    subscribers.value = data.subscribers;
-    if (data.testSegmentTopic) testSegmentTopic.value = data.testSegmentTopic;
-  } catch (e) {
-    errorBanner.value = apiErrorMessage(e);
-  } finally {
-    loadingSubs.value = false;
-  }
-}
-
-async function addToTestSegment(s: AdminSubscriber) {
-  enrollingId.value = s.id;
-  try {
-    const data = await api.post<{ subscriber: { id: string; topics: string[] } }>(
-      `/api/admin/subscribers/${s.id}/test-segment`,
-      {},
-    );
-    // Patch local state so the button updates without a refetch.
-    const idx = subscribers.value.findIndex((x) => x.id === s.id);
-    if (idx >= 0) subscribers.value[idx].topics = data.subscriber.topics;
-  } catch (e) {
-    errorBanner.value = apiErrorMessage(e);
-  } finally {
-    enrollingId.value = null;
-  }
-}
-
-function inTestSegment(s: AdminSubscriber): boolean {
-  return s.topics.includes(testSegmentTopic.value);
-}
-
-function endpointTail(endpoint: string): string {
-  return endpoint.length > 40 ? '…' + endpoint.slice(-40) : endpoint;
+  testNotice.value = null;
 }
 
 function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; scheduledAt?: string }> = {}) {
@@ -137,38 +94,6 @@ function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; s
   return payload;
 }
 
-async function sendTest() {
-  clearStatus();
-  sendingTest.value = true;
-  try {
-    const res = await api.post<DispatchResult>('/api/send', {
-      portal: 'taxscan',
-      title: title.value || 'Test push',
-      body: body.value || 'Internal segment test',
-      url: url.value || 'https://www.taxscan.in/',
-      icon: icon.value || undefined,
-      target: { type: 'topics', topics: [testSegmentTopic.value] },
-      breaking: true,
-    });
-    result.value = res;
-    if (res.sent === 0) {
-      testHint.value =
-        `No subscriber has the '${testSegmentTopic.value}' topic yet, so nothing was delivered. ` +
-        `Use the "Test segment" panel below to enrol your browser, then try again.`;
-      // Refresh the subscriber list so the panel is ready when the user scrolls.
-      void loadSubscribers();
-    }
-  } catch (e) {
-    errorBanner.value = apiErrorMessage(e);
-  } finally {
-    sendingTest.value = false;
-  }
-}
-
-onMounted(() => {
-  void loadSubscribers();
-});
-
 async function send() {
   clearStatus();
   submitting.value = true;
@@ -181,6 +106,30 @@ async function send() {
     submitting.value = false;
   }
 }
+
+async function enableTestDevice() {
+  clearStatus();
+  await testDevice.enable();
+}
+
+async function sendToMyDevice() {
+  clearStatus();
+  try {
+    await testDevice.sendTest({
+      title: title.value,
+      body: body.value,
+      url: url.value,
+      icon: icon.value || undefined,
+    });
+    testNotice.value = 'Sent — check the notification on this device.';
+  } catch {
+    // testError is already set; surfaced in the panel below.
+  }
+}
+
+onMounted(() => {
+  void testDevice.refresh();
+});
 </script>
 
 <template>
@@ -260,23 +209,12 @@ async function send() {
       </div>
 
       <div v-if="errorBanner" class="banner err">{{ errorBanner }}</div>
-      <div v-if="testHint" class="banner err">{{ testHint }}</div>
       <div v-if="result" class="banner ok">
         {{ result.status === 'SCHEDULED' ? 'Scheduled' : 'Dispatched' }} ·
-        campaignId={{ result.campaignId }}
-        <pre>{{ JSON.stringify(result, null, 2) }}</pre>
+        reached {{ result.sent }} subscriber(s) · campaignId={{ result.campaignId }}
       </div>
 
-      <div class="form-row" style="display: flex; gap: 10px; justify-content: flex-end">
-        <button
-          type="button"
-          class="btn"
-          :disabled="sendingTest"
-          :title="`Targets topic: '${testSegmentTopic}'`"
-          @click="sendTest"
-        >
-          {{ sendingTest ? 'Sending test…' : `Send test to '${testSegmentTopic}'` }}
-        </button>
+      <div class="form-row" style="display: flex; justify-content: flex-end">
         <button
           type="button"
           class="btn btn-primary"
@@ -288,56 +226,46 @@ async function send() {
       </div>
     </div>
 
+    <!-- Preview on the editor's own device — never touches real subscribers. -->
     <div class="card">
-      <div class="toolbar">
-        <div class="toolbar-title">Test segment</div>
-        <button class="btn" :disabled="loadingSubs" @click="loadSubscribers">
-          {{ loadingSubs ? 'Loading…' : 'Refresh' }}
-        </button>
-      </div>
-      <p class="muted" style="margin-top: 0">
-        The "Send test" button targets <code>topics: ['{{ testSegmentTopic }}']</code>.
-        Add at least one subscriber below to that topic so test sends land somewhere.
+      <div class="toolbar-title">Test on this device</div>
+      <p class="muted" style="margin-top: 4px">
+        Send the notification above to <strong>just this browser</strong> to see exactly how it
+        looks. No one else receives it.
       </p>
-      <table>
-        <thead>
-          <tr>
-            <th>Created</th>
-            <th>Endpoint</th>
-            <th>Topics</th>
-            <th>UA</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="s in subscribers" :key="s.id">
-            <td class="muted">{{ new Date(s.createdAt).toLocaleString() }}</td>
-            <td><code style="font-size: 11px">{{ endpointTail(s.endpoint) }}</code></td>
-            <td>{{ s.topics.join(', ') || '—' }}</td>
-            <td class="muted">{{ s.userAgent || '—' }}</td>
-            <td>
-              <button
-                class="btn"
-                :disabled="inTestSegment(s) || enrollingId === s.id"
-                @click="addToTestSegment(s)"
-              >
-                {{
-                  inTestSegment(s)
-                    ? 'In test segment'
-                    : enrollingId === s.id
-                    ? 'Adding…'
-                    : `Add '${testSegmentTopic}'`
-                }}
-              </button>
-            </td>
-          </tr>
-          <tr v-if="subscribers.length === 0 && !loadingSubs">
-            <td colspan="5" class="muted" style="text-align: center; padding: 24px">
-              No active subscribers yet. Open the demo page and accept the prompt to create one.
-            </td>
-          </tr>
-        </tbody>
-      </table>
+
+      <template v-if="!testSupported">
+        <p class="muted">This browser can’t show notifications, so on-device testing isn’t available here.</p>
+      </template>
+
+      <template v-else-if="!testReady">
+        <button class="btn" :disabled="testBusy" @click="enableTestDevice">
+          {{ testBusy ? 'Enabling…' : 'Enable test notifications on this device' }}
+        </button>
+        <p
+          v-if="testPermission === 'denied'"
+          class="muted"
+          style="margin: 8px 0 0; font-size: 12px"
+        >
+          Notifications are blocked for this site. Allow them in your browser’s site settings, then
+          reload this page.
+        </p>
+      </template>
+
+      <template v-else>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+          <span class="muted" style="font-size: 13px">✓ This device is set up for testing.</span>
+          <button class="btn btn-primary" :disabled="!canTest || testBusy" @click="sendToMyDevice">
+            {{ testBusy ? 'Sending…' : 'Send test to my device' }}
+          </button>
+          <span v-if="!canTest" class="muted" style="font-size: 12px">
+            Fill in the title, body and link above first.
+          </span>
+        </div>
+      </template>
+
+      <div v-if="testError" class="banner err" style="margin-top: 10px">{{ testError }}</div>
+      <div v-if="testNotice" class="banner ok" style="margin-top: 10px">{{ testNotice }}</div>
     </div>
   </main>
 </template>

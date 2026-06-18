@@ -4,7 +4,14 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { requireBearerOrUser } from '../lib/auth';
-import { dispatchCampaign, executeCampaign, type Sender } from '../services/send';
+import type { Subscriber } from '@prisma/client';
+import {
+  dispatchCampaign,
+  executeCampaign,
+  DEFAULT_NOTIFICATION_ICON,
+  type Sender,
+} from '../services/send';
+import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -63,19 +70,17 @@ const TargetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('topics'), topics: z.array(z.string().min(1)).min(1) }),
 ]);
 
+const allowedHostsMessage =
+  env.allowedPushHosts.length > 0
+    ? `Click URL must link to one of these sites: ${env.allowedPushHosts.join(', ')}. Update ALLOWED_PUSH_HOSTS to add another.`
+    : 'Invalid Click URL.';
+const pushUrlField = z.string().min(1).refine(isAllowedPushUrl, { message: allowedHostsMessage });
+
 const SendSchema = z.object({
   portal: z.string().min(1),
   title: z.string().min(1),
   body: z.string().min(1),
-  url: z
-    .string()
-    .min(1)
-    .refine(isAllowedPushUrl, {
-      message:
-        env.allowedPushHosts.length > 0
-          ? `Click URL must link to one of these sites: ${env.allowedPushHosts.join(', ')}. Update ALLOWED_PUSH_HOSTS to add another.`
-          : 'Invalid Click URL.',
-    }),
+  url: pushUrlField,
   icon: z.string().optional(),
   target: TargetSchema,
   breaking: z.boolean().optional(),
@@ -83,6 +88,20 @@ const SendSchema = z.object({
   // cooldown so the send reaches every eligible subscriber. See CampaignInput.
   force: z.boolean().optional(),
   scheduledAt: z.string().datetime().optional(),
+});
+
+// Test-on-this-device: the admin's own browser subscribes (via the SPA) and
+// posts its subscription here to receive a one-off preview of the composed
+// notification. No DB row, no portal — it reaches ONLY the device that asked.
+const TestDeviceSchema = z.object({
+  subscription: z.object({
+    endpoint: z.string().min(1),
+    keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
+  }),
+  title: z.string().min(1),
+  body: z.string().min(1),
+  url: pushUrlField,
+  icon: z.string().optional(),
 });
 
 function badRequest(res: Response, err: z.ZodError) {
@@ -270,6 +289,44 @@ export function createApiRouter(
         { sender: opts.sender },
       );
       return res.status(200).json(result);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Preview the composed notification on the caller's own device only. The SPA
+  // subscribes the admin's browser and posts that subscription here; we push a
+  // single notification straight to it — no subscriber row, no audience.
+  router.post('/send/test-device', requireBearerOrUser(), async (req, res, next) => {
+    try {
+      const parsed = TestDeviceSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error);
+      const { subscription, title, body, url, icon } = parsed.data;
+      const sender = opts.sender ?? sendToSubscriber;
+      const device = {
+        id: 'test-device',
+        endpoint: subscription.endpoint,
+        p256dh: subscription.keys.p256dh,
+        auth: subscription.keys.auth,
+      } as Subscriber;
+      const outcome = await sender(device, {
+        title,
+        body,
+        url,
+        icon: icon || DEFAULT_NOTIFICATION_ICON,
+        badge: icon || DEFAULT_NOTIFICATION_ICON,
+        tag: 'taxscan-test',
+      });
+      if (!outcome.ok) {
+        return res.status(502).json({
+          error: 'push_failed',
+          message:
+            'statusCode' in outcome
+              ? `Push service returned ${outcome.statusCode}. Re-enable test notifications and try again.`
+              : 'Could not deliver to this device. Re-enable test notifications and try again.',
+        });
+      }
+      return res.json({ ok: true });
     } catch (err) {
       return next(err);
     }
