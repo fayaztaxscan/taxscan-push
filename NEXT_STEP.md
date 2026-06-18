@@ -14,9 +14,11 @@ status changes so a fresh Claude session can pick up cleanly.
    `.page-wide` 1280px container), **Campaigns** (10-column sortable table), **Queue**,
    **Review** (pipeline strip), **Compose** (Test-on-this-device + flags), **Dashboard**.
    Goal: no horizontal clipping/overflow; heatmaps scroll or scale cleanly; tap targets OK.
-2. **Confirm the reconciler closes the capture gap.** Pre-fix: 67 published vs 43 captured
-   (2026-06-18). After `RECONCILER_ENABLED=true`, captured-today should reach ≈ the daily
-   sitemap count. Spot-check `news-sitemap-daily.xml` `<loc>` count vs our captures for a day.
+2. **⏳ FIRST THING NEXT SESSION: confirm the reconciler closed the capture gap.** Pre-fix:
+   67 published vs 43 captured (2026-06-18); `RECONCILER_ENABLED=true` was set that evening but
+   the verification poll was stopped before a full `*/20` cycle completed (still showing 43).
+   Next session: compare today's `news-sitemap-daily.xml` `<loc>` count vs our captured-today
+   count — they should be ≈ equal. If still short, check the reconciler logs / that cron fired.
 3. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
 4. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
