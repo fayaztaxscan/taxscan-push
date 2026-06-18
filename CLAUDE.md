@@ -14,21 +14,27 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
 - **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of
   iZooto-granted browsers, `pushsubscriptionchange`).
 - **RSS → editorial classifier** (`src/services/classify.ts`) — polls 5 section feeds
-  (corporate / gst / income-tax / customs / jobs); routes each article by TITLE into
-  QUALIFIED (SC / Bombay-priority HC / other HC / regulatory) · FALLBACK
+  (corporate / gst / income-tax / customs / jobs) PLUS the master feed (`RSS_FEED_NEWS`
+  = taxscan.in/feed, all sections); stores each article's RSS `<category>` tags and routes
+  by TITLE into QUALIFIED (SC / Bombay-priority HC / other HC / regulatory) · FALLBACK
   (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical + job/recruitment posts, editor-decided).
 - **Editorial pacer** (`src/services/pacer.ts`) — 1 push per global 45-min slot, ≤20/day,
   best-first (today → authority tier → oldest-published-first), defer-not-drop; morning
   backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`, default OFF).
+- **Coverage reports** (`src/services/reports.ts` + `reportScheduler.ts`) — weekly + monthly
+  Category×dates and Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split),
+  counting EVERY captured article. In-app **Reports** screen (Download/Copy image for
+  WhatsApp) + emailed Mon 08:00 IST / 1st 08:00 IST to app users + a report-only email list
+  (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/
   shop click URLs, **Test on this device** isolated preview), **Review queue**, **Send queue**
-  (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time), **Activity**
-  (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
+  (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time), **Reports**,
+  **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit
   log, push-URL allowlist (`ALLOWED_PUSH_HOSTS`, incl. academy/shop), rate limits, helmet.
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
-`MORNING_BACKFILL_ENABLED`=OFF.
+`RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=OFF.
 
 **Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
 `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +
