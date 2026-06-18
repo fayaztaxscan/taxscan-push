@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
@@ -36,6 +36,19 @@ const error = ref<string | null>(null);
 const showOnlyMine = ref(false);
 
 const detailCampaignId = ref<string | null>(null);
+
+// Sort by when the push actually fired (most recent first), so recent send
+// activity is visible at the top rather than buried under newer captures.
+// Still-queued campaigns (never pushed → no sentAt) fall below the sent ones,
+// ordered by capture time.
+const sortedCampaigns = computed(() =>
+  [...campaigns.value].sort((a, b) => {
+    if (a.sentAt && b.sentAt) return Date.parse(b.sentAt) - Date.parse(a.sentAt);
+    if (a.sentAt) return -1;
+    if (b.sentAt) return 1;
+    return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  }),
+);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -99,7 +112,7 @@ onMounted(load);
         <thead>
           <tr>
             <th>Captured</th>
-            <th>Pushed</th>
+            <th title="Sorted by push time (most recent first)">Pushed ▼</th>
             <th>Title</th>
             <th>Created by</th>
             <th>Status</th>
@@ -112,7 +125,7 @@ onMounted(load);
         </thead>
         <tbody>
           <tr
-            v-for="c in campaigns"
+            v-for="c in sortedCampaigns"
             :key="c.id"
             class="row-clickable"
             @click="openDetail(c.id)"
