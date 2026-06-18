@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
+import PipelineStrip from '../components/PipelineStrip.vue';
 
 type ReviewItem = {
   id: string;
@@ -59,10 +60,12 @@ onMounted(load);
 <template>
   <main class="page">
     <h1 class="section-title">Review queue</h1>
+    <PipelineStrip current="review" />
     <p class="muted" style="margin-top: 0">
-      Unclassified articles (no recognised court/authority) held for an editor.
-      <strong>Approve</strong> queues it for the next send slot, <strong>Push now</strong>
-      sends it immediately to everyone, <strong>Reject</strong> drops it.
+      Articles the system couldn’t auto-classify (no recognised court/authority) — they wait
+      here for your decision. <strong>Approve</strong> moves it to the <strong>Queue</strong> to
+      auto-send on the next slot, <strong>Push now</strong> sends it immediately to everyone,
+      <strong>Reject</strong> drops it.
     </p>
 
     <div v-if="error" class="banner err">{{ error }}</div>
