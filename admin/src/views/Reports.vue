@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { apiErrorMessage, useApi } from '../composables/useApi';
+import { useAuth } from '../composables/useAuth';
 import { toPng } from 'html-to-image';
 
 type Heatmap = {
@@ -23,7 +24,52 @@ type Report = {
 };
 
 const api = useApi();
+const { user } = useAuth();
+const isAdmin = computed(() => user.value?.role === 'ADMIN');
 const period = ref<'weekly' | 'monthly'>('weekly');
+
+type Recipient = { id: string; email: string; active: boolean; createdAt: string };
+const recipients = ref<Recipient[]>([]);
+const newEmail = ref('');
+const recBusy = ref(false);
+const recError = ref<string | null>(null);
+
+async function loadRecipients() {
+  if (!isAdmin.value) return;
+  try {
+    const d = await api.get<{ items: Recipient[] }>('/api/report-recipients');
+    recipients.value = d.items;
+  } catch (e) {
+    recError.value = apiErrorMessage(e);
+  }
+}
+async function addRecipient() {
+  const email = newEmail.value.trim();
+  if (!email) return;
+  recBusy.value = true;
+  recError.value = null;
+  try {
+    await api.post('/api/report-recipients', { email });
+    newEmail.value = '';
+    await loadRecipients();
+  } catch (e) {
+    recError.value = apiErrorMessage(e);
+  } finally {
+    recBusy.value = false;
+  }
+}
+async function removeRecipient(r: Recipient) {
+  recBusy.value = true;
+  recError.value = null;
+  try {
+    await api.del(`/api/report-recipients/${r.id}`);
+    recipients.value = recipients.value.filter((x) => x.id !== r.id);
+  } catch (e) {
+    recError.value = apiErrorMessage(e);
+  } finally {
+    recBusy.value = false;
+  }
+}
 const report = ref<Report | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -103,7 +149,21 @@ async function copyImage() {
   }
 }
 
-onMounted(load);
+async function emailTest() {
+  error.value = null;
+  notice.value = null;
+  try {
+    const r = await api.post<{ to: string }>('/api/reports/test-email', { period: period.value });
+    notice.value = `Test report emailed to ${r.to}. Check your inbox.`;
+  } catch (e) {
+    error.value = apiErrorMessage(e);
+  }
+}
+
+onMounted(() => {
+  void load();
+  void loadRecipients();
+});
 </script>
 
 <template>
@@ -117,6 +177,7 @@ onMounted(load);
       <span class="spacer" style="flex: 1" />
       <button class="btn" :disabled="!report || loading" @click="downloadImage">Download image</button>
       <button class="btn" :disabled="!report || loading" @click="copyImage">Copy image</button>
+      <button class="btn" :disabled="!report || loading" @click="emailTest">Email me a test</button>
       <button class="btn" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh' }}</button>
     </div>
 
@@ -208,6 +269,45 @@ onMounted(load);
 
     <div v-else-if="!loading" class="card">
       <p class="muted">No report data yet.</p>
+    </div>
+
+    <!-- Email recipients — admin only. App users always get the report too. -->
+    <div v-if="isAdmin" class="card" style="margin-top: 16px">
+      <div class="toolbar-title">Email recipients</div>
+      <p class="muted" style="margin-top: 4px">
+        Everyone with a login already receives the weekly &amp; monthly report by email. Add extra
+        internal members here — <strong>email only</strong> (no login, no push).
+      </p>
+      <div style="display: flex; gap: 8px; margin: 8px 0; max-width: 460px">
+        <input
+          v-model="newEmail"
+          type="email"
+          placeholder="name@company.com"
+          style="flex: 1"
+          @keyup.enter="addRecipient"
+        />
+        <button class="btn btn-primary" :disabled="recBusy || !newEmail" @click="addRecipient">Add</button>
+      </div>
+      <div v-if="recError" class="banner err">{{ recError }}</div>
+      <table>
+        <thead>
+          <tr><th>Email</th><th>Added</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in recipients" :key="r.id">
+            <td>{{ r.email }}</td>
+            <td class="muted">{{ new Date(r.createdAt).toLocaleDateString() }}</td>
+            <td style="text-align: right">
+              <button class="btn" :disabled="recBusy" @click="removeRecipient(r)">Remove</button>
+            </td>
+          </tr>
+          <tr v-if="recipients.length === 0">
+            <td colspan="3" class="muted" style="text-align: center; padding: 16px">
+              No extra recipients yet — only logged-in users get the report.
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </main>
 </template>

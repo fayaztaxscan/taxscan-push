@@ -117,6 +117,16 @@ enum SendQueue {
   REVIEW
 }
 
+// Internal report-only recipients: emails that receive the weekly/monthly
+// coverage report but have no login and no push subscription. App users (the
+// User table) also receive it via their email; this is for extra internal members.
+model ReportRecipient {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
 model User {
   id                    String    @id @default(cuid())
   email                 String    @unique

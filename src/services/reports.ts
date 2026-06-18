@@ -204,6 +204,70 @@ export async function buildReport(opts: {
   };
 }
 
+// --- Email rendering (inline styles, hex colours — email-client safe) --------
+function cellHex(n: number, max: number): string {
+  if (n === 0) return '#fbdcdc'; // soft red
+  const r = n / Math.max(1, max);
+  if (r < 0.34) return '#fde68a'; // amber
+  if (r < 0.67) return '#bbf7d0'; // light green
+  return '#4ade80'; // green
+}
+
+function emailHeatTable(title: string, label: string, h: Heatmap): string {
+  const max = Math.max(1, ...h.rows.flatMap((r) => r.perDay));
+  const th = (t: string, align = 'center') =>
+    `<th style="background:#1e293b;color:#fff;padding:4px 6px;font-size:11px;border:1px solid #fff;text-align:${align};white-space:nowrap">${t}</th>`;
+  const cell = (n: number, bg: string, bold = false) =>
+    `<td style="padding:4px 6px;border:1px solid #fff;text-align:center;font-size:12px;background:${bg};${bold ? 'font-weight:700' : ''}">${n}</td>`;
+  const head = `<tr>${th(label, 'left')}${h.dates.map((d) => th(d.slice(5))).join('')}${th('Total')}</tr>`;
+  const body = h.rows
+    .map(
+      (row) =>
+        `<tr><td style="padding:4px 6px;border:1px solid #fff;background:#f1f5f9;font-weight:600;font-size:12px;white-space:nowrap">${row.label}</td>` +
+        row.perDay.map((n) => cell(n, cellHex(n, max))).join('') +
+        cell(row.total, '#e2e8f0', true) +
+        `</tr>`,
+    )
+    .join('');
+  const foot =
+    `<tr><td style="padding:4px 6px;border:1px solid #fff;background:#e2e8f0;font-weight:700;font-size:12px">Total</td>` +
+    h.dayTotals.map((t) => cell(t, '#e2e8f0', true)).join('') +
+    cell(h.grandTotal, '#cbd5e1', true) +
+    `</tr>`;
+  return `<h3 style="margin:18px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b">${title}</h3>
+    <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif">${head}${body}${foot}</table>`;
+}
+
+/** Render the report as a self-contained HTML email (subject + body + text). */
+export function renderReportEmail(report: Report): { subject: string; html: string; text: string } {
+  const periodLabel = report.period === 'weekly' ? 'Weekly' : 'Monthly';
+  const subject = `Taxscan ${periodLabel} Coverage Report · ${report.start} → ${report.end}`;
+  const trend =
+    report.prevTotal > 0 ? Math.round(((report.total - report.prevTotal) / report.prevTotal) * 100) : null;
+  const trendStr = trend === null ? '—' : trend >= 0 ? `▲ ${trend}%` : `▼ ${Math.abs(trend)}%`;
+  const gaps = report.gaps.benchesWithNothing.slice(0, 8);
+  const topBenches = report.byBench.rows.slice(0, 6).map((r) => `${r.label} ${r.total}`).join(', ');
+  const text = `Taxscan ${periodLabel} Coverage Report (${report.start} → ${report.end})
+${report.total} articles published, ${trendStr} vs previous ${report.period === 'weekly' ? 'week' : 'month'} (${report.prevTotal}).
+Top benches: ${topBenches}.
+Open the Taxscan Push admin → Reports for the full heatmaps.`;
+  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;background:#f8fafc;padding:16px;margin:0">
+  <div style="max-width:920px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:22px">
+    <div style="font-size:18px;font-weight:700">Taxscan ${periodLabel} Coverage Report</div>
+    <div style="color:#64748b;font-size:13px;margin-top:2px">${report.start} → ${report.end}</div>
+    <div style="margin:14px 0 4px;font-size:14px"><strong>${report.total}</strong> articles published ·
+      <strong>${trendStr}</strong> vs previous ${report.period === 'weekly' ? 'week' : 'month'} (${report.prevTotal}) ·
+      ${report.byCategory.rows.length} categories / ${report.byBench.rows.length} benches active</div>
+    <div style="font-size:13px;color:#475569">Quality: ${report.quality.qualified} court rulings ·
+      ${report.quality.fallback} tribunal filler · ${report.quality.review} in review${report.quality.uncategorized ? ` · ${report.quality.uncategorized} unclassified` : ''}</div>
+    ${gaps.length ? `<div style="font-size:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;margin-top:12px"><strong>No coverage this ${report.period === 'weekly' ? 'week' : 'month'}:</strong> ${gaps.join(', ')}${report.gaps.benchesWithNothing.length > gaps.length ? ' …' : ''}</div>` : ''}
+    ${emailHeatTable('Categories × dates', 'Category', report.byCategory)}
+    ${emailHeatTable('Courts / benches × dates', 'Bench', report.byBench)}
+    <div style="margin-top:16px;font-size:11px;color:#94a3b8">Generated automatically by Taxscan Push · internal report — please don't forward outside the team.</div>
+  </div></body></html>`;
+  return { subject, html, text };
+}
+
 /** IST-midnight instant for a given IST day key (YYYY-MM-DD). */
 function istMidnight(dayKey: string): Date {
   return new Date(`${dayKey}T00:00:00.000+05:30`);
