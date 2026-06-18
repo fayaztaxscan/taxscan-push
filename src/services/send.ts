@@ -94,6 +94,8 @@ export type CampaignInput = {
    */
   sendQueue?: SendQueue | null;
   authority?: string | null;
+  /** RSS <category> tags for the coverage reports (poller-set). */
+  categories?: string[];
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -334,6 +336,7 @@ export async function dispatchCampaign(
       createdByUserId: input.createdByUserId ?? null,
       sendQueue: input.sendQueue ?? null,
       authority: input.authority ?? null,
+      categories: input.categories ?? [],
     },
   });
 

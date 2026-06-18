@@ -235,8 +235,8 @@ describe('pollOnce dedupe', () => {
   });
 });
 
-describe('pollOnce per-feed topic tagging', () => {
-  it('tags every item with the feed\'s configured topic, ignoring <category> entirely', async () => {
+describe('pollOnce topic tagging (from categories, with feed fallback)', () => {
+  it("derives each item's topic from its <category> tags, else the feed topic", async () => {
     const feedUrl = freshFeedUrl('gst-feed');
     trackFeed(feedUrl);
     const { dispatcher, calls } = recordingDispatcher();
@@ -245,25 +245,26 @@ describe('pollOnce per-feed topic tagging', () => {
       topic: 'gst',
       mode: 'live',
       fetcher: fakeFetcher([
-        // These categories would have mapped to ['income-tax'] under the old
-        // category-parsing logic, but the feed itself is the source of truth.
+        // Category maps to income-tax → overrides the feed's configured 'gst'
+        // (so the same article via the master /feed gets the right topic).
         {
           guid: 'tag-1',
-          title: 'GST piece',
+          title: 'A ruling piece',
           link: 'https://taxscan.in/gst',
           categories: ['Income Tax,Top Stories'],
         },
+        // No subject category → falls back to the feed's topic 'gst'.
         {
           guid: 'tag-2',
           title: 'Another',
           link: 'https://taxscan.in/x',
-          categories: ['Whatever,Top Stories'],
+          categories: ['News Updates'],
         },
       ]),
       dispatcher,
     });
     expect(calls).toHaveLength(2);
-    expect(calls[0].target).toEqual({ type: 'topics', topics: ['gst'] });
+    expect(calls[0].target).toEqual({ type: 'topics', topics: ['income-tax'] });
     expect(calls[1].target).toEqual({ type: 'topics', topics: ['gst'] });
   });
 
@@ -578,6 +579,55 @@ describe('job-scan targeting', () => {
       pacerEnabled: true,
       fetcher: fakeFetcher([
         { guid: 'sc1', title: 'Supreme Court ruling [Read Judgment]', link: 'https://taxscan.in/sc' },
+      ]),
+      dispatcher,
+    });
+    const row = await prisma.feedItem.findFirst({ where: { feedUrl } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: row!.campaignId! } });
+    expect(campaign?.target).toEqual({ type: 'topics', topics: ['income-tax'] });
+  });
+});
+
+describe('category capture + topic derivation (master feed)', () => {
+  it('stores RSS categories and derives the topic from them (not the feed topic)', async () => {
+    const feedUrl = freshFeedUrl('categories');
+    trackFeed(feedUrl);
+    const { dispatcher } = recordingDispatcher();
+    await pollOnce({
+      feedUrl,
+      topic: 'news', // master-feed fallback topic
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher: fakeFetcher([
+        {
+          guid: 'cat1',
+          title: 'Place of Supply under GST: an explainer',
+          link: 'https://taxscan.in/gst-explainer',
+          categories: ['CST & VAT / GST', 'Top Stories'],
+        },
+      ]),
+      dispatcher,
+    });
+    const row = await prisma.feedItem.findFirst({ where: { feedUrl } });
+    const campaign = await prisma.campaign.findUnique({ where: { id: row!.campaignId! } });
+    expect(campaign?.categories).toEqual(['CST & VAT / GST', 'Top Stories']);
+    // topic derived from the category (gst), not the feed's configured 'news'.
+    expect(campaign?.target).toEqual({ type: 'topics', topics: ['gst'] });
+  });
+
+  it('falls back to the feed topic when no category maps', async () => {
+    const feedUrl = freshFeedUrl('cat-fallback');
+    trackFeed(feedUrl);
+    const { dispatcher } = recordingDispatcher();
+    await pollOnce({
+      feedUrl,
+      topic: 'income-tax',
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher: fakeFetcher([
+        { guid: 'cat2', title: 'A general update', link: 'https://taxscan.in/x', categories: ['News Updates'] },
       ]),
       dispatcher,
     });

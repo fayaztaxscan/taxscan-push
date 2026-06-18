@@ -94,6 +94,9 @@ model Campaign {
   // (e.g. "CESTAT", "Supreme Court") for ranking + display.
   sendQueue SendQueue?
   authority String?
+  // The article's RSS <category> tags (e.g. ["Income Tax","Top Stories"]),
+  // captured for the weekly/monthly coverage reports. Empty for manual sends.
+  categories String[] @default([])
   // Set when an editor handles a REVIEW item (approve / reject / push-now). A
   // REVIEW DRAFT with reviewedAt = null is still pending in the review queue.
   reviewedAt DateTime?
