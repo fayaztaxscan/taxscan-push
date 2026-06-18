@@ -37,18 +37,60 @@ const showOnlyMine = ref(false);
 
 const detailCampaignId = ref<string | null>(null);
 
-// Sort by when the push actually fired (most recent first), so recent send
-// activity is visible at the top rather than buried under newer captures.
-// Still-queued campaigns (never pushed → no sentAt) fall below the sent ones,
-// ordered by capture time.
-const sortedCampaigns = computed(() =>
-  [...campaigns.value].sort((a, b) => {
-    if (a.sentAt && b.sentAt) return Date.parse(b.sentAt) - Date.parse(a.sentAt);
-    if (a.sentAt) return -1;
-    if (b.sentAt) return 1;
-    return Date.parse(b.createdAt) - Date.parse(a.createdAt);
-  }),
-);
+// Click a column header to sort by it; click again to flip direction. Default
+// is Pushed (most recent sends first) so recent activity leads. Captured gives
+// the as-listed/queue order. Nulls (e.g. a draft with no push time or CTR)
+// always sort to the bottom regardless of direction.
+type SortKey = 'createdAt' | 'sentAt' | 'status' | 'sent' | 'clicked' | 'ctr' | 'failed' | 'deliveryRate';
+const sortKey = ref<SortKey>('sentAt');
+const sortDir = ref<'asc' | 'desc'>('desc');
+
+function setSort(key: SortKey): void {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortKey.value = key;
+    sortDir.value = 'desc';
+  }
+}
+function sortInd(key: SortKey): string {
+  if (sortKey.value !== key) return '';
+  return sortDir.value === 'desc' ? ' ▼' : ' ▲';
+}
+function sortVal(c: Campaign, key: SortKey): number | string | null {
+  switch (key) {
+    case 'createdAt':
+      return Date.parse(c.createdAt);
+    case 'sentAt':
+      return c.sentAt ? Date.parse(c.sentAt) : null;
+    case 'status':
+      return c.status;
+    case 'sent':
+      return c.sent;
+    case 'clicked':
+      return c.clicked;
+    case 'failed':
+      return c.failed;
+    case 'ctr':
+      return c.ctr;
+    case 'deliveryRate':
+      return c.deliveryRate;
+  }
+}
+const sortedCampaigns = computed(() => {
+  const key = sortKey.value;
+  const dir = sortDir.value === 'asc' ? 1 : -1;
+  return [...campaigns.value].sort((a, b) => {
+    const va = sortVal(a, key);
+    const vb = sortVal(b, key);
+    if (va === null && vb === null) return 0;
+    if (va === null) return 1; // nulls last, regardless of direction
+    if (vb === null) return -1;
+    if (va < vb) return -1 * dir;
+    if (va > vb) return 1 * dir;
+    return Date.parse(b.createdAt) - Date.parse(a.createdAt); // stable tiebreak
+  });
+});
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -111,16 +153,32 @@ onMounted(load);
       <table>
         <thead>
           <tr>
-            <th>Captured</th>
-            <th title="Sorted by push time (most recent first)">Pushed ▼</th>
+            <th class="th-sort" title="Sort by capture time" @click="setSort('createdAt')">
+              Captured<span class="sort-ind">{{ sortInd('createdAt') }}</span>
+            </th>
+            <th class="th-sort" title="Sort by push time" @click="setSort('sentAt')">
+              Pushed<span class="sort-ind">{{ sortInd('sentAt') }}</span>
+            </th>
             <th>Title</th>
             <th>Created by</th>
-            <th>Status</th>
-            <th>Sent</th>
-            <th>Clicked</th>
-            <th>CTR</th>
-            <th>Failed</th>
-            <th>Delivery</th>
+            <th class="th-sort" @click="setSort('status')">
+              Status<span class="sort-ind">{{ sortInd('status') }}</span>
+            </th>
+            <th class="th-sort" @click="setSort('sent')">
+              Sent<span class="sort-ind">{{ sortInd('sent') }}</span>
+            </th>
+            <th class="th-sort" @click="setSort('clicked')">
+              Clicked<span class="sort-ind">{{ sortInd('clicked') }}</span>
+            </th>
+            <th class="th-sort" @click="setSort('ctr')">
+              CTR<span class="sort-ind">{{ sortInd('ctr') }}</span>
+            </th>
+            <th class="th-sort" @click="setSort('failed')">
+              Failed<span class="sort-ind">{{ sortInd('failed') }}</span>
+            </th>
+            <th class="th-sort" @click="setSort('deliveryRate')">
+              Delivery<span class="sort-ind">{{ sortInd('deliveryRate') }}</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -180,3 +238,18 @@ onMounted(load);
     />
   </main>
 </template>
+
+<style scoped>
+.th-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.th-sort:hover {
+  text-decoration: underline;
+}
+.sort-ind {
+  font-size: 11px;
+  opacity: 0.75;
+}
+</style>
