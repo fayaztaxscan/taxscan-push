@@ -85,4 +85,32 @@ describe('buildReport', () => {
 
     expect(r.quality).toMatchObject({ qualified: 1, fallback: 1, review: 1 });
   });
+
+  it('orders bench rows by hierarchy (SC → priority HC → other HC → tribunal → Unspecified), not volume', async () => {
+    const p = `test-report-order-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    const start = ist(2026, 7, 6);
+    const end = ist(2026, 7, 13);
+    const mk = async (title: string, n: number) => {
+      for (let i = 0; i < n; i += 1) {
+        const c = await prisma.campaign.create({
+          data: { portal: p, title, body: '.', url: 'https://taxscan.in', target: { type: 'all' }, status: 'DRAFT', categories: [], createdAt: ist(2026, 7, 8, 9) },
+        });
+        ids.push(c.id);
+      }
+    };
+    await mk('Relief: ITAT [Read Order]', 5); // highest volume — must NOT lead
+    await mk('Supreme Court ruling [Read Judgment]', 1);
+    await mk('Bombay HC quashes notice [Read Order]', 1); // priority HC
+    await mk('Delhi High Court allows appeal', 1); // other HC
+    await mk('GST explainer with no court', 1); // Unspecified
+
+    const r = await buildReport({ portal: p, period: 'weekly', start, end });
+    expect(r.byBench.rows.map((x) => x.label)).toEqual([
+      'Supreme Court',
+      'Bombay High Court',
+      'Delhi High Court',
+      'ITAT',
+      'Unspecified',
+    ]);
+  });
 });
