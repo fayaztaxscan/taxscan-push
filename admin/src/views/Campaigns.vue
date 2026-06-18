@@ -112,7 +112,14 @@ async function load(): Promise<void> {
 }
 
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString();
+  // Compact (no seconds, short month, no year) so the date columns stay on one
+  // line and don't crowd out the metric columns.
+  return new Date(iso).toLocaleString(undefined, {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function openDetail(id: string): void {
@@ -130,7 +137,7 @@ onMounted(load);
 </script>
 
 <template>
-  <main class="page">
+  <main class="page page-wide">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">Campaigns</h1>
       <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px">
@@ -188,8 +195,10 @@ onMounted(load);
             class="row-clickable"
             @click="openDetail(c.id)"
           >
-            <td class="muted">{{ fmtDate(c.createdAt) }}</td>
-            <td :class="c.sentAt ? '' : 'muted'">{{ c.sentAt ? fmtDate(c.sentAt) : '—' }}</td>
+            <td class="muted" style="white-space: nowrap">{{ fmtDate(c.createdAt) }}</td>
+            <td :class="c.sentAt ? '' : 'muted'" style="white-space: nowrap">
+              {{ c.sentAt ? fmtDate(c.sentAt) : '—' }}
+            </td>
             <td>{{ c.title }}</td>
             <td>
               <template v-if="c.createdBy">

@@ -393,6 +393,12 @@ label {
   width: 100%;
   margin: 0 auto;
 }
+/* Data-dense views (Campaigns has 10 columns) need more room so the last
+   column isn't pushed off the edge; falls back to the card's horizontal
+   scroll on narrower screens. */
+.page-wide {
+  max-width: 1280px;
+}
 
 .card {
   background: var(--surface);
