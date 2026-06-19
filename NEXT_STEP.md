@@ -7,13 +7,29 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-06-19)
 
-1. **Responsive design audit across all devices (TOP priority next session).** The early
-   mobile work (hamburger nav + a `@media (max-width:720px)` block in `app.css`) predates the
-   newer screens. Audit and fix layout on phone (≈390px) and tablet (≈768px) for **every**
-   page — especially the wide/dense ones added since: **Reports** (two wide heatmaps + the
-   `.page-wide` 1280px container), **Campaigns** (10-column sortable table), **Queue**,
-   **Review** (pipeline strip), **Compose** (Test-on-this-device + flags), **Dashboard**.
-   Goal: no horizontal clipping/overflow; heatmaps scroll or scale cleanly; tap targets OK.
+1. **✅ DONE 2026-06-19 — responsive-design audit across all admin pages (was TOP priority).**
+   Audited all 6 pages (Dashboard/Compose/Review/Queue/Campaigns/Reports) headless via
+   Playwright (real built SPA, mocked `/api/**`) at **390 / 768 / 1024 / 1100px**, asserting
+   zero page horizontal overflow. **Two real bugs found + fixed (committed on `develop`, not yet
+   merged):**
+   - **Reports** (commit `ad7f001`): `.insights` was `repeat(4,1fr)` → the 4th card (`32·45·4`
+     unbreakable middot string) clipped off the right edge on phones; and the two heat tables
+     overflowed the document (no scroll container, unlike `.card`). Fix: insights wrap via
+     `auto-fit minmax(150px,1fr)` (2-up phone / 4-up tablet+); each heat table now lives in a
+     `.heat-scroll` wrapper. The WhatsApp PNG is preserved — `renderPng()` adds an `.exporting`
+     class that drops the scroll clip and captures at full content width (desktop output byte-
+     identical; mobile export now complete).
+   - **Nav bar, ALL pages** (commit `ee69b0f`): the hamburger only engaged at ≤720px, so the
+     full desktop nav row (8 links + account + utils, intrinsic ~1100px) **overflowed the whole
+     721–1100px tablet band by ~315px** (iPad portrait 768 + landscape 1024). Fix: raised the
+     hamburger breakpoint to **≤1024px** (split the nav-collapse rules into their own media
+     query; content tweaks stay at 720/480) + `flex-wrap` on `.nav` as a safety net for the
+     1025–1100 sliver. After: 0 overflow at every width on every page.
+   - Everything else (Campaigns 10-col table, Queue, Review pipeline strip, Compose flags,
+     Dashboard metric grid) was already clean — dense tables scroll inside their `.card`
+     (`overflow-x:auto`); no changes needed.
+   Re-run harness: `admin/` Playwright + `chromium` from `@playwright/test`, fixtures in
+   `/tmp/fix-*.json` pulled from prod via ADMIN_TOKEN in repo `.env`.
 2. **✅ DONE 2026-06-19 — reconciler CONFIRMED closing the gap (was: verify it had).** Method:
    fetched `news-sitemap-daily.xml` (rolling ~2-day window: 30 on 06-17, 34 on 06-18, 2 on
    06-19 = 66 entries) and cross-checked every `<news:title>` against the captured campaign
