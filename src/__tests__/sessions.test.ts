@@ -40,7 +40,7 @@ afterAll(async () => {
 });
 
 describe('createSession', () => {
-  it('returns a base64url token + expiresAt 8h in the future', async () => {
+  it('returns a base64url token + expiresAt one TTL in the future', async () => {
     const u = await makeUser('create-token');
     const before = new Date();
     const { token, expiresAt } = await createSession(u.id);
@@ -128,7 +128,7 @@ describe('findValidSession', () => {
 
     const found = await findValidSession(token);
     expect(found).not.toBeNull();
-    // New expiry should be ~now + 8h, comfortably beyond `earlier`.
+    // New expiry should be ~now + the TTL, comfortably beyond `earlier`.
     expect(found!.expiresAt.getTime()).toBeGreaterThan(earlier.getTime() + 3600_000);
   });
 });

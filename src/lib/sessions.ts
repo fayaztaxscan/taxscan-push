@@ -5,16 +5,17 @@
  * crypto-random base64url string. Only its SHA-256 hash is persisted in
  * `UserSession.tokenHash`, so a DB compromise doesn't expose live tokens.
  *
- * Sliding expiry — `findValidSession` updates `expiresAt` to now + 8h on
+ * Sliding expiry — `findValidSession` updates `expiresAt` to now + the TTL on
  * every successful lookup. Active sessions stay live indefinitely; idle
- * sessions time out after 8h.
+ * sessions time out after the TTL. Set to 7 days so editors aren't logged out
+ * between days (the earlier 8h window forced a re-login most mornings).
  */
 
 import { createHash, randomBytes } from 'crypto';
 import type { User, UserSession } from '@prisma/client';
 import { prisma } from './prisma';
 
-export const SESSION_TTL_HOURS = 8;
+export const SESSION_TTL_HOURS = 24 * 7; // 7 days (sliding)
 const SESSION_TTL_MS = SESSION_TTL_HOURS * 60 * 60 * 1000;
 
 export type SessionWithUser = UserSession & { user: User };
