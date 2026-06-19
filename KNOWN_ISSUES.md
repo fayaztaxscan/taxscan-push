@@ -419,9 +419,21 @@ against any specific unsubscribe-vs-frequency curve; several were refuted.
 
 ---
 
-## 6. GitHub `*/5` warm-ping fires only every ~2–4.5 h, so the Railway worker can go cold
+## 6. GitHub `*/5` warm-ping fires only every ~2–4.5 h (redundant — UptimeRobot covers liveness)
 
-**Filed:** 2026-06-19. **Owner:** internal. **Severity:** moderate (intermittent UX).
+**Filed:** 2026-06-19. **Owner:** internal. **Severity:** low (downgraded — see update).
+
+> **✅ UPDATE 2026-06-19 — worker is NOT actually going cold; this is effectively a non-issue.**
+> The UptimeRobot monitor on `…up.railway.app/healthz` is confirmed active, checking **every
+> 5 min**, showing **100% uptime over the last 7 and 30 days (0 incidents, 0m down)** and a
+> 12-day continuous up-streak, flat ~290 ms response time. So the unreliable GitHub `*/5` ping
+> is redundant — UptimeRobot is the real, reliable keep-warm/liveness pinger and the worker
+> stays warm. The cold-worker theory for the 2026-06-19 "Refresh failed" reports is therefore
+> **refuted**: the server was up 100% on those days. Remaining likely cause of those reports is
+> the 8h session TTL (day-apart logout → 401) + occasional mobile network blips, both now
+> handled gracefully by the client retry + 401→login shipped in `69bd496`. No action needed on
+> the warm-ping; leaving the GitHub workflow in place as a harmless secondary. Original analysis
+> retained below for history.
 
 ### What's happening
 

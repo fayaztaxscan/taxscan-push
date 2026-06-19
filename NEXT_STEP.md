@@ -60,17 +60,18 @@ status changes so a fresh Claude session can pick up cleanly.
      union in the most-recently-pushed campaigns via a SENT-event `groupBy` (dashboard last 7d
      take 10; list last 14d take 50, carrying the "Show only mine" filter). Regression test
      `metricsRecentCampaigns.test.ts`. Backend 288/288.
-4. **⏳ OPEN — make keep-warm reliable (root cause of the cold-worker failures).** The GitHub
-   `*/5` warm-ping (`.github/workflows/warm-ping.yml`) is heavily throttled — `gh run list`
-   showed it actually firing only every **~2–4.5 h**, so the Railway worker can go cold between
-   pings and the first request after idle fails. Verify UptimeRobot's 5-min monitor is still
-   active (the real safety net), or move warm-ping to an external cron pinger / configure Railway
-   to not idle. (Latency when warm is fine: metrics ~0.34s, reports ~0.20s — failures are
-   transient-origin, not slow queries.)
-5. **⏳ OPEN — consider lengthening the 8h session TTL.** `src/lib/sessions.ts SESSION_TTL_HOURS=8`
-   (sliding) is why editors get logged out between days ("desktop yesterday / mobile today" →
-   expired cookie → 401). The new 401 UX is graceful, but a longer TTL (e.g. 7-day sliding) would
-   stop the day-apart logouts. Product call.
+4. **✅ RESOLVED 2026-06-19 — keep-warm is reliable (cold-worker theory refuted).** UptimeRobot
+   monitor on `…up.railway.app/healthz` confirmed active (screenshot): **5-min checks, 100%
+   uptime over 7 & 30 days, 0 incidents, 12-day up-streak, ~290ms flat**. So the worker does NOT
+   go cold — the throttled GitHub `*/5` ping is redundant (KNOWN_ISSUES #6 downgraded to a
+   non-issue). The 2026-06-19 "Refresh failed" reports were therefore NOT a server outage; the
+   prime remaining cause is the 8h session TTL (item 5).
+5. **⏳ OPEN — lengthen the 8h session TTL (now the prime suspect for the "Refresh failed"
+   reports).** `src/lib/sessions.ts SESSION_TTL_HOURS=8` (sliding) is why editors get logged out
+   between days ("desktop yesterday / mobile today" → expired cookie → 401). The new 401 UX is
+   graceful (redirect to login w/ notice), but a longer TTL (e.g. 7-day sliding) would stop the
+   day-apart logouts entirely. One-line change + adjust `sessions.test.ts`. Product call on the
+   window length.
 6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
 7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
