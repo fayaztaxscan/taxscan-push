@@ -42,15 +42,48 @@ status changes so a fresh Claude session can pick up cleanly.
    the report buckets by *capture date* (createdAt) while the sitemap groups by *publish date*,
    so per-day counts won't line up exactly — match by title (CDATA-stripped, normalized), not
    by per-day totals. No action needed; reconciler + retention working as designed.
-3. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
+3. **✅ DONE 2026-06-19 — "Refresh fails / site won't load" investigated + fixed (Dashboard +
+   Reports), plus the Dashboard & Campaigns "missing records" bug.** All committed on `develop`,
+   not yet merged. Three fixes:
+   - **Refresh resilience** (commit `69bd496`) — the shared `useApi` fetch had no timeout, no
+     retry, and surfaced an expired session as a cryptic banner. Now: 15s per-attempt timeout
+     (AbortController), up to 2 backoff retries on network err / 502 / 503 / 504 (GET/HEAD only),
+     and 401 → redirect to `/login?reason=expired` with a "session expired" notice. Applies to
+     Refresh on **every** page (identical `load()` pattern everywhere).
+   - **`/api/reports` cache** (commit `69bd496`) — `getReport` wraps `buildReport` with a 60s
+     in-process cache (`REPORTS_CACHE_TTL_MS`, 0 under test), mirroring `/api/metrics`.
+   - **"Recent campaigns" / Campaigns list missing records** (commits `884f23c` Dashboard,
+     `783a039` Campaigns) — both were sourced from the newest-N **by capture time** but shown
+     **by push time**, so a campaign pushed recently yet captured earlier (pacer sends
+     oldest-first; backfill + manual Push-now replay old drafts) silently vanished. *Confirmed
+     live:* 3 of the 5 most-recently-pushed campaigns were absent from prod `/api/metrics`. Fix:
+     union in the most-recently-pushed campaigns via a SENT-event `groupBy` (dashboard last 7d
+     take 10; list last 14d take 50, carrying the "Show only mine" filter). Regression test
+     `metricsRecentCampaigns.test.ts`. Backend 288/288.
+4. **⏳ OPEN — make keep-warm reliable (root cause of the cold-worker failures).** The GitHub
+   `*/5` warm-ping (`.github/workflows/warm-ping.yml`) is heavily throttled — `gh run list`
+   showed it actually firing only every **~2–4.5 h**, so the Railway worker can go cold between
+   pings and the first request after idle fails. Verify UptimeRobot's 5-min monitor is still
+   active (the real safety net), or move warm-ping to an external cron pinger / configure Railway
+   to not idle. (Latency when warm is fine: metrics ~0.34s, reports ~0.20s — failures are
+   transient-origin, not slow queries.)
+5. **⏳ OPEN — consider lengthening the 8h session TTL.** `src/lib/sessions.ts SESSION_TTL_HOURS=8`
+   (sliding) is why editors get logged out between days ("desktop yesterday / mobile today" →
+   expired cookie → 401). The new 401 UX is graceful, but a longer TTL (e.g. 7-day sliding) would
+   stop the day-apart logouts. Product call.
+6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
-4. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
+7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
    first automated **Monday 08:00 IST** weekly + **1st 08:00 IST** monthly land. The category
    heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
-5. **Retention tuning** — `RETENTION_DAYS=7` is one window for all DRAFTs; consider a shorter
+8. **Retention tuning** — `RETENTION_DAYS=7` is one window for all DRAFTs; consider a shorter
    window for tribunal/fallback (e.g. 3d) if that pile stays large.
-6. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
+9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
    live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
+
+> **Unmerged on `develop` (awaiting a `develop → main` PR + Railway deploy):** the reconciler
+> verification doc, the responsive fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports
+> cache (`69bd496`), and the missing-records fixes (`884f23c`, `783a039`). None are live yet.
 
 ---
 
