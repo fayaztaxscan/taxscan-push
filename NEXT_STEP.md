@@ -66,12 +66,11 @@ status changes so a fresh Claude session can pick up cleanly.
    go cold — the throttled GitHub `*/5` ping is redundant (KNOWN_ISSUES #6 downgraded to a
    non-issue). The 2026-06-19 "Refresh failed" reports were therefore NOT a server outage; the
    prime remaining cause is the 8h session TTL (item 5).
-5. **⏳ OPEN — lengthen the 8h session TTL (now the prime suspect for the "Refresh failed"
-   reports).** `src/lib/sessions.ts SESSION_TTL_HOURS=8` (sliding) is why editors get logged out
-   between days ("desktop yesterday / mobile today" → expired cookie → 401). The new 401 UX is
-   graceful (redirect to login w/ notice), but a longer TTL (e.g. 7-day sliding) would stop the
-   day-apart logouts entirely. One-line change + adjust `sessions.test.ts`. Product call on the
-   window length.
+5. **✅ DONE 2026-06-19 — session TTL raised 8h → 7 days (sliding).** `src/lib/sessions.ts
+   SESSION_TTL_HOURS = 24 * 7`; stops the day-apart logouts that caused the "Refresh failed"
+   reports. Active editors now stay signed in across the work week (sliding: each request resets
+   the 7-day clock); the graceful 401→login handles the eventual idle expiry. Tests TTL-agnostic
+   (assert via the constant); full suite 288/288.
 6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
 7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
