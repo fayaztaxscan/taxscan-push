@@ -416,3 +416,54 @@ and what importance signal best ranks rulings (court/ruling type, recency).
 Full verified report + sources: deep-research run 2026-06-16 (transcript under
 the session's `workflows/` dir). Benchmark caveat above stands — do not set caps
 against any specific unsubscribe-vs-frequency curve; several were refuted.
+
+---
+
+## 6. GitHub `*/5` warm-ping fires only every ~2–4.5 h, so the Railway worker can go cold
+
+**Filed:** 2026-06-19. **Owner:** internal. **Severity:** moderate (intermittent UX).
+
+### What's happening
+
+`.github/workflows/warm-ping.yml` is scheduled `cron: '*/5 * * * *'` to hit
+`/healthz` every 5 minutes and keep the Railway worker hot. GitHub heavily
+throttles/deprioritises scheduled workflows (especially high-frequency `*/5` on
+lower-activity repos), so the runs do **not** happen every 5 min. `gh run list
+--workflow=warm-ping.yml` on 2026-06-19 showed actual gaps of **~1.9–4.5 hours**:
+
+```
+06-19 02:34 → 06-18 23:48 → 21:56 → 19:50 → 17:30 → 14:11 → 10:55 → 06:26
+```
+
+During those multi-hour gaps the worker can idle/cold-start, so the first
+request after idle (a page load or a Refresh click) is slow or returns 5xx.
+
+### Impact
+
+Surfaced as the user-reported "clicked Refresh and the site failed to load,"
+intermittently, on both desktop and mobile. The client-side timeout + retry
+shipped 2026-06-19 (commit `69bd496`) now **masks** this (a retry usually hits a
+now-warm worker), but the underlying cold-worker window still exists. When warm,
+latency is fine (`/api/metrics` ~0.34s, `/api/reports` ~0.20s) — so this is purely
+a cold-start problem, not slow queries.
+
+### How to measure
+
+- `gh run list --workflow=warm-ping.yml -L 20` — confirm the real cadence vs the
+  intended 5 min (the gaps above are the symptom).
+- Railway metrics/logs — look for cold-start spikes or restarts correlated with
+  the ping gaps and with reported failures.
+
+### Proposed fix
+
+Don't rely on GitHub's `*/5` schedule for liveness. Options (pick one):
+
+1. **Confirm UptimeRobot is still active** (5-min monitor on `/healthz`, set up at
+   go-live) — it's an independent, reliable pinger and the real safety net. If it
+   lapsed, re-enable it. This alone likely closes the gap.
+2. Move the warm-ping to an external cron pinger (cron-job.org, a Railway cron
+   service, or an Uptime/Cloudflare worker) that actually fires every 5 min.
+3. Configure Railway so the service does not idle (min replicas / always-on),
+   removing the need to keep it warm at all.
+
+Until then, the client retry keeps the symptom mostly invisible to users.

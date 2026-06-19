@@ -65,9 +65,29 @@ const KNOWN_SOURCES: SubscriberSource[] = [
   'import',
 ];
 
+// Shared select for the campaign-row shape both buildMetrics (dashboard
+// "Recent campaigns") and listCampaigns (the /campaigns page) return.
+const campaignSelect = {
+  id: true,
+  title: true,
+  status: true,
+  createdAt: true,
+  scheduledAt: true,
+  createdByUserId: true,
+  createdBy: { select: { id: true, email: true, role: true } },
+} as const;
+
 export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   const today = startOfDayIST(now);
   const windowStart = new Date(today.getTime() - 29 * MS_PER_DAY);
+  // "Recent campaigns" on the dashboard is sorted by PUSH time, but a query
+  // ordered by CAPTURE time (createdAt) misses campaigns pushed recently yet
+  // captured earlier — which is routine here: the pacer sends oldest-published
+  // first, and morning backfill + manual Push-now replay older drafts, while
+  // captures (~30-50/day) outpace sends (<=20/day). So alongside the newest
+  // captures we also pull the most-recently-pushed campaigns and union them in
+  // below. Bound the SENT scan to the last 7 days — older isn't "recent".
+  const pushedSince = new Date(today.getTime() - 7 * MS_PER_DAY);
 
   // Wave 1: five queries in parallel (was thirteen). Consolidations:
   //  - subscriber ACTIVE/EXPIRED counts → one groupBy on status.
@@ -77,8 +97,14 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   //    event.count queries) → one grouped raw scan on meta->>'source'.
   // Fewer round-trips is the win: data volume is tiny, so per-query latency to
   // Postgres dominated the old 13-query fan-out.
-  const [subscriberStatusCounts, recentSubs, eventTypeCounts, subscribedBySource, recentCampaigns] =
-    await Promise.all([
+  const [
+    subscriberStatusCounts,
+    recentSubs,
+    eventTypeCounts,
+    subscribedBySource,
+    recentlyCaptured,
+    recentlyPushedGroups,
+  ] = await Promise.all([
       prisma.subscriber.groupBy({ by: ['status'], _count: { _all: true } }),
       prisma.subscriber.findMany({
         where: { createdAt: { gte: windowStart } },
@@ -97,17 +123,33 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       prisma.campaign.findMany({
         orderBy: { createdAt: 'desc' },
         take: 20,
-        select: {
-          id: true,
-          title: true,
-          status: true,
-          createdAt: true,
-          scheduledAt: true,
-          createdByUserId: true,
-          createdBy: { select: { id: true, email: true, role: true } },
-        },
+        select: campaignSelect,
+      }),
+      // The most-recently-pushed campaigns (latest SENT event per campaign),
+      // newest first. Unioned with the newest captures below so push-ordered
+      // "Recent campaigns" never drops a recently-sent-but-older-captured item.
+      prisma.event.groupBy({
+        by: ['campaignId'],
+        where: { type: 'SENT', campaignId: { not: null }, createdAt: { gte: pushedSince } },
+        _max: { createdAt: true },
+        orderBy: { _max: { createdAt: 'desc' } },
+        take: 10,
       }),
     ]);
+
+  // Union: newest captures (keeps not-yet-sent drafts visible) + the
+  // most-recently-pushed campaigns that fell outside that capture window.
+  const capturedIds = new Set(recentlyCaptured.map((c) => c.id));
+  const missingPushedIds = recentlyPushedGroups
+    .map((g) => g.campaignId)
+    .filter((id): id is string => id !== null && !capturedIds.has(id));
+  const extraPushed = missingPushedIds.length
+    ? await prisma.campaign.findMany({
+        where: { id: { in: missingPushedIds } },
+        select: campaignSelect,
+      })
+    : [];
+  const recentCampaigns = [...recentlyCaptured, ...extraPushed];
 
   const statusCount = new Map<string, number>();
   for (const row of subscriberStatusCounts) statusCount.set(row.status, row._count._all);
@@ -275,20 +317,40 @@ export async function listCampaigns(
   limit = 50,
   opts: { createdByUserId?: string } = {},
 ): Promise<CampaignStat[]> {
-  const campaigns = await prisma.campaign.findMany({
-    where: opts.createdByUserId ? { createdByUserId: opts.createdByUserId } : undefined,
+  const userFilter = opts.createdByUserId ? { createdByUserId: opts.createdByUserId } : {};
+  const captured = await prisma.campaign.findMany({
+    where: opts.createdByUserId ? userFilter : undefined,
     orderBy: { createdAt: 'desc' },
     take: limit,
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      createdAt: true,
-      scheduledAt: true,
-      createdByUserId: true,
-      createdBy: { select: { id: true, email: true, role: true } },
-    },
+    select: campaignSelect,
   });
+
+  // Same capture-vs-push fix as the dashboard: a campaign pushed recently but
+  // captured outside the newest-`limit` window (a long-deferred draft, or a
+  // manual Push-now of an older item) would otherwise be absent from this
+  // push-sortable list. Union in the most-recently-pushed campaigns (last 14
+  // days). The extra fetch carries the same "mine" filter, so the scoped view
+  // stays scoped. (Single-user views are usually fully covered by the window
+  // already; this matters most for the unfiltered, pacer-dominated list.)
+  const capturedIds = new Set(captured.map((c) => c.id));
+  const pushedSince = new Date(Date.now() - 14 * MS_PER_DAY);
+  const recentlyPushed = await prisma.event.groupBy({
+    by: ['campaignId'],
+    where: { type: 'SENT', campaignId: { not: null }, createdAt: { gte: pushedSince } },
+    _max: { createdAt: true },
+    orderBy: { _max: { createdAt: 'desc' } },
+    take: 50,
+  });
+  const missingPushedIds = recentlyPushed
+    .map((g) => g.campaignId)
+    .filter((id): id is string => id !== null && !capturedIds.has(id));
+  const extra = missingPushedIds.length
+    ? await prisma.campaign.findMany({
+        where: { id: { in: missingPushedIds }, ...userFilter },
+        select: campaignSelect,
+      })
+    : [];
+  const campaigns = [...captured, ...extra];
   if (campaigns.length === 0) return [];
 
   const ids = campaigns.map((c) => c.id);

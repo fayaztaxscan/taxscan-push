@@ -5,6 +5,88 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
+## ▶️ NEXT STEPS / open items (as of 2026-06-19)
+
+1. **✅ DONE 2026-06-19 — responsive-design audit across all admin pages (was TOP priority).**
+   Audited all 6 pages (Dashboard/Compose/Review/Queue/Campaigns/Reports) headless via
+   Playwright (real built SPA, mocked `/api/**`) at **390 / 768 / 1024 / 1100px**, asserting
+   zero page horizontal overflow. **Two real bugs found + fixed (committed on `develop`, not yet
+   merged):**
+   - **Reports** (commit `ad7f001`): `.insights` was `repeat(4,1fr)` → the 4th card (`32·45·4`
+     unbreakable middot string) clipped off the right edge on phones; and the two heat tables
+     overflowed the document (no scroll container, unlike `.card`). Fix: insights wrap via
+     `auto-fit minmax(150px,1fr)` (2-up phone / 4-up tablet+); each heat table now lives in a
+     `.heat-scroll` wrapper. The WhatsApp PNG is preserved — `renderPng()` adds an `.exporting`
+     class that drops the scroll clip and captures at full content width (desktop output byte-
+     identical; mobile export now complete).
+   - **Nav bar, ALL pages** (commit `ee69b0f`): the hamburger only engaged at ≤720px, so the
+     full desktop nav row (8 links + account + utils, intrinsic ~1100px) **overflowed the whole
+     721–1100px tablet band by ~315px** (iPad portrait 768 + landscape 1024). Fix: raised the
+     hamburger breakpoint to **≤1024px** (split the nav-collapse rules into their own media
+     query; content tweaks stay at 720/480) + `flex-wrap` on `.nav` as a safety net for the
+     1025–1100 sliver. After: 0 overflow at every width on every page.
+   - Everything else (Campaigns 10-col table, Queue, Review pipeline strip, Compose flags,
+     Dashboard metric grid) was already clean — dense tables scroll inside their `.card`
+     (`overflow-x:auto`); no changes needed.
+   Re-run harness: `admin/` Playwright + `chromium` from `@playwright/test`, fixtures in
+   `/tmp/fix-*.json` pulled from prod via ADMIN_TOKEN in repo `.env`.
+2. **✅ DONE 2026-06-19 — reconciler CONFIRMED closing the gap (was: verify it had).** Method:
+   fetched `news-sitemap-daily.xml` (rolling ~2-day window: 30 on 06-17, 34 on 06-18, 2 on
+   06-19 = 66 entries) and cross-checked every `<news:title>` against the captured campaign
+   titles from `GET /api/campaigns?limit=200`. Result: **65/66 captured**; the only gap was a
+   06-19 article published minutes earlier, pending the next `*/20` reconcile cycle (normal
+   lag, not a miss). The 06-18 captured count had risen **43 → 54** since the evening the
+   verification poll was stopped — i.e. the reconciler kept ingesting; we now hold MORE for the
+   18th (54) than the rolling sitemap still exposes (34). `totals.expired=1170` confirms
+   retention is live too. **Gotcha for re-runs:** sitemap `<news:title>` is CDATA-wrapped and
+   the report buckets by *capture date* (createdAt) while the sitemap groups by *publish date*,
+   so per-day counts won't line up exactly — match by title (CDATA-stripped, normalized), not
+   by per-day totals. No action needed; reconciler + retention working as designed.
+3. **✅ DONE 2026-06-19 — "Refresh fails / site won't load" investigated + fixed (Dashboard +
+   Reports), plus the Dashboard & Campaigns "missing records" bug.** All committed on `develop`,
+   not yet merged. Three fixes:
+   - **Refresh resilience** (commit `69bd496`) — the shared `useApi` fetch had no timeout, no
+     retry, and surfaced an expired session as a cryptic banner. Now: 15s per-attempt timeout
+     (AbortController), up to 2 backoff retries on network err / 502 / 503 / 504 (GET/HEAD only),
+     and 401 → redirect to `/login?reason=expired` with a "session expired" notice. Applies to
+     Refresh on **every** page (identical `load()` pattern everywhere).
+   - **`/api/reports` cache** (commit `69bd496`) — `getReport` wraps `buildReport` with a 60s
+     in-process cache (`REPORTS_CACHE_TTL_MS`, 0 under test), mirroring `/api/metrics`.
+   - **"Recent campaigns" / Campaigns list missing records** (commits `884f23c` Dashboard,
+     `783a039` Campaigns) — both were sourced from the newest-N **by capture time** but shown
+     **by push time**, so a campaign pushed recently yet captured earlier (pacer sends
+     oldest-first; backfill + manual Push-now replay old drafts) silently vanished. *Confirmed
+     live:* 3 of the 5 most-recently-pushed campaigns were absent from prod `/api/metrics`. Fix:
+     union in the most-recently-pushed campaigns via a SENT-event `groupBy` (dashboard last 7d
+     take 10; list last 14d take 50, carrying the "Show only mine" filter). Regression test
+     `metricsRecentCampaigns.test.ts`. Backend 288/288.
+4. **⏳ OPEN — make keep-warm reliable (root cause of the cold-worker failures).** The GitHub
+   `*/5` warm-ping (`.github/workflows/warm-ping.yml`) is heavily throttled — `gh run list`
+   showed it actually firing only every **~2–4.5 h**, so the Railway worker can go cold between
+   pings and the first request after idle fails. Verify UptimeRobot's 5-min monitor is still
+   active (the real safety net), or move warm-ping to an external cron pinger / configure Railway
+   to not idle. (Latency when warm is fine: metrics ~0.34s, reports ~0.20s — failures are
+   transient-origin, not slow queries.)
+5. **⏳ OPEN — consider lengthening the 8h session TTL.** `src/lib/sessions.ts SESSION_TTL_HOURS=8`
+   (sliding) is why editors get logged out between days ("desktop yesterday / mobile today" →
+   expired cookie → 401). The new 401 UX is graceful, but a longer TTL (e.g. 7-day sliding) would
+   stop the day-apart logouts. Product call.
+6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
+   for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
+7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
+   first automated **Monday 08:00 IST** weekly + **1st 08:00 IST** monthly land. The category
+   heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
+8. **Retention tuning** — `RETENTION_DAYS=7` is one window for all DRAFTs; consider a shorter
+   window for tribunal/fallback (e.g. 3d) if that pile stays large.
+9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
+   live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
+
+> **Unmerged on `develop` (awaiting a `develop → main` PR + Railway deploy):** the reconciler
+> verification doc, the responsive fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports
+> cache (`69bd496`), and the missing-records fixes (`884f23c`, `783a039`). None are live yet.
+
+---
+
 ## What this system is + what's built (capability overview)
 
 **What it is:** a self-hosted web-push notification platform for taxscan.in (a GST/Income-Tax
@@ -21,6 +103,10 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
   stores each article's RSS `<category>` tags; classifies by TITLE into QUALIFIED (SC / priority
   HC = Bombay / other HC / regulatory) · FALLBACK (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical +
   job/recruitment posts).
+- **No-miss reconciler + retention** (`reconciler.ts`) — a cron reconciles against taxscan's
+  complete daily sitemap and captures any article the feeds missed (feeds show only ~11/poll);
+  DRAFTs unsent within `RETENTION_DAYS` are archived (EXPIRED status) to bound the backlog.
+  Reports infer category from the title when no RSS tag, so coverage stays accurate.
 - **Editorial pacer** (`pacer.ts`) — 1 push per global 45-min slot, ≤20/day, best-first (today →
   authority tier → oldest-published-first), defer-not-drop; morning backfill from yesterday (flagged off).
 - **Review queue** (`/review`) + **Send queue** (`/queue`) with **Push now**; a Captured → Review →

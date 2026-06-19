@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-06-18) — LIVE in production
+## Current state (updated 2026-06-19) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~2,200 active subscribers. **iZooto runs in parallel and stays** — its ~3M base is
 cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommission it.
@@ -20,7 +20,11 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical + job/recruitment posts, editor-decided).
 - **Editorial pacer** (`src/services/pacer.ts`) — 1 push per global 45-min slot, ≤20/day,
   best-first (today → authority tier → oldest-published-first), defer-not-drop; morning
-  backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`, default OFF).
+  backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`).
+- **No-miss reconciler + retention** (`src/services/reconciler.ts`) — feeds expose only ~11
+  items/poll, so a cron reconciles against taxscan's complete daily sitemap and captures any
+  missed article (behind `RECONCILER_ENABLED`); DRAFTs unsent within `RETENTION_DAYS` are
+  archived (EXPIRED status). Reports infer category from the title when no RSS tag.
 - **Coverage reports** (`src/services/reports.ts` + `reportScheduler.ts`) — weekly + monthly
   Category×dates and Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split),
   counting EVERY captured article. In-app **Reports** screen (Download/Copy image for
@@ -31,11 +35,25 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
   Manual/Automatic — Push-now sets `createdByUserId`), **Reports**,
   **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
+  Responsive phone→tablet→desktop (nav collapses to a hamburger ≤1024px). "Recent campaigns"
+  (Dashboard) and the Campaigns list union in recently-PUSHED items so they aren't dropped by
+  the capture-time window.
+- **Resilient data fetch** — the shared `useApi` adds a 15s timeout + retry (network/502/503/504,
+  GET-only) and routes a 401 to `/login?reason=expired`, so a cold worker / flaky connection no
+  longer leaves Refresh stuck or "failed to load". `/api/metrics` (20s) and `/api/reports` (60s)
+  are short-TTL cached.
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit
   log, push-URL allowlist (`ALLOWED_PUSH_HOSTS`, incl. academy/shop), rate limits, helmet.
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
-`RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=OFF.
+`RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
+`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=7. (`METRICS_CACHE_TTL_MS`=20s and
+`REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
+
+**Open next steps:** (1) make keep-warm reliable — the GitHub `*/5` warm-ping actually fires
+only every ~2–4.5 h, so the Railway worker can go cold (KNOWN_ISSUES #6); verify UptimeRobot or
+move to an external pinger. (2) consider lengthening the 8h sliding session TTL (day-apart
+logouts). See `NEXT_STEP.md`.
 
 **Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
 `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +

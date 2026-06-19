@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useAuth, AuthError } from '../composables/useAuth';
 
@@ -11,6 +11,10 @@ const submitting = ref(false);
 const router = useRouter();
 const route = useRoute();
 const { login, user } = useAuth();
+
+// Set by useApi when a 401 bounced the user here mid-session, so we explain
+// why they're back at the login screen rather than showing nothing.
+const sessionExpired = computed(() => route.query.reason === 'expired' && !error.value);
 
 async function onSubmit() {
   error.value = null;
@@ -61,6 +65,9 @@ async function onSubmit() {
           autocomplete="current-password"
           required
         />
+      </div>
+      <div v-if="sessionExpired" class="banner err">
+        Your session expired — please sign in again.
       </div>
       <div v-if="error" class="banner err">{{ error }}</div>
       <div class="form-row" style="display: flex; justify-content: flex-end">

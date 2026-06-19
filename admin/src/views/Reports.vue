@@ -121,8 +121,25 @@ function cellColor(n: number, max: number): string {
 }
 
 async function renderPng(): Promise<string> {
-  if (!sheet.value) throw new Error('Report not ready.');
-  return toPng(sheet.value, { backgroundColor: '#ffffff', pixelRatio: 2 });
+  const node = sheet.value;
+  if (!node) throw new Error('Report not ready.');
+  // On narrow viewports the heat tables live inside horizontally-scrollable
+  // wrappers (so they don't clip on screen). For the shared image we want the
+  // FULL report, so temporarily neutralise that clipping and capture at the
+  // sheet's full content width. On desktop nothing overflows, so scrollWidth ==
+  // offsetWidth and the output is byte-for-byte what it was before.
+  node.classList.add('exporting');
+  try {
+    const width = Math.ceil(node.scrollWidth);
+    return await toPng(node, {
+      backgroundColor: '#ffffff',
+      pixelRatio: 2,
+      width,
+      style: { width: `${width}px` },
+    });
+  } finally {
+    node.classList.remove('exporting');
+  }
 }
 async function downloadImage() {
   error.value = null;
@@ -219,50 +236,54 @@ onMounted(() => {
       </div>
 
       <h3 class="heat-h">Courts / benches × dates</h3>
-      <table class="heat">
-        <thead>
-          <tr>
-            <th class="heat-label">Bench</th>
-            <th v-for="d in report.byBench.dates" :key="d">{{ shortDate(d) }}</th>
-            <th class="heat-total">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in report.byBench.rows" :key="row.label">
-            <td class="heat-label">{{ row.label }}</td>
-            <td v-for="(n, i) in row.perDay" :key="i" :style="{ background: cellColor(n, benchMax) }">{{ n }}</td>
-            <td class="heat-total">{{ row.total }}</td>
-          </tr>
-          <tr class="heat-foot">
-            <td class="heat-label">Total</td>
-            <td v-for="(t, i) in report.byBench.dayTotals" :key="i">{{ t }}</td>
-            <td class="heat-total">{{ report.byBench.grandTotal }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="heat-scroll">
+        <table class="heat">
+          <thead>
+            <tr>
+              <th class="heat-label">Bench</th>
+              <th v-for="d in report.byBench.dates" :key="d">{{ shortDate(d) }}</th>
+              <th class="heat-total">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in report.byBench.rows" :key="row.label">
+              <td class="heat-label">{{ row.label }}</td>
+              <td v-for="(n, i) in row.perDay" :key="i" :style="{ background: cellColor(n, benchMax) }">{{ n }}</td>
+              <td class="heat-total">{{ row.total }}</td>
+            </tr>
+            <tr class="heat-foot">
+              <td class="heat-label">Total</td>
+              <td v-for="(t, i) in report.byBench.dayTotals" :key="i">{{ t }}</td>
+              <td class="heat-total">{{ report.byBench.grandTotal }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h3 class="heat-h">Categories × dates</h3>
-      <table class="heat">
-        <thead>
-          <tr>
-            <th class="heat-label">Category</th>
-            <th v-for="d in report.byCategory.dates" :key="d">{{ shortDate(d) }}</th>
-            <th class="heat-total">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in report.byCategory.rows" :key="row.label">
-            <td class="heat-label">{{ row.label }}</td>
-            <td v-for="(n, i) in row.perDay" :key="i" :style="{ background: cellColor(n, catMax) }">{{ n }}</td>
-            <td class="heat-total">{{ row.total }}</td>
-          </tr>
-          <tr class="heat-foot">
-            <td class="heat-label">Total</td>
-            <td v-for="(t, i) in report.byCategory.dayTotals" :key="i">{{ t }}</td>
-            <td class="heat-total">{{ report.byCategory.grandTotal }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="heat-scroll">
+        <table class="heat">
+          <thead>
+            <tr>
+              <th class="heat-label">Category</th>
+              <th v-for="d in report.byCategory.dates" :key="d">{{ shortDate(d) }}</th>
+              <th class="heat-total">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in report.byCategory.rows" :key="row.label">
+              <td class="heat-label">{{ row.label }}</td>
+              <td v-for="(n, i) in row.perDay" :key="i" :style="{ background: cellColor(n, catMax) }">{{ n }}</td>
+              <td class="heat-total">{{ row.total }}</td>
+            </tr>
+            <tr class="heat-foot">
+              <td class="heat-label">Total</td>
+              <td v-for="(t, i) in report.byCategory.dayTotals" :key="i">{{ t }}</td>
+              <td class="heat-total">{{ report.byCategory.grandTotal }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <div class="report-foot">Generated by Taxscan Push · {{ rangeLabel(report) }}</div>
     </div>
@@ -349,7 +370,9 @@ onMounted(() => {
 }
 .insights {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Wrap to 2-up (and eventually 1-up) on narrow screens instead of clipping
+     the 4th card off the edge. 4-across on desktop is unchanged. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   margin: 16px 0;
 }
@@ -387,6 +410,17 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
+}
+/* Heat tables can be wider than the viewport (esp. the monthly 30-day view),
+   so each scrolls horizontally within its own wrapper rather than overflowing
+   the document. During PNG export (.exporting) we drop the clip so the shared
+   image captures the full table — see renderPng(). */
+.heat-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.report-sheet.exporting .heat-scroll {
+  overflow: visible;
 }
 table.heat {
   width: 100%;
