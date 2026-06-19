@@ -13,7 +13,7 @@ import {
 } from '../services/send';
 import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
-import { buildReport, reportWindow } from '../services/reports';
+import { getReport, reportWindow } from '../services/reports';
 import { sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -558,7 +558,7 @@ export function createApiRouter(
     try {
       const period = req.query.period === 'monthly' ? 'monthly' : 'weekly';
       const { start, end } = reportWindow(period, new Date());
-      const report = await buildReport({ portal: env.rss.portal, period, start, end });
+      const report = await getReport({ portal: env.rss.portal, period, start, end });
       return res.json(report);
     } catch (err) {
       return next(err);

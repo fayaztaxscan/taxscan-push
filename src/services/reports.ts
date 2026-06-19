@@ -247,6 +247,52 @@ export async function buildReport(opts: {
   };
 }
 
+// ---- Short-TTL cache for GET /api/reports ----
+//
+// The Reports screen re-fetches on open and on every "Refresh" click. buildReport
+// scans every captured Campaign in the window (and the prior window for the
+// trend), so caching shields Postgres from redundant work and keeps Refresh
+// snappy — the report only needs to be fresh to the minute, not the second.
+//
+// TTL is read per-call from REPORTS_CACHE_TTL_MS (default 60s; 0 disables). It
+// defaults to 0 under NODE_ENV=test so suites always see freshly-computed data.
+// Single-instance only (in-memory); revisit if we scale out.
+let reportCache: Record<string, { at: number; data: Report }> = {};
+
+function defaultReportTtlMs(): number {
+  const raw = process.env.REPORTS_CACHE_TTL_MS;
+  if (raw !== undefined && raw !== '') return Number(raw);
+  return process.env.NODE_ENV === 'test' ? 0 : 60_000;
+}
+
+/** Test hook — clears the in-process report cache. */
+export function __resetReportCache(): void {
+  reportCache = {};
+}
+
+/**
+ * Cached wrapper around buildReport. Keyed by portal+period (the window is
+ * derived from period + now, so within the short TTL it's effectively the same
+ * window). The route uses this; call buildReport directly for an uncached read
+ * (e.g. the scheduled email, which must reflect the exact send moment).
+ */
+export async function getReport(
+  opts: { portal: string; period: 'weekly' | 'monthly'; start: Date; end: Date },
+  cfg: { ttlMs?: number; now?: Date } = {},
+): Promise<Report> {
+  const ttlMs = cfg.ttlMs ?? defaultReportTtlMs();
+  if (ttlMs <= 0) return buildReport(opts);
+
+  const t = (cfg.now ?? new Date()).getTime();
+  const key = `${opts.portal}:${opts.period}`;
+  const hit = reportCache[key];
+  if (hit && t - hit.at < ttlMs) return hit.data;
+
+  const data = await buildReport(opts);
+  reportCache[key] = { at: t, data };
+  return data;
+}
+
 // --- Email rendering (inline styles, hex colours — email-client safe) --------
 function cellHex(n: number, max: number): string {
   if (n === 0) return '#fbdcdc'; // soft red
