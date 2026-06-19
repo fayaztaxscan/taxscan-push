@@ -5,7 +5,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-06-18, end of day)
+## ▶️ NEXT STEPS / open items (as of 2026-06-19)
 
 1. **Responsive design audit across all devices (TOP priority next session).** The early
    mobile work (hamburger nav + a `@media (max-width:720px)` block in `app.css`) predates the
@@ -14,11 +14,18 @@ status changes so a fresh Claude session can pick up cleanly.
    `.page-wide` 1280px container), **Campaigns** (10-column sortable table), **Queue**,
    **Review** (pipeline strip), **Compose** (Test-on-this-device + flags), **Dashboard**.
    Goal: no horizontal clipping/overflow; heatmaps scroll or scale cleanly; tap targets OK.
-2. **⏳ FIRST THING NEXT SESSION: confirm the reconciler closed the capture gap.** Pre-fix:
-   67 published vs 43 captured (2026-06-18); `RECONCILER_ENABLED=true` was set that evening but
-   the verification poll was stopped before a full `*/20` cycle completed (still showing 43).
-   Next session: compare today's `news-sitemap-daily.xml` `<loc>` count vs our captured-today
-   count — they should be ≈ equal. If still short, check the reconciler logs / that cron fired.
+2. **✅ DONE 2026-06-19 — reconciler CONFIRMED closing the gap (was: verify it had).** Method:
+   fetched `news-sitemap-daily.xml` (rolling ~2-day window: 30 on 06-17, 34 on 06-18, 2 on
+   06-19 = 66 entries) and cross-checked every `<news:title>` against the captured campaign
+   titles from `GET /api/campaigns?limit=200`. Result: **65/66 captured**; the only gap was a
+   06-19 article published minutes earlier, pending the next `*/20` reconcile cycle (normal
+   lag, not a miss). The 06-18 captured count had risen **43 → 54** since the evening the
+   verification poll was stopped — i.e. the reconciler kept ingesting; we now hold MORE for the
+   18th (54) than the rolling sitemap still exposes (34). `totals.expired=1170` confirms
+   retention is live too. **Gotcha for re-runs:** sitemap `<news:title>` is CDATA-wrapped and
+   the report buckets by *capture date* (createdAt) while the sitemap groups by *publish date*,
+   so per-day counts won't line up exactly — match by title (CDATA-stripped, normalized), not
+   by per-day totals. No action needed; reconciler + retention working as designed.
 3. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
 4. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
