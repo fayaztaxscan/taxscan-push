@@ -65,6 +65,18 @@ const KNOWN_SOURCES: SubscriberSource[] = [
   'import',
 ];
 
+// Shared select for the campaign-row shape both buildMetrics (dashboard
+// "Recent campaigns") and listCampaigns (the /campaigns page) return.
+const campaignSelect = {
+  id: true,
+  title: true,
+  status: true,
+  createdAt: true,
+  scheduledAt: true,
+  createdByUserId: true,
+  createdBy: { select: { id: true, email: true, role: true } },
+} as const;
+
 export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   const today = startOfDayIST(now);
   const windowStart = new Date(today.getTime() - 29 * MS_PER_DAY);
@@ -76,15 +88,6 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   // captures we also pull the most-recently-pushed campaigns and union them in
   // below. Bound the SENT scan to the last 7 days — older isn't "recent".
   const pushedSince = new Date(today.getTime() - 7 * MS_PER_DAY);
-  const campaignSelect = {
-    id: true,
-    title: true,
-    status: true,
-    createdAt: true,
-    scheduledAt: true,
-    createdByUserId: true,
-    createdBy: { select: { id: true, email: true, role: true } },
-  } as const;
 
   // Wave 1: five queries in parallel (was thirteen). Consolidations:
   //  - subscriber ACTIVE/EXPIRED counts → one groupBy on status.
@@ -314,20 +317,40 @@ export async function listCampaigns(
   limit = 50,
   opts: { createdByUserId?: string } = {},
 ): Promise<CampaignStat[]> {
-  const campaigns = await prisma.campaign.findMany({
-    where: opts.createdByUserId ? { createdByUserId: opts.createdByUserId } : undefined,
+  const userFilter = opts.createdByUserId ? { createdByUserId: opts.createdByUserId } : {};
+  const captured = await prisma.campaign.findMany({
+    where: opts.createdByUserId ? userFilter : undefined,
     orderBy: { createdAt: 'desc' },
     take: limit,
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      createdAt: true,
-      scheduledAt: true,
-      createdByUserId: true,
-      createdBy: { select: { id: true, email: true, role: true } },
-    },
+    select: campaignSelect,
   });
+
+  // Same capture-vs-push fix as the dashboard: a campaign pushed recently but
+  // captured outside the newest-`limit` window (a long-deferred draft, or a
+  // manual Push-now of an older item) would otherwise be absent from this
+  // push-sortable list. Union in the most-recently-pushed campaigns (last 14
+  // days). The extra fetch carries the same "mine" filter, so the scoped view
+  // stays scoped. (Single-user views are usually fully covered by the window
+  // already; this matters most for the unfiltered, pacer-dominated list.)
+  const capturedIds = new Set(captured.map((c) => c.id));
+  const pushedSince = new Date(Date.now() - 14 * MS_PER_DAY);
+  const recentlyPushed = await prisma.event.groupBy({
+    by: ['campaignId'],
+    where: { type: 'SENT', campaignId: { not: null }, createdAt: { gte: pushedSince } },
+    _max: { createdAt: true },
+    orderBy: { _max: { createdAt: 'desc' } },
+    take: 50,
+  });
+  const missingPushedIds = recentlyPushed
+    .map((g) => g.campaignId)
+    .filter((id): id is string => id !== null && !capturedIds.has(id));
+  const extra = missingPushedIds.length
+    ? await prisma.campaign.findMany({
+        where: { id: { in: missingPushedIds }, ...userFilter },
+        select: campaignSelect,
+      })
+    : [];
+  const campaigns = [...captured, ...extra];
   if (campaigns.length === 0) return [];
 
   const ids = campaigns.map((c) => c.id);

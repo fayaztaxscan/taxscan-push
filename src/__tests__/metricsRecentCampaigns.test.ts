@@ -11,7 +11,7 @@
  * seeds enough fresh captures to push the old-but-just-sent campaign out of the
  * newest-20-by-createdAt window, then asserts it still appears via the push path.
  */
-import { buildMetrics } from '../services/metrics';
+import { buildMetrics, listCampaigns } from '../services/metrics';
 import { prisma } from '../lib/prisma';
 
 const ids: string[] = [];
@@ -61,4 +61,12 @@ it('surfaces a recently-pushed campaign captured outside the newest-20 window', 
   const found = m.campaigns.find((c) => c.id === oldId);
   expect(found).toBeDefined(); // present despite being outside the newest-20 captures
   expect(found?.sentAt).not.toBeNull(); // and its push time resolved
+
+  // listCampaigns (the /campaigns page) has the same guarantee. Use a small
+  // limit so the old campaign is outside the newest-`limit` captures (the 22
+  // fresh drafts fill it), and assert the push-union still surfaces it.
+  const list = await listCampaigns(5);
+  const inList = list.find((c) => c.id === oldId);
+  expect(inList).toBeDefined();
+  expect(inList?.sentAt).not.toBeNull();
 });
