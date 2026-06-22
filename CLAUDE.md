@@ -47,7 +47,7 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
 `RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
-`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=7. (`METRICS_CACHE_TTL_MS`=20s and
+`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
 **Open next steps:** (1) make keep-warm reliable — the GitHub `*/5` warm-ping actually fires

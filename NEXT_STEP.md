@@ -76,8 +76,9 @@ status changes so a fresh Claude session can pick up cleanly.
 7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
    first automated **Monday 08:00 IST** weekly + **1st 08:00 IST** monthly land. The category
    heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
-8. **Retention tuning** — `RETENTION_DAYS=7` is one window for all DRAFTs; consider a shorter
-   window for tribunal/fallback (e.g. 3d) if that pile stays large.
+8. **Retention tuning** — `RETENTION_DAYS=3` (lowered from 7 on 2026-06-22): one window for all
+   DRAFTs incl. REVIEW. If editor-pending REVIEW items start aging out before review, consider
+   exempting REVIEW from the sweep (`expireStaleDrafts`) rather than raising the global window.
 9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
    live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
 
