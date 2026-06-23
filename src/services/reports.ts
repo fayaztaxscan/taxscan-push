@@ -7,8 +7,14 @@ import { prisma } from '../lib/prisma';
  *   - Category × dates — are we publishing across all subject areas, enough?
  *   - Bench × dates    — which courts/tribunals are we covering, where are gaps?
  * Plus an insight layer (totals, vs-previous-period, coverage gaps, quality
- * split) and a no-undercount cross-check. Counts EVERY captured article in the
- * window (any status) — the report is about what was published, not what we sent.
+ * split) and a no-undercount cross-check. Counts every UNIQUE captured article
+ * in the window (any status), keyed by its URL and bucketed by capture date —
+ * the report is about what was published, not what we sent. A re-send of the
+ * same article (the morning backfill clones yesterday's piece into a fresh row
+ * keeping the original createdAt; an editor may also manually re-push) shares
+ * the article's URL, so it is counted ONCE, not again. Manual pushes that link
+ * out to the academy/shop storefronts are not editorial articles and are
+ * excluded by host.
  */
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
@@ -180,6 +186,63 @@ function buildHeatmap(
 }
 
 /**
+ * Article identity for de-duplication: the permalink, trailing slashes trimmed.
+ * Every article has a unique URL; a re-send (backfill clone / manual re-push)
+ * carries the same URL. Falls back to the row id when the URL is missing/blank
+ * so an unusual urlless row is never collapsed into another.
+ */
+function articleKey(c: { id: string; url?: string | null }): string {
+  const u = (c.url ?? '').trim().replace(/\/+$/, '');
+  return u || `__id:${c.id}`;
+}
+
+/**
+ * Coverage is about taxscan.in editorial articles. Manual pushes that link out
+ * to the academy/shop storefronts (a course/product URL) are not articles, so
+ * they don't belong in the report. Exclude them by host. URL-less or
+ * unparseable rows are kept (they aren't academy/shop and counted before).
+ */
+const NON_ARTICLE_HOSTS = /(^|\.)(?:academy|shop)\.taxscan\.in$/i;
+function isArticleUrl(url?: string | null): boolean {
+  const u = (url ?? '').trim();
+  if (!u) return true;
+  try {
+    return !NON_ARTICLE_HOSTS.test(new URL(u).hostname);
+  } catch {
+    return true;
+  }
+}
+
+type ReportRow = { title: string; categories: string[]; day: string; sendQueue: SendQueue | null };
+
+/**
+ * Collapse re-sends into one row per unique article. Within a URL group the
+ * representative is the most-richly-classified row (has RSS categories, then a
+ * send queue) — the backfill clone drops categories, so this keeps the
+ * original's. The day bucket is the earliest capture instant in the group.
+ */
+function dedupeByArticle(
+  campaigns: { id: string; url: string | null; title: string; categories: string[]; createdAt: Date; sendQueue: SendQueue | null }[],
+): ReportRow[] {
+  const groups = new Map<string, typeof campaigns>();
+  for (const c of campaigns) {
+    const key = articleKey(c);
+    const g = groups.get(key);
+    if (g) g.push(c);
+    else groups.set(key, [c]);
+  }
+  const score = (c: { categories: string[]; sendQueue: SendQueue | null }): number =>
+    (c.categories?.length ? 2 : 0) + (c.sendQueue ? 1 : 0);
+  const out: ReportRow[] = [];
+  for (const g of groups.values()) {
+    const rep = g.reduce((best, c) => (score(c) > score(best) ? c : best), g[0]);
+    const earliest = g.reduce((min, c) => (c.createdAt < min ? c.createdAt : min), g[0].createdAt);
+    out.push({ title: rep.title, categories: rep.categories, day: istDateKey(earliest), sendQueue: rep.sendQueue });
+  }
+  return out;
+}
+
+/**
  * Build a report over [start, end) (both IST-midnight instants), comparing to
  * the equally-long window immediately before it.
  */
@@ -193,21 +256,23 @@ export async function buildReport(opts: {
   const spanMs = end.getTime() - start.getTime();
   const prevStart = new Date(start.getTime() - spanMs);
 
-  const [campaigns, prevTotal] = await Promise.all([
+  const [campaigns, prevCampaigns] = await Promise.all([
     prisma.campaign.findMany({
       where: { portal, createdAt: { gte: start, lt: end } },
-      select: { title: true, categories: true, createdAt: true, sendQueue: true },
+      select: { id: true, url: true, title: true, categories: true, createdAt: true, sendQueue: true },
     }),
-    prisma.campaign.count({ where: { portal, createdAt: { gte: prevStart, lt: start } } }),
+    prisma.campaign.findMany({
+      where: { portal, createdAt: { gte: prevStart, lt: start } },
+      select: { id: true, url: true },
+    }),
   ]);
 
   const dates = dayKeys(start, end);
-  const rows = campaigns.map((c) => ({
-    title: c.title,
-    categories: c.categories,
-    day: istDateKey(c.createdAt),
-    sendQueue: c.sendQueue,
-  }));
+  // Collapse re-sends to one row per unique article (see file header): group by
+  // URL, keep the richest-classified row (RSS categories first, then a send
+  // queue), and bucket on the earliest capture instant in the group.
+  const rows = dedupeByArticle(campaigns.filter((c) => isArticleUrl(c.url)));
+  const prevTotal = new Set(prevCampaigns.filter((c) => isArticleUrl(c.url)).map(articleKey)).size;
 
   const byCategory = buildHeatmap((c) => reportCategory(c.categories, c.title), rows, dates);
   // Bench heatmap is ordered by judicial hierarchy (SC → priority HCs → other
@@ -233,7 +298,7 @@ export async function buildReport(opts: {
     start: dates[0] ?? istDateKey(start),
     end: dates[dates.length - 1] ?? istDateKey(new Date(end.getTime() - 1)),
     dates,
-    total: campaigns.length,
+    total: rows.length,
     prevTotal,
     byCategory,
     byBench,
