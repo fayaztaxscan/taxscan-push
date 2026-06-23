@@ -118,8 +118,9 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
   history, captured-vs-pushed times, **Source = Manual/Automatic** — Push-now is attributed to the
   editor), **Activity** (append-only audit), **Users** (RBAC, email invites, temp passwords).
 - **Coverage reports** (`reports.ts` + `reportScheduler.ts`) — weekly + monthly Category×dates and
-  Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting EVERY captured
-  article. In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 08:00 / 1st
+  Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting every UNIQUE captured
+  article by capture date (re-sends collapse by URL; academy/shop storefront pushes excluded).
+  In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 08:00 / 1st
   08:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
 - **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,

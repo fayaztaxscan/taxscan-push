@@ -27,7 +27,9 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   archived (EXPIRED status). Reports infer category from the title when no RSS tag.
 - **Coverage reports** (`src/services/reports.ts` + `reportScheduler.ts`) — weekly + monthly
   Category×dates and Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split),
-  counting EVERY captured article. In-app **Reports** screen (Download/Copy image for
+  counting every UNIQUE captured taxscan.in article by capture date (re-sends — e.g. the
+  morning backfill clone or a manual re-push — collapse by URL; academy/shop storefront
+  pushes are excluded as non-articles). In-app **Reports** screen (Download/Copy image for
   WhatsApp) + emailed Mon 08:00 IST / 1st 08:00 IST to app users + a report-only email list
   (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/

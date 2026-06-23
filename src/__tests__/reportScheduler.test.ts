@@ -51,10 +51,10 @@ describe('sendScheduledReport', () => {
   it('builds the report for the window and emails every recipient', async () => {
     const portal = `test-reportsched-${uniq()}`;
     const c1 = await prisma.campaign.create({
-      data: { portal, title: 'Bombay HC ruling [Read Order]', body: '.', url: 'https://taxscan.in', target: { type: 'all' }, status: 'DRAFT', categories: ['Income Tax'], createdAt: ist(2026, 6, 16, 10) },
+      data: { portal, title: 'Bombay HC ruling [Read Order]', body: '.', url: 'https://taxscan.in/bombay/1', target: { type: 'all' }, status: 'DRAFT', categories: ['Income Tax'], createdAt: ist(2026, 6, 16, 10) },
     });
     const c2 = await prisma.campaign.create({
-      data: { portal, title: 'Relief: ITAT [Read Order]', body: '.', url: 'https://taxscan.in', target: { type: 'all' }, status: 'DRAFT', categories: ['Income Tax'], createdAt: ist(2026, 6, 17, 10) },
+      data: { portal, title: 'Relief: ITAT [Read Order]', body: '.', url: 'https://taxscan.in/itat/2', target: { type: 'all' }, status: 'DRAFT', categories: ['Income Tax'], createdAt: ist(2026, 6, 17, 10) },
     });
     campaignIds.push(c1.id, c2.id);
 
