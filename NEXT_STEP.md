@@ -25,8 +25,7 @@ status changes so a fresh Claude session can pick up cleanly.
 1. **✅ DONE 2026-06-19 — responsive-design audit across all admin pages (was TOP priority).**
    Audited all 6 pages (Dashboard/Compose/Review/Queue/Campaigns/Reports) headless via
    Playwright (real built SPA, mocked `/api/**`) at **390 / 768 / 1024 / 1100px**, asserting
-   zero page horizontal overflow. **Two real bugs found + fixed (committed on `develop`, not yet
-   merged):**
+   zero page horizontal overflow. **Two real bugs found + fixed (merged to `main` + live):**
    - **Reports** (commit `ad7f001`): `.insights` was `repeat(4,1fr)` → the 4th card (`32·45·4`
      unbreakable middot string) clipped off the right edge on phones; and the two heat tables
      overflowed the document (no scroll container, unlike `.card`). Fix: insights wrap via
@@ -58,8 +57,8 @@ status changes so a fresh Claude session can pick up cleanly.
    so per-day counts won't line up exactly — match by title (CDATA-stripped, normalized), not
    by per-day totals. No action needed; reconciler + retention working as designed.
 3. **✅ DONE 2026-06-19 — "Refresh fails / site won't load" investigated + fixed (Dashboard +
-   Reports), plus the Dashboard & Campaigns "missing records" bug.** All committed on `develop`,
-   not yet merged. Three fixes:
+   Reports), plus the Dashboard & Campaigns "missing records" bug.** All merged to `main` + live.
+   Three fixes:
    - **Refresh resilience** (commit `69bd496`) — the shared `useApi` fetch had no timeout, no
      retry, and surfaced an expired session as a cryptic banner. Now: 15s per-attempt timeout
      (AbortController), up to 2 backoff retries on network err / 502 / 503 / 504 (GET/HEAD only),
@@ -97,9 +96,10 @@ status changes so a fresh Claude session can pick up cleanly.
 9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
    live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
 
-> **Unmerged on `develop` (awaiting a `develop → main` PR + Railway deploy):** the reconciler
-> verification doc, the responsive fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports
-> cache (`69bd496`), and the missing-records fixes (`884f23c`, `783a039`). None are live yet.
+> **All merged & live (as of 2026-06-23):** the reconciler verification doc, the responsive
+> fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports cache (`69bd496`), the missing-records
+> fixes (`884f23c`, `783a039`), and the unique-article report counting (PR #26, `4432cd5`) are all
+> on `main` and deployed. `develop` and `main` are in sync.
 
 ---
 
