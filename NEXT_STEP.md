@@ -7,6 +7,21 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-06-19)
 
+0. **✅ SHIPPED & VERIFIED LIVE 2026-06-23 — coverage reports count each article ONCE
+   (PR #26, `4432cd5`, merged to `main` + deployed).** The reports counted every Campaign row,
+   so the morning backfill (which clones yesterday's article into a fresh row keeping the
+   original `createdAt`) and manual re-pushes **double-counted** articles — confirmed live (20
+   duplicate-title `auto`/`SENT` pairs with identical-ms `createdAt`). Fix in
+   `src/services/reports.ts`: `buildReport` now dedupes to **one row per unique article URL**
+   (keeps the richest-classified row — the clone drops `categories`, so the original's RSS
+   category survives — and buckets on the earliest capture instant); `prevTotal` is a distinct-URL
+   count too. **academy/shop storefront pushes excluded** (non-articles, by URL host). Counting
+   stays by **capture date** (`createdAt`), not push date. **Production verification:** weekly
+   `total` dropped **224 → 193** (31 re-sends/storefront collapsed), heatmap grand-totals both
+   match 193 (dedup flows through the heatmaps), `prevTotal` legitimately unchanged at 159 (the
+   06-09→06-15 week predates the 06-18 backfill, so no clones to collapse). No DB migration, no
+   env-var change, internal-only — zero subscriber impact. Suite 290/290.
+
 1. **✅ DONE 2026-06-19 — responsive-design audit across all admin pages (was TOP priority).**
    Audited all 6 pages (Dashboard/Compose/Review/Queue/Campaigns/Reports) headless via
    Playwright (real built SPA, mocked `/api/**`) at **390 / 768 / 1024 / 1100px**, asserting
