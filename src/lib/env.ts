@@ -135,11 +135,11 @@ export const env = {
     until: process.env.MORNING_BACKFILL_UNTIL ?? '12:00',
   },
   // Weekly/monthly coverage report emails (internal). Default off; needs email
-  // configured. Crons are IST (env.rss.tz): Monday 08:00 weekly, 1st 08:00 monthly.
+  // configured. Crons are IST (env.rss.tz): Monday 07:00 weekly, 1st 07:00 monthly.
   reports: {
     enabled: process.env.REPORTS_ENABLED === 'true',
-    weeklyCron: process.env.REPORT_WEEKLY_CRON ?? '0 8 * * 1',
-    monthlyCron: process.env.REPORT_MONTHLY_CRON ?? '0 8 1 * *',
+    weeklyCron: process.env.REPORT_WEEKLY_CRON ?? '0 7 * * 1',
+    monthlyCron: process.env.REPORT_MONTHLY_CRON ?? '0 7 1 * *',
   },
   // No-miss backstop: periodically reconcile against taxscan's complete daily
   // sitemap and capture any article the RSS feeds missed (feeds only show the

@@ -7,11 +7,25 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-06-19)
 
+0. **✅ SHIPPED & VERIFIED LIVE 2026-06-23 — coverage reports count each article ONCE
+   (PR #26, `4432cd5`, merged to `main` + deployed).** The reports counted every Campaign row,
+   so the morning backfill (which clones yesterday's article into a fresh row keeping the
+   original `createdAt`) and manual re-pushes **double-counted** articles — confirmed live (20
+   duplicate-title `auto`/`SENT` pairs with identical-ms `createdAt`). Fix in
+   `src/services/reports.ts`: `buildReport` now dedupes to **one row per unique article URL**
+   (keeps the richest-classified row — the clone drops `categories`, so the original's RSS
+   category survives — and buckets on the earliest capture instant); `prevTotal` is a distinct-URL
+   count too. **academy/shop storefront pushes excluded** (non-articles, by URL host). Counting
+   stays by **capture date** (`createdAt`), not push date. **Production verification:** weekly
+   `total` dropped **224 → 193** (31 re-sends/storefront collapsed), heatmap grand-totals both
+   match 193 (dedup flows through the heatmaps), `prevTotal` legitimately unchanged at 159 (the
+   06-09→06-15 week predates the 06-18 backfill, so no clones to collapse). No DB migration, no
+   env-var change, internal-only — zero subscriber impact. Suite 290/290.
+
 1. **✅ DONE 2026-06-19 — responsive-design audit across all admin pages (was TOP priority).**
    Audited all 6 pages (Dashboard/Compose/Review/Queue/Campaigns/Reports) headless via
    Playwright (real built SPA, mocked `/api/**`) at **390 / 768 / 1024 / 1100px**, asserting
-   zero page horizontal overflow. **Two real bugs found + fixed (committed on `develop`, not yet
-   merged):**
+   zero page horizontal overflow. **Two real bugs found + fixed (merged to `main` + live):**
    - **Reports** (commit `ad7f001`): `.insights` was `repeat(4,1fr)` → the 4th card (`32·45·4`
      unbreakable middot string) clipped off the right edge on phones; and the two heat tables
      overflowed the document (no scroll container, unlike `.card`). Fix: insights wrap via
@@ -43,8 +57,8 @@ status changes so a fresh Claude session can pick up cleanly.
    so per-day counts won't line up exactly — match by title (CDATA-stripped, normalized), not
    by per-day totals. No action needed; reconciler + retention working as designed.
 3. **✅ DONE 2026-06-19 — "Refresh fails / site won't load" investigated + fixed (Dashboard +
-   Reports), plus the Dashboard & Campaigns "missing records" bug.** All committed on `develop`,
-   not yet merged. Three fixes:
+   Reports), plus the Dashboard & Campaigns "missing records" bug.** All merged to `main` + live.
+   Three fixes:
    - **Refresh resilience** (commit `69bd496`) — the shared `useApi` fetch had no timeout, no
      retry, and surfaced an expired session as a cryptic banner. Now: 15s per-attempt timeout
      (AbortController), up to 2 backoff retries on network err / 502 / 503 / 504 (GET/HEAD only),
@@ -74,7 +88,7 @@ status changes so a fresh Claude session can pick up cleanly.
 6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
 7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
-   first automated **Monday 08:00 IST** weekly + **1st 08:00 IST** monthly land. The category
+   first automated **Monday 07:00 IST** weekly + **1st 07:00 IST** monthly land. The category
    heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
 8. **Retention tuning** — `RETENTION_DAYS=3` (lowered from 7 on 2026-06-22): one window for all
    DRAFTs incl. REVIEW. If editor-pending REVIEW items start aging out before review, consider
@@ -82,9 +96,10 @@ status changes so a fresh Claude session can pick up cleanly.
 9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
    live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
 
-> **Unmerged on `develop` (awaiting a `develop → main` PR + Railway deploy):** the reconciler
-> verification doc, the responsive fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports
-> cache (`69bd496`), and the missing-records fixes (`884f23c`, `783a039`). None are live yet.
+> **All merged & live (as of 2026-06-23):** the reconciler verification doc, the responsive
+> fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports cache (`69bd496`), the missing-records
+> fixes (`884f23c`, `783a039`), and the unique-article report counting (PR #26, `4432cd5`) are all
+> on `main` and deployed. `develop` and `main` are in sync.
 
 ---
 
@@ -120,8 +135,8 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Coverage reports** (`reports.ts` + `reportScheduler.ts`) — weekly + monthly Category×dates and
   Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting every UNIQUE captured
   article by capture date (re-sends collapse by URL; academy/shop storefront pushes excluded).
-  In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 08:00 / 1st
-  08:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
+  In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 07:00 / 1st
+  07:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
 - **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
