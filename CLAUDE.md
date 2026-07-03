@@ -30,7 +30,7 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   counting every UNIQUE captured taxscan.in article by capture date (re-sends — e.g. the
   morning backfill clone or a manual re-push — collapse by URL; academy/shop storefront
   pushes are excluded as non-articles). In-app **Reports** screen (Download/Copy image for
-  WhatsApp) + emailed Mon 08:00 IST / 1st 08:00 IST to app users + a report-only email list
+  WhatsApp) + emailed Mon 07:00 IST / 1st 07:00 IST to app users + a report-only email list
   (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/
   shop click URLs, **Test on this device** isolated preview), **Review queue**, **Send queue**

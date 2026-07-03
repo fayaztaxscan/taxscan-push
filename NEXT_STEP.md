@@ -88,7 +88,7 @@ status changes so a fresh Claude session can pick up cleanly.
 6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
    for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
 7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
-   first automated **Monday 08:00 IST** weekly + **1st 08:00 IST** monthly land. The category
+   first automated **Monday 07:00 IST** weekly + **1st 07:00 IST** monthly land. The category
    heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
 8. **Retention tuning** — `RETENTION_DAYS=3` (lowered from 7 on 2026-06-22): one window for all
    DRAFTs incl. REVIEW. If editor-pending REVIEW items start aging out before review, consider
@@ -135,8 +135,8 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Coverage reports** (`reports.ts` + `reportScheduler.ts`) — weekly + monthly Category×dates and
   Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting every UNIQUE captured
   article by capture date (re-sends collapse by URL; academy/shop storefront pushes excluded).
-  In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 08:00 / 1st
-  08:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
+  In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 07:00 / 1st
+  07:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
 - **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
