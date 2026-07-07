@@ -51,6 +51,11 @@ const CATEGORY_ALIASES: { re: RegExp; label: string }[] = [
   { re: /labour|labor/i, label: 'Labour Law' },
   { re: /round[\s-]*up|digest|weekly/i, label: 'Round-Ups/Digests' },
   { re: /job[\s-]*scan/i, label: 'JobScan' },
+  // taxscan's practitioner guides/how-tos section. The feed emits ONE
+  // comma-joined tag string (e.g. "Other Taxations,Top Stories"), so without
+  // this alias the raw compound string becomes the heatmap row — and each
+  // tag-combination variant would fragment into its own row.
+  { re: /other taxation/i, label: 'Other Taxations' },
 ];
 
 // Title-based category inference — the fallback when an article has no usable
@@ -58,12 +63,30 @@ const CATEGORY_ALIASES: { re: RegExp; label: string }[] = [
 // captured before category storage). Keeps the heatmap in known buckets instead
 // of "Uncategorized". First match wins.
 const TITLE_CATEGORY: { label: string; re: RegExp }[] = [
+  // Distinct content FORMS first — a "GST Weekly Round-Up" is a round-up, not
+  // a GST case, and a "CA Vacancy" is a job post, not a profession story.
+  { label: 'Round-Ups/Digests', re: /round[\s-]*up|\bdigest\b/i },
+  { label: 'JobScan', re: /\bvacanc(y|ies)\b|\brecruitment\b|\bhiring\b|job opening/i },
+  // Specialist subjects before the broad tax rules — a transfer-pricing or
+  // benami matter usually also mentions ITAT/income tax, and the specific
+  // label is the one the coverage report cares about.
+  { label: 'International Tax/TP', re: /transfer pricing|international tax(ation)?|\bDTAA\b/i },
+  { label: 'Benami/PMLA', re: /\bPMLA\b|\bbenami\b|money[\s-]*laundering|enforcement directorate/i },
+  { label: 'FEMA', re: /\bFEMA\b|foreign exchange/i },
   { label: 'Income Tax', re: /income[\s-]*tax|\bITAT\b|\bCBDT\b|\bITR\b|\bTDS\b/i },
   { label: 'GST', re: /\bGST\b|\bGSTAT\b|\bCST\b|\bVAT\b|input tax credit|e-?way bill/i },
   { label: 'Customs', re: /\bcustoms\b|\bexcise\b|\bCESTAT\b|\bDGFT\b/i },
   { label: 'SEBI/RBI', re: /\bSEBI\b|\bRBI\b/i },
   { label: 'Corporate Law', re: /\bNCLAT\b|\bNCLT\b|\binsolvency\b|\bIBC\b|companies act|\bcorporate\b/i },
   { label: 'Service Tax', re: /\bservice tax\b/i },
+  // After the tax rules, so "TDS on EPF withdrawal" stays Income Tax.
+  { label: 'Labour Law', re: /\blabou?r\b|\bEPFO?\b|provident fund|\bgratuity\b/i },
+  // Profession/audit pieces (ICAI news, audit guides) — last, so a subject
+  // keyword ("GST audit") wins over the generic profession vocabulary.
+  {
+    label: 'Audit/Profession',
+    re: /\btax audit\b|\bICAI\b|\bICSI\b|chartered accountants?\b|\bCA firms?\b|books of accounts|\bauditing\b|statutory audit/i,
+  },
 ];
 
 export function categoryFromTitle(title: string): string | null {

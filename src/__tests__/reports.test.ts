@@ -76,6 +76,46 @@ describe('reportCategory', () => {
     expect(reportCategory([], 'NCLT admits insolvency plea')).toBe('Corporate Law');
     expect(reportCategory([], 'A generic update with no subject signal')).toBe('Uncategorized');
   });
+
+  it('maps the comma-joined "Other Taxations" tag to its own clean row', () => {
+    // taxscan's feed emits ONE joined tag string, not separate tags.
+    expect(reportCategory(['Other Taxations,Top Stories'])).toBe('Other Taxations');
+    expect(reportCategory(['Other Taxations'])).toBe('Other Taxations');
+    // The tag wins over title inference — respect taxscan's own tagging.
+    expect(reportCategory(['Other Taxations,Top Stories'], 'How to Claim a TDS Refund: A Guide')).toBe(
+      'Other Taxations',
+    );
+  });
+
+  it('infers profession/audit pieces from the title (were Uncategorized)', () => {
+    expect(
+      reportCategory([], 'Important Pointers to Finalize Books of Accounts Before Tax Audit: A Guide'),
+    ).toBe('Audit/Profession');
+    expect(reportCategory([], 'ESG Auditing: The New Goldmine for Indian CA Firms')).toBe('Audit/Profession');
+    expect(reportCategory([], 'ICAI releases new guidance note for members')).toBe('Audit/Profession');
+    // A subject keyword still wins over the generic profession vocabulary.
+    expect(reportCategory([], 'GST Audit: Department issues notices')).toBe('GST');
+  });
+
+  it('activates the previously tag-only categories from the title', () => {
+    expect(reportCategory([], 'Transfer Pricing: ITAT deletes ALP adjustment')).toBe('International Tax/TP');
+    expect(reportCategory([], 'India-Mauritius DTAA benefit allowed')).toBe('International Tax/TP');
+    expect(reportCategory([], 'Enforcement Directorate attaches assets in Money Laundering case')).toBe(
+      'Benami/PMLA',
+    );
+    expect(reportCategory([], 'Benami property transaction: appeal dismissed')).toBe('Benami/PMLA');
+    expect(reportCategory([], 'FEMA violation: penalty upheld')).toBe('FEMA');
+    expect(reportCategory([], 'EPFO issues circular on provident fund withdrawal')).toBe('Labour Law');
+    // Tax keywords outrank Labour Law so TDS-on-EPF stays a tax story.
+    expect(reportCategory([], 'TDS on EPF withdrawal: what you should know')).toBe('Income Tax');
+  });
+
+  it('classifies round-ups and job posts by content form, before subject keywords', () => {
+    expect(reportCategory([], 'GST Case Digest: Weekly Round-Up')).toBe('Round-Ups/Digests');
+    expect(reportCategory([], 'Supreme Court and High Courts Weekly Round Up')).toBe('Round-Ups/Digests');
+    expect(reportCategory([], 'CA Vacancy in Deloitte')).toBe('JobScan');
+    expect(reportCategory([], 'Recruitment: Income Tax Department hiring Inspectors')).toBe('JobScan');
+  });
 });
 
 describe('buildReport', () => {
