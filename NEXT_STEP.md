@@ -7,6 +7,20 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-06-19)
 
+-1. **✅ SHIPPED 2026-07-07 — richer report category rows (PR #28, `5661672`).** Data till date
+   showed (a) taxscan's feed emits ONE comma-joined `<category>` string, so the un-aliased
+   guides section appeared as a raw `Other Taxations,Top Stories` row (18 in June, 8 last
+   week) — now aliased to a clean **Other Taxations** row (tag wins over title inference, so
+   TDS/ITR-titled guides move here from Income Tax); and (b) **Uncategorized was ~10% of the
+   week** (24/248; steady 3–7/day) — tag-less reconciler captures whose titles carry no tax
+   keyword. New title rules: **Audit/Profession** (tax audit/ICAI/CA-firm pieces), **JobScan**
+   (vacancy/recruitment), and activation of the five dormant alias labels (**Benami/PMLA,
+   FEMA, International Tax/TP, Labour Law, Round-Ups/Digests**) that taxscan's tags never
+   emit. Ordering: content forms → specialist subjects → broad tax → profession vocab last
+   ("GST audit" stays GST). Report-only (categories computed at report time; history
+   reclassifies automatically). Verified on the live sitemap (75 titles): Uncategorized 2→0.
+   Suite 294/294.
+
 0. **✅ SHIPPED & VERIFIED LIVE 2026-06-23 — coverage reports count each article ONCE
    (PR #26, `4432cd5`, merged to `main` + deployed).** The reports counted every Campaign row,
    so the morning backfill (which clones yesterday's article into a fresh row keeping the
@@ -95,6 +109,18 @@ status changes so a fresh Claude session can pick up cleanly.
    exempting REVIEW from the sweep (`expireStaleDrafts`) rather than raising the global window.
 9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
    live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
+10. **⏸ PAUSED 2026-07-07 — per-article read counts via GA4 (user will resume later).**
+   Decision made: Google Analytics, NOT Hocalwire — probed taxscan's Hocalwire Public API live
+   (s-id in `.env`: `HOCALWIRE_API_BASE`/`HOCALWIRE_S_ID`, gitignored): `getNewsDynamicProps`
+   returns only editorial metadata (citation/coram/PDF — no view counts), `most_read` is empty,
+   `buzz_count`=0. GA also survives the possible Hocalwire exit (join key = article URL, ours).
+   GA4 property ID: **258445828**; push UTM (`taxscan-push / push_notifications`) already live.
+   Agreed design: `GA_READS_ENABLED` flag, ~2h cron sync → ONE batched GA4 Data API call
+   (pagePath × session source, rolling 3-day re-fetch) → additive `ArticleReadStat` table;
+   request path never calls GA (zero perf impact; stale-tolerant). To resume: user creates a
+   GCP service account (enable Google Analytics Data API, JSON key, Viewer on the property),
+   then Phase B PR (migration + sync, flag off) and Phase C PR (Reads columns on Campaigns,
+   per-category reads + top-10 most-read in reports).
 
 > **All merged & live (as of 2026-06-23):** the reconciler verification doc, the responsive
 > fixes (`ad7f001`, `ee69b0f`), refresh resilience + reports cache (`69bd496`), the missing-records
@@ -123,8 +149,11 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
   complete daily sitemap and captures any article the feeds missed (feeds show only ~11/poll);
   DRAFTs unsent within `RETENTION_DAYS` are archived (EXPIRED status) to bound the backlog.
   Reports infer category from the title when no RSS tag, so coverage stays accurate.
-- **Editorial pacer** (`pacer.ts`) — 1 push per global 45-min slot, ≤20/day, best-first (today →
-  authority tier → oldest-published-first), defer-not-drop; morning backfill from yesterday (flagged off).
+- **Editorial pacer** (`pacer.ts`) — 1 push per global 45-min slot, paced by quiet hours
+  (23:00–07:00 IST) + spacing (~21/day; `DAILY_SEND_CEILING` disabled at 999 in prod as of
+  2026-07-03, was 20), best-first (today → authority tier → oldest-published-first),
+  defer-not-drop; morning backfill from yesterday (flagged off). Runs at cap=Infinity — the
+  per-subscriber `FREQ_CAP_PER_DAY` (prod 30, was 4) gates only manual non-force `/api/send`.
 - **Review queue** (`/review`) + **Send queue** (`/queue`) with **Push now**; a Captured → Review →
   Queue → Sent pipeline strip ties them together.
 - **Manual Compose** — All/topic targeting, Breaking + Force, schedule-for-later, taxscan/academy/shop

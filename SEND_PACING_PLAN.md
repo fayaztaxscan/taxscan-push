@@ -80,11 +80,15 @@ Nothing is ever silently dropped — articles are **deferred** to a later slot, 
 - **Global send spacing: 45 min** (`SEND_SPACING_MINUTES=45`) between *any* two channel
   pushes — **global across all topics** (decision D4), so an "All news" subscriber is never
   hit twice inside 45 min. Measured as time since the last SENT push of any kind (auto OR manual).
-- **Daily ceiling: 20** (`DAILY_SEND_CEILING=20`), channel-level (campaigns dispatched
-  since IST midnight). It **hard-stops the AUTOMATED pacer** at 20. **Manual force pushes
-  are NOT blocked by it** — an editor can always push beyond 20 (editorial override) — but
-  manual pushes still **count** toward the running total, so they bring the automated pacer
-  to its 20 limit sooner. (Counted-in, but override-capable — decision D1.)
+- **Daily ceiling: effectively disabled** (`DAILY_SEND_CEILING=999` in prod since 2026-07-03;
+  code default is still 20). Channel-level (distinct campaigns dispatched since IST midnight),
+  it hard-stops the AUTOMATED pacer at the ceiling. It was set to 20, but quiet hours
+  (23:00-07:00) + the 45-min spacing already cap the pacer at ~21/day, so the ceiling was
+  redundant; it's now raised to 999 (a high backstop, not a real limit). Quiet hours + spacing
+  are the volume control. **Manual force pushes are NOT blocked by it** — an editor can always
+  push beyond it (editorial override) — but manual pushes still **count** toward the running
+  total. **WARNING:** never set it to 0 — the check is `sentToday >= ceiling`, so 0 stops the
+  pacer entirely. Use a large number to disable. (Counted-in, but override-capable — decision D1.)
 - **Quiet hours**: existing window still applies — no sends overnight. 45-min spacing
   across the active day naturally yields ≈17–20 slots, matching the proven cadence.
 - **Per-subscriber cooldown: retired** (`MIN_GAP_MINUTES=0`). Global spacing + topic
@@ -180,9 +184,9 @@ This is the only routine human touch-point — the SC/HC/tribunal bulk is fully 
 | Param | Value | Meaning |
 |---|---|---|
 | `SEND_SPACING_MINUTES` | 45 | global gap between channel pushes |
-| `DAILY_SEND_CEILING` | 20 | channel-level daily ceiling, counts ALL sends incl. manual |
+| `DAILY_SEND_CEILING` | 999 (prod) | channel-level daily ceiling; effectively disabled (was 20) — quiet hours + 45-min spacing are the real cap. NEVER set to 0 (0 stops the pacer). |
 | `MIN_GAP_MINUTES` | 0 | retire the per-subscriber cooldown |
-| `FREQ_CAP_PER_DAY` | (retire / superseded) | replaced by the channel-level ceiling |
+| `FREQ_CAP_PER_DAY` | 30 (prod) | per-subscriber daily cap; gates ONLY the manual non-force `/api/send` path (pacer runs at cap=Infinity). Raised 4→30 so manual "All" sends aren't clipped. |
 | allow-list / skip-list | config | title-classifier authority lists |
 
 ---
