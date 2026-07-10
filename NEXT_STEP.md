@@ -7,6 +7,19 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-06-19)
 
+-2. **✅ SHIPPED 2026-07-10 — custom date-range reports (Reports → "Custom" tab).** Editors can
+   now pick any From/To window of up to **30 days** (both ends inclusive, IST; "To" may be
+   today for a so-far-today look) and see the same Category×dates + Bench×dates report.
+   Backend: `customReportWindow()` in `reports.ts` validates the range (format, calendar
+   validity, order, future, 30-day max) and the route accepts
+   `GET /api/reports?period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD` (400 with a human message
+   on a bad range); the vs-previous insight compares against the equally-long window
+   immediately before. Report cache is now keyed by window (custom ranges cache separately;
+   expired entries pruned). SPA: third "Custom" segment with two date pickers + Apply,
+   prefilled to the last 7 days, client-side inline validation mirroring the server's;
+   "Email me a test" stays Weekly/Monthly-only (scheduled emails unchanged). Verified
+   headless end-to-end (API + built SPA via Playwright). Suite 298/298.
+
 -1. **✅ SHIPPED 2026-07-07 — richer report category rows (PR #28, `5661672`).** Data till date
    showed (a) taxscan's feed emits ONE comma-joined `<category>` string, so the un-aliased
    guides section appeared as a raw `Other Taxations,Top Stories` row (18 in June, 8 last

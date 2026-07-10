@@ -36,7 +36,8 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   emits ONE comma-joined tag string, aliased to clean rows incl. "Other Taxations" (guides);
   title inference covers tag-less reconciler captures — Audit/Profession, JobScan, and the
   once-dormant Benami/PMLA / FEMA / International Tax/TP / Labour Law / Round-Ups/Digests.
-  In-app **Reports** screen (Download/Copy image for
+  In-app **Reports** screen (Weekly / Monthly / **Custom** — any date range up to 30 days via
+  `?period=custom&from&to`, validated server-side; Download/Copy image for
   WhatsApp) + emailed Mon 07:00 IST / 1st 07:00 IST to app users + a report-only email list
   (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/

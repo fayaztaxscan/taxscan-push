@@ -11,7 +11,7 @@ type Heatmap = {
   grandTotal: number;
 };
 type Report = {
-  period: 'weekly' | 'monthly';
+  period: 'weekly' | 'monthly' | 'custom';
   start: string;
   end: string;
   dates: string[];
@@ -26,7 +26,34 @@ type Report = {
 const api = useApi();
 const { user } = useAuth();
 const isAdmin = computed(() => user.value?.role === 'ADMIN');
-const period = ref<'weekly' | 'monthly'>('weekly');
+const period = ref<'weekly' | 'monthly' | 'custom'>('weekly');
+
+// --- Custom date range (max 30 days, both ends inclusive) -------------------
+const MAX_CUSTOM_DAYS = 30;
+const customFrom = ref('');
+const customTo = ref('');
+
+/** Local calendar day as YYYY-MM-DD (editors are in IST; the server re-validates in IST). */
+function dayKey(d: Date): string {
+  return d.toLocaleDateString('en-CA');
+}
+const todayKey = dayKey(new Date());
+
+const customDays = computed(() => {
+  if (!customFrom.value || !customTo.value) return null;
+  const ms = new Date(customTo.value).getTime() - new Date(customFrom.value).getTime();
+  if (Number.isNaN(ms)) return null;
+  return Math.round(ms / 86_400_000) + 1;
+});
+const customError = computed(() => {
+  if (!customFrom.value || !customTo.value) return 'Pick both dates.';
+  const days = customDays.value;
+  if (days === null) return 'Pick valid dates.';
+  if (days < 1) return '"From" must be on or before "To".';
+  if (customTo.value > todayKey) return 'The range cannot extend into the future.';
+  if (days > MAX_CUSTOM_DAYS) return `Max ${MAX_CUSTOM_DAYS} days — this range is ${days}.`;
+  return null;
+});
 
 type Recipient = { id: string; email: string; active: boolean; createdAt: string };
 const recipients = ref<Recipient[]>([]);
@@ -77,20 +104,30 @@ const notice = ref<string | null>(null);
 const sheet = ref<HTMLElement | null>(null);
 
 async function load() {
+  if (period.value === 'custom' && customError.value) return;
   loading.value = true;
   error.value = null;
   notice.value = null;
   try {
-    report.value = await api.get<Report>(`/api/reports?period=${period.value}`);
+    const query =
+      period.value === 'custom'
+        ? `period=custom&from=${customFrom.value}&to=${customTo.value}`
+        : `period=${period.value}`;
+    report.value = await api.get<Report>(`/api/reports?${query}`);
   } catch (e) {
     error.value = apiErrorMessage(e);
   } finally {
     loading.value = false;
   }
 }
-function setPeriod(p: 'weekly' | 'monthly') {
+function setPeriod(p: 'weekly' | 'monthly' | 'custom') {
   if (period.value === p) return;
   period.value = p;
+  if (p === 'custom' && (!customFrom.value || !customTo.value)) {
+    // Sensible starting range: the last 7 days, ending today.
+    customTo.value = todayKey;
+    customFrom.value = dayKey(new Date(Date.now() - 6 * 86_400_000));
+  }
   void load();
 }
 
@@ -98,6 +135,18 @@ const trendPct = computed(() => {
   const r = report.value;
   if (!r || r.prevTotal === 0) return null;
   return Math.round(((r.total - r.prevTotal) / r.prevTotal) * 100);
+});
+const periodTitle = computed(() =>
+  report.value?.period === 'weekly' ? 'Weekly' : report.value?.period === 'monthly' ? 'Monthly' : 'Custom',
+);
+// The unit the vs-previous trend compares against — for custom ranges the
+// backend compares to the equally-long window immediately before it.
+const prevNoun = computed(() => {
+  const r = report.value;
+  if (!r) return '';
+  if (r.period === 'weekly') return 'week';
+  if (r.period === 'monthly') return 'month';
+  return `${r.dates.length} days`;
 });
 const catMax = computed(() => maxOf(report.value?.byCategory));
 const benchMax = computed(() => maxOf(report.value?.byBench));
@@ -147,7 +196,10 @@ async function downloadImage() {
   try {
     const a = document.createElement('a');
     a.href = await renderPng();
-    a.download = `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
+    a.download =
+      period.value === 'custom'
+        ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
+        : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
     a.click();
     notice.value = 'Image downloaded — attach it in WhatsApp.';
   } catch (e) {
@@ -190,12 +242,29 @@ onMounted(() => {
       <div class="seg">
         <button :class="{ on: period === 'weekly' }" @click="setPeriod('weekly')">Weekly</button>
         <button :class="{ on: period === 'monthly' }" @click="setPeriod('monthly')">Monthly</button>
+        <button :class="{ on: period === 'custom' }" @click="setPeriod('custom')">Custom</button>
       </div>
       <span class="spacer" style="flex: 1" />
       <button class="btn" :disabled="!report || loading" @click="downloadImage">Download image</button>
       <button class="btn" :disabled="!report || loading" @click="copyImage">Copy image</button>
-      <button class="btn" :disabled="!report || loading" @click="emailTest">Email me a test</button>
+      <button
+        class="btn"
+        :disabled="!report || loading || period === 'custom'"
+        :title="period === 'custom' ? 'Test emails send the standing Weekly/Monthly report' : ''"
+        @click="emailTest"
+      >
+        Email me a test
+      </button>
       <button class="btn" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+    </div>
+
+    <!-- Custom range picker — any window of up to 30 days, both ends inclusive. -->
+    <div v-if="period === 'custom'" class="custom-range">
+      <label>From <input v-model="customFrom" type="date" :max="todayKey" /></label>
+      <label>To <input v-model="customTo" type="date" :max="todayKey" /></label>
+      <button class="btn btn-primary" :disabled="loading || !!customError" @click="load">Apply</button>
+      <span v-if="customError" class="range-err">{{ customError }}</span>
+      <span v-else class="muted">{{ customDays }} day{{ customDays === 1 ? '' : 's' }}</span>
     </div>
 
     <div v-if="error" class="banner err">{{ error }}</div>
@@ -203,9 +272,7 @@ onMounted(() => {
 
     <div v-if="report" ref="sheet" class="report-sheet">
       <div class="report-head">
-        <div class="report-title">
-          Taxscan {{ report.period === 'weekly' ? 'Weekly' : 'Monthly' }} Coverage Report
-        </div>
+        <div class="report-title">Taxscan {{ periodTitle }} Coverage Report</div>
         <div class="report-range">{{ rangeLabel(report) }}</div>
       </div>
 
@@ -218,7 +285,7 @@ onMounted(() => {
           <div class="ins-n" :class="trendPct === null ? '' : trendPct >= 0 ? 'up' : 'down'">
             {{ trendPct === null ? '—' : (trendPct >= 0 ? '▲ ' : '▼ ') + Math.abs(trendPct) + '%' }}
           </div>
-          <div class="ins-l">vs previous {{ report.period === 'weekly' ? 'week' : 'month' }} ({{ report.prevTotal }})</div>
+          <div class="ins-l">vs previous {{ prevNoun }} ({{ report.prevTotal }})</div>
         </div>
         <div class="ins">
           <div class="ins-n">{{ report.byCategory.rows.length }} / {{ report.byBench.rows.length }}</div>
@@ -231,7 +298,7 @@ onMounted(() => {
       </div>
 
       <div v-if="topGaps.length" class="gaps">
-        <strong>No coverage this {{ report.period === 'weekly' ? 'week' : 'month' }}:</strong>
+        <strong>No coverage in this {{ report.period === 'custom' ? 'period' : report.period === 'weekly' ? 'week' : 'month' }}:</strong>
         {{ topGaps.join(', ') }}<span v-if="report.gaps.benchesWithNothing.length > topGaps.length"> …</span>
       </div>
 
@@ -351,6 +418,27 @@ onMounted(() => {
   background: var(--primary);
   color: #fff;
   font-weight: 600;
+}
+.custom-range {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+.custom-range label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.custom-range input[type='date'] {
+  font-size: 13px;
+}
+.range-err {
+  color: #dc2626;
+  font-size: 12px;
 }
 .report-sheet {
   background: #fff;

@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { buildReport, detectBench, reportCategory } from '../services/reports';
+import { buildReport, customReportWindow, detectBench, istDateKey, reportCategory } from '../services/reports';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(y: number, m: number, d: number, h = 0, min = 0): Date {
@@ -118,7 +118,52 @@ describe('reportCategory', () => {
   });
 });
 
+describe('customReportWindow', () => {
+  // Fixed "now": 2026-07-10 12:00 IST.
+  const now = ist(2026, 7, 10, 12);
+
+  it('returns an inclusive [from, to] window (end = to + 1 day) and allows to = today', () => {
+    const w = customReportWindow('2026-07-01', '2026-07-10', now);
+    expect(istDateKey(w.start)).toBe('2026-07-01');
+    expect(istDateKey(w.end)).toBe('2026-07-11'); // exclusive
+    // A single-day range is valid too.
+    const one = customReportWindow('2026-07-05', '2026-07-05', now);
+    expect(istDateKey(one.start)).toBe('2026-07-05');
+    expect(istDateKey(one.end)).toBe('2026-07-06');
+  });
+
+  it('accepts exactly 30 days and rejects 31', () => {
+    expect(() => customReportWindow('2026-06-11', '2026-07-10', now)).not.toThrow(); // 30 days
+    expect(() => customReportWindow('2026-06-10', '2026-07-10', now)).toThrow(/limited to 30 days/);
+  });
+
+  it('rejects reversed, future, malformed, and non-existent dates', () => {
+    expect(() => customReportWindow('2026-07-08', '2026-07-05', now)).toThrow(/on or before/);
+    expect(() => customReportWindow('2026-07-09', '2026-07-11', now)).toThrow(/future/);
+    expect(() => customReportWindow('07/01/2026', '2026-07-10', now)).toThrow(/YYYY-MM-DD/);
+    expect(() => customReportWindow('', '2026-07-10', now)).toThrow(/YYYY-MM-DD/);
+    expect(() => customReportWindow('2026-02-31', '2026-03-05', now)).toThrow(/does not exist/);
+  });
+});
+
 describe('buildReport', () => {
+  it('builds a custom-period report over an arbitrary window with a same-length previous window', async () => {
+    const p = `test-report-custom-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    // Window: 10 days, 2026-05-11 .. 2026-05-20 (inclusive).
+    const { start, end } = customReportWindow('2026-05-11', '2026-05-20', ist(2026, 5, 21, 12));
+    await art({ title: 'Prior-window ITAT order [Read Order]', categories: ['Income Tax'], at: ist(2026, 5, 3, 10), portal: p }); // in the preceding 10 days
+    await art({ title: 'Bombay HC ruling [Read Order]', categories: ['Income Tax'], at: ist(2026, 5, 12, 10), queue: 'QUALIFIED', portal: p });
+    await art({ title: 'GST circular explained', categories: ['CST & VAT / GST'], at: ist(2026, 5, 19, 9), queue: 'REVIEW', portal: p });
+
+    const r = await buildReport({ portal: p, period: 'custom', start, end });
+    expect(r.period).toBe('custom');
+    expect(r.dates.length).toBe(10);
+    expect(r.start).toBe('2026-05-11');
+    expect(r.end).toBe('2026-05-20');
+    expect(r.total).toBe(2);
+    expect(r.prevTotal).toBe(1); // the 05-01..05-10 window right before
+  });
+
   it('aggregates categories, benches, totals, quality and previous-period total', async () => {
     const start = ist(2026, 6, 15);
     const end = ist(2026, 6, 22); // 7 days: 06-15 .. 06-21

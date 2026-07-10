@@ -13,7 +13,7 @@ import {
 } from '../services/send';
 import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
-import { getReport, reportWindow } from '../services/reports';
+import { customReportWindow, getReport, reportWindow } from '../services/reports';
 import { sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -552,10 +552,25 @@ export function createApiRouter(
     }
   });
 
-  // Coverage & Quality report (weekly default; ?period=monthly). Counts every
-  // captured article in the window — the basis for the in-app view + emails.
+  // Coverage & Quality report (weekly default; ?period=monthly, or
+  // ?period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD for an ad-hoc range of up to
+  // 30 IST days, both ends inclusive). Counts every captured article in the
+  // window — the basis for the in-app view + emails.
   router.get('/reports', requireBearerOrUser(), async (req, res, next) => {
     try {
+      if (req.query.period === 'custom') {
+        let window: { start: Date; end: Date };
+        try {
+          window = customReportWindow(String(req.query.from ?? ''), String(req.query.to ?? ''));
+        } catch (e) {
+          return res.status(400).json({
+            error: 'bad_range',
+            message: e instanceof Error ? e.message : 'Invalid date range.',
+          });
+        }
+        const report = await getReport({ portal: env.rss.portal, period: 'custom', ...window });
+        return res.json(report);
+      }
       const period = req.query.period === 'monthly' ? 'monthly' : 'weekly';
       const { start, end } = reportWindow(period, new Date());
       const report = await getReport({ portal: env.rss.portal, period, start, end });
