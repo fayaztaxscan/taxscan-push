@@ -99,16 +99,24 @@ status changes so a fresh Claude session can pick up cleanly.
    reports. Active editors now stay signed in across the work week (sliding: each request resets
    the 7-day clock); the graceful 401→login handles the eventual idle expiry. Tests TTL-agnostic
    (assert via the constant); full suite 288/288.
-6. **Watch the morning backfill** (enabled 2026-06-18) — keep an eye on the unsubscribe rate
-   for a few days since it re-sends prior-day content; set `MORNING_BACKFILL_ENABLED=false` if it spikes.
-7. **Verify the report emails** — use "Email me a test" on the Reports screen; confirm the
-   first automated **Monday 07:00 IST** weekly + **1st 07:00 IST** monthly land. The category
-   heatmap fills out over ~a week (title-inference now covers back-filled/historical rows).
-8. **Retention tuning** — `RETENTION_DAYS=3` (lowered from 7 on 2026-06-22): one window for all
-   DRAFTs incl. REVIEW. If editor-pending REVIEW items start aging out before review, consider
-   exempting REVIEW from the sweep (`expireStaleDrafts`) rather than raising the global window.
-9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
-   live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
+6. **✅ CLOSED 2026-07-10 — morning backfill watch.** Enabled since 2026-06-18 with no churn
+   signal: live unsubscribe rate **0.016%** (threshold <0.5%), delivery 99.4%, active
+   subscribers grew ~2,200 → **2,436**. Re-sending prior-day content is not driving unsubs.
+7. **✅ CLOSED 2026-07-10 — report emails confirmed landing.** The automated weekly
+   **Monday 07:00 IST** email (first run 2026-07-06 at the new time, PR #27) arrived as
+   expected; monthly 1st-07:00 uses the same scheduler path. Category heatmap has matured
+   (title inference covers tag-less rows since PR #28).
+8. **✅ CLOSED 2026-07-10 — retention at 3 days is working as designed.** `totals.expired`
+   = 3,578 and climbing daily; no reports of editor-pending REVIEW items aging out before
+   review. If that ever changes, the agreed remedy is exempting REVIEW from
+   `expireStaleDrafts` rather than raising the global window.
+9. **✅ MOOT 2026-07-10 — the two `[system] … URL check — ignore` campaigns** (empty portal,
+   0 recipients, from the 2026-06-18 live academy/shop allowlist verification) are no longer
+   reachable through the UI: the Campaigns API caps at the newest 200 rows and ~3 weeks of
+   captures (~30–50/day) have pushed them out of the window; the default Pushed-desc sort
+   sinks never-pushed rows anyway. Rows still exist in Postgres but deleting them would need
+   a direct prod-DB query — decided not worth touching prod data. No metrics/report impact
+   (0 events; academy/shop URLs are excluded from reports since PR #26).
 10. **⏸ PAUSED 2026-07-07 — per-article read counts via GA4 (user will resume later).**
    Decision made: Google Analytics, NOT Hocalwire — probed taxscan's Hocalwire Public API live
    (s-id in `.env`: `HOCALWIRE_API_BASE`/`HOCALWIRE_S_ID`, gitignored): `getNewsDynamicProps`
