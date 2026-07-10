@@ -169,8 +169,9 @@ export function benchRank(label: string): number {
 
 export type HeatmapRow = { label: string; perDay: number[]; total: number };
 export type Heatmap = { rows: HeatmapRow[]; dates: string[]; dayTotals: number[]; grandTotal: number };
+export type ReportPeriod = 'weekly' | 'monthly' | 'custom';
 export type Report = {
-  period: 'weekly' | 'monthly';
+  period: ReportPeriod;
   start: string; // IST day key (inclusive)
   end: string; // IST day key (inclusive)
   dates: string[];
@@ -271,7 +272,7 @@ function dedupeByArticle(
  */
 export async function buildReport(opts: {
   portal: string;
-  period: 'weekly' | 'monthly';
+  period: ReportPeriod;
   start: Date;
   end: Date;
 }): Promise<Report> {
@@ -359,24 +360,29 @@ export function __resetReportCache(): void {
 }
 
 /**
- * Cached wrapper around buildReport. Keyed by portal+period (the window is
- * derived from period + now, so within the short TTL it's effectively the same
- * window). The route uses this; call buildReport directly for an uncached read
- * (e.g. the scheduled email, which must reflect the exact send moment).
+ * Cached wrapper around buildReport. Keyed by portal+period+window, so the two
+ * standing tabs stay one entry each while every distinct custom range caches
+ * separately. The route uses this; call buildReport directly for an uncached
+ * read (e.g. the scheduled email, which must reflect the exact send moment).
  */
 export async function getReport(
-  opts: { portal: string; period: 'weekly' | 'monthly'; start: Date; end: Date },
+  opts: { portal: string; period: ReportPeriod; start: Date; end: Date },
   cfg: { ttlMs?: number; now?: Date } = {},
 ): Promise<Report> {
   const ttlMs = cfg.ttlMs ?? defaultReportTtlMs();
   if (ttlMs <= 0) return buildReport(opts);
 
   const t = (cfg.now ?? new Date()).getTime();
-  const key = `${opts.portal}:${opts.period}`;
+  const key = `${opts.portal}:${opts.period}:${istDateKey(opts.start)}:${istDateKey(opts.end)}`;
   const hit = reportCache[key];
   if (hit && t - hit.at < ttlMs) return hit.data;
 
   const data = await buildReport(opts);
+  // Custom ranges mint a new key per distinct window — drop dead entries so the
+  // cache can't grow without bound over a long uptime.
+  for (const k of Object.keys(reportCache)) {
+    if (t - reportCache[k].at >= ttlMs) delete reportCache[k];
+  }
   reportCache[key] = { at: t, data };
   return data;
 }
@@ -417,7 +423,11 @@ function emailHeatTable(title: string, label: string, h: Heatmap): string {
 
 /** Render the report as a self-contained HTML email (subject + body + text). */
 export function renderReportEmail(report: Report): { subject: string; html: string; text: string } {
-  const periodLabel = report.period === 'weekly' ? 'Weekly' : 'Monthly';
+  const periodLabel =
+    report.period === 'weekly' ? 'Weekly' : report.period === 'monthly' ? 'Monthly' : 'Custom';
+  // The unit the vs-previous trend compares against ("vs previous week/month/period").
+  const prevNoun =
+    report.period === 'weekly' ? 'week' : report.period === 'monthly' ? 'month' : 'period';
   const subject = `Taxscan ${periodLabel} Coverage Report · ${report.start} → ${report.end}`;
   const trend =
     report.prevTotal > 0 ? Math.round(((report.total - report.prevTotal) / report.prevTotal) * 100) : null;
@@ -425,7 +435,7 @@ export function renderReportEmail(report: Report): { subject: string; html: stri
   const gaps = report.gaps.benchesWithNothing.slice(0, 8);
   const topBenches = report.byBench.rows.slice(0, 6).map((r) => `${r.label} ${r.total}`).join(', ');
   const text = `Taxscan ${periodLabel} Coverage Report (${report.start} → ${report.end})
-${report.total} articles published, ${trendStr} vs previous ${report.period === 'weekly' ? 'week' : 'month'} (${report.prevTotal}).
+${report.total} articles published, ${trendStr} vs previous ${prevNoun} (${report.prevTotal}).
 Top benches: ${topBenches}.
 Open the Taxscan Push admin → Reports for the full heatmaps.`;
   const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;background:#f8fafc;padding:16px;margin:0">
@@ -433,11 +443,11 @@ Open the Taxscan Push admin → Reports for the full heatmaps.`;
     <div style="font-size:18px;font-weight:700">Taxscan ${periodLabel} Coverage Report</div>
     <div style="color:#64748b;font-size:13px;margin-top:2px">${report.start} → ${report.end}</div>
     <div style="margin:14px 0 4px;font-size:14px"><strong>${report.total}</strong> articles published ·
-      <strong>${trendStr}</strong> vs previous ${report.period === 'weekly' ? 'week' : 'month'} (${report.prevTotal}) ·
+      <strong>${trendStr}</strong> vs previous ${prevNoun} (${report.prevTotal}) ·
       ${report.byCategory.rows.length} categories / ${report.byBench.rows.length} benches active</div>
     <div style="font-size:13px;color:#475569">Quality: ${report.quality.qualified} court rulings ·
       ${report.quality.fallback} tribunal filler · ${report.quality.review} in review${report.quality.uncategorized ? ` · ${report.quality.uncategorized} unclassified` : ''}</div>
-    ${gaps.length ? `<div style="font-size:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;margin-top:12px"><strong>No coverage this ${report.period === 'weekly' ? 'week' : 'month'}:</strong> ${gaps.join(', ')}${report.gaps.benchesWithNothing.length > gaps.length ? ' …' : ''}</div>` : ''}
+    ${gaps.length ? `<div style="font-size:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;margin-top:12px"><strong>No coverage this ${prevNoun}:</strong> ${gaps.join(', ')}${report.gaps.benchesWithNothing.length > gaps.length ? ' …' : ''}</div>` : ''}
     ${emailHeatTable('Courts / benches × dates', 'Bench', report.byBench)}
     ${emailHeatTable('Categories × dates', 'Category', report.byCategory)}
     <div style="margin-top:16px;font-size:11px;color:#94a3b8">Generated automatically by Taxscan Push · internal report — please don't forward outside the team.</div>
@@ -464,4 +474,41 @@ export function reportWindow(period: 'weekly' | 'monthly', now: Date): { start: 
   const prevMonthM = m === 1 ? 12 : m - 1;
   const firstOfPrev = istMidnight(`${prevMonthY}-${String(prevMonthM).padStart(2, '0')}-01`);
   return { start: firstOfPrev, end: firstOfThis };
+}
+
+/** Longest range a custom report may span (inclusive of both end days). */
+export const MAX_CUSTOM_REPORT_DAYS = 30;
+
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Window for a custom report over the IST days [from, to], both inclusive.
+ * Throws with a human-readable message (surfaced as the API's 400 body) when
+ * the range is malformed, reversed, in the future, or longer than
+ * MAX_CUSTOM_REPORT_DAYS. `to` may be today — a partial day is fine for an
+ * ad-hoc "how are we doing so far" look.
+ */
+export function customReportWindow(from: string, to: string, now: Date = new Date()): { start: Date; end: Date } {
+  if (!DAY_KEY_RE.test(from) || !DAY_KEY_RE.test(to)) {
+    throw new Error('Dates must be in YYYY-MM-DD format.');
+  }
+  const start = istMidnight(from);
+  const lastDay = istMidnight(to);
+  // Round-trip to reject non-existent calendar dates (e.g. 2026-02-31), which
+  // Date may either refuse (NaN) or roll over depending on the engine.
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(lastDay.getTime()) ||
+    istDateKey(start) !== from ||
+    istDateKey(lastDay) !== to
+  ) {
+    throw new Error('That date does not exist on the calendar.');
+  }
+  if (lastDay < start) throw new Error('"From" must be on or before "To".');
+  if (to > istDateKey(now)) throw new Error('The range cannot extend into the future.');
+  const days = Math.round((lastDay.getTime() - start.getTime()) / 86_400_000) + 1;
+  if (days > MAX_CUSTOM_REPORT_DAYS) {
+    throw new Error(`The range is limited to ${MAX_CUSTOM_REPORT_DAYS} days — this one spans ${days}.`);
+  }
+  return { start, end: new Date(lastDay.getTime() + 86_400_000) };
 }
