@@ -5,10 +5,11 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-06-19) — LIVE in production
+## Current state (updated 2026-07-10) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
-~2,200 active subscribers. **iZooto runs in parallel and stays** — its ~3M base is
-cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommission it.
+~2,400 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
+stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
+plan to decommission it.
 
 **What's been built:**
 - **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of
@@ -62,10 +63,13 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `MIN_GAP_MINUTES`=0. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps:** (1) make keep-warm reliable — the GitHub `*/5` warm-ping actually fires
-only every ~2–4.5 h, so the Railway worker can go cold (KNOWN_ISSUES #6); verify UptimeRobot or
-move to an external pinger. (2) consider lengthening the 8h sliding session TTL (day-apart
-logouts). See `NEXT_STEP.md`.
+**Open next steps:** ONE open item — per-article read counts via GA4 (paused 2026-07-07;
+design agreed, waiting on the user's GCP service-account JSON — NEXT_STEP.md item 10).
+Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime — the flaky
+GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19); watch
+items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
+healthy 2026-07-10; Compose "Force" stays default-OFF by explicit user decision — don't
+re-propose. See `NEXT_STEP.md`.
 
 **Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
 `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +
