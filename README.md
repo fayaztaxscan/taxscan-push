@@ -346,8 +346,10 @@ Notes on what each indicator means in practice:
 - **CTR below 4%** suggests either notification copy / icon issues or that the audience isn't
   well-matched to the content. Look at per-campaign CTR in the Campaigns view — a single bad
   campaign can drag the overall down.
-- **Unsubscribe spike (≥ 1%)** is usually a content-quality or frequency-cap signal. The cap
-  defaults to 4/day per subscriber but you can tune `FREQ_CAP_PER_DAY`.
+- **Unsubscribe spike (≥ 1%)** is usually a content-quality or frequency-cap signal. The
+  per-subscriber cap defaults to 4/day in code but is set to **30** in prod (`FREQ_CAP_PER_DAY`);
+  note it gates only the manual non-force `/api/send` path — the editorial pacer runs at
+  cap=Infinity and is paced instead by quiet hours + the 45-min spacing.
 - **Delivery rate below 95%** means the subscriber base has accumulated dead endpoints faster
   than the natural prune cycle. The 410-handling path flips subscribers to EXPIRED automatically,
   so this should self-heal over a few cycles. If it doesn't, check the `[rss] poll` and the
@@ -655,7 +657,7 @@ Body:
 ```
 
 `target` is either `{ "type": "all" }` or `{ "type": "topics", "topics": ["gst", "income-tax"] }`. The
-service applies the per-subscriber daily cap (`FREQ_CAP_PER_DAY`, default 4) and the IST quiet-hours
+service applies the per-subscriber daily cap (`FREQ_CAP_PER_DAY`, code default 4 / prod 30) and the IST quiet-hours
 window (`QUIET_HOURS_START`/`QUIET_HOURS_END`, default 23:00→07:00). Inside the quiet window the
 campaign is persisted as `SCHEDULED` with `scheduledAt` set to the next allowed instant — set
 `breaking: true` to bypass.

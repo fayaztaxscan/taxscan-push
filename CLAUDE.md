@@ -18,9 +18,12 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   = taxscan.in/feed, all sections); stores each article's RSS `<category>` tags and routes
   by TITLE into QUALIFIED (SC / Bombay-priority HC / other HC / regulatory) · FALLBACK
   (ITAT/CESTAT/NCLAT/NCLT) · REVIEW (analytical + job/recruitment posts, editor-decided).
-- **Editorial pacer** (`src/services/pacer.ts`) — 1 push per global 45-min slot, ≤20/day,
-  best-first (today → authority tier → oldest-published-first), defer-not-drop; morning
-  backfill from yesterday (behind `MORNING_BACKFILL_ENABLED`).
+- **Editorial pacer** (`src/services/pacer.ts`) — 1 push per global 45-min slot, paced by
+  quiet hours (23:00–07:00 IST) + spacing (~21/day max; the `DAILY_SEND_CEILING` hard cap is
+  now disabled at 999 in prod — it was 20 but redundant), best-first (today → authority tier →
+  oldest-published-first), defer-not-drop; morning backfill from yesterday (behind
+  `MORNING_BACKFILL_ENABLED`). Runs at cap=Infinity, so the per-subscriber `FREQ_CAP_PER_DAY`
+  gates ONLY manual non-force `/api/send` (prod=30, raised from 4 on 2026-07-03).
 - **No-miss reconciler + retention** (`src/services/reconciler.ts`) — feeds expose only ~11
   items/poll, so a cron reconciles against taxscan's complete daily sitemap and captures any
   missed article (behind `RECONCILER_ENABLED`); DRAFTs unsent within `RETENTION_DAYS` are
@@ -29,7 +32,11 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
   Category×dates and Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split),
   counting every UNIQUE captured taxscan.in article by capture date (re-sends — e.g. the
   morning backfill clone or a manual re-push — collapse by URL; academy/shop storefront
-  pushes are excluded as non-articles). In-app **Reports** screen (Download/Copy image for
+  pushes are excluded as non-articles). Category rows (2026-07-07, PR #28): taxscan's feed
+  emits ONE comma-joined tag string, aliased to clean rows incl. "Other Taxations" (guides);
+  title inference covers tag-less reconciler captures — Audit/Profession, JobScan, and the
+  once-dormant Benami/PMLA / FEMA / International Tax/TP / Labour Law / Round-Ups/Digests.
+  In-app **Reports** screen (Download/Copy image for
   WhatsApp) + emailed Mon 07:00 IST / 1st 07:00 IST to app users + a report-only email list
   (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/
@@ -49,7 +56,9 @@ cryptographically un-migratable (origin+VAPID bound); do NOT plan to decommissio
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
 `RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
-`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
+`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=3, `DAILY_SEND_CEILING`=999 (ceiling disabled;
+quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-force path only),
+`MIN_GAP_MINUTES`=0. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
 **Open next steps:** (1) make keep-warm reliable — the GitHub `*/5` warm-ping actually fires
