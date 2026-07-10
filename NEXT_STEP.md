@@ -110,8 +110,13 @@ status changes so a fresh Claude session can pick up cleanly.
    = 3,578 and climbing daily; no reports of editor-pending REVIEW items aging out before
    review. If that ever changes, the agreed remedy is exempting REVIEW from
    `expireStaleDrafts` rather than raising the global window.
-9. Cosmetic: two `[system] … URL check — ignore` campaigns (empty portal, 0 recipients) from a
-   live academy/shop verification linger in the Campaigns list — harmless; clean up if desired.
+9. **✅ MOOT 2026-07-10 — the two `[system] … URL check — ignore` campaigns** (empty portal,
+   0 recipients, from the 2026-06-18 live academy/shop allowlist verification) are no longer
+   reachable through the UI: the Campaigns API caps at the newest 200 rows and ~3 weeks of
+   captures (~30–50/day) have pushed them out of the window; the default Pushed-desc sort
+   sinks never-pushed rows anyway. Rows still exist in Postgres but deleting them would need
+   a direct prod-DB query — decided not worth touching prod data. No metrics/report impact
+   (0 events; academy/shop URLs are excluded from reports since PR #26).
 10. **⏸ PAUSED 2026-07-07 — per-article read counts via GA4 (user will resume later).**
    Decision made: Google Analytics, NOT Hocalwire — probed taxscan's Hocalwire Public API live
    (s-id in `.env`: `HOCALWIRE_API_BASE`/`HOCALWIRE_S_ID`, gitignored): `getNewsDynamicProps`
