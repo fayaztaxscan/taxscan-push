@@ -151,6 +151,9 @@ export const env = {
     cron: process.env.GA_READS_CRON ?? '15 */2 * * *',
     propertyId: process.env.GA_PROPERTY_ID ?? '258445828',
     lookbackDays: intEnv('GA_READS_LOOKBACK_DAYS', 3),
+    // Daily build of the cached "Reads" report (bench/category × trailing
+    // windows). IST, after the nightly sweepers.
+    reportCron: process.env.GA_READS_REPORT_CRON ?? '45 5 * * *',
     serviceAccountJson: process.env.GA_SERVICE_ACCOUNT_JSON ?? '',
     serviceAccountFile: process.env.GA_SERVICE_ACCOUNT_FILE ?? 'ga-service-account.json',
   },

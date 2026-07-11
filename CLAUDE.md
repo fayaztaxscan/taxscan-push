@@ -68,7 +68,12 @@ Phase B (sync engine) SHIPPED 2026-07-11: `ArticleReadStat` table + `src/service
 ~2h cron behind `GA_READS_ENABLED` mirroring GA4 pageviews (total + push-attributed, by
 date×pagePath, rolling 3-day window); request path never calls GA. Creds =
 `GA_SERVICE_ACCOUNT_JSON` (Railway) / `ga-service-account.json` file (local, gitignored —
-never commit). Remaining: Phase C UI (Reads columns on Campaigns, reads in reports).
+never commit). **Reads report SHIPPED 2026-07-11 (same day):** Reports → **Reads** tab —
+bench×window + category×window pageview heatmaps over trailing 1w/1m/3m/6m/12m windows
+(all-traffic GA reads, classified by the coverage report's own title rules), built daily
+05:45 IST by `src/services/readsReport.ts` into the `GaReadsReport` cache row and served by
+`GET /api/reports/reads` (request path never calls GA; stale-tolerant). Remaining: Reads
+columns on the Campaigns screen + reads in the emailed report.
 Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime — the flaky
 GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19); watch
 items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
