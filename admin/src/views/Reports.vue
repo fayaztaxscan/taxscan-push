@@ -23,10 +23,25 @@ type Report = {
   gaps: { benchesWithNothing: string[] };
 };
 
+// The "Reads" report — pageview aggregates by bench/category over trailing
+// windows, built daily on the server from Google Analytics (never at request
+// time) and served from its cache. Shares the sheet + heat-table styling so
+// Download/Copy image work unchanged.
+type ReadsCell = { views: number; articles: number; share: number } | null;
+type ReadsRow = { label: string; cells: ReadsCell[] };
+type ReadsReport = {
+  ready: boolean;
+  message?: string;
+  generatedAt?: string;
+  windows?: { label: string; days: number; siteViews: number; articleViews: number; articlesRead: number }[];
+  categories?: ReadsRow[];
+  benches?: ReadsRow[];
+};
+
 const api = useApi();
 const { user } = useAuth();
 const isAdmin = computed(() => user.value?.role === 'ADMIN');
-const period = ref<'weekly' | 'monthly' | 'custom'>('weekly');
+const period = ref<'weekly' | 'monthly' | 'custom' | 'reads'>('weekly');
 
 // --- Custom date range (max 30 days, both ends inclusive) -------------------
 const MAX_CUSTOM_DAYS = 30;
@@ -98,6 +113,7 @@ async function removeRecipient(r: Recipient) {
   }
 }
 const report = ref<Report | null>(null);
+const readsReport = ref<ReadsReport | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
@@ -109,6 +125,10 @@ async function load() {
   error.value = null;
   notice.value = null;
   try {
+    if (period.value === 'reads') {
+      readsReport.value = await api.get<ReadsReport>('/api/reports/reads');
+      return;
+    }
     const query =
       period.value === 'custom'
         ? `period=custom&from=${customFrom.value}&to=${customTo.value}`
@@ -120,7 +140,7 @@ async function load() {
     loading.value = false;
   }
 }
-function setPeriod(p: 'weekly' | 'monthly' | 'custom') {
+function setPeriod(p: 'weekly' | 'monthly' | 'custom' | 'reads') {
   if (period.value === p) return;
   period.value = p;
   if (p === 'custom' && (!customFrom.value || !customTo.value)) {
@@ -169,6 +189,35 @@ function cellColor(n: number, max: number): string {
   return `hsl(${Math.round(ratio * 120)}, 62%, 72%)`; // red → yellow → green
 }
 
+// --- Reads report helpers ----------------------------------------------------
+// Blue sequential intensity (share of the window's article reads) — reads use
+// magnitude, not the coverage report's red→green "gap" semantics. sqrt spreads
+// the heavy tail; the mix is capped so dark text stays readable on every cell.
+const readsMaxShare = computed(() => {
+  const r = readsReport.value;
+  let m = 0;
+  for (const row of [...(r?.categories ?? []), ...(r?.benches ?? [])])
+    for (const c of row.cells) if (c && c.share > m) m = c.share;
+  return m;
+});
+function readsCellColor(share: number): string {
+  const p = Math.sqrt(share / Math.max(readsMaxShare.value, 0.0001)) * 0.58;
+  const mix = (w: number, b: number) => Math.round(w + (b - w) * p);
+  return `rgb(${mix(255, 42)}, ${mix(255, 120)}, ${mix(255, 214)})`; // white → #2a78d6
+}
+function fmtViews(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+function sharePct(share: number): string {
+  return (share * 100).toFixed(1) + '%';
+}
+const readsAsOf = computed(() => {
+  const g = readsReport.value?.generatedAt;
+  return g ? new Date(g).toLocaleString() : '';
+});
+
 async function renderPng(): Promise<string> {
   const node = sheet.value;
   if (!node) throw new Error('Report not ready.');
@@ -197,9 +246,11 @@ async function downloadImage() {
     const a = document.createElement('a');
     a.href = await renderPng();
     a.download =
-      period.value === 'custom'
-        ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
-        : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
+      period.value === 'reads'
+        ? `taxscan-reads-report-${new Date().toLocaleDateString('en-CA')}.png`
+        : period.value === 'custom'
+          ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
+          : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
     a.click();
     notice.value = 'Image downloaded — attach it in WhatsApp.';
   } catch (e) {
@@ -243,14 +294,27 @@ onMounted(() => {
         <button :class="{ on: period === 'weekly' }" @click="setPeriod('weekly')">Weekly</button>
         <button :class="{ on: period === 'monthly' }" @click="setPeriod('monthly')">Monthly</button>
         <button :class="{ on: period === 'custom' }" @click="setPeriod('custom')">Custom</button>
+        <button :class="{ on: period === 'reads' }" @click="setPeriod('reads')">Reads</button>
       </div>
       <span class="spacer" style="flex: 1" />
-      <button class="btn" :disabled="!report || loading" @click="downloadImage">Download image</button>
-      <button class="btn" :disabled="!report || loading" @click="copyImage">Copy image</button>
       <button
         class="btn"
-        :disabled="!report || loading || period === 'custom'"
-        :title="period === 'custom' ? 'Test emails send the standing Weekly/Monthly report' : ''"
+        :disabled="loading || (period === 'reads' ? !readsReport?.ready : !report)"
+        @click="downloadImage"
+      >
+        Download image
+      </button>
+      <button
+        class="btn"
+        :disabled="loading || (period === 'reads' ? !readsReport?.ready : !report)"
+        @click="copyImage"
+      >
+        Copy image
+      </button>
+      <button
+        class="btn"
+        :disabled="!report || loading || period === 'custom' || period === 'reads'"
+        :title="period === 'custom' || period === 'reads' ? 'Test emails send the standing Weekly/Monthly report' : ''"
         @click="emailTest"
       >
         Email me a test
@@ -270,7 +334,7 @@ onMounted(() => {
     <div v-if="error" class="banner err">{{ error }}</div>
     <div v-if="notice" class="banner ok">{{ notice }}</div>
 
-    <div v-if="report" ref="sheet" class="report-sheet">
+    <div v-if="period !== 'reads' && report" ref="sheet" class="report-sheet">
       <div class="report-head">
         <div class="report-title">Taxscan {{ periodTitle }} Coverage Report</div>
         <div class="report-range">{{ rangeLabel(report) }}</div>
@@ -353,6 +417,90 @@ onMounted(() => {
       </div>
 
       <div class="report-foot">Generated by Taxscan Push · {{ rangeLabel(report) }}</div>
+    </div>
+
+    <!-- Reads report: what actually gets read, by bench and category, over
+         trailing windows. Data is built daily on the server from GA. -->
+    <div v-else-if="period === 'reads' && readsReport?.ready" ref="sheet" class="report-sheet">
+      <div class="report-head">
+        <div class="report-title">Taxscan Reads Report</div>
+        <div class="report-range">Article reads by bench &amp; category · data as of {{ readsAsOf }}</div>
+      </div>
+
+      <div class="insights">
+        <div v-for="w in readsReport.windows" :key="w.label" class="ins">
+          <div class="ins-n">{{ fmtViews(w.articleViews) }}</div>
+          <div class="ins-l">reads · last {{ w.label }} · {{ w.articlesRead.toLocaleString() }} articles</div>
+        </div>
+      </div>
+
+      <h3 class="heat-h">Categories × window</h3>
+      <div class="heat-scroll">
+        <table class="heat reads">
+          <thead>
+            <tr>
+              <th class="heat-label">Category</th>
+              <th v-for="w in readsReport.windows" :key="w.label">{{ w.label }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in readsReport.categories" :key="row.label">
+              <td class="heat-label">{{ row.label }}</td>
+              <td
+                v-for="(c, i) in row.cells"
+                :key="i"
+                :style="c ? { background: readsCellColor(c.share) } : undefined"
+                :title="c ? `${row.label} — last ${readsReport.windows?.[i]?.label}: ${c.views.toLocaleString()} reads (${sharePct(c.share)}) across ${c.articles.toLocaleString()} articles` : ''"
+              >
+                <template v-if="c">
+                  <span class="rv">{{ fmtViews(c.views) }}</span>
+                  <span class="rs">{{ sharePct(c.share) }}</span>
+                </template>
+                <span v-else class="muted">—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="heat-h">Courts / benches × window</h3>
+      <div class="heat-scroll">
+        <table class="heat reads">
+          <thead>
+            <tr>
+              <th class="heat-label">Bench</th>
+              <th v-for="w in readsReport.windows" :key="w.label">{{ w.label }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in readsReport.benches" :key="row.label">
+              <td class="heat-label">{{ row.label }}</td>
+              <td
+                v-for="(c, i) in row.cells"
+                :key="i"
+                :style="c ? { background: readsCellColor(c.share) } : undefined"
+                :title="c ? `${row.label} — last ${readsReport.windows?.[i]?.label}: ${c.views.toLocaleString()} reads (${sharePct(c.share)}) across ${c.articles.toLocaleString()} articles` : ''"
+              >
+                <template v-if="c">
+                  <span class="rv">{{ fmtViews(c.views) }}</span>
+                  <span class="rs">{{ sharePct(c.share) }}</span>
+                </template>
+                <span v-else class="muted">—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="report-foot">
+        Reads = pageviews from all traffic (Google Analytics), classified from the headline with the
+        coverage report's rules. Windows are trailing and cumulative — 1 month includes the week.
+        Deeper blue = larger share of that window's reads.
+      </div>
+    </div>
+
+    <div v-else-if="period === 'reads' && readsReport && !readsReport.ready" class="card">
+      <p class="muted">{{ readsReport.message ?? 'The first reads report has not been built yet — check back shortly.' }}</p>
     </div>
 
     <div v-else-if="!loading" class="card">
@@ -556,5 +704,23 @@ table.heat th.heat-total {
   font-size: 11px;
   color: var(--muted);
   text-align: right;
+}
+/* Reads report cells: value + share stacked, right-aligned (magnitudes), with
+   blue share-intensity backgrounds set inline by readsCellColor(). */
+table.heat.reads td {
+  text-align: right;
+  padding: 5px 10px;
+}
+table.heat.reads td.heat-label {
+  text-align: left;
+}
+table.heat.reads .rv {
+  display: block;
+  font-weight: 600;
+}
+table.heat.reads .rs {
+  display: block;
+  font-size: 10px;
+  color: #475569;
 }
 </style>

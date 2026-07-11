@@ -216,6 +216,18 @@ model ArticleReadStat {
   @@index([pagePath])
 }
 
+// Cached "Reads" report: bench×window + category×window pageview aggregates
+// over trailing windows (1w/1m/3m/6m/12m), built by src/services/readsReport.ts
+// from the GA4 Data API on a daily cron. One row per portal — the API serves
+// this row directly and never calls GA at request time, so the screen loads
+// instantly and a GA outage only means the report stays at its last build.
+model GaReadsReport {
+  id          String   @id @default(cuid())
+  portal      String   @unique
+  payload     Json
+  generatedAt DateTime @default(now()) @updatedAt
+}
+
 model FeedItem {
   id         String   @id @default(cuid())
   feedUrl    String

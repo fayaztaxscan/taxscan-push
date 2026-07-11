@@ -14,6 +14,7 @@ import {
 import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { customReportWindow, getReport, reportWindow } from '../services/reports';
+import { getReadsReport } from '../services/readsReport';
 import { sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -575,6 +576,24 @@ export function createApiRouter(
       const { start, end } = reportWindow(period, new Date());
       const report = await getReport({ portal: env.rss.portal, period, start, end });
       return res.json(report);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // The "Reads" report: bench×window + category×window pageview aggregates
+  // over trailing windows, served from the daily-built GaReadsReport cache row.
+  // Never calls GA at request time. `ready:false` until the first build lands.
+  router.get('/reports/reads', requireBearerOrUser(), async (_req, res, next) => {
+    try {
+      if (!env.gaReads.enabled) {
+        return res.status(404).json({ error: 'disabled', message: 'Reads reporting is not enabled.' });
+      }
+      const row = await getReadsReport(env.rss.portal);
+      if (!row) {
+        return res.json({ ready: false, message: 'The first reads report has not been built yet — check back shortly.' });
+      }
+      return res.json({ ready: true, generatedAt: row.generatedAt, ...row.payload });
     } catch (err) {
       return next(err);
     }

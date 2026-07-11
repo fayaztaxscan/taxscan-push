@@ -149,8 +149,17 @@ status changes so a fresh Claude session can pick up cleanly.
    (local). Also runs one pass ~15s after boot so enabling is instantly verifiable.
    **To enable on Railway:** set `GA_SERVICE_ACCOUNT_JSON` (paste the key file's content) +
    `GA_READS_ENABLED=true`, then watch the deploy log for `[ga-reads] synced rows=…`.
-   **Phase C (next PR):** Reads / via-Push columns on Campaigns, per-category reads in the
-   coverage report, top-10 most-read in the weekly email.
+   **Phase C part 1 — READS REPORT SHIPPED 2026-07-11 (same day):** Reports → **Reads** tab
+   showing bench×window and category×window read heatmaps over trailing 1w/1m/3m/6m/12m
+   windows — all-traffic GA pageviews on article pages (slug ends in the numeric id),
+   classified from the headline with the coverage report's own rules, cells = reads + share
+   of that window (blue intensity, sqrt-spread). Built daily 05:45 IST
+   (`GA_READS_REPORT_CRON`) by `src/services/readsReport.ts` → `GaReadsReport` cache row
+   (per portal); stale-aware boot pass (>12h). `GET /api/reports/reads` serves the cache and
+   NEVER calls GA. Download/Copy image work; "Email me a test" stays Weekly/Monthly-only.
+   Verified headless (390/1280px, zero overflow, real GA fixture). **Phase C remaining:**
+   Reads / via-Push columns on Campaigns (join `ArticleReadStat` by URL path), per-category
+   reads + top-10 most-read in the emailed weekly report.
    *(Original pause note, for context:)*
    Decision made: Google Analytics, NOT Hocalwire — probed taxscan's Hocalwire Public API live
    (s-id in `.env`: `HOCALWIRE_API_BASE`/`HOCALWIRE_S_ID`, gitignored): `getNewsDynamicProps`
