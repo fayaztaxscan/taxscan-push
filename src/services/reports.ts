@@ -421,8 +421,53 @@ function emailHeatTable(title: string, label: string, h: Heatmap): string {
     <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif">${head}${body}${foot}</table>`;
 }
 
+// Type-only import — erased at compile time, so no runtime cycle with
+// readsReport.ts (which imports classifier functions from this module).
+import type { ReadsEmailSummary } from './readsReport';
+
+function fmtReadCount(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
+/** The optional "how it was read" email section (weekly/monthly report). */
+function emailReadsSection(reads: ReadsEmailSummary, prevNoun: string): string {
+  const catRows = reads.byCategory
+    .map(
+      (c) =>
+        `<tr><td style="padding:3px 8px;border:1px solid #fff;background:#f1f5f9;font-size:12px;white-space:nowrap">${c.label}</td>` +
+        `<td style="padding:3px 8px;border:1px solid #fff;background:#eff6ff;font-size:12px;text-align:right">${fmtReadCount(c.reads)}</td>` +
+        `<td style="padding:3px 8px;border:1px solid #fff;background:#eff6ff;font-size:12px;text-align:right;color:#64748b">${reads.totalReads > 0 ? ((100 * c.reads) / reads.totalReads).toFixed(1) : '0.0'}%</td></tr>`,
+    )
+    .join('');
+  const topRows = reads.topArticles
+    .map(
+      (a, i) =>
+        `<tr><td style="padding:3px 8px;border:1px solid #fff;background:#f8fafc;font-size:12px;color:#64748b;text-align:right">${i + 1}</td>` +
+        `<td style="padding:3px 8px;border:1px solid #fff;background:#f8fafc;font-size:12px">${a.title}</td>` +
+        `<td style="padding:3px 8px;border:1px solid #fff;background:#eff6ff;font-size:12px;text-align:right;font-weight:600">${fmtReadCount(a.reads)}</td>` +
+        `<td style="padding:3px 8px;border:1px solid #fff;background:#eff6ff;font-size:12px;text-align:right;color:#64748b">${fmtReadCount(a.pushReads)}</td></tr>`,
+    )
+    .join('');
+  const th = (t: string, align = 'left') =>
+    `<th style="background:#1e293b;color:#fff;padding:4px 8px;font-size:11px;border:1px solid #fff;text-align:${align};white-space:nowrap">${t}</th>`;
+  return `
+    <h3 style="margin:22px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b">How it was read</h3>
+    <div style="font-size:13px;margin-bottom:8px"><strong>${fmtReadCount(reads.totalReads)}</strong> article reads counted so far this ${prevNoun}
+      · <strong>${fmtReadCount(reads.pushReads)}</strong> arrived via push</div>
+    <table style="border-collapse:collapse;font-family:Arial,sans-serif;margin-bottom:12px">
+      <tr>${th('Reads by category')}${th('Reads', 'right')}${th('Share', 'right')}</tr>${catRows}</table>
+    <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif">
+      <tr>${th('#', 'right')}${th('Most-read articles')}${th('Reads', 'right')}${th('via Push', 'right')}</tr>${topRows}</table>
+    <div style="margin-top:6px;font-size:11px;color:#94a3b8">Reads = pageviews from all traffic (Google Analytics), classified like the coverage rows above. Numbers for the newest days keep settling for ~48h.</div>`;
+}
+
 /** Render the report as a self-contained HTML email (subject + body + text). */
-export function renderReportEmail(report: Report): { subject: string; html: string; text: string } {
+export function renderReportEmail(
+  report: Report,
+  reads?: ReadsEmailSummary,
+): { subject: string; html: string; text: string } {
   const periodLabel =
     report.period === 'weekly' ? 'Weekly' : report.period === 'monthly' ? 'Monthly' : 'Custom';
   // The unit the vs-previous trend compares against ("vs previous week/month/period").
@@ -434,9 +479,15 @@ export function renderReportEmail(report: Report): { subject: string; html: stri
   const trendStr = trend === null ? '—' : trend >= 0 ? `▲ ${trend}%` : `▼ ${Math.abs(trend)}%`;
   const gaps = report.gaps.benchesWithNothing.slice(0, 8);
   const topBenches = report.byBench.rows.slice(0, 6).map((r) => `${r.label} ${r.total}`).join(', ');
+  const readsText = reads
+    ? `\n${fmtReadCount(reads.totalReads)} article reads so far (${fmtReadCount(reads.pushReads)} via push). Most read: ${reads.topArticles
+        .slice(0, 3)
+        .map((a) => `${a.title} (${fmtReadCount(a.reads)})`)
+        .join('; ')}.`
+    : '';
   const text = `Taxscan ${periodLabel} Coverage Report (${report.start} → ${report.end})
 ${report.total} articles published, ${trendStr} vs previous ${prevNoun} (${report.prevTotal}).
-Top benches: ${topBenches}.
+Top benches: ${topBenches}.${readsText}
 Open the Taxscan Push admin → Reports for the full heatmaps.`;
   const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#0f172a;background:#f8fafc;padding:16px;margin:0">
   <div style="max-width:920px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:22px">
@@ -450,6 +501,7 @@ Open the Taxscan Push admin → Reports for the full heatmaps.`;
     ${gaps.length ? `<div style="font-size:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;margin-top:12px"><strong>No coverage this ${prevNoun}:</strong> ${gaps.join(', ')}${report.gaps.benchesWithNothing.length > gaps.length ? ' …' : ''}</div>` : ''}
     ${emailHeatTable('Courts / benches × dates', 'Bench', report.byBench)}
     ${emailHeatTable('Categories × dates', 'Category', report.byCategory)}
+    ${reads ? emailReadsSection(reads, prevNoun) : ''}
     <div style="margin-top:16px;font-size:11px;color:#94a3b8">Generated automatically by Taxscan Push · internal report — please don't forward outside the team.</div>
   </div></body></html>`;
   return { subject, html, text };

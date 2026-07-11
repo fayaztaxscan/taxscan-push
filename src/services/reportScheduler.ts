@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../lib/email';
 import { buildReport, renderReportEmail, reportWindow } from './reports';
+import { readsSummaryForWindow, type ReadsEmailSummary } from './readsReport';
 
 /**
  * Weekly/monthly coverage-report emails (SEND_PACING_PLAN.md / reports).
@@ -43,7 +44,19 @@ export async function sendScheduledReport(opts: {
 
   const { start, end } = reportWindow(opts.period, now);
   const report = await buildReport({ portal, period: opts.period, start, end });
-  const { subject, html, text } = renderReportEmail(report);
+
+  // "How it was read" section — only when read tracking is on, and never a
+  // reason for the coverage email to fail: any error just drops the section.
+  let reads: ReadsEmailSummary | undefined;
+  if (env.gaReads.enabled) {
+    try {
+      reads = (await readsSummaryForWindow({ start, end, portal })) ?? undefined;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[report] reads summary failed — sending without the reads section', e);
+    }
+  }
+  const { subject, html, text } = renderReportEmail(report, reads);
 
   const emails = opts.recipients ?? (await reportRecipientEmails());
   let sent = 0;

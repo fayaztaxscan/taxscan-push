@@ -76,7 +76,10 @@ bench×window + category×window pageview heatmaps over trailing 1w/1m/3m/6m/12m
 columns SHIPPED 2026-07-11 (same day):** sortable Reads + via-Push columns on the Campaigns
 screen — `listCampaigns` sums `ArticleReadStat` by taxscan URL path (null = no data, shown
 "—"); one-time 30-day backfill done (97,848 rows; `GA_READS_LOOKBACK_DAYS` back at 3).
-Remaining: reads in the emailed weekly report (optional).
+**Email reads SHIPPED 2026-07-11 (same day) — GA-reads feature COMPLETE:** the weekly/monthly
+coverage email gains a "How it was read" section (reads by category + top-10 most-read +
+via-push counts, from `readsSummaryForWindow` in `readsReport.ts`) when `GA_READS_ENABLED`;
+a reads failure never blocks the email. NO open next steps — item 10 is closed.
 Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime — the flaky
 GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19); watch
 items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
