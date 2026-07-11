@@ -25,6 +25,10 @@ type Campaign = {
   scheduledAt: string | null;
   createdByUserId: string | null;
   createdBy: CampaignCreator;
+  /** Article reads (GA, all traffic); null = no data for this URL yet. */
+  reads: number | null;
+  /** Reads from sessions that arrived via our push notification. */
+  pushReads: number | null;
 };
 
 const api = useApi();
@@ -41,7 +45,17 @@ const detailCampaignId = ref<string | null>(null);
 // is Pushed (most recent sends first) so recent activity leads. Captured gives
 // the as-listed/queue order. Nulls (e.g. a draft with no push time or CTR)
 // always sort to the bottom regardless of direction.
-type SortKey = 'createdAt' | 'sentAt' | 'status' | 'sent' | 'clicked' | 'ctr' | 'failed' | 'deliveryRate';
+type SortKey =
+  | 'createdAt'
+  | 'sentAt'
+  | 'status'
+  | 'sent'
+  | 'clicked'
+  | 'ctr'
+  | 'reads'
+  | 'pushReads'
+  | 'failed'
+  | 'deliveryRate';
 const sortKey = ref<SortKey>('sentAt');
 const sortDir = ref<'asc' | 'desc'>('desc');
 
@@ -73,6 +87,10 @@ function sortVal(c: Campaign, key: SortKey): number | string | null {
       return c.failed;
     case 'ctr':
       return c.ctr;
+    case 'reads':
+      return c.reads;
+    case 'pushReads':
+      return c.pushReads;
     case 'deliveryRate':
       return c.deliveryRate;
   }
@@ -109,6 +127,13 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false;
   }
+}
+
+function fmtReads(n: number | null): string {
+  if (n === null) return '—';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
 }
 
 function fmtDate(iso: string): string {
@@ -180,6 +205,20 @@ onMounted(load);
             <th class="th-sort" @click="setSort('ctr')">
               CTR<span class="sort-ind">{{ sortInd('ctr') }}</span>
             </th>
+            <th
+              class="th-sort"
+              title="Article pageviews from all traffic (Google Analytics), summed over the tracked days"
+              @click="setSort('reads')"
+            >
+              Reads<span class="sort-ind">{{ sortInd('reads') }}</span>
+            </th>
+            <th
+              class="th-sort"
+              title="Reads from sessions that arrived via our push notification"
+              @click="setSort('pushReads')"
+            >
+              via Push<span class="sort-ind">{{ sortInd('pushReads') }}</span>
+            </th>
             <th class="th-sort" @click="setSort('failed')">
               Failed<span class="sort-ind">{{ sortInd('failed') }}</span>
             </th>
@@ -215,6 +254,10 @@ onMounted(load);
                 {{ pct(c.ctr) }}
               </span>
             </td>
+            <td :class="c.reads === null ? 'muted' : ''" :title="c.reads === null ? 'No read data for this URL yet' : ''">
+              {{ fmtReads(c.reads) }}
+            </td>
+            <td :class="c.pushReads === null ? 'muted' : ''">{{ fmtReads(c.pushReads) }}</td>
             <td>{{ c.failed }}</td>
             <td>
               <span
@@ -226,7 +269,7 @@ onMounted(load);
             </td>
           </tr>
           <tr v-if="campaigns.length === 0 && !loading">
-            <td colspan="10" class="muted" style="text-align: center; padding: 24px">
+            <td colspan="12" class="muted" style="text-align: center; padding: 24px">
               {{ showOnlyMine ? "You haven't sent any campaigns yet." : 'No campaigns yet.' }}
             </td>
           </tr>
