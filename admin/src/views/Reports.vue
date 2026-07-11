@@ -434,17 +434,18 @@ onMounted(() => {
         </div>
       </div>
 
-      <h3 class="heat-h">Categories × window</h3>
+      <!-- Bench above Category, matching the Weekly/Monthly coverage tabs. -->
+      <h3 class="heat-h">Courts / benches × window</h3>
       <div class="heat-scroll">
         <table class="heat reads">
           <thead>
             <tr>
-              <th class="heat-label">Category</th>
+              <th class="heat-label">Bench</th>
               <th v-for="w in readsReport.windows" :key="w.label">{{ w.label }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in readsReport.categories" :key="row.label">
+            <tr v-for="row in readsReport.benches" :key="row.label">
               <td class="heat-label">{{ row.label }}</td>
               <td
                 v-for="(c, i) in row.cells"
@@ -463,17 +464,17 @@ onMounted(() => {
         </table>
       </div>
 
-      <h3 class="heat-h">Courts / benches × window</h3>
+      <h3 class="heat-h">Categories × window</h3>
       <div class="heat-scroll">
         <table class="heat reads">
           <thead>
             <tr>
-              <th class="heat-label">Bench</th>
+              <th class="heat-label">Category</th>
               <th v-for="w in readsReport.windows" :key="w.label">{{ w.label }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in readsReport.benches" :key="row.label">
+            <tr v-for="row in readsReport.categories" :key="row.label">
               <td class="heat-label">{{ row.label }}</td>
               <td
                 v-for="(c, i) in row.cells"
