@@ -130,7 +130,28 @@ status changes so a fresh Claude session can pick up cleanly.
    sinks never-pushed rows anyway. Rows still exist in Postgres but deleting them would need
    a direct prod-DB query — decided not worth touching prod data. No metrics/report impact
    (0 events; academy/shop URLs are excluded from reports since PR #26).
-10. **⏸ PAUSED 2026-07-07 — per-article read counts via GA4 (user will resume later).**
+10. **▶ IN PROGRESS 2026-07-11 — per-article read counts via GA4: Phase B SHIPPED (sync
+   engine), Phase C (UI) next.** The user created the GCP service account
+   (`taxscan-push-reads@taxscan-push-ga.iam.gserviceaccount.com`, Viewer on GA4 property
+   258445828) and handed over the key JSON (repo root `ga-service-account.json`, gitignored
+   via `*service-account*.json` — NEVER commit). A live probe proved access end-to-end:
+   4,604 pages with views in 3 days; push attribution flowing (209 pages with
+   `sessionSource=taxscan-push` views). **Phase B (this PR):** additive `ArticleReadStat`
+   table (portal, pagePath, date, totalViews, pushViews, fetchedAt; unique per
+   portal+path+date) + `src/services/gaReads.ts` — flag-gated (`GA_READS_ENABLED`) ~2h cron
+   (`GA_READS_CRON=15 */2 * * *`) making ONE batched GA4 Data API call (pageviews by
+   date×pagePath, unfiltered + filtered to our push UTM) over a rolling 3-day window
+   (`GA_READS_LOOKBACK_DAYS`), replacing each returned date's rows wholesale in one
+   transaction. Request path NEVER calls GA (GA failure = counts go stale, nothing breaks).
+   Auth = plain service-account JWT (node:crypto) against the REST endpoint — deliberately
+   NO `@google-analytics/data` dep, keeping `package-lock.json` untouched (Railway build-cache
+   footgun). Creds: `GA_SERVICE_ACCOUNT_JSON` inline (Railway) or `GA_SERVICE_ACCOUNT_FILE`
+   (local). Also runs one pass ~15s after boot so enabling is instantly verifiable.
+   **To enable on Railway:** set `GA_SERVICE_ACCOUNT_JSON` (paste the key file's content) +
+   `GA_READS_ENABLED=true`, then watch the deploy log for `[ga-reads] synced rows=…`.
+   **Phase C (next PR):** Reads / via-Push columns on Campaigns, per-category reads in the
+   coverage report, top-10 most-read in the weekly email.
+   *(Original pause note, for context:)*
    Decision made: Google Analytics, NOT Hocalwire — probed taxscan's Hocalwire Public API live
    (s-id in `.env`: `HOCALWIRE_API_BASE`/`HOCALWIRE_S_ID`, gitignored): `getNewsDynamicProps`
    returns only editorial metadata (citation/coram/PDF — no view counts), `most_read` is empty,
