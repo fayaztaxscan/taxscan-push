@@ -5,7 +5,11 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-06-19)
+## ▶️ NEXT STEPS / open items (as of 2026-07-11) — ALL CLOSED, nothing open
+
+Every numbered item below is done. The board is clean: no open work, only routine
+monitoring (dashboard health gates) and whatever the user asks for next. First scheduled
+coverage email carrying the new "How it was read" section: **Mon 2026-07-13 07:00 IST**.
 
 -2. **✅ SHIPPED 2026-07-10 — custom date-range reports (Reports → "Custom" tab).** Editors can
    now pick any From/To window of up to **30 days** (both ends inclusive, IST; "To" may be
@@ -227,8 +231,17 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Coverage reports** (`reports.ts` + `reportScheduler.ts`) — weekly + monthly Category×dates and
   Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split), counting every UNIQUE captured
   article by capture date (re-sends collapse by URL; academy/shop storefront pushes excluded).
-  In-app **Reports** screen (Download/Copy image for WhatsApp) + emailed Mon 07:00 / 1st
-  07:00 IST to app users + a report-only email list; INTERNAL (never to subscribers).
+  In-app **Reports** screen (Weekly / Monthly / Custom / **Reads**; Download/Copy image for
+  WhatsApp) + emailed Mon 07:00 / 1st 07:00 IST to app users + a report-only email list;
+  INTERNAL (never to subscribers). The email ends with a **"How it was read"** section
+  (reads by category + top-10 most-read) when read tracking is on.
+- **GA4 read tracking** (PRs #33–#36, 2026-07-11) — per-article pageview counts behind
+  `GA_READS_ENABLED`; the request path never calls GA (crons mirror GA → Postgres):
+  `gaReads.ts` ~2h sync → `ArticleReadStat` (total + push-attributed views by path×date;
+  30-day history backfilled); `readsReport.ts` daily 05:45 IST → **Reports → Reads** tab
+  (bench/category × trailing 1w/1m/3m/6m/12m windows) via `GET /api/reports/reads`;
+  sortable **Reads / via Push** columns on Campaigns; reads section in the emailed report.
+  Creds: `GA_SERVICE_ACCOUNT_JSON` (Railway) / gitignored `ga-service-account.json` (local).
 - **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
