@@ -157,8 +157,14 @@ status changes so a fresh Claude session can pick up cleanly.
    (`GA_READS_REPORT_CRON`) by `src/services/readsReport.ts` → `GaReadsReport` cache row
    (per portal); stale-aware boot pass (>12h). `GET /api/reports/reads` serves the cache and
    NEVER calls GA. Download/Copy image work; "Email me a test" stays Weekly/Monthly-only.
-   Verified headless (390/1280px, zero overflow, real GA fixture). **Phase C remaining:**
-   Reads / via-Push columns on Campaigns (join `ArticleReadStat` by URL path), per-category
+   Verified headless (390/1280px, zero overflow, real GA fixture).
+   **Phase C part 2 — CAMPAIGNS READS COLUMNS SHIPPED 2026-07-11 (same day):** sortable
+   **Reads** + **via Push** columns on the Campaigns screen. `listCampaigns` sums
+   `ArticleReadStat` (totalViews/pushViews) per taxscan URL path (trailing-slash tolerant;
+   academy/shop URLs and untracked articles show "—" = null, distinct from a real 0).
+   One-time 30-day history backfill done via the `GA_READS_LOOKBACK_DAYS` env dance
+   (30 → boot sync pulled 97,848 rows / 31 dates → back to 3; history persists because the
+   sync only replaces dates GA returns). **Phase C remaining (optional):** per-category
    reads + top-10 most-read in the emailed weekly report.
    *(Original pause note, for context:)*
    Decision made: Google Analytics, NOT Hocalwire — probed taxscan's Hocalwire Public API live

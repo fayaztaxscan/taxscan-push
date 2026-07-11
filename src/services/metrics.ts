@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { env } from '../lib/env';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -38,6 +39,15 @@ export type CampaignStat = {
   scheduledAt: string | null;
   createdByUserId: string | null;
   createdBy: CampaignCreator;
+  /**
+   * Article pageviews from ArticleReadStat (GA, all traffic) summed over the
+   * synced days, joined by taxscan.in URL path. null = no data (non-taxscan
+   * URL, or the article predates read tracking) — distinct from a real 0.
+   * Only set by listCampaigns (the /campaigns page); absent on the dashboard.
+   */
+  reads?: number | null;
+  /** The subset of reads whose session GA attributes to our push UTM. */
+  pushReads?: number | null;
 };
 
 export type SubscriberSource =
@@ -70,6 +80,7 @@ const KNOWN_SOURCES: SubscriberSource[] = [
 const campaignSelect = {
   id: true,
   title: true,
+  url: true,
   status: true,
   createdAt: true,
   scheduledAt: true,
@@ -313,6 +324,51 @@ export async function getMetrics(
   return data;
 }
 
+const TAXSCAN_HOSTS = new Set(['taxscan.in', 'www.taxscan.in']);
+
+/**
+ * The ArticleReadStat join key for a campaign URL: the taxscan.in path with
+ * any trailing slash dropped. null for non-taxscan URLs (academy/shop) — GA
+ * read data only exists for the taxscan.in property.
+ */
+export function readsPath(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (!TAXSCAN_HOSTS.has(u.hostname.toLowerCase())) return null;
+    return u.pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sum ArticleReadStat (totalViews/pushViews) per taxscan URL path. GA may
+ * report the path with or without a trailing slash, so both spellings are
+ * queried and folded onto the normalized key.
+ */
+async function readsByPath(
+  paths: string[],
+): Promise<Map<string, { reads: number; pushReads: number }>> {
+  const out = new Map<string, { reads: number; pushReads: number }>();
+  if (paths.length === 0) return out;
+  const rows = await prisma.articleReadStat.groupBy({
+    by: ['pagePath'],
+    where: {
+      portal: env.rss.portal,
+      pagePath: { in: [...paths, ...paths.map((p) => `${p}/`)] },
+    },
+    _sum: { totalViews: true, pushViews: true },
+  });
+  for (const r of rows) {
+    const key = r.pagePath.replace(/\/+$/, '') || '/';
+    const e = out.get(key) ?? { reads: 0, pushReads: 0 };
+    e.reads += r._sum.totalViews ?? 0;
+    e.pushReads += r._sum.pushViews ?? 0;
+    out.set(key, e);
+  }
+  return out;
+}
+
 export async function listCampaigns(
   limit = 50,
   opts: { createdByUserId?: string } = {},
@@ -354,12 +410,21 @@ export async function listCampaigns(
   if (campaigns.length === 0) return [];
 
   const ids = campaigns.map((c) => c.id);
-  const events = await prisma.event.groupBy({
-    by: ['campaignId', 'type'],
-    where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED', 'FAILED'] } },
-    _count: { _all: true },
-    _min: { createdAt: true },
-  });
+  const pathByCampaign = new Map<string, string | null>(
+    campaigns.map((c) => [c.id, readsPath(c.url)]),
+  );
+  const uniquePaths = [
+    ...new Set([...pathByCampaign.values()].filter((p): p is string => p !== null)),
+  ];
+  const [events, reads] = await Promise.all([
+    prisma.event.groupBy({
+      by: ['campaignId', 'type'],
+      where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED', 'FAILED'] } },
+      _count: { _all: true },
+      _min: { createdAt: true },
+    }),
+    readsByPath(uniquePaths),
+  ]);
   const byCampaign = {
     SENT: new Map<string, number>(),
     CLICKED: new Map<string, number>(),
@@ -377,6 +442,8 @@ export async function listCampaigns(
     const sent = byCampaign.SENT.get(c.id) ?? 0;
     const clicked = byCampaign.CLICKED.get(c.id) ?? 0;
     const failed = byCampaign.FAILED.get(c.id) ?? 0;
+    const path = pathByCampaign.get(c.id);
+    const r = path ? reads.get(path) : undefined;
     return {
       id: c.id,
       title: c.title,
@@ -393,6 +460,8 @@ export async function listCampaigns(
       createdBy: c.createdBy
         ? { id: c.createdBy.id, email: c.createdBy.email, role: c.createdBy.role }
         : null,
+      reads: r ? r.reads : null,
+      pushReads: r ? r.pushReads : null,
     };
   });
 }
