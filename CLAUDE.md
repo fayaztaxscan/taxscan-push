@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-07-10) — LIVE in production
+## Current state (updated 2026-07-11) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~2,400 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
 stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
@@ -41,6 +41,21 @@ plan to decommission it.
   `?period=custom&from&to`, validated server-side; Download/Copy image for
   WhatsApp) + emailed Mon 07:00 IST / 1st 07:00 IST to app users + a report-only email list
   (`ReportRecipient`); INTERNAL — never to subscribers. Behind `REPORTS_ENABLED`.
+- **GA4 read tracking (PRs #33–#36, 2026-07-11, all LIVE)** — per-article pageview counts
+  from the GA4 Data API (property 258445828), behind `GA_READS_ENABLED`. Four pieces, one
+  invariant: **the request path NEVER calls GA** — crons mirror GA into Postgres, requests
+  read Postgres, a GA outage only staleness. (1) `src/services/gaReads.ts`: ~2h cron →
+  `ArticleReadStat` (portal, pagePath, date, totalViews + push-attributed pushViews; rolling
+  `GA_READS_LOOKBACK_DAYS=3`, one-time 30-day backfill done). Zero-dep auth: service-account
+  JWT via node:crypto (deliberately no `@google-analytics/data` — keeps package-lock
+  untouched). Creds = `GA_SERVICE_ACCOUNT_JSON` on Railway / gitignored
+  `ga-service-account.json` locally — NEVER commit. (2) **Reports → Reads tab**: bench×window
+  + category×window read heatmaps over trailing 1w/1m/3m/6m/12m windows (headlines classified
+  with the coverage report's own rules), built daily 05:45 IST by `readsReport.ts` into the
+  `GaReadsReport` cache row, served by `GET /api/reports/reads`. (3) **Campaigns**: sortable
+  Reads + via-Push columns (`listCampaigns` sums `ArticleReadStat` by taxscan URL path;
+  "—" = no data ≠ 0). (4) **Coverage email**: "How it was read" section (reads by category +
+  top-10 most-read; failure never blocks the email).
 - **Admin SPA** — Compose (All/topic targeting, Breaking/Force, schedule, taxscan/academy/
   shop click URLs, **Test on this device** isolated preview), **Review queue**, **Send queue**
   (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
@@ -60,31 +75,17 @@ plan to decommission it.
 `RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
 `RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=3, `DAILY_SEND_CEILING`=999 (ceiling disabled;
 quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-force path only),
-`MIN_GAP_MINUTES`=0. (`METRICS_CACHE_TTL_MS`=20s and
+`MIN_GAP_MINUTES`=0, `GA_READS_ENABLED`=ON + `GA_SERVICE_ACCOUNT_JSON` +
+`GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps:** ONE open item — per-article read counts via GA4 (NEXT_STEP.md item 10).
-Phase B (sync engine) SHIPPED 2026-07-11: `ArticleReadStat` table + `src/services/gaReads.ts`
-~2h cron behind `GA_READS_ENABLED` mirroring GA4 pageviews (total + push-attributed, by
-date×pagePath, rolling 3-day window); request path never calls GA. Creds =
-`GA_SERVICE_ACCOUNT_JSON` (Railway) / `ga-service-account.json` file (local, gitignored —
-never commit). **Reads report SHIPPED 2026-07-11 (same day):** Reports → **Reads** tab —
-bench×window + category×window pageview heatmaps over trailing 1w/1m/3m/6m/12m windows
-(all-traffic GA reads, classified by the coverage report's own title rules), built daily
-05:45 IST by `src/services/readsReport.ts` into the `GaReadsReport` cache row and served by
-`GET /api/reports/reads` (request path never calls GA; stale-tolerant). **Campaigns Reads
-columns SHIPPED 2026-07-11 (same day):** sortable Reads + via-Push columns on the Campaigns
-screen — `listCampaigns` sums `ArticleReadStat` by taxscan URL path (null = no data, shown
-"—"); one-time 30-day backfill done (97,848 rows; `GA_READS_LOOKBACK_DAYS` back at 3).
-**Email reads SHIPPED 2026-07-11 (same day) — GA-reads feature COMPLETE:** the weekly/monthly
-coverage email gains a "How it was read" section (reads by category + top-10 most-read +
-via-push counts, from `readsSummaryForWindow` in `readsReport.ts`) when `GA_READS_ENABLED`;
-a reads failure never blocks the email. NO open next steps — item 10 is closed.
-Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime — the flaky
-GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19); watch
-items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
+**Open next steps: NONE** — NEXT_STEP.md item 10 (GA4 reads) closed 2026-07-11 with all four
+pieces live. Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime —
+the flaky GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19);
+watch items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
 healthy 2026-07-10; Compose "Force" stays default-OFF by explicit user decision — don't
-re-propose. See `NEXT_STEP.md`.
+re-propose. First scheduled email with the reads section: Mon 2026-07-13 07:00 IST — worth a
+glance that it landed well. See `NEXT_STEP.md`.
 
 **Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
 `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +
