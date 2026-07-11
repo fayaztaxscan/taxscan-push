@@ -10,3 +10,7 @@ prisma/*.db
 # Playwright outputs
 admin/test-results/
 admin/playwright-report/
+
+# GA4 service-account key — never commit
+ga-service-account.json
+*service-account*.json

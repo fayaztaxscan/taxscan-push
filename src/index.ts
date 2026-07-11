@@ -13,6 +13,7 @@ import { startSweeper } from './services/sweeper';
 import { startPacer } from './services/pacer';
 import { startReportScheduler } from './services/reportScheduler';
 import { startReconciler, startRetention } from './services/reconciler';
+import { startGaReadsSync } from './services/gaReads';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
 import type { Sender } from './services/send';
 
@@ -36,5 +37,6 @@ app.listen(env.port, () => {
   startReportScheduler();
   startReconciler();
   startRetention();
+  startGaReadsSync();
   startAuditRetentionSweeper();
 });

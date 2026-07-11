@@ -196,6 +196,26 @@ model AuditLog {
   @@index([action])
 }
 
+// Per-article read counts synced from the GA4 Data API (src/services/gaReads.ts).
+// One row per (portal, pagePath, date): `totalViews` = all pageviews GA saw for
+// that path that day; `pushViews` = the subset from sessions GA attributes to our
+// push UTM (sessionSource = taxscan-push). Written ONLY by the flag-gated sync
+// cron — the request path (reports/campaigns) reads Postgres and never calls GA,
+// so a GA outage just leaves counts stale, it can't slow or break the app.
+model ArticleReadStat {
+  id         String   @id @default(cuid())
+  portal     String   @default("taxscan")
+  pagePath   String
+  date       DateTime @db.Date
+  totalViews Int      @default(0)
+  pushViews  Int      @default(0)
+  fetchedAt  DateTime @default(now()) @updatedAt
+
+  @@unique([portal, pagePath, date])
+  @@index([date])
+  @@index([pagePath])
+}
+
 model FeedItem {
   id         String   @id @default(cuid())
   feedUrl    String

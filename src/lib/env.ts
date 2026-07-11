@@ -141,6 +141,19 @@ export const env = {
     weeklyCron: process.env.REPORT_WEEKLY_CRON ?? '0 7 * * 1',
     monthlyCron: process.env.REPORT_MONTHLY_CRON ?? '0 7 1 * *',
   },
+  // Per-article read counts synced from the GA4 Data API into ArticleReadStat
+  // (src/services/gaReads.ts). Default off. Credentials: GA_SERVICE_ACCOUNT_JSON
+  // holds the service-account key JSON inline (Railway), else the key is read
+  // from GA_SERVICE_ACCOUNT_FILE on disk (local dev; gitignored). The sync
+  // re-fetches a rolling lookback window because GA settles late (24-48h).
+  gaReads: {
+    enabled: process.env.GA_READS_ENABLED === 'true',
+    cron: process.env.GA_READS_CRON ?? '15 */2 * * *',
+    propertyId: process.env.GA_PROPERTY_ID ?? '258445828',
+    lookbackDays: intEnv('GA_READS_LOOKBACK_DAYS', 3),
+    serviceAccountJson: process.env.GA_SERVICE_ACCOUNT_JSON ?? '',
+    serviceAccountFile: process.env.GA_SERVICE_ACCOUNT_FILE ?? 'ga-service-account.json',
+  },
   // No-miss backstop: periodically reconcile against taxscan's complete daily
   // sitemap and capture any article the RSS feeds missed (feeds only show the
   // latest ~11 per poll). Default off.

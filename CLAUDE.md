@@ -63,8 +63,12 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `MIN_GAP_MINUTES`=0. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps:** ONE open item — per-article read counts via GA4 (paused 2026-07-07;
-design agreed, waiting on the user's GCP service-account JSON — NEXT_STEP.md item 10).
+**Open next steps:** ONE open item — per-article read counts via GA4 (NEXT_STEP.md item 10).
+Phase B (sync engine) SHIPPED 2026-07-11: `ArticleReadStat` table + `src/services/gaReads.ts`
+~2h cron behind `GA_READS_ENABLED` mirroring GA4 pageviews (total + push-attributed, by
+date×pagePath, rolling 3-day window); request path never calls GA. Creds =
+`GA_SERVICE_ACCOUNT_JSON` (Railway) / `ga-service-account.json` file (local, gitignored —
+never commit). Remaining: Phase C UI (Reads columns on Campaigns, reads in reports).
 Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime — the flaky
 GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19); watch
 items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
