@@ -130,8 +130,14 @@ status changes so a fresh Claude session can pick up cleanly.
    sinks never-pushed rows anyway. Rows still exist in Postgres but deleting them would need
    a direct prod-DB query — decided not worth touching prod data. No metrics/report impact
    (0 events; academy/shop URLs are excluded from reports since PR #26).
-10. **▶ IN PROGRESS 2026-07-11 — per-article read counts via GA4: Phase B SHIPPED (sync
-   engine), Phase C (UI) next.** The user created the GCP service account
+10. **✅ DONE 2026-07-11 — per-article read counts via GA4 (all phases shipped same day;
+   feature COMPLETE).** Final piece: the weekly/monthly coverage email now carries a
+   **"How it was read"** section — total reads so far + via-push, reads by category, and the
+   top-10 most-read articles of the window (`readsSummaryForWindow` in `readsReport.ts`:
+   ArticleReadStat sums over the window's IST day keys, article paths only, slug-classified
+   with the report's own rules, captured campaign headlines used for titles with slug text as
+   fallback). Only rendered when `GA_READS_ENABLED`; wrapped so a reads failure never blocks
+   the coverage email. History of the build below. The user created the GCP service account
    (`taxscan-push-reads@taxscan-push-ga.iam.gserviceaccount.com`, Viewer on GA4 property
    258445828) and handed over the key JSON (repo root `ga-service-account.json`, gitignored
    via `*service-account*.json` — NEVER commit). A live probe proved access end-to-end:

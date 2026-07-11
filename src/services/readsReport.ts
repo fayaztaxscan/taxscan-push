@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
-import { detectBench, reportCategory, benchRank } from './reports';
+import { detectBench, reportCategory, benchRank, istDateKey } from './reports';
 import {
   loadGaCredentials,
   getGaAccessToken,
@@ -173,6 +173,108 @@ export async function getReadsReport(
   const row = await prisma.gaReadsReport.findUnique({ where: { portal } });
   if (!row) return null;
   return { payload: row.payload as unknown as ReadsPayload, generatedAt: row.generatedAt };
+}
+
+// --- Reads summary for the emailed coverage report ---------------------------
+
+export type ReadsEmailSummary = {
+  /** Article reads (all traffic) counted so far in the window. */
+  totalReads: number;
+  /** The subset from sessions GA attributes to our push UTM. */
+  pushReads: number;
+  byCategory: { label: string; reads: number }[];
+  topArticles: { title: string; reads: number; pushReads: number }[];
+};
+
+/** JS twin of ARTICLE_PATH_RE (which is a GA API filter string). */
+const ARTICLE_PATH_JS_RE = /-\d{5,}$/;
+
+/**
+ * Readable pseudo-title from an article slug — used to classify paths whose
+ * article we never captured, and as the display fallback when no campaign
+ * title matches. The category regexes are case-insensitive, so slug text
+ * ("gst"/"itat"/"income tax") classifies the same as a real headline.
+ */
+export function titleFromPath(p: string): string {
+  const slug = (p.split('/').filter(Boolean).pop() ?? '').replace(/-\d+$/, '');
+  const text = slug.replace(/-/g, ' ').trim();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * Reads during [start, end) for the coverage-report email, from ArticleReadStat
+ * only (never GA at send time). Counts article pages only (slug ends in the
+ * numeric id); categories are classified from the campaign-independent slug so
+ * every read counts even when we never captured the article. Returns null when
+ * the window has no read data at all (e.g. before tracking started).
+ */
+export async function readsSummaryForWindow(opts: {
+  start: Date;
+  end: Date; // exclusive, like reportWindow()
+  portal?: string;
+  topN?: number;
+}): Promise<ReadsEmailSummary | null> {
+  const portal = opts.portal ?? env.rss.portal;
+  const topN = opts.topN ?? 10;
+  // ArticleReadStat.date is the UTC-midnight key of the GA (IST) calendar day;
+  // the report window is IST midnights — compare by day key.
+  const grouped = await prisma.articleReadStat.groupBy({
+    by: ['pagePath'],
+    where: {
+      portal,
+      date: { gte: new Date(istDateKey(opts.start)), lt: new Date(istDateKey(opts.end)) },
+    },
+    _sum: { totalViews: true, pushViews: true },
+  });
+
+  // Fold trailing-slash spellings onto one key and keep article pages only.
+  const byPath = new Map<string, { reads: number; pushReads: number }>();
+  for (const g of grouped) {
+    const path = g.pagePath.replace(/\/+$/, '');
+    if (!ARTICLE_PATH_JS_RE.test(path)) continue;
+    const e = byPath.get(path) ?? { reads: 0, pushReads: 0 };
+    e.reads += g._sum.totalViews ?? 0;
+    e.pushReads += g._sum.pushViews ?? 0;
+    byPath.set(path, e);
+  }
+  if (byPath.size === 0) return null;
+
+  let totalReads = 0;
+  let pushReads = 0;
+  const cat = new Map<string, number>();
+  for (const [path, e] of byPath) {
+    totalReads += e.reads;
+    pushReads += e.pushReads;
+    const label = reportCategory([], titleFromPath(path));
+    cat.set(label, (cat.get(label) ?? 0) + e.reads);
+  }
+  const byCategory = [...cat.entries()]
+    .map(([label, reads]) => ({ label, reads }))
+    .sort((a, b) => b.reads - a.reads);
+
+  const top = [...byPath.entries()].sort((a, b) => b[1].reads - a[1].reads).slice(0, topN);
+  // Real headlines where we captured the article; slug-derived text otherwise.
+  const campaigns = top.length
+    ? await prisma.campaign.findMany({
+        where: { OR: top.map(([path]) => ({ url: { contains: path } })) },
+        select: { url: true, title: true },
+      })
+    : [];
+  const titleByPath = new Map<string, string>();
+  for (const c of campaigns) {
+    try {
+      titleByPath.set(new URL(c.url).pathname.replace(/\/+$/, ''), c.title);
+    } catch {
+      /* unparseable stored URL — fall back to the slug title */
+    }
+  }
+  const topArticles = top.map(([path, e]) => ({
+    title: titleByPath.get(path) ?? titleFromPath(path),
+    reads: e.reads,
+    pushReads: e.pushReads,
+  }));
+
+  return { totalReads, pushReads, byCategory, topArticles };
 }
 
 const STALE_MS = 12 * 60 * 60 * 1000;
