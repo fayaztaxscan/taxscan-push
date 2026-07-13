@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-07-11) — LIVE in production
+## Current state (updated 2026-07-13) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~2,400 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
 stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
@@ -79,13 +79,24 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps: NONE** — NEXT_STEP.md item 10 (GA4 reads) closed 2026-07-11 with all four
-pieces live. Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime —
+**Open next steps: ONE (2026-07-13) — report-logic corrections, PAUSED on the user's data.**
+The user will share correction data/insights next session; rewire `reports.ts` then — do NOT
+ship anything before that. Groundwork done 2026-07-13 (News-vs-Articles study): full prod dump
+(1,137 unique articles, 1 Jun–13 Jul) shows the report's residual rows (240 items) split
+**News 115 / Articles (knowledge content) 91 / Job posts 34** — Uncategorized is 87%
+adjacent-law court news (SARFAESI/DRT/NI Act/PC Act titles with no tax keyword); Unspecified
+is 44% Articles + 39% dept news + 17% job posts. A draft title-grammar `detectContentType`
+classifier (~97% vs manual read of all 240) + labeled ground truth + shareables live in
+`docs/News-vs-Articles-{draft-classifier.ts,study-data.json,Study.{html,pdf,xlsx}}` (untracked
+by design). Proposal on the table: split both residual rows by content type + add DRT/DRAT
+benches (report-only; history reclassifies). Details in memory `news-vs-articles-study` +
+NEXT_STEP.md item -3. GA4 reads (item 10) closed 2026-07-11 with all four pieces live.
+Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime —
 the flaky GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19);
 watch items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
 healthy 2026-07-10; Compose "Force" stays default-OFF by explicit user decision — don't
-re-propose. First scheduled email with the reads section: Mon 2026-07-13 07:00 IST — worth a
-glance that it landed well. See `NEXT_STEP.md`.
+re-propose. First scheduled email with the reads section went out Mon 2026-07-13 07:00 IST —
+confirm with the user it landed well. See `NEXT_STEP.md`.
 
 **Read for detail:** `NEXT_STEP.md` (running state board + capability overview),
 `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`. Keep this section +
