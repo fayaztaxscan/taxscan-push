@@ -78,10 +78,11 @@ describe('buildReadsReport', () => {
     const bench = (l: string) => payload.benches.find((b) => b.label === l);
     expect(bench('ITAT')?.cells[0]).toMatchObject({ views: 600, articles: 1, share: 0.6 });
     expect(bench('Supreme Court')?.cells[0]).toMatchObject({ views: 300, share: 0.3 });
-    // Report ordering: SC before ITAT, Unspecified last.
+    // Report ordering: SC before ITAT, residual "no bench" rows last. The CBDT
+    // deadline item names no court → "No bench – News" (it's news, not knowledge).
     const labels = payload.benches.map((b) => b.label);
     expect(labels.indexOf('Supreme Court')).toBeLessThan(labels.indexOf('ITAT'));
-    expect(labels[labels.length - 1]).toBe('Unspecified');
+    expect(labels[labels.length - 1]).toBe('No bench – News');
 
     // Categories ordered by 12-month views desc: Income Tax (700) before GST (300).
     expect(payload.categories[0].label).toBe('Income Tax');

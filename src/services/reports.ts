@@ -66,26 +66,51 @@ const TITLE_CATEGORY: { label: string; re: RegExp }[] = [
   // Distinct content FORMS first — a "GST Weekly Round-Up" is a round-up, not
   // a GST case, and a "CA Vacancy" is a job post, not a profession story.
   { label: 'Round-Ups/Digests', re: /round[\s-]*up|\bdigest\b/i },
-  { label: 'JobScan', re: /\bvacanc(y|ies)\b|\brecruitment\b|\bhiring\b|job opening/i },
+  { label: 'JobScan', re: /\bvacanc(y|ies)\b|\brecruitment\b|\bhiring\b|job opening|walk[\s-]*in|\binternship\b/i },
   // Specialist subjects before the broad tax rules — a transfer-pricing or
   // benami matter usually also mentions ITAT/income tax, and the specific
   // label is the one the coverage report cares about.
   { label: 'International Tax/TP', re: /transfer pricing|international tax(ation)?|\bDTAA\b/i },
-  { label: 'Benami/PMLA', re: /\bPMLA\b|\bbenami\b|money[\s-]*laundering|enforcement directorate/i },
+  {
+    label: 'Benami/PMLA',
+    re: /\bPMLA\b|\bbenami\b|money[\s-]*laundering|enforcement directorate|unexplained\s+(?:asset|money|investment|cash|credit|income)/i,
+  },
   { label: 'FEMA', re: /\bFEMA\b|foreign exchange/i },
-  { label: 'Income Tax', re: /income[\s-]*tax|\bITAT\b|\bCBDT\b|\bITR\b|\bTDS\b/i },
-  { label: 'GST', re: /\bGST\b|\bGSTAT\b|\bCST\b|\bVAT\b|input tax credit|e-?way bill/i },
-  { label: 'Customs', re: /\bcustoms\b|\bexcise\b|\bCESTAT\b|\bDGFT\b/i },
+  // Broad tax subjects. Keyword sets widened per the 2026-07 editorial review
+  // (News-vs-Articles study) — safe, unambiguous forms only.
+  {
+    label: 'Income Tax',
+    re: /income[\s‐-―-]*tax|\bITAT\b|\bCBDT\b|\bITR\b|\bTDS\b|\bTCS\b|\bsalary\b|\bESOPs?\b|\bRSUs?\b|\bPAN\s?card\b|\bPAN[-\s]?aadhaar\b|\bCIT\s?\(A\)|re-?assessment|\bs\.?\s?(?:80[a-z]{0,3}|14A|147A?|148A?|151A?)\b|section\s?80|\bcharit(?:y|able)\b|section\s?12A|\b12AA\b|\bIT Dept\b|tax planning|capital gains|advance tax/i,
+  },
+  // Fix: the old /\bGST\b/ missed GSTR / GSTN / IGST / CGST / SGST / GSTAT
+  // because the trailing/leading letter breaks the word boundary.
+  {
+    label: 'GST',
+    re: /\b(?:[ICUS]|UT)?GST(?:R|N|AT)?\b|\bCST\b|\bVAT\b|input tax credit|e-?way bill|\bAATO\b/i,
+  },
+  {
+    label: 'Customs',
+    re: /\bcustoms?\b|\bexcise\b|CESTAT\b|\bDGFT\b|\bDGTR\b|\bimports?\b|\bCENVAT\b|anti[-\s]?dumping|\bDIGIT\b/i,
+  },
   { label: 'SEBI/RBI', re: /\bSEBI\b|\bRBI\b/i },
-  { label: 'Corporate Law', re: /\bNCLAT\b|\bNCLT\b|\binsolvency\b|\bIBC\b|companies act|\bcorporate\b/i },
+  {
+    label: 'Corporate Law',
+    re: /\bNCLAT\b|\bNCLT\b|\bIBBI\b|\binsolvency\b|\bIBC\b|companies act|\bcorporate\b|\bMCA\b|\bSARFAESI\b|\bDRAT\b|\bDRT\b|\bNPA\b|\bCIRP\b|resolution professional|liquidation|winding[\s-]?up|cheque\s+(?:dishonou?r|bounce)|\bNI Act\b|section\s?138|\bFATF\b/i,
+  },
   { label: 'Service Tax', re: /\bservice tax\b/i },
+  // Other state/indirect taxes with their own identity — after the mainstream
+  // tax rules so "GST on mining royalty" stays GST.
+  {
+    label: 'Other Taxations',
+    re: /\bmining\b|entry tax|property tax|\bKVAT\b|\bMVAT\b|\broyalty\b|state budget|\bbudget\b|vehicle tax|\bOET Act\b/i,
+  },
   // After the tax rules, so "TDS on EPF withdrawal" stays Income Tax.
   { label: 'Labour Law', re: /\blabou?r\b|\bEPFO?\b|provident fund|\bgratuity\b/i },
-  // Profession/audit pieces (ICAI news, audit guides) — last, so a subject
+  // Profession/audit pieces (ICAI/NFRA news, audit guides) — last, so a subject
   // keyword ("GST audit") wins over the generic profession vocabulary.
   {
     label: 'Audit/Profession',
-    re: /\btax audit\b|\bICAI\b|\bICSI\b|chartered accountants?\b|\bCA firms?\b|books of accounts|\bauditing\b|statutory audit/i,
+    re: /\btax audit\b|\bICAI\b|\bICSI\b|\bNFRA\b|chartered accountants?\b|\bCA firms?\b|\bCA (?:foundation|final|inter|intermediate)\b|books of accounts|\bauditing\b|statutory audit/i,
   },
 ];
 
@@ -96,19 +121,99 @@ export function categoryFromTitle(title: string): string | null {
 }
 
 /**
- * The report-category row for an article: its RSS category tags first (most
- * accurate), else inferred from the title, else the raw tag, else Uncategorized.
+ * The report-category row for an article. A strong title keyword wins first
+ * (per the 2026-07 editorial review): taxscan's RSS tags are often a generic
+ * "Corporate"/"Other Taxations"/"Top Stories" umbrella on the long tail, so a
+ * definite subject signal in the headline (DGFT, MCA, GSTR, DRT…) is more
+ * reliable than the tag. Falls back to the RSS tag alias, then the raw tag,
+ * then Uncategorized.
  */
 export function reportCategory(categories: string[], title = ''): string {
+  const inferred = categoryFromTitle(title);
+  if (inferred) return inferred;
   const subjects = (categories ?? []).map((c) => c.trim()).filter((c) => c && !CROSS_CUTTING.test(c));
   for (const c of subjects) {
     const alias = CATEGORY_ALIASES.find((a) => a.re.test(c));
     if (alias) return alias.label;
   }
-  const inferred = categoryFromTitle(title);
-  if (inferred) return inferred;
   if (subjects.length > 0) return subjects[0]; // unknown subject tag → show as-is
   return 'Uncategorized';
+}
+
+/**
+ * Content type of an article from its title grammar: News reports an actor + an
+ * act ("CBDT Condones…", "Kerala HC Dismisses…"); an Article is knowledge
+ * content a professional uses in daily work (guides, explainers, checklists,
+ * reader questions); a Job post is a JobScan vacancy. Used to split the report's
+ * residual rows ("Uncategorized"/"Unspecified") into news vs knowledge content.
+ * Title-only (no RSS/markup signal exists); ~97% agreement with a manual read of
+ * the 240-item study set — misses default safely to News.
+ */
+const JOB_TITLE_RE = /\bvacanc(y|ies)\b|\brecruitment\b|\bhiring\b|job opening|walk[\s-]*in|\binternship\b/i;
+const ARTICLE_TITLE_PATTERNS: RegExp[] = [
+  /\bhow to\b/i,
+  /\bguide\b/i,
+  /\bexplained\b|\bexplainer\b|\bdecoding\b|\bunderstanding\b|\bsimplified\b/i,
+  /step[\s-]*by[\s-]*step/i,
+  /\bchecklist\b/i,
+  /\bknow\b/i, // "All you need to Know", "Know the rules"
+  /\bdeep dive\b/i,
+  /\bcase (digest|analysis)\b|\banalytical study\b/i,
+  /\bmistakes?\b|\btraps\b|\bnightmares?\b|\bhidden costs?\b/i, // 'traps' plural only: "CBI Trap Case" is news
+  /\btaxation of\b/i,
+  /\brole of\b/i,
+  /\bkey (changes|expenses|considerations|risk areas?|rules)\b/i,
+  /\bpractical\b/i,
+  /\bcompliance calendar\b/i,
+  /\btds rate chart\b|\brate chart\b/i,
+  /\bcomplete list\b|\[pdf download\]|\bdownload pdf\b|\(.*pdf\)/i,
+  /\bmaximis/i,
+  /\bfuture of\b/i,
+  /\ba day in the life\b/i,
+  /\bset[\s-]?off and carry forward\b/i,
+  // Topic-declaration titles ("GST on X…", "RCM on Y…") — knowledge pieces open
+  // with the subject; news opens with an actor + verb.
+  /^(gst|rcm|tds|itc|lut|tax)\s+(on|in|under|for)\b/i,
+  // Noun phrase + colon + enumerated aspects.
+  /:\s[^:]*\b(applicability|taxability|rules|benefits|implications|essentials|challenges|landscape|way forward|considerations|compliance)\b[^:]*$/i,
+  /\bwhy .* matters\b|\bcheck these\b/i,
+  /\bthe (evolving|ultimate|misunderstood|new goldmine)\b/i,
+];
+// A question addressed to the reader reads as knowledge content — unless the
+// title answers it as news ("the department replied / issued FAQs").
+const QUESTION_NEWS_RE = /dept\.? replies|issues? faqs?|faqs? answered/i;
+
+export type ContentType = 'News' | 'Article' | 'Job post';
+export function detectContentType(title: string): ContentType {
+  const t = (title ?? '').trim();
+  if (JOB_TITLE_RE.test(t)) return 'Job post';
+  for (const re of ARTICLE_TITLE_PATTERNS) if (re.test(t)) return 'Article';
+  if (t.includes('?') && !QUESTION_NEWS_RE.test(t)) return 'Article';
+  return 'News';
+}
+
+/**
+ * Heatmap row key for the Category grid. When an article can't be filed under a
+ * known subject ("Uncategorized"), split it by content type so news and
+ * knowledge content are visible separately.
+ */
+export function categoryRowKey(c: { title: string; categories: string[] }): string {
+  const cat = reportCategory(c.categories, c.title);
+  if (cat !== 'Uncategorized') return cat;
+  const type = detectContentType(c.title);
+  return type === 'Article' ? 'Articles – General' : type === 'Job post' ? 'JobScan' : 'Other News';
+}
+
+/**
+ * Heatmap row key for the Bench grid. When the headline names no court
+ * ("Unspecified"), split by content type: department news vs knowledge content
+ * vs job posts.
+ */
+export function benchRowKey(title: string): string {
+  const bench = detectBench(title);
+  if (bench !== 'Unspecified') return bench;
+  const type = detectContentType(title);
+  return type === 'Article' ? 'No bench – Articles' : type === 'Job post' ? 'No bench – Job posts' : 'No bench – News';
 }
 
 // --- Bench from the article title --------------------------------------------
@@ -139,10 +244,12 @@ const BENCHES: { bench: string; re: RegExp }[] = [
   { bench: 'Jharkhand High Court', re: /\bjharkhand\s+(?:high court|HC)\b/i },
   { bench: 'High Court', re: /\bhigh court\b|\bHC\b/i }, // generic, after the named ones
   { bench: 'ITAT', re: /\bITAT\b|income tax appellate tribunal/i },
-  { bench: 'CESTAT', re: /\bCESTAT\b/i },
+  { bench: 'CESTAT', re: /CESTAT\b/i }, // no leading \b so "PCESTAT" also matches
   { bench: 'GSTAT', re: /\bGSTAT\b/i },
   { bench: 'NCLAT', re: /\bNCLAT\b/i },
   { bench: 'NCLT', re: /\bNCLT\b/i },
+  { bench: 'DRAT', re: /\bDRAT\b/i }, // Debts Recovery Appellate Tribunal
+  { bench: 'DRT', re: /\bDRT\b/i }, // Debts Recovery Tribunal
   { bench: 'AAAR', re: /\bAAAR\b/i },
   { bench: 'AAR', re: /\bAAR\b/i },
 ];
@@ -162,9 +269,14 @@ export function detectBench(title: string): string {
 // This is exactly the order BENCHES is declared in (priority HCs sit right after
 // the Supreme Court), so the heatmap reads top-down by judicial hierarchy.
 const BENCH_ORDER = BENCHES.map((b) => b.bench);
+// The three residual "no bench" rows sort after every real bench, in this order.
+const RESIDUAL_BENCH_ORDER = ['No bench – News', 'No bench – Articles', 'No bench – Job posts'];
 export function benchRank(label: string): number {
   const i = BENCH_ORDER.indexOf(label);
-  return i === -1 ? BENCH_ORDER.length : i; // unknown / 'Unspecified' → last
+  if (i !== -1) return i;
+  const j = RESIDUAL_BENCH_ORDER.indexOf(label);
+  if (j !== -1) return BENCH_ORDER.length + j; // residual rows last, in a fixed order
+  return BENCH_ORDER.length + RESIDUAL_BENCH_ORDER.length; // truly unknown → very last
 }
 
 export type HeatmapRow = { label: string; perDay: number[]; total: number };
@@ -298,11 +410,11 @@ export async function buildReport(opts: {
   const rows = dedupeByArticle(campaigns.filter((c) => isArticleUrl(c.url)));
   const prevTotal = new Set(prevCampaigns.filter((c) => isArticleUrl(c.url)).map(articleKey)).size;
 
-  const byCategory = buildHeatmap((c) => reportCategory(c.categories, c.title), rows, dates);
+  const byCategory = buildHeatmap((c) => categoryRowKey(c), rows, dates);
   // Bench heatmap is ordered by judicial hierarchy (SC → priority HCs → other
-  // HCs → tribunals → Unspecified), not by volume.
+  // HCs → tribunals → the three "no bench" residual rows last), not by volume.
   const byBench = buildHeatmap(
-    (c) => detectBench(c.title),
+    (c) => benchRowKey(c.title),
     rows,
     dates,
     (a, b) => benchRank(a.label) - benchRank(b.label) || b.total - a.total,

@@ -1,5 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { prisma } from '../lib/prisma';
-import { buildReport, customReportWindow, detectBench, istDateKey, reportCategory } from '../services/reports';
+import {
+  benchRowKey,
+  buildReport,
+  categoryRowKey,
+  customReportWindow,
+  detectBench,
+  detectContentType,
+  istDateKey,
+  reportCategory,
+} from '../services/reports';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(y: number, m: number, d: number, h = 0, min = 0): Date {
@@ -81,8 +92,13 @@ describe('reportCategory', () => {
     // taxscan's feed emits ONE joined tag string, not separate tags.
     expect(reportCategory(['Other Taxations,Top Stories'])).toBe('Other Taxations');
     expect(reportCategory(['Other Taxations'])).toBe('Other Taxations');
-    // The tag wins over title inference — respect taxscan's own tagging.
+    // A strong title keyword now WINS over the generic tag (2026-07 editorial
+    // review): "Other Taxations" is taxscan's guides umbrella, so a TDS guide is
+    // really Income Tax. Tags still decide when the title has no subject signal.
     expect(reportCategory(['Other Taxations,Top Stories'], 'How to Claim a TDS Refund: A Guide')).toBe(
+      'Income Tax',
+    );
+    expect(reportCategory(['Other Taxations,Top Stories'], 'A generic guide with no subject')).toBe(
       'Other Taxations',
     );
   });
@@ -115,6 +131,100 @@ describe('reportCategory', () => {
     expect(reportCategory([], 'Supreme Court and High Courts Weekly Round Up')).toBe('Round-Ups/Digests');
     expect(reportCategory([], 'CA Vacancy in Deloitte')).toBe('JobScan');
     expect(reportCategory([], 'Recruitment: Income Tax Department hiring Inspectors')).toBe('JobScan');
+  });
+
+  it('catches the GST family the old \\bGST\\b boundary missed (GSTR/GSTN/IGST/…)', () => {
+    for (const t of [
+      'How to Reconcile Your Books with GSTR-2B in Under 30 Minutes',
+      'GSTN Revises AATO Amendment Timeline for FY 2025-26',
+      'IGST Refund Proceedings Quashed: Calcutta HC',
+      'CGST Officers conduct search',
+    ]) {
+      expect(reportCategory([], t)).toBe('GST');
+    }
+  });
+
+  it('applies the 2026-07 editorial keyword widenings (safe forms only)', () => {
+    expect(reportCategory([], 'MCA extends Companies Compliance Facilitation Scheme, 2026')).toBe('Corporate Law');
+    expect(reportCategory([], 'DRT Quashes Indian Bank Auction for Procedural Violations')).toBe('Corporate Law');
+    expect(reportCategory([], 'SARFAESI Recovery Not Subject to Trust Committee Approval: Kerala HC')).toBe(
+      'Corporate Law',
+    );
+    expect(reportCategory([], 'DGFT Notifies Tariff Rate Quotas for UK Vehicle Imports')).toBe('Customs');
+    expect(reportCategory([], 'NFRA Urges Auditors to Review Uncorrected Errors')).toBe('Audit/Profession');
+    expect(reportCategory([], 'Mining Lease Tenure Row: Orissa HC Questions Penalty Tax Demand')).toBe(
+      'Other Taxations',
+    );
+    expect(reportCategory([], 'Karnataka HC on 8-Year Delay in Filing Before CIT(A), Says s. 264 Revision')).toBe(
+      'Income Tax',
+    );
+    // Unicode non-breaking hyphen (U+2011) in "Income‑Tax" still resolves.
+    expect(reportCategory([], 'Income‑Tax (Amendment) Ordinance, 2026: FIIs Gain Exemption')).toBe('Income Tax');
+    // Safe-phrasing guardrails: broad words must NOT hijack unrelated stories.
+    expect(reportCategory([], 'GST registration cancelled: Madras HC')).toBe('GST'); // not Income Tax
+    expect(reportCategory([], 'GST Audit: Department issues notices')).toBe('GST'); // not Audit
+  });
+});
+
+describe('detectContentType', () => {
+  it('separates news from knowledge content and job posts', () => {
+    expect(detectContentType('Kerala HC Dismisses Revenue’s Appeal [Read Order]')).toBe('News');
+    expect(detectContentType('CBDT notifies revised ITR-3 form for AY 2025-26')).toBe('News');
+    expect(detectContentType('How to Reconcile Your Books with GSTR-2B: A Step-by-Step Guide')).toBe('Article');
+    expect(detectContentType('Taxation of ESOPs and RSUs in the Hands of Employees')).toBe('Article');
+    expect(detectContentType('GST on Renting of Property: Applicability, Rate and ITC')).toBe('Article');
+    expect(detectContentType('Income Below Rs. 12 Lakh? Don’t Skip ITR Filing')).toBe('Article'); // reader question
+    expect(detectContentType('CA Vacancy at Deloitte India')).toBe('Job post');
+    // 'traps' plural is knowledge content; "Trap Case" (singular) is news.
+    expect(detectContentType('5 Hidden Traps in the New TDS Rules')).toBe('Article');
+    expect(detectContentType('CBI Trap Case: Officer caught red-handed')).toBe('News');
+  });
+
+  it('matches the 240-item study ground truth (regression lock)', () => {
+    const items: { title: string; type: string }[] = JSON.parse(
+      readFileSync(join(__dirname, 'fixtures', 'content-type-groundtruth.json'), 'utf8'),
+    );
+    const hits = items.filter((x) => detectContentType(x.title) === x.type).length;
+    expect(hits).toBe(items.length);
+  });
+});
+
+describe('column-G editorial category corrections (2026-07)', () => {
+  it('resolves at least 59 of the 71 desk corrections; the shortfall is the known broad-keyword set', () => {
+    const corr: { title: string; target: string; note: string }[] = JSON.parse(
+      readFileSync(join(__dirname, 'fixtures', 'category-corrections.json'), 'utf8'),
+    );
+    const hits = corr.filter((c) => reportCategory([], c.title) === c.target);
+    expect(hits.length).toBeGreaterThanOrEqual(59);
+  });
+});
+
+describe('detectBench — recovery tribunals + residual split', () => {
+  it('recognises DRT and DRAT (were Unspecified)', () => {
+    expect(detectBench('DRT Quashes Indian Bank Auction: Orders Refund [Read Order]')).toBe('DRT');
+    expect(detectBench('DRAT upholds DRT’s Cancellation of Auction [Read Order]')).toBe('DRAT');
+    expect(detectBench('PCESTAT sets aside demand')).toBe('CESTAT'); // no leading \\b
+  });
+
+  it('splits "Unspecified" into news / articles / job-post residual rows', () => {
+    expect(benchRowKey('CBDT notifies revised ITR form')).toBe('No bench – News');
+    expect(benchRowKey('How to file GST returns: A Complete Guide')).toBe('No bench – Articles');
+    expect(benchRowKey('CA Vacancy at a Big-4 firm')).toBe('No bench – Job posts');
+    // A named bench is untouched.
+    expect(benchRowKey('Bombay HC quashes reassessment [Read Order]')).toBe('Bombay High Court');
+  });
+});
+
+describe('categoryRowKey — "Uncategorized" residual split', () => {
+  it('splits the leftover row into Other News vs Articles – General', () => {
+    expect(categoryRowKey({ title: 'Some adjacent-law HC ruling with no tax keyword', categories: [] })).toBe(
+      'Other News',
+    );
+    expect(categoryRowKey({ title: 'A Practical Deep Dive with no subject keyword', categories: [] })).toBe(
+      'Articles – General',
+    );
+    // A known subject is untouched.
+    expect(categoryRowKey({ title: 'GST on rent explained', categories: [] })).toBe('GST');
   });
 });
 
@@ -184,12 +294,13 @@ describe('buildReport', () => {
 
     expect(r.byBench.rows.find((x) => x.label === 'Bombay High Court')?.total).toBe(1);
     expect(r.byBench.rows.find((x) => x.label === 'ITAT')?.total).toBe(1);
-    expect(r.byBench.rows.find((x) => x.label === 'Unspecified')?.total).toBe(1); // the explainer
+    // The explainer names no court → "Unspecified" now splits by content type.
+    expect(r.byBench.rows.find((x) => x.label === 'No bench – Articles')?.total).toBe(1);
 
     expect(r.quality).toMatchObject({ qualified: 1, fallback: 1, review: 1 });
   });
 
-  it('orders bench rows by hierarchy (SC → priority HC → other HC → tribunal → Unspecified), not volume', async () => {
+  it('orders bench rows by hierarchy (SC → priority HC → other HC → tribunal → residual rows), not volume', async () => {
     const p = `test-report-order-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const start = ist(2026, 7, 6);
     const end = ist(2026, 7, 13);
@@ -202,7 +313,7 @@ describe('buildReport', () => {
     await mk('Supreme Court ruling [Read Judgment]', 1);
     await mk('Bombay HC quashes notice [Read Order]', 1); // priority HC
     await mk('Delhi High Court allows appeal', 1); // other HC
-    await mk('GST explainer with no court', 1); // Unspecified
+    await mk('GST explainer with no court', 1); // no bench → residual (Article)
 
     const r = await buildReport({ portal: p, period: 'weekly', start, end });
     expect(r.byBench.rows.map((x) => x.label)).toEqual([
@@ -210,7 +321,7 @@ describe('buildReport', () => {
       'Bombay High Court',
       'Delhi High Court',
       'ITAT',
-      'Unspecified',
+      'No bench – Articles',
     ]);
   });
 

@@ -5,11 +5,55 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-07-11) — ALL CLOSED, nothing open
+## ▶️ NEXT STEPS / open items (as of 2026-07-13) — ONE open item (-3, paused on user data)
 
-Every numbered item below is done. The board is clean: no open work, only routine
-monitoring (dashboard health gates) and whatever the user asks for next. First scheduled
-coverage email carrying the new "How it was read" section: **Mon 2026-07-13 07:00 IST**.
+Item -3 below is open and paused. Everything else is done. First scheduled coverage email
+carrying the "How it was read" section went out **Mon 2026-07-13 07:00 IST** — confirm with
+the user it landed well.
+
+-3. **✅ SHIPPED to `main` 2026-07-15 — editorial CONFIRMED; FEMA kept as a separate row.**
+   The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`** (71
+   keyword→category rules, e.g. "DGFT, Import- Customs"). Decisions taken: strong **title keyword
+   wins over generic RSS tags**; **broad keywords constrained to safe phrasings**; do **BOTH** the
+   category remapping AND the News/Articles/Job split. Shipped to `develop` (commit `b0d08b5`,
+   suite **324/324**) — report-only, no migration/flag, history reclassifies; `readsReport` moved
+   to the new row-key helpers so the Reads tab + email stay in sync. What changed in
+   `src/services/reports.ts`: (1) `reportCategory` now title-first; (2) widened Income Tax / GST /
+   Customs / Corporate / Other Taxations / Audit / Benami keyword sets (safe forms only); (3) bug
+   fixes the data caught — `\bGST\b` missed **GSTR/GSTN/IGST/CGST/SGST**, "Income‑Tax" with a
+   U+2011 hyphen missed the rule, `CIT(A)` trailing `\b`; (4) `detectBench` gains **DRT + DRAT**,
+   `CESTAT` relaxed for PCESTAT; (5) `detectContentType` + `categoryRowKey`/`benchRowKey` split
+   **Uncategorized → Other News / Articles – General** and **Unspecified → No bench – News/
+   Articles/Job posts**. **Coverage 59/71**; the 12 held back are broad-word collisions +
+   the FEMA question (default safely). Fixtures committed as regression oracles
+   (`src/__tests__/fixtures/content-type-groundtruth.json` 240/240 lock +
+   `category-corrections.json` ≥59). **Editorial PDF produced** (`docs/News-vs-Articles-Report-
+   Corrections.{html,pdf}`, untracked) — circulated + confirmed. **FEMA-row decision = keep
+   separate** (already the default; no code change). Merged develop→main (Railway auto-deploys;
+   report-only, internal, zero subscriber impact). **Item -3 DONE — board clean.** The 12
+   held-back items stay uncaught by design (broad-word safety). The original study groundwork
+   (below) is unchanged. ~~PAUSED on user data~~ — data received + shipped. Groundwork
+   already complete (this session's News-vs-Articles study): dumped ALL prod campaigns
+   (1,273 rows → 1,137 unique articles, 2026-06-01→07-13) via
+   `railway variables --service Postgres --json` → `DATABASE_PUBLIC_URL` → read-only psql,
+   replayed the report's own dedupe/classify pipeline, and manually read all **240 residual
+   items** (52 Uncategorized on the category grid, 206 Unspecified on the bench grid, 18 in
+   both). Result: they split **News 115 (48%) / Articles = knowledge content 91 (38%) /
+   Job posts 34 (14%)**. Uncategorized is 87% adjacent-law court news (SARFAESI/DRT, NI Act,
+   PC Act, property tax — no tax keyword in title); Unspecified is where the knowledge
+   content hides (44% Articles). No hard signal exists (no RSS "Articles" tag; 95% of URLs
+   under `/top-stories/`; page markup always `articleSection:"Top Stories"`), so the draft
+   classifier is title-grammar based (`detectContentType`, ~97% agreement with the manual
+   read; 'traps' must stay PLURAL — "CBI Trap Case" is news). Proposal on the table: split
+   Unspecified → "No bench – News / – Articles / – Job posts", split Uncategorized →
+   "Other News" + "Articles – General", add missing DRT/DRAT benches (also: "PCESTAT"
+   doesn't match /\bCESTAT\b/) — report-only change like PR #28, history reclassifies, and
+   it flows to the emailed report + Reads tab for free. Assets (docs/, untracked by design):
+   `News-vs-Articles-Study.{html,pdf,xlsx}` (shared with colleague),
+   `News-vs-Articles-draft-classifier.ts` (tested ruleset + study harness; its hardcoded
+   scratchpad paths need fixing on reuse), `News-vs-Articles-study-data.json` (240 labeled
+   items = ground-truth fixture for tests). Artifact:
+   https://claude.ai/code/artifact/3186fcc8-44dc-47b8-94f2-8483796be55b
 
 -2. **✅ SHIPPED 2026-07-10 — custom date-range reports (Reports → "Custom" tab).** Editors can
    now pick any From/To window of up to **30 days** (both ends inclusive, IST; "To" may be

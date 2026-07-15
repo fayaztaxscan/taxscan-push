@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
-import { detectBench, reportCategory, benchRank, istDateKey } from './reports';
+import { benchRowKey, categoryRowKey, benchRank, istDateKey } from './reports';
 import {
   loadGaCredentials,
   getGaAccessToken,
@@ -122,8 +122,8 @@ export async function buildReadsReport(opts: {
         const views = Number(r.metricValues[0].value) || 0;
         articleViews += views;
         articlesRead += 1;
-        bump(byBench, detectBench(title), wi, views);
-        bump(byCategory, reportCategory([], title), wi, views);
+        bump(byBench, benchRowKey(title), wi, views);
+        bump(byCategory, categoryRowKey({ title, categories: [] }), wi, views);
       }
     }
     windows.push({ label: w.label, days: w.days, siteViews, articleViews, articlesRead });
@@ -245,7 +245,10 @@ export async function readsSummaryForWindow(opts: {
   for (const [path, e] of byPath) {
     totalReads += e.reads;
     pushReads += e.pushReads;
-    const label = reportCategory([], titleFromPath(path));
+    // Same row keys as the coverage heatmaps (Uncategorized splits into Other
+    // News / Articles – General). Titles here are slug-derived, so content-type
+    // detection is coarser and defaults safely to News.
+    const label = categoryRowKey({ title: titleFromPath(path), categories: [] });
     cat.set(label, (cat.get(label) ?? 0) + e.reads);
   }
   const byCategory = [...cat.entries()]
