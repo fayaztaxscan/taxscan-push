@@ -11,9 +11,27 @@ Item -3 below is open and paused. Everything else is done. First scheduled cover
 carrying the "How it was read" section went out **Mon 2026-07-13 07:00 IST** — confirm with
 the user it landed well.
 
--3. **⏳ OPEN / PAUSED 2026-07-13 — report corrections: rewire report logic when the user
-   shares their data (next session).** The user flagged that the reports need corrections and
-   will share the data/insights next session — do NOT ship anything until then. Groundwork
+-3. **🟡 IMPLEMENTED ON `develop` 2026-07-15, AWAITING EDITORIAL SIGN-OFF (was PAUSED on data).**
+   The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`** (71
+   keyword→category rules, e.g. "DGFT, Import- Customs"). Decisions taken: strong **title keyword
+   wins over generic RSS tags**; **broad keywords constrained to safe phrasings**; do **BOTH** the
+   category remapping AND the News/Articles/Job split. Shipped to `develop` (commit `b0d08b5`,
+   suite **324/324**) — report-only, no migration/flag, history reclassifies; `readsReport` moved
+   to the new row-key helpers so the Reads tab + email stay in sync. What changed in
+   `src/services/reports.ts`: (1) `reportCategory` now title-first; (2) widened Income Tax / GST /
+   Customs / Corporate / Other Taxations / Audit / Benami keyword sets (safe forms only); (3) bug
+   fixes the data caught — `\bGST\b` missed **GSTR/GSTN/IGST/CGST/SGST**, "Income‑Tax" with a
+   U+2011 hyphen missed the rule, `CIT(A)` trailing `\b`; (4) `detectBench` gains **DRT + DRAT**,
+   `CESTAT` relaxed for PCESTAT; (5) `detectContentType` + `categoryRowKey`/`benchRowKey` split
+   **Uncategorized → Other News / Articles – General** and **Unspecified → No bench – News/
+   Articles/Job posts**. **Coverage 59/71**; the 12 held back are broad-word collisions +
+   the FEMA question (default safely). Fixtures committed as regression oracles
+   (`src/__tests__/fixtures/content-type-groundtruth.json` 240/240 lock +
+   `category-corrections.json` ≥59). **Editorial PDF produced** (`docs/News-vs-Articles-Report-
+   Corrections.{html,pdf}`, untracked) — user is circulating it. **⏳ Before develop→main PR:**
+   (a) editorial confirms; (b) **FEMA-row decision** (keep separate / fold into RBI-SEBI / ED-FEMA
+   raids → Benami-PMLA). The original study groundwork (below) is unchanged.
+   ~~PAUSED on user data~~ — data received. Groundwork
    already complete (this session's News-vs-Articles study): dumped ALL prod campaigns
    (1,273 rows → 1,137 unique articles, 2026-06-01→07-13) via
    `railway variables --service Postgres --json` → `DATABASE_PUBLIC_URL` → read-only psql,
