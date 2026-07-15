@@ -79,20 +79,20 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps: ONE (2026-07-15) — report-logic corrections, IMPLEMENTED on `develop`,
-AWAITING EDITORIAL SIGN-OFF.** The user delivered the corrections as **column G of
-`docs/News-vs-Articles-Study.xlsx`** (71 keyword→category rules). Decisions: strong **title
-keyword wins over generic RSS tags**; **broad keywords constrained to safe phrasings**; do
-**BOTH** the category remapping AND the News/Articles/Job split. Shipped to `develop`
+**Open next steps: NONE — board clean as of 2026-07-15.** Last item (report-logic corrections)
+SHIPPED to `main` this date; editorial confirmed and **FEMA is kept as a separate row** (user's
+decision). The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`**
+(71 keyword→category rules). Decisions: strong **title keyword wins over generic RSS tags**;
+**broad keywords constrained to safe phrasings**; do **BOTH** the category remapping AND the
+News/Articles/Job split. Merged develop→main
 (commit `b0d08b5`, suite 324/324) — report-only in `src/services/reports.ts` (title-first
 `reportCategory`, widened safe keyword sets, `\bGST\b`→GSTR/GSTN/IGST fix, U+2011-hyphen fix,
 DRT/DRAT benches + PCESTAT, `detectContentType` splitting Uncategorized→Other News/Articles–General
 and Unspecified→No bench – News/Articles/Job posts; `readsReport` uses the new row-key helpers).
-**Coverage 59/71** (12 held back = broad-word collisions + the FEMA-row question, all default
-safely). Fixtures committed as regression oracles. Editorial PDF at
-`docs/News-vs-Articles-Report-Corrections.{html,pdf}` (untracked) — user is circulating it.
-**Before develop→main PR:** editorial confirms + decide the **FEMA row** (keep separate / fold
-into RBI-SEBI / ED-FEMA raids→Benami-PMLA). Groundwork done 2026-07-13 (News-vs-Articles study): full prod dump
+**Coverage 59/71** (12 held back = broad-word collisions, uncaught by design; default safely).
+Fixtures committed as regression oracles. Editorial PDF at
+`docs/News-vs-Articles-Report-Corrections.{html,pdf}` (untracked) — circulated + confirmed.
+Groundwork done 2026-07-13 (News-vs-Articles study): full prod dump
 (1,137 unique articles, 1 Jun–13 Jul) shows the report's residual rows (240 items) split
 **News 115 / Articles (knowledge content) 91 / Job posts 34** — Uncategorized is 87%
 adjacent-law court news (SARFAESI/DRT/NI Act/PC Act titles with no tax keyword); Unspecified

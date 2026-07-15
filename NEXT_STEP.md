@@ -11,7 +11,7 @@ Item -3 below is open and paused. Everything else is done. First scheduled cover
 carrying the "How it was read" section went out **Mon 2026-07-13 07:00 IST** — confirm with
 the user it landed well.
 
--3. **🟡 IMPLEMENTED ON `develop` 2026-07-15, AWAITING EDITORIAL SIGN-OFF (was PAUSED on data).**
+-3. **✅ SHIPPED to `main` 2026-07-15 — editorial CONFIRMED; FEMA kept as a separate row.**
    The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`** (71
    keyword→category rules, e.g. "DGFT, Import- Customs"). Decisions taken: strong **title keyword
    wins over generic RSS tags**; **broad keywords constrained to safe phrasings**; do **BOTH** the
@@ -28,10 +28,11 @@ the user it landed well.
    the FEMA question (default safely). Fixtures committed as regression oracles
    (`src/__tests__/fixtures/content-type-groundtruth.json` 240/240 lock +
    `category-corrections.json` ≥59). **Editorial PDF produced** (`docs/News-vs-Articles-Report-
-   Corrections.{html,pdf}`, untracked) — user is circulating it. **⏳ Before develop→main PR:**
-   (a) editorial confirms; (b) **FEMA-row decision** (keep separate / fold into RBI-SEBI / ED-FEMA
-   raids → Benami-PMLA). The original study groundwork (below) is unchanged.
-   ~~PAUSED on user data~~ — data received. Groundwork
+   Corrections.{html,pdf}`, untracked) — circulated + confirmed. **FEMA-row decision = keep
+   separate** (already the default; no code change). Merged develop→main (Railway auto-deploys;
+   report-only, internal, zero subscriber impact). **Item -3 DONE — board clean.** The 12
+   held-back items stay uncaught by design (broad-word safety). The original study groundwork
+   (below) is unchanged. ~~PAUSED on user data~~ — data received + shipped. Groundwork
    already complete (this session's News-vs-Articles study): dumped ALL prod campaigns
    (1,273 rows → 1,137 unique articles, 2026-06-01→07-13) via
    `railway variables --service Postgres --json` → `DATABASE_PUBLIC_URL` → read-only psql,
