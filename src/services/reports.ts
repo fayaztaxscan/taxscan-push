@@ -73,7 +73,9 @@ const TITLE_CATEGORY: { label: string; re: RegExp }[] = [
   { label: 'International Tax/TP', re: /transfer pricing|international tax(ation)?|\bDTAA\b/i },
   {
     label: 'Benami/PMLA',
-    re: /\bPMLA\b|\bbenami\b|money[\s-]*laundering|enforcement directorate|unexplained\s+(?:asset|money|investment|cash|credit|income)/i,
+    // NOTE: only "unexplained asset(s)" (PMLA attachment). Do NOT add unexplained
+    // cash/credit/income/investment — those are s.68/69 Income-Tax additions.
+    re: /\bPMLA\b|\bbenami\b|money[\s-]*laundering|enforcement directorate|unexplained\s+assets?\b/i,
   },
   { label: 'FEMA', re: /\bFEMA\b|foreign exchange/i },
   // Broad tax subjects. Keyword sets widened per the 2026-07 editorial review
