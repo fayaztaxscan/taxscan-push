@@ -163,6 +163,11 @@ describe('reportCategory', () => {
     // Safe-phrasing guardrails: broad words must NOT hijack unrelated stories.
     expect(reportCategory([], 'GST registration cancelled: Madras HC')).toBe('GST'); // not Income Tax
     expect(reportCategory([], 'GST Audit: Department issues notices')).toBe('GST'); // not Audit
+    // "unexplained asset" = PMLA; but s.68/69 "unexplained cash/credit/income/
+    // investment" are Income-Tax additions and must stay Income Tax.
+    expect(reportCategory([], 'Rs. 100 cr Unexplained Asset case: Calcutta HC grants bail')).toBe('Benami/PMLA');
+    expect(reportCategory([], 'Advance for Land cannot be Unexplained Cash Credit u/s 68: ITAT')).toBe('Income Tax');
+    expect(reportCategory([], 'Cash Deposits treated as Unexplained Income struck down: ITAT')).toBe('Income Tax');
   });
 });
 
