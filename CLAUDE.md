@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-07-13) — LIVE in production
+## Current state (updated 2026-07-15) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~2,400 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
 stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
@@ -84,14 +84,18 @@ SHIPPED to `main` this date; editorial confirmed and **FEMA is kept as a separat
 decision). The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`**
 (71 keyword→category rules). Decisions: strong **title keyword wins over generic RSS tags**;
 **broad keywords constrained to safe phrasings**; do **BOTH** the category remapping AND the
-News/Articles/Job split. Merged develop→main
-(commit `b0d08b5`, suite 324/324) — report-only in `src/services/reports.ts` (title-first
-`reportCategory`, widened safe keyword sets, `\bGST\b`→GSTR/GSTN/IGST fix, U+2011-hyphen fix,
-DRT/DRAT benches + PCESTAT, `detectContentType` splitting Uncategorized→Other News/Articles–General
-and Unspecified→No bench – News/Articles/Job posts; `readsReport` uses the new row-key helpers).
-**Coverage 59/71** (12 held back = broad-word collisions, uncaught by design; default safely).
-Fixtures committed as regression oracles. Editorial PDF at
-`docs/News-vs-Articles-Report-Corrections.{html,pdf}` (untracked) — circulated + confirmed.
+News/Articles/Job split. Merged develop→main (**PR #39** `b0d08b5`, suite 324/324) — report-only
+in `src/services/reports.ts` (title-first `reportCategory`, widened safe keyword sets,
+`\bGST\b`→GSTR/GSTN/IGST fix, U+2011-hyphen fix, DRT/DRAT benches + PCESTAT, `detectContentType`
+splitting Uncategorized→Other News/Articles–General and Unspecified→No bench – News/Articles/Job
+posts; `readsReport` uses the new row-key helpers). **Coverage 59/71** (12 held back = broad-word
+collisions, uncaught by design; default safely). Fixtures committed as regression oracles. Editorial
+PDF at `docs/News-vs-Articles-Report-Corrections.{html,pdf}` (untracked) — circulated + confirmed.
+**Post-ship (PR #40 `98d9f95`):** validated old-vs-new over a live prod week (6–12 Jul, 225 unique)
+and fixed a false positive — Benami/PMLA keyword now matches **`unexplained asset(s)` only** (s.68/69
+"unexplained cash credit/income/investment" are Income-Tax, NOT PMLA). **VERIFIED LIVE 2026-07-15:**
+`/api/reports?period=weekly` returns the new rows (No bench – News/Articles/Job posts, Other News);
+Uncategorized/Unspecified gone. History reclassifies automatically (computed at report time).
 Groundwork done 2026-07-13 (News-vs-Articles study): full prod dump
 (1,137 unique articles, 1 Jun–13 Jul) shows the report's residual rows (240 items) split
 **News 115 / Articles (knowledge content) 91 / Job posts 34** — Uncategorized is 87%
