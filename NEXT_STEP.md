@@ -5,12 +5,17 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-07-28) — ONE open item (-4, awaiting flag flip)
+## ▶️ NEXT STEPS / open items (as of 2026-07-28) — code board CLEAN; ONE user-side item
 
-Item -4 below is shipped to `develop` but the flags are OFF in prod. Everything else is done.
+Item -4 below is SHIPPED + LIVE. The only thing left is user-side: send the editorial note asking
+taxscan to 301-redirect deleted duplicates (the residual gap no code can close).
 
--4. **⚠️ 2026-07-28 — DEAD PUSH LINKS: duplicate-title guard + pre-push link check shipped to
-   `develop`, FLAGS OFF.** User tapped a notification and got taxscan's 404 page. **Root cause is
+-4. **✅ SHIPPED + LIVE 2026-07-28 — DEAD PUSH LINKS: duplicate-title guard + pre-push link check.
+   Merged via PR #42 (merge `83b9bfe`, commit `03c2fdb`); BOTH FLAGS SET TRUE on Railway at
+   13:23 UTC and verified in the live logs** — poll lines now carry `duplicates=`, a field that
+   exists only in the new build, which is also how you verify a backend-only deploy here (there is
+   no version endpoint; `/healthz` returns only `{"status":"ok"}`). Deploy was zero-downtime
+   (healthz 200 throughout). User tapped a notification and got taxscan's 404 page. **Root cause is
    NOT ours** — we push the exact URL the RSS feed gives us. taxscan published the SAME story
    twice as two posts (different ids/slugs); GUID dedupe can't see a re-post, so the second copy
    classified and pushed as fresh news; the desk later deleted one of the two posts, and whichever
@@ -47,8 +52,16 @@ Item -4 below is shipped to `develop` but the flags are OFF in prod. Everything 
    consistently the newer copy (07-28 newer deleted, 07-27 OLDER deleted). The only complete fix is
    editorial: **301-redirect a removed duplicate to the survivor instead of hard-deleting it** —
    drafted at `docs/NOTE-TO-EDITORIAL-deleted-articles.md` (untracked, per the docs/ precedent).
-   **TODO:** merge develop→main, then set both flags true on Railway and watch the poller log for
-   `duplicates=` / the pacer for `dead_link`.
+   **REMAINING (user-side):** send that note to the desk.
+   **Watch:** the poller logs `duplicates=N` each tick (a hold also prints
+   `[rss] duplicate headline within 72h → REVIEW: "<title>"` and the article lands on Review); the
+   pacer logs `[pacer] article gone from the site — archived, not sent` and flips that campaign to
+   EXPIRED. At ~3 republishes/week, expect the first `duplicates=1` within days, not hours.
+   **Railway access note:** the `railway` CLI is NO LONGER installed here, but the stored OAuth
+   session at `~/.railway/config.json` still works against the GraphQL API
+   (`https://backboard.railway.com/graphql/v2`, `Authorization: Bearer <accessToken>`) — that is
+   how these flags were set (`variableUpsert`; project `b08dbc23…`, env `9bd24594…`, service
+   `dae954c6…`). The access token is short-lived (~1 h), so re-read it from the config each time.
 
 Everything below is history. First scheduled coverage email carrying the "How it was read"
 section went out **Mon 2026-07-13 07:00 IST** — confirm with the user it landed well.
