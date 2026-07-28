@@ -5,11 +5,53 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-07-13) — ONE open item (-3, paused on user data)
+## ▶️ NEXT STEPS / open items (as of 2026-07-28) — ONE open item (-4, awaiting flag flip)
 
-Item -3 below is open and paused. Everything else is done. First scheduled coverage email
-carrying the "How it was read" section went out **Mon 2026-07-13 07:00 IST** — confirm with
-the user it landed well.
+Item -4 below is shipped to `develop` but the flags are OFF in prod. Everything else is done.
+
+-4. **⚠️ 2026-07-28 — DEAD PUSH LINKS: duplicate-title guard + pre-push link check shipped to
+   `develop`, FLAGS OFF.** User tapped a notification and got taxscan's 404 page. **Root cause is
+   NOT ours** — we push the exact URL the RSS feed gives us. taxscan published the SAME story
+   twice as two posts (different ids/slugs); GUID dedupe can't see a re-post, so the second copy
+   classified and pushed as fresh news; the desk later deleted one of the two posts, and whichever
+   one we'd pushed became a dead link. **Key CMS fact:** taxscan resolves articles by the TRAILING
+   ID and 301s any slug (verified: `/top-stories/x-1449424` → canonical). So a renamed headline can
+   NEVER break our links — only an actual deletion can.
+   **Measured blast radius (GA4, 14 days):** 2 confirmed dead pushes, ~1.5% of ~129 pushes, each
+   having reached ~2,550 subscribers — (a) 2026-07-28 18:08 IST *Revenue Cannot Revive…NCLT: Bombay
+   HC* (id `1449457` deleted, `1449424` survives); (b) 2026-07-27 08:24 UTC *Tax and Interest…
+   Unutilised GST ITC: Madras HC* (id `1449354` recorded 51 live views **then 14 "Page Not found -
+   404" views** — caught mid-deletion; `1449379` survives). Everything else healthy: 6,443
+   push-attributed pageviews/14d with no systemic breakage, all 38 queued URLs live. A third
+   suspect (Gujarat HC pre-deposit) was a FALSE POSITIVE — its article is fine (1,653 views); the
+   dead hits were a truncated `/financial-incapacity-to-pay-rs-19l` with no id (someone's broken
+   copy-paste, not our push).
+   **GOTCHA for re-measuring:** filtering GA by `sessionSource='taxscan-push'` UNDERCOUNTS 404
+   landings badly (returned 0) — GA4 session attribution reflects how the SESSION started, so a
+   push click inside an existing session isn't tagged. Query `pageTitle` EXACT `Page Not found -
+   404` across ALL sources instead, then cross-reference paths against pushed titles. The 404 page
+   does fire GA (`G-2PTEG0Z7SB`), so it is measurable. Also: `/api/campaigns` does NOT return `url`
+   (dropped in the DTO), and the railway CLI is NO LONGER installed on this machine — GA was the
+   only route to this answer.
+   **Shipped (commit on `develop`, suite 338/338, was 324):** (1) `DUPLICATE_TITLE_GUARD_ENABLED`
+   (+`DUPLICATE_TITLE_WINDOW_HOURS`=72) — `normalizeTitle()` in `poller.ts` strips `[Read Order]`
+   tags/punctuation/case; a headline already captured inside the window routes to **REVIEW**
+   (defer-not-drop, so the weekly Round-Up just needs an approve click) and the poll result gains a
+   `duplicates` counter. (2) `LINK_CHECK_ENABLED` (+`LINK_CHECK_TIMEOUT_MS`=5000) — the pacer HEADs
+   the URL after its atomic claim, and archives a deleted article as **EXPIRED** (NOT back to
+   DRAFT, else every later tick re-picks it and the queue wedges); new reason `dead_link`; the slot
+   isn't consumed since no SENT event is written. **FAIL-OPEN by design** — only 404/410 count as
+   dead; timeouts/5xx/network errors send as normal.
+   **RESIDUAL GAP — cannot be fixed in code:** if taxscan deletes the copy we already pushed, the
+   notification is already on 2,550 phones and its link can't be edited. Deletion is not
+   consistently the newer copy (07-28 newer deleted, 07-27 OLDER deleted). The only complete fix is
+   editorial: **301-redirect a removed duplicate to the survivor instead of hard-deleting it** —
+   drafted at `docs/NOTE-TO-EDITORIAL-deleted-articles.md` (untracked, per the docs/ precedent).
+   **TODO:** merge develop→main, then set both flags true on Railway and watch the poller log for
+   `duplicates=` / the pacer for `dead_link`.
+
+Everything below is history. First scheduled coverage email carrying the "How it was read"
+section went out **Mon 2026-07-13 07:00 IST** — confirm with the user it landed well.
 
 -3. **✅ SHIPPED to `main` 2026-07-15 — editorial CONFIRMED; FEMA kept as a separate row.**
    The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`** (71

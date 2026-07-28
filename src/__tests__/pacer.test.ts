@@ -1,6 +1,6 @@
 import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { runPacerTick } from '../services/pacer';
+import { runPacerTick, isUrlDeadDefault } from '../services/pacer';
 import type { Sender } from '../services/send';
 import type { SendQueue } from '../services/classify';
 import { validKeys } from './helpers';
@@ -407,5 +407,166 @@ describe('runPacerTick — morning backfill (§5a)', () => {
     const r = await runPacerTick({ ...BASE, backfillEnabled: false, now, portal, sender: okSender() });
     expect(r.backfill).toBe(false);
     expect(r.reason).toBe('empty'); // no fresh + backfill off → idle
+  });
+});
+
+describe('runPacerTick — pre-push link check', () => {
+  it('archives an article the CMS has deleted instead of pushing a dead link', async () => {
+    const portal = uniquePortal('deadlink');
+    const now = ist(2026, 7, 28, 12, 0);
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 11, 0),
+    });
+    const sender = okSender();
+
+    const r = await runPacerTick({
+      ...BASE,
+      now,
+      portal,
+      sender,
+      linkCheck: true,
+      isUrlDead: async () => true,
+    });
+
+    expect(r.reason).toBe('dead_link');
+    expect(r.released).toBeNull();
+    // EXPIRED, not DRAFT — otherwise every later tick re-picks the dead row and
+    // the queue wedges on it.
+    const after = await prisma.campaign.findUnique({ where: { id: c.id } });
+    expect(after?.status).toBe('EXPIRED');
+    const sent = await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } });
+    expect(sent).toBe(0);
+  });
+
+  it('moves on to the next article on the following tick', async () => {
+    const portal = uniquePortal('deadlink-next');
+    await makeSubscriber(portal);
+    const dead = await draft(portal, {
+      title: 'Supreme Court dead ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 10, 0),
+    });
+    const live = await draft(portal, {
+      title: 'Supreme Court live ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 11, 0),
+    });
+    // `draft()` uses one fixed url; the check keys off the url, so separate them.
+    await prisma.campaign.update({
+      where: { id: dead.id },
+      data: { url: 'https://taxscan.in/top-stories/dead-1' },
+    });
+    await prisma.campaign.update({
+      where: { id: live.id },
+      data: { url: 'https://taxscan.in/top-stories/live-1' },
+    });
+
+    const first = await runPacerTick({
+      ...BASE,
+      now: ist(2026, 7, 28, 12, 0),
+      portal,
+      sender: okSender(),
+      linkCheck: true,
+      isUrlDead: async (url) => url.includes('dead'),
+    });
+    expect(first.reason).toBe('dead_link');
+    expect(first.campaignId).toBe(dead.id);
+
+    // No SENT event was written, so spacing does not block the very next tick.
+    const second = await runPacerTick({
+      ...BASE,
+      now: ist(2026, 7, 28, 12, 1),
+      portal,
+      sender: okSender(),
+      linkCheck: true,
+      isUrlDead: async (url) => url.includes('dead'),
+    });
+    expect(second.reason).toBe('sent');
+    expect(second.campaignId).toBe(live.id);
+  });
+
+  it('sends normally when the article is still live', async () => {
+    const portal = uniquePortal('livelink');
+    const now = ist(2026, 7, 28, 12, 0);
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 11, 0),
+    });
+
+    const r = await runPacerTick({
+      ...BASE,
+      now,
+      portal,
+      sender: okSender(),
+      linkCheck: true,
+      isUrlDead: async () => false,
+    });
+
+    expect(r.reason).toBe('sent');
+    expect(r.campaignId).toBe(c.id);
+  });
+
+  it('does not check the link when the flag is off', async () => {
+    const portal = uniquePortal('nolinkcheck');
+    const now = ist(2026, 7, 28, 12, 0);
+    await makeSubscriber(portal);
+    await draft(portal, {
+      title: 'Supreme Court ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 11, 0),
+    });
+    let called = false;
+
+    const r = await runPacerTick({
+      ...BASE,
+      now,
+      portal,
+      sender: okSender(),
+      linkCheck: false,
+      isUrlDead: async () => {
+        called = true;
+        return true;
+      },
+    });
+
+    expect(called).toBe(false);
+    expect(r.reason).toBe('sent');
+  });
+});
+
+describe('isUrlDeadDefault', () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it('treats 404 and 410 as dead', async () => {
+    for (const status of [404, 410]) {
+      global.fetch = (async () => ({ status })) as unknown as typeof fetch;
+      await expect(isUrlDeadDefault('https://taxscan.in/x', 1000)).resolves.toBe(true);
+    }
+  });
+
+  it('fails open on 200, 5xx, and network errors — never blocks a send', async () => {
+    global.fetch = (async () => ({ status: 200 })) as unknown as typeof fetch;
+    await expect(isUrlDeadDefault('https://taxscan.in/x', 1000)).resolves.toBe(false);
+
+    global.fetch = (async () => ({ status: 503 })) as unknown as typeof fetch;
+    await expect(isUrlDeadDefault('https://taxscan.in/x', 1000)).resolves.toBe(false);
+
+    global.fetch = (async () => {
+      throw new Error('ECONNRESET');
+    }) as unknown as typeof fetch;
+    await expect(isUrlDeadDefault('https://taxscan.in/x', 1000)).resolves.toBe(false);
   });
 });

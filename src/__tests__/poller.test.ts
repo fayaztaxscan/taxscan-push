@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import {
   pollAllFeeds,
   pollOnce,
+  normalizeTitle,
   slugify,
   trimDescription,
   type Dispatcher,
@@ -634,5 +635,190 @@ describe('category capture + topic derivation (master feed)', () => {
     const row = await prisma.feedItem.findFirst({ where: { feedUrl } });
     const campaign = await prisma.campaign.findUnique({ where: { id: row!.campaignId! } });
     expect(campaign?.target).toEqual({ type: 'topics', topics: ['income-tax'] });
+  });
+});
+
+describe('normalizeTitle', () => {
+  it('folds case, punctuation and the [Read Order] tag', () => {
+    expect(normalizeTitle('Revenue Cannot Revive Demand: Bombay HC [Read Order]')).toBe(
+      'revenue cannot revive demand bombay hc',
+    );
+  });
+
+  it('matches two copies of one story whose trailing tags differ', () => {
+    // The desk appends these inconsistently between duplicate posts — the whole
+    // reason a duplicate slips past GUID dedupe with a different slug.
+    expect(normalizeTitle('Tax cannot be Levied on Unutilised ITC: Madras HC [Read Order]')).toBe(
+      normalizeTitle('Tax cannot be Levied on Unutilised ITC: Madras HC'),
+    );
+  });
+
+  it('keeps genuinely different headlines apart', () => {
+    expect(normalizeTitle('ITAT deletes addition')).not.toBe(normalizeTitle('ITAT confirms addition'));
+  });
+});
+
+describe('duplicate-title guard', () => {
+  const QUALIFIED_TITLE = 'Supreme Court allows Input Tax Credit Refund';
+
+  function dupePortal(name: string): string {
+    return `test-dupe-${name}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  }
+
+  it('routes a republished headline to REVIEW instead of the auto queue', async () => {
+    const feedUrl = freshFeedUrl('dupe-guard');
+    trackFeed(feedUrl);
+    const portal = dupePortal('guard');
+    // Same story, two posts: different guid, different slug/id, same headline
+    // (one carries the [Read Order] tag) — exactly what taxscan republishes.
+    const items: FakeItem[] = [
+      { guid: 'dupe-1', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/a-111' },
+      {
+        guid: 'dupe-2',
+        title: `${QUALIFIED_TITLE} [Read Order]`,
+        link: 'https://taxscan.in/top-stories/a-222',
+      },
+    ];
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      portal,
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      duplicateGuard: true,
+      fetcher: fakeFetcher(items),
+    });
+
+    expect(result).toMatchObject({ newItems: 2, duplicates: 1, sent: 0, errors: 0 });
+    const rows = await prisma.campaign.findMany({ where: { portal }, orderBy: { url: 'asc' } });
+    expect(rows.map((r) => r.sendQueue)).toEqual(['QUALIFIED', 'REVIEW']);
+    // Held, not dropped — the editor still sees it.
+    expect(rows.every((r) => r.status === 'DRAFT')).toBe(true);
+  });
+
+  it('catches a copy republished on a later poll tick', async () => {
+    const portal = dupePortal('later-tick');
+    const firstFeed = freshFeedUrl('dupe-tick-1');
+    const secondFeed = freshFeedUrl('dupe-tick-2');
+    trackFeed(firstFeed);
+    trackFeed(secondFeed);
+
+    await pollOnce({
+      feedUrl: firstFeed,
+      topic: 'gst',
+      portal,
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      duplicateGuard: true,
+      fetcher: fakeFetcher([
+        { guid: 'tick-1', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/b-111' },
+      ]),
+    });
+    const result = await pollOnce({
+      feedUrl: secondFeed,
+      topic: 'gst',
+      portal,
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      duplicateGuard: true,
+      fetcher: fakeFetcher([
+        { guid: 'tick-2', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/b-222' },
+      ]),
+    });
+
+    expect(result.duplicates).toBe(1);
+    const second = await prisma.campaign.findFirst({
+      where: { portal, url: 'https://taxscan.in/top-stories/b-222' },
+    });
+    expect(second?.sendQueue).toBe('REVIEW');
+  });
+
+  it('never auto-sends the duplicate on the no-pacer path', async () => {
+    const feedUrl = freshFeedUrl('dupe-nopacer');
+    trackFeed(feedUrl);
+    const portal = dupePortal('nopacer');
+    const { dispatcher, calls } = recordingDispatcher();
+    // Pacer off = QUALIFIED dispatches straight from the poller; the duplicate
+    // must still be withheld.
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      portal,
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: false,
+      duplicateGuard: true,
+      fetcher: fakeFetcher([
+        { guid: 'np-1', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/c-111' },
+        { guid: 'np-2', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/c-222' },
+      ]),
+      dispatcher,
+    });
+
+    expect(result).toMatchObject({ sent: 1, duplicates: 1 });
+    expect(calls.map((c) => c.url)).toEqual(['https://taxscan.in/top-stories/c-111']);
+  });
+
+  it('ignores a copy published outside the window', async () => {
+    const feedUrl = freshFeedUrl('dupe-window');
+    trackFeed(feedUrl);
+    const portal = dupePortal('window');
+    const old = await prisma.campaign.create({
+      data: {
+        portal,
+        title: QUALIFIED_TITLE,
+        body: '.',
+        url: 'https://taxscan.in/top-stories/old-111',
+        target: { type: 'all' },
+        status: 'SENT',
+        sendQueue: 'QUALIFIED',
+        createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+      },
+    });
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      portal,
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      duplicateGuard: true,
+      duplicateWindowHours: 72,
+      fetcher: fakeFetcher([
+        { guid: 'win-1', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/new-111' },
+      ]),
+    });
+
+    expect(result.duplicates).toBe(0);
+    const fresh = await prisma.campaign.findFirst({
+      where: { portal, url: 'https://taxscan.in/top-stories/new-111' },
+    });
+    expect(fresh?.sendQueue).toBe('QUALIFIED');
+    await prisma.campaign.deleteMany({ where: { id: old.id } });
+  });
+
+  it('is off by default — a duplicate classifies normally', async () => {
+    const feedUrl = freshFeedUrl('dupe-off');
+    trackFeed(feedUrl);
+    const portal = dupePortal('off');
+    const result = await pollOnce({
+      feedUrl,
+      topic: 'gst',
+      portal,
+      mode: 'live',
+      editorialFilter: true,
+      pacerEnabled: true,
+      fetcher: fakeFetcher([
+        { guid: 'off-1', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/d-111' },
+        { guid: 'off-2', title: QUALIFIED_TITLE, link: 'https://taxscan.in/top-stories/d-222' },
+      ]),
+    });
+
+    expect(result.duplicates).toBe(0);
+    const rows = await prisma.campaign.findMany({ where: { portal } });
+    expect(rows.every((r) => r.sendQueue === 'QUALIFIED')).toBe(true);
   });
 });

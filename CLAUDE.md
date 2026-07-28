@@ -79,7 +79,20 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps: NONE — board clean as of 2026-07-15.** Last item (report-logic corrections)
+**Open next steps: ONE — dead-link guards shipped to `develop` 2026-07-28, FLAGS OFF in prod.**
+A tapped notification hit taxscan's 404: the desk published one story twice (two ids/slugs), GUID
+dedupe can't see a re-post so the second copy pushed as fresh news, then the desk deleted one of the
+two posts. Not a URL bug on our side — and note taxscan resolves articles by the **trailing id and
+301s any slug**, so only an actual deletion can break a pushed link. GA4 measured 2 dead pushes in
+14 days (~1.5% of ~129), each to ~2,550 subs. Shipped behind two flags (suite 338/338):
+`DUPLICATE_TITLE_GUARD_ENABLED` (repeat headline within `DUPLICATE_TITLE_WINDOW_HOURS`=72 → REVIEW,
+defer-not-drop) and `LINK_CHECK_ENABLED` (pacer HEADs the URL pre-dispatch, archives a deleted
+article as EXPIRED, reason `dead_link`; **fail-open** — only 404/410 count). **Residual gap needs
+editorial, not code:** a notification already delivered can't be edited, so taxscan must
+**301-redirect removed duplicates to the survivor** (note drafted at
+`docs/NOTE-TO-EDITORIAL-deleted-articles.md`). See `NEXT_STEP.md` item -4.
+
+**Prior board state: clean as of 2026-07-15.** Last item (report-logic corrections)
 SHIPPED to `main` this date; editorial confirmed and **FEMA is kept as a separate row** (user's
 decision). The user delivered the corrections as **column G of `docs/News-vs-Articles-Study.xlsx`**
 (71 keyword→category rules). Decisions: strong **title keyword wins over generic RSS tags**;

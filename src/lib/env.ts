@@ -108,6 +108,30 @@ export const env = {
     // regardless of this flag; only the hold/route behaviour is gated.
     editorialFilter: process.env.RSS_EDITORIAL_FILTER === 'true',
   },
+  // Duplicate-title guard. taxscan occasionally publishes the SAME story twice
+  // as two posts with different ids/slugs; GUID dedupe can't see that (different
+  // guid = new article), so the second copy classifies and pushes as fresh news.
+  // Observed 2026-07-28: subscribers got one headline 3× in 23h, and when the
+  // desk later deleted one of the two posts the notification pointing at it
+  // dead-ended on a 404. When ON, an article whose normalised title was already
+  // captured within `windowHours` is routed to REVIEW instead of the auto queue —
+  // defer-not-drop, so an editor decides (same treatment job posts already get).
+  // Default off; a legitimately recurring headline (e.g. the weekly Round-Up)
+  // lands in Review rather than being suppressed.
+  duplicateTitleGuard: {
+    enabled: process.env.DUPLICATE_TITLE_GUARD_ENABLED === 'true',
+    windowHours: intEnv('DUPLICATE_TITLE_WINDOW_HOURS', 72),
+  },
+  // Pre-push link check. The pacer HEADs the article URL immediately before
+  // dispatch and archives (EXPIRED) anything the CMS has already deleted, so a
+  // post pulled between capture and its send slot never goes out as a dead link.
+  // FAIL-OPEN by design: only an explicit 404/410 counts as dead — timeouts,
+  // network errors and 5xx all send as normal, because a flaky check must never
+  // block the channel. Default off.
+  linkCheck: {
+    enabled: process.env.LINK_CHECK_ENABLED === 'true',
+    timeoutMs: intEnv('LINK_CHECK_TIMEOUT_MS', 5000),
+  },
   sweeper: {
     enabled: process.env.SWEEPER_ENABLED === 'true',
     cron: process.env.SWEEPER_CRON ?? '* * * * *',
