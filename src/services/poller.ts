@@ -27,6 +27,10 @@ export type PollDeps = {
   editorialFilter?: boolean;
   /** Override env.pacer.enabled (Stage 2). Defaults to the env value. */
   pacerEnabled?: boolean;
+  /** Override env.duplicateTitleGuard.enabled. Defaults to the env value. */
+  duplicateGuard?: boolean;
+  /** Override env.duplicateTitleGuard.windowHours. Defaults to the env value. */
+  duplicateWindowHours?: number;
 };
 
 export type PollResult = {
@@ -39,6 +43,8 @@ export type PollResult = {
   captured: number;
   /** Classified non-QUALIFIED and held as DRAFT (editorial filter, live mode). */
   held: number;
+  /** Re-routed to REVIEW because the same headline was captured recently. */
+  duplicates: number;
   errors: number;
   durationMs: number;
   mode: SendMode;
@@ -51,6 +57,20 @@ export type PollAllResult = {
 
 const defaultParser = new Parser();
 const defaultFetcher: Fetcher = (url) => defaultParser.parseURL(url) as Promise<FeedOutput>;
+
+/**
+ * Normalise a headline for duplicate detection: drop the `[Read Order]`-style
+ * trailing tags the desk appends inconsistently between two copies of the same
+ * story, fold punctuation/case/whitespace. Two posts of the same article
+ * normalise identically even when their slugs and ids differ.
+ */
+export function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
 
 export function slugify(s: string): string {
   return s
@@ -102,6 +122,9 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const mode = deps.mode ?? env.send.mode;
   const editorialFilter = deps.editorialFilter ?? env.rss.editorialFilter;
   const pacerEnabled = deps.pacerEnabled ?? env.pacer.enabled;
+  const duplicateGuard = deps.duplicateGuard ?? env.duplicateTitleGuard.enabled;
+  const duplicateWindowHours =
+    deps.duplicateWindowHours ?? env.duplicateTitleGuard.windowHours;
   const startedAt = Date.now();
 
   let itemsFound = 0;
@@ -110,6 +133,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   let sent = 0;
   let captured = 0;
   let held = 0;
+  let duplicates = 0;
   let errors = 0;
 
   try {
@@ -127,6 +151,20 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
     const seenSet = new Set(seen.map((s) => s.guid));
     alreadySeen = seenSet.size;
     const fresh = items.filter((it) => !seenSet.has(pickGuid(it)!));
+
+    // Duplicate-title guard: the set of headlines already captured inside the
+    // window, normalised. Loaded once per tick (only when there is something
+    // fresh to check) and topped up as this tick captures, so two copies
+    // arriving in the SAME tick are caught too.
+    const recentTitles = new Set<string>();
+    if (duplicateGuard && fresh.length > 0) {
+      const since = new Date(Date.now() - duplicateWindowHours * 60 * 60 * 1000);
+      const rows = await prisma.campaign.findMany({
+        where: { portal, createdAt: { gte: since } },
+        select: { title: true },
+      });
+      for (const r of rows) recentTitles.add(normalizeTitle(r.title));
+    }
 
     for (const item of fresh) {
       const guid = pickGuid(item)!;
@@ -162,6 +200,22 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
       // way, so an editor still decides before anything sends.
       const jobPost = articleTopic === 'jobs' || isJobPost(title);
 
+      // A headline we already captured inside the window is a republished copy,
+      // not new news. Hold it for an editor rather than auto-pushing the same
+      // story twice — and never silently drop it, since some headlines (the
+      // weekly Round-Up) legitimately recur.
+      const normalized = normalizeTitle(title);
+      const isDuplicate = duplicateGuard && recentTitles.has(normalized);
+      if (duplicateGuard) recentTitles.add(normalized);
+      if (isDuplicate) {
+        duplicates++;
+        // eslint-disable-next-line no-console
+        console.log(
+          `[rss] duplicate headline within ${duplicateWindowHours}h → REVIEW: "${title}"`,
+        );
+      }
+      const sendQueue = isDuplicate ? 'REVIEW' : c.queue;
+
       const input: CampaignInput = {
         portal,
         title,
@@ -169,7 +223,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
         url: item.link!.trim(),
         target: jobPost ? { type: 'all' } : { type: 'topics', topics: [articleTopic] },
         breaking: false,
-        sendQueue: c.queue,
+        sendQueue,
         authority: c.authority,
         categories,
       };
@@ -183,7 +237,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
       // capture_only never dispatches.
       const shouldSend =
         mode === 'live' &&
-        (!editorialFilter ? true : c.queue === 'QUALIFIED' && !pacerEnabled);
+        (!editorialFilter ? true : sendQueue === 'QUALIFIED' && !pacerEnabled);
 
       if (!shouldSend) {
         // Write the Campaign as DRAFT and link the FeedItem, but skip dispatch.
@@ -250,9 +304,9 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
   const durationMs = Date.now() - startedAt;
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] poll topic=${topic} feed=${feedUrl} mode=${mode} filter=${editorialFilter} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} captured=${captured} held=${held} errors=${errors} ms=${durationMs}`,
+    `[rss] poll topic=${topic} feed=${feedUrl} mode=${mode} filter=${editorialFilter} items=${itemsFound} alreadySeen=${alreadySeen} new=${newItems} sent=${sent} captured=${captured} held=${held} duplicates=${duplicates} errors=${errors} ms=${durationMs}`,
   );
-  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, captured, held, errors, durationMs, mode };
+  return { topic, feedUrl, itemsFound, alreadySeen, newItems, sent, captured, held, duplicates, errors, durationMs, mode };
 }
 
 export async function pollAllFeeds(
@@ -274,12 +328,13 @@ export async function pollAllFeeds(
     sent: results.reduce((s, r) => s + r.sent, 0),
     captured: results.reduce((s, r) => s + r.captured, 0),
     held: results.reduce((s, r) => s + r.held, 0),
+    duplicates: results.reduce((s, r) => s + r.duplicates, 0),
     errors: results.reduce((s, r) => s + r.errors, 0),
     durationMs: Date.now() - startedAt,
   };
   // eslint-disable-next-line no-console
   console.log(
-    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} captured=${totals.captured} held=${totals.held} errors=${totals.errors} ms=${totals.durationMs}`,
+    `[rss] tick complete feeds=${results.length} items=${totals.itemsFound} alreadySeen=${totals.alreadySeen} new=${totals.newItems} sent=${totals.sent} captured=${totals.captured} held=${totals.held} duplicates=${totals.duplicates} errors=${totals.errors} ms=${totals.durationMs}`,
   );
   return { feeds: results, totals };
 }

@@ -41,9 +41,46 @@ export type PacerDeps = {
   portal?: string;
   backfillEnabled?: boolean;
   morningUntil?: string;
+  /** Override env.linkCheck.enabled. Defaults to the env value. */
+  linkCheck?: boolean;
+  /** Injectable for tests — defaults to a real HEAD request. */
+  isUrlDead?: (url: string) => Promise<boolean>;
 };
 
-export type PacerReason = 'sent' | 'quiet_hours' | 'spacing' | 'ceiling' | 'empty' | 'error';
+export type PacerReason =
+  | 'sent'
+  | 'quiet_hours'
+  | 'spacing'
+  | 'ceiling'
+  | 'empty'
+  | 'dead_link'
+  | 'error';
+
+/**
+ * Has the CMS already removed this article? Used to stop a post that was
+ * deleted between capture and its send slot from going out as a dead link.
+ *
+ * FAIL-OPEN: only an explicit 404/410 counts as dead. A timeout, a network
+ * error or a 5xx returns false and the article sends as normal — a flaky
+ * check must never silently hold the channel. taxscan resolves articles by
+ * the trailing id and 301s any slug, so a renamed headline is NOT dead.
+ */
+export async function isUrlDeadDefault(url: string, timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    return res.status === 404 || res.status === 410;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export type PacerResult = {
   released: 'QUALIFIED' | 'FALLBACK' | null;
@@ -300,6 +337,35 @@ export async function runPacerTick(deps: PacerDeps = {}): Promise<PacerResult> {
   });
   if (claim.count === 0) {
     return { released: null, campaignId: null, reason: 'empty', sentToday, backfill: false };
+  }
+
+  // Link check — after the claim (so no other tick can grab the row while we
+  // wait on the network) and before dispatch. A deleted article is archived
+  // rather than returned to DRAFT, otherwise every later tick would re-pick it
+  // and the queue would wedge on the dead row. The slot is not consumed: the
+  // next tick (one minute later) simply selects the next article, since spacing
+  // keys off the last SENT event and nothing was sent here.
+  const linkCheckEnabled = deps.linkCheck ?? env.linkCheck.enabled;
+  if (linkCheckEnabled) {
+    const isDead = deps.isUrlDead ?? ((u: string) => isUrlDeadDefault(u, env.linkCheck.timeoutMs));
+    if (await isDead(campaign.url)) {
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: { status: 'EXPIRED' },
+      });
+      // eslint-disable-next-line no-console
+      console.warn('[pacer] article gone from the site — archived, not sent', {
+        campaignId: campaign.id,
+        url: campaign.url,
+      });
+      return {
+        released: null,
+        campaignId: campaign.id,
+        reason: 'dead_link',
+        sentToday,
+        backfill: viaBackfill,
+      };
+    }
   }
 
   try {
