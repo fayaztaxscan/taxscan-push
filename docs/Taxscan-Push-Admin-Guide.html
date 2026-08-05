@@ -96,7 +96,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 1.0
+    &nbsp;·&nbsp; Version 1.1 &nbsp;·&nbsp; Updated 5 August 2026
   </div>
 </div>
 
@@ -112,7 +112,7 @@
   <li><span class="n">5</span> Reading the Dashboard (what every number means)</li>
   <li><span class="n">6</span> The Review queue — your main task</li>
   <li><span class="n">7</span> Sending a notification yourself (Compose)</li>
-  <li><span class="n">8</span> The other screens</li>
+  <li><span class="n">8</span> The other screens — Campaigns, Reports &amp; Reads</li>
   <li><span class="n">9</span> Quick reference card</li>
   <li><span class="n">10</span> Frequently asked questions</li>
 </ol>
@@ -301,6 +301,19 @@ straight away, <em>Approve</em> schedules it for the next slot, <em>Reject</em> 
         postings appear.</li>
   </ul>
 </div>
+
+<h3>Repeat headlines</h3>
+<p>If the same headline appears again <strong>within 72 hours</strong>, the second copy is held here instead of
+being pushed. When the desk publishes the same story twice as two separate posts, the system can't tell it from
+genuinely new news — so rather than send your readers the same headline twice, it asks you.</p>
+<div class="box info"><span class="box-t">What to do with one</span>
+  <ul style="margin:6px 0 0">
+    <li><strong>Genuinely the same story again?</strong> <em>Reject</em> it — subscribers already got it.</li>
+    <li><strong>A headline that legitimately recurs</strong> — the weekly Round-Up, a digest — is just
+        <em>Approve</em>, one click. Nothing is ever discarded automatically.</li>
+    <li>Worth the moment it takes: getting the same headline twice is the most common reason people unsubscribe.</li>
+  </ul>
+</div>
 </section>
 
 <!-- 7 -->
@@ -378,8 +391,8 @@ notification will look before sending it to anyone.</p>
   <thead><tr><th style="width:22%">Screen</th><th>What it's for</th></tr></thead>
   <tbody>
     <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one to send it immediately instead of waiting its turn.</td></tr>
-    <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks and click-rate. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. Use it to review performance over time.</td></tr>
-    <tr><td><strong>Reports</strong></td><td>The weekly &amp; monthly <strong>coverage report</strong> — heatmaps of how many articles we published by category and by court, to judge breadth and volume. See below.</td></tr>
+    <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
+    <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court) and the <strong>Reads report</strong> (what readers actually opened). See below.</td></tr>
     <tr><td><strong>Activity</strong></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
     <tr><td><strong>Users</strong> <span class="muted">(Admins only)</span></td><td>Add teammates by email invite or with a temporary password, change their role, or deactivate them. New members get a link to set their own password.</td></tr>
     <tr><td><strong>Change password</strong></td><td>Update your own password at any time.</td></tr>
@@ -390,27 +403,90 @@ notification will look before sending it to anyone.</p>
   (gives you a temporary password to share). Pick <strong>Publisher</strong> for editors, <strong>Administrator</strong>
   only for people who also need to manage the team.</div>
 
+<h3>The Campaigns screen — the columns explained</h3>
+<p>Every column is sortable — click the heading. The four that tell you how a notification performed:</p>
+<table>
+  <thead><tr><th style="width:16%">Column</th><th>What it counts</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Sent</strong></td>
+        <td>How many devices we delivered the notification to.</td></tr>
+    <tr><td><strong>Clicked</strong> / <strong>CTR</strong></td>
+        <td>How many people <em>tapped the notification</em>, and that as a share of Sent. This measures the
+            notification — was the headline worth interrupting someone for?</td></tr>
+    <tr><td><strong>Reads</strong></td>
+        <td>How many times the <strong>article page</strong> was opened, by <em>everyone</em> — Google search,
+            the homepage, social, newsletters, and push. This measures the article, not the notification. Counts
+            come from Google Analytics.</td></tr>
+    <tr><td><strong>via Push</strong></td>
+        <td>The slice of <strong>Reads</strong> that arrived through a push notification. Compare it against
+            Reads to see how much of an article's traffic <em>we</em> generated.</td></tr>
+  </tbody>
+</table>
+<div class="box info"><span class="box-t">Reads vs Clicked — they measure different things</span>
+  <strong>Clicked</strong> is about the notification; <strong>Reads</strong> is about the article. Reads is
+  normally far larger than Clicked, because most readers arrive from Google rather than from us — that is
+  expected and not a problem. A story with high Reads but low Clicked usually means the article is strong but
+  the push headline undersold it.</div>
+<div class="box tip"><span class="box-t">A dash (—) is not a zero</span>
+  <strong>—</strong> means <em>no read data for this link</em>, not "nobody read it". You'll see it on a course or
+  product link (academy / shop pages aren't tracked here) and on articles older than read tracking. Numbers for
+  the last day or two also keep rising for about 48 hours as Google Analytics settles.</div>
+
 <h3>The Reports screen — coverage at a glance</h3>
 <p>The <strong>Reports</strong> tab shows two heat-maps for a period — <strong>courts/benches × dates</strong>
 (ordered Supreme Court first, then the priority High Courts, then the rest) and <strong>categories × dates</strong>
 — with the count in each cell shaded red (none) to green (plenty), plus a
 summary line (total articles, change vs the previous period, and where coverage was missing). It answers
-"<em>did we publish enough, across enough of the map?</em>" Switch between <strong>Weekly</strong> and
-<strong>Monthly</strong> at the top.</p>
+"<em>did we publish enough, across enough of the map?</em>"</p>
+<p>Four tabs across the top:</p>
+<table>
+  <thead><tr><th style="width:16%">Tab</th><th>What it shows</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Weekly</strong></td><td>The last 7 complete days.</td></tr>
+    <tr><td><strong>Monthly</strong></td><td>The previous calendar month.</td></tr>
+    <tr><td><strong>Custom</strong></td><td>Any window you choose — pick a <em>From</em> and <em>To</em> date and
+        click <strong>Apply</strong>. Up to <strong>30 days</strong>, both ends included; "To" can be today if you
+        want a so-far-this-week look.</td></tr>
+    <tr><td><strong>Reads</strong></td><td>What readers actually opened, rather than what we published. See below.</td></tr>
+  </tbody>
+</table>
 <ul>
   <li><strong>Share it</strong> — <em>Download image</em> or <em>Copy image</em> turns the whole report into a
       picture you can drop straight into a WhatsApp group.</li>
   <li><strong>It also arrives by email automatically</strong> — every <strong>Monday morning</strong> (the past
-      week) and on the <strong>1st of each month</strong> (the previous month).</li>
-  <li><strong>Email me a test</strong> sends the current report to your own inbox so you can see how it looks.</li>
+      week) and on the <strong>1st of each month</strong> (the previous month). The email now ends with a
+      <strong>"How it was read"</strong> section: reads by category and the ten most-read articles of the period.</li>
+  <li><strong>Email me a test</strong> sends the current report to your own inbox so you can see how it looks.
+      <span class="muted">Test emails always send the standing Weekly/Monthly report, so the button is off on the
+      Custom and Reads tabs.</span></li>
 </ul>
 <div class="box info"><span class="box-t">Who gets the report email (Admins)</span>
   Everyone with a login receives it. To include other internal colleagues who don't need a login, add their email
   under <strong>Email recipients</strong> on the Reports screen — they'll get the weekly &amp; monthly email only,
   nothing else. This report is <strong>internal</strong>: it never goes to your notification subscribers.</div>
-<div class="box tip"><span class="box-t">Give it a week</span>
-  The <strong>courts/benches</strong> heat-map is accurate right away. The <strong>categories</strong> heat-map
-  fills in over the first week as new articles are tagged — early on it may show mostly "Uncategorised."</div>
+
+<h3>The Reads tab — what readers actually opened</h3>
+<p>The coverage report answers "<em>what did we publish?</em>" The <strong>Reads</strong> tab answers the other
+half: "<em>what did people actually read?</em>" It uses the same two maps — <strong>courts/benches</strong> and
+<strong>categories</strong> — but instead of dates, the columns are trailing windows:
+<strong>1&nbsp;week · 1&nbsp;month · 3&nbsp;months · 6&nbsp;months · 12&nbsp;months</strong>. Each cell is the
+number of article pageviews for that row in that window, shaded by how big a share of the period it was; hover a
+cell for the exact figure and how many articles it covers.</p>
+<p>Reading it together with the coverage report is where the value is:</p>
+<ul>
+  <li><strong>Heavy coverage, light reading</strong> — a bench or category you publish a lot of but that barely
+      registers in Reads. Worth asking whether it deserves the desk time.</li>
+  <li><strong>Light coverage, heavy reading</strong> — the opposite, and the more interesting signal: readers want
+      more of it than you're producing.</li>
+  <li>The tiles along the top give total article reads per window, so you can see the direction of travel at a glance.</li>
+</ul>
+<div class="box info"><span class="box-t">Where the numbers come from</span>
+  Reads are Google Analytics pageviews for taxscan.in article pages — <strong>all</strong> traffic, not just push.
+  The report is rebuilt once a day, so the "data as of" line under the title may be a few hours old; that's
+  normal and nothing needs doing.</div>
+<div class="box tip"><span class="box-t">The last two days always look low</span>
+  Google Analytics keeps settling recent figures for about 48 hours, so the newest days undercount slightly and
+  then catch up. Judge trends on the longer windows, not on yesterday.</div>
 </section>
 
 <!-- 9 -->
@@ -445,6 +521,9 @@ summary line (total articles, change vs the previous period, and where coverage 
     <tr><td>Delivery rate dipped</td><td>Usually dead subscriptions; it self-heals. Only worry if it stays low for days.</td></tr>
     <tr><td>A big story breaks</td><td>Compose → write it → <strong>Force send</strong> (add <strong>Breaking</strong> if overnight).</td></tr>
     <tr><td>Review queue is piling up</td><td>Clear it: Approve the good pieces, Reject the rest.</td></tr>
+    <tr><td>The same headline is sitting in Review</td><td>It was published twice within 72h. <strong>Reject</strong> a true duplicate; <strong>Approve</strong> a legitimate repeat (weekly Round-Up).</td></tr>
+    <tr><td>A campaign shows <strong>—</strong> under Reads</td><td>No read data for that link (course/product page, or an older article) — not a zero. Nothing to fix.</td></tr>
+    <tr><td>High Reads but low Clicked</td><td>The article works; the push headline undersold it. Sharpen the wording next time.</td></tr>
   </tbody>
 </table>
 </section>
@@ -470,7 +549,31 @@ write it and tick <strong>Force send</strong>. Or, for an item already in the Re
 their subscription expired (counted in the delivery rate). This is normal — no system reaches 100%.</p>
 
 <h3>Can I undo a send?</h3>
-<p>No — once a notification is out, it's out. Always double-check the title and link before sending.</p>
+<p>No — once a notification is out, it's out. Always double-check the title and link before sending. This is also
+why a <strong>deleted article</strong> is a problem: the link inside a delivered notification can't be changed, so
+if the page is removed from the site afterwards, anyone tapping it lands on a "page not found". If a duplicate
+post has to be removed, ask the web team to <strong>redirect</strong> it to the copy you're keeping rather than
+deleting it outright.</p>
+
+<h3>What's the difference between Clicked and Reads on the Campaigns screen?</h3>
+<p><strong>Clicked</strong> counts people who tapped <em>our notification</em>. <strong>Reads</strong> counts
+everyone who opened <em>the article</em>, however they got there — mostly Google. Reads being much bigger than
+Clicked is normal. <strong>via Push</strong> is the overlap: the readers we brought in.</p>
+
+<h3>Why does a campaign show "—" in the Reads column?</h3>
+<p>It means there's no read data for that link, <em>not</em> that nobody read it. Course and product links
+(academy / shop) aren't tracked, and articles from before read tracking started have no figures. Very recent
+sends also fill in over about 48 hours.</p>
+
+<h3>The same headline turned up in my Review queue — why?</h3>
+<p>Because that headline was already published within the last 72 hours. The desk sometimes posts the same story
+twice, and rather than push it to your readers a second time the system asks you first. Reject it if it's a
+genuine duplicate; approve it if it's something that legitimately recurs, like the weekly Round-Up.</p>
+
+<h3>An article vanished from the queue without being sent.</h3>
+<p>The system checks each article is still live on the site immediately before pushing it. If it has been deleted
+in the meantime, it's archived instead of sent — that's deliberate, so a notification never points at a missing
+page. Nothing is wrong and no action is needed.</p>
 
 <h3>What's the difference between "Breaking" and "Force send"?</h3>
 <p><strong>Breaking</strong> only lets a send happen during overnight quiet hours. <strong>Force send</strong> makes it
@@ -484,7 +587,7 @@ reach everyone immediately, ignoring the normal spacing/frequency limits. They'r
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 1.0
+  Taxscan Push · Admin User Guide · Version 1.1 · Updated 5 August 2026
 </p>
 </section>
 
