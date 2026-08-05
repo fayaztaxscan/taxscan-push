@@ -194,10 +194,37 @@ describe('buildSurfacesReport with nothing synced', () => {
       now: NOW,
     });
     expect(payload.dataThrough).toBeNull();
+    expect(payload.dataFrom).toBeNull();
     expect(payload.windows).toHaveLength(READ_WINDOWS.length);
     expect(payload.windows[0].totals.DISCOVER).toEqual({ clicks: 0, impressions: 0, articles: 0 });
     expect(grid(payload.byCategory, 'DISCOVER').rows).toEqual([]);
     expect(payload.topArticles.GOOGLE_NEWS).toEqual([]);
+  });
+});
+
+/**
+ * The sync only ever fetches a rolling lookback, so a fresh install holds days
+ * rather than months. `dataFrom` is what lets the panel say "we only have N days
+ * of history" instead of presenting a week's data under a "12 months" heading.
+ */
+describe('buildSurfacesReport history span', () => {
+  const portal = `test-surfaces-span-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+
+  afterAll(async () => {
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+
+  it('reports the earliest and latest synced day, not the window bounds', async () => {
+    await seed(portal, [
+      ['/top-stories/a-111111', 'DISCOVER', '2026-08-01', 10, 100],
+      ['/top-stories/b-222222', 'DISCOVER', '2026-08-04', 20, 200],
+    ]);
+    const payload = await buildSurfacesReport({ portal, now: NOW });
+    expect(payload.dataFrom).toBe('2026-08-01');
+    expect(payload.dataThrough).toBe('2026-08-04');
+    // Only 4 days exist, yet the 12-month window is still offered — which is
+    // exactly why the panel needs dataFrom to qualify the longer columns.
+    expect(payload.windows[payload.windows.length - 1].days).toBeGreaterThan(4);
   });
 });
 
