@@ -54,6 +54,13 @@ export type SurfacesPayload = {
   topArticles: Record<SurfaceKey, TopSurfacedArticle[]>;
   /** IST day key of the most recent day carrying any synced row; null if none. */
   dataThrough: string | null;
+  /**
+   * IST day key of the EARLIEST synced day. The sync only fetches a rolling
+   * lookback window, so on a fresh install the table holds days, not months —
+   * and a column headed "12 months" would then be showing a week's data under a
+   * year's label. The panel uses this to say how much history actually exists.
+   */
+  dataFrom: string | null;
 };
 
 // ARTICLE_PATH_JS_RE (imported above) keeps non-article rows out: the sync
@@ -110,19 +117,27 @@ export async function buildSurfacesReport(opts: {
   const { portal } = opts;
   const now = opts.now ?? new Date();
 
-  const latest = await prisma.articleSurfaceStat.findFirst({
-    where: { portal },
-    orderBy: { date: 'desc' },
-    select: { date: true },
-  });
+  const [latest, earliest] = await Promise.all([
+    prisma.articleSurfaceStat.findFirst({
+      where: { portal },
+      orderBy: { date: 'desc' },
+      select: { date: true },
+    }),
+    prisma.articleSurfaceStat.findFirst({
+      where: { portal },
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    }),
+  ]);
   const empty: SurfacesPayload = {
     windows: READ_WINDOWS.map((w) => ({ label: w.label, days: w.days, totals: emptyTotals() })),
     byCategory: SURFACES.map(({ surface }) => ({ surface, rows: [] })),
     byBench: SURFACES.map(({ surface }) => ({ surface, rows: [] })),
     topArticles: { DISCOVER: [], GOOGLE_NEWS: [] },
     dataThrough: null,
+    dataFrom: null,
   };
-  if (!latest) return empty;
+  if (!latest || !earliest) return empty;
 
   // ArticleSurfaceStat.date is the UTC-midnight key of a calendar day (Google's
   // property timezone). An IST midnight instant is 18:30 UTC of the PREVIOUS
@@ -206,6 +221,7 @@ export async function buildSurfacesReport(opts: {
     byBench: grids(byBench, (a, b) => benchRank(a.label) - benchRank(b.label)),
     topArticles: await topSurfacedArticles(topByPath),
     dataThrough: istDateKey(latest.date),
+    dataFrom: istDateKey(earliest.date),
   };
   return payload;
 }

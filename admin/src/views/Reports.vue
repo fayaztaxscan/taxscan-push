@@ -58,6 +58,7 @@ type SurfacesReport = {
   byBench?: SurfaceGrid[];
   topArticles?: Record<SurfaceKey, TopSurfacedArticle[]>;
   dataThrough?: string | null;
+  dataFrom?: string | null;
 };
 
 const api = useApi();
@@ -297,6 +298,45 @@ const surfaceSections = computed(() => {
     top: r.topArticles?.[key] ?? [],
   }));
 });
+/**
+ * The one-line answer, before any grid: how much each surface actually sent us
+ * last month. An editor opening this tab wants the comparison first — the grids
+ * explain the "why" only once you know which surface matters.
+ */
+const MONTH_WINDOW_INDEX = 1; // READ_WINDOWS: [1 week, 1 month, 3 months, ...]
+const surfaceHeadline = computed(() =>
+  surfaceSections.value.map((s) => ({
+    key: s.key,
+    label: s.label,
+    clicks: s.windows[MONTH_WINDOW_INDEX]?.clicks ?? 0,
+  })),
+);
+
+/**
+ * Share of the last month's clicks across BOTH surfaces. Drives which section
+ * opens by default: giving a surface worth a rounding error the same screen
+ * space as the one carrying the traffic is what makes a report tiring to read.
+ */
+function surfaceShareOfAll(key: SurfaceKey): number {
+  const total = surfaceHeadline.value.reduce((n, h) => n + h.clicks, 0);
+  if (total <= 0) return 0;
+  return (surfaceHeadline.value.find((h) => h.key === key)?.clicks ?? 0) / total;
+}
+
+// Surfaces the reader has opened by hand. A minor surface stays collapsed until
+// asked for — but the threshold is computed, not hardcoded, so if Google News
+// ever grows into a real channel it expands on its own.
+const MINOR_SURFACE_SHARE = 0.1;
+const openedSurfaces = ref<SurfaceKey[]>([]);
+function surfaceIsOpen(key: SurfaceKey): boolean {
+  return surfaceShareOfAll(key) >= MINOR_SURFACE_SHARE || openedSurfaces.value.includes(key);
+}
+function toggleSurface(key: SurfaceKey): void {
+  openedSurfaces.value = openedSurfaces.value.includes(key)
+    ? openedSurfaces.value.filter((k) => k !== key)
+    : [...openedSurfaces.value, key];
+}
+
 /** True when Google has reported no pickup at all for this surface, in any window. */
 function surfaceHasNothing(s: { windows: SurfaceStat[]; benches: SurfaceRow[]; categories: SurfaceRow[] }): boolean {
   return (
@@ -350,6 +390,25 @@ function surfaceCellTitle(
   );
 }
 const surfacesThrough = computed(() => surfacesReport.value?.dataThrough ?? null);
+
+/**
+ * How many days of history we actually hold. The sync fetches a rolling
+ * lookback, so a fresh install has days, not months — and a column headed
+ * "12 months" would then be a week's data wearing a year's label. When history
+ * is shorter than the widest window we say so rather than let the header lie.
+ */
+const surfacesHistoryDays = computed(() => {
+  const from = surfacesReport.value?.dataFrom;
+  const through = surfacesReport.value?.dataThrough;
+  if (!from || !through) return null;
+  const ms = new Date(through).getTime() - new Date(from).getTime();
+  return Math.max(1, Math.round(ms / 86400000) + 1);
+});
+const surfacesWindowsArePartial = computed(() => {
+  const days = surfacesHistoryDays.value;
+  const widest = surfacesReport.value?.windows?.[(surfacesReport.value?.windows?.length ?? 1) - 1]?.days;
+  return days !== null && widest !== undefined && days < widest;
+});
 
 /** Whether the currently-shown tab actually has a sheet to export. */
 const sheetReady = computed(() => {
@@ -662,32 +721,58 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- The two things an editor must know before reading a single number.
-           Deliberately on the panel (and in the exported image), not in a tooltip. -->
+      <!-- The answer first: which surface actually sends us traffic. Everything
+           below explains that number; nobody should have to scroll to find it. -->
+      <div class="surface-headline">
+        <div v-for="h in surfaceHeadline" :key="h.key" class="sh-item">
+          <span class="sh-n">{{ fmtCount(h.clicks) }}</span>
+          <span class="sh-l">{{ h.label }} clicks · last month</span>
+        </div>
+      </div>
+
+      <!-- The two things that stop a reader misreading these numbers. Kept short
+           and on the panel (so they survive into the exported image) rather than
+           hidden in a tooltip. -->
       <div class="gaps">
-        <p style="margin: 0 0 6px">
-          <strong>These are Google clicks — they are not the “Reads” figures.</strong>
-          A click here means someone tapped one of our headlines in the Google Discover feed or in
-          Google News. The Reads tab counts page views from all traffic. Two different measures of two
-          different things: never add them together and never compare one against the other.
-          Impressions (the small grey number) are how often a headline was shown, tapped or not.
+        <p style="margin: 0 0 4px">
+          <strong>These are Google clicks, not Reads.</strong>
+          Someone tapped our headline in Discover or Google News. The Reads tab counts page views
+          from every source — don’t add or compare the two.
         </p>
         <p style="margin: 0">
-          <strong>The last 2–3 days are always missing.</strong>
-          Google reports this data a few days late, and for the newest days it sends nothing at all —
-          not smaller numbers, none. So a quiet-looking recent stretch means Google has not reported
-          yet, not that pickup collapsed. That is why everything here is a trailing window looking
-          backwards, never a day-by-day chart.
+          <strong>The newest 2–3 days are always missing.</strong>
+          Google reports late, so a quiet recent stretch is the lag, not a drop.
+        </p>
+        <p v-if="surfacesWindowsArePartial" style="margin: 4px 0 0">
+          <strong>We only hold {{ surfacesHistoryDays }} days of history so far.</strong>
+          Longer columns show everything collected to date, not a full period, so don’t read
+          “12 months” as a year yet. They fill out as the days accumulate.
         </p>
       </div>
 
       <section v-for="s in surfaceSections" :key="s.key" class="surface-block">
-        <h3 class="surface-h">{{ s.label }}</h3>
+        <div class="surface-h-row">
+          <h3 class="surface-h">{{ s.label }}</h3>
+          <!-- A surface carrying a rounding-error share stays folded away until
+               asked for, so the one that matters isn't buried under a duplicate. -->
+          <button
+            v-if="!surfaceHasNothing(s) && surfaceShareOfAll(s.key) < MINOR_SURFACE_SHARE"
+            class="btn"
+            @click="toggleSurface(s.key)"
+          >
+            {{ surfaceIsOpen(s.key) ? 'Hide breakdown' : 'Show breakdown' }}
+          </button>
+        </div>
 
         <p v-if="surfaceHasNothing(s)" class="muted no-pickup">
           Google sent us nothing from {{ s.label }} in any of these windows — no clicks and no
           impressions. Either our stories are not being picked up there, or Google has not reported
           them yet.
+        </p>
+
+        <p v-else-if="!surfaceIsOpen(s.key)" class="muted no-pickup">
+          A small share of our Google traffic — {{ fmtCount(s.windows[MONTH_WINDOW_INDEX]?.clicks ?? 0) }}
+          clicks last month. Show the breakdown if you want the detail.
         </p>
 
         <template v-else>
@@ -727,10 +812,10 @@ onMounted(() => {
                         : `${row.label} — no ${s.label} pickup in the last ${s.windows[i]?.label ?? ''}`
                     "
                   >
-                    <template v-if="c">
-                      <span class="rv">{{ fmtCount(c.clicks) }}</span>
-                      <span class="rs">{{ fmtCount(c.impressions) }} impr</span>
-                    </template>
+                    <!-- Clicks only. Impressions, click rate and share are all in
+                         the cell's tooltip — two numbers in every cell of a 30-row
+                         grid is 300 numbers to read past to find the pattern. -->
+                    <span v-if="c" class="rv">{{ fmtCount(c.clicks) }}</span>
                     <span v-else class="muted">—</span>
                   </td>
                 </tr>
@@ -763,10 +848,10 @@ onMounted(() => {
                         : `${row.label} — no ${s.label} pickup in the last ${s.windows[i]?.label ?? ''}`
                     "
                   >
-                    <template v-if="c">
-                      <span class="rv">{{ fmtCount(c.clicks) }}</span>
-                      <span class="rs">{{ fmtCount(c.impressions) }} impr</span>
-                    </template>
+                    <!-- Clicks only. Impressions, click rate and share are all in
+                         the cell's tooltip — two numbers in every cell of a 30-row
+                         grid is 300 numbers to read past to find the pattern. -->
+                    <span v-if="c" class="rv">{{ fmtCount(c.clicks) }}</span>
                     <span v-else class="muted">—</span>
                   </td>
                 </tr>
@@ -807,8 +892,8 @@ onMounted(() => {
       </section>
 
       <div class="report-foot">
-        Big number = clicks from Google; small grey number = impressions (times shown). “—” means no
-        pickup at all in that window, which is not the same as zero clicks. Windows are trailing and
+        Numbers are clicks from Google; hover a cell for impressions, click rate and share. “—” means
+        no pickup at all in that window, which is not the same as zero clicks. Windows are trailing and
         cumulative — 1 month includes the week. Deeper violet = a larger share of that surface’s clicks
         in that window. Google credits whichever copy of a story it treats as the original, so a story
         published twice can appear as two near-identical rows.
@@ -1064,6 +1149,39 @@ table.heat.surfaces .rs {
   color: #475569;
 }
 /* --- Surfaces report ------------------------------------------------------- */
+/* The answer, before the evidence. Same tile vocabulary as .insights so it reads
+   as part of the system, just given the top of the panel. */
+.surface-headline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+.sh-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 160px;
+}
+.sh-n {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+.sh-l {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* Heading and its show/hide control on one line. */
+.surface-h-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .surface-block + .surface-block {
   margin-top: 26px;
   border-top: 1px solid var(--border);
