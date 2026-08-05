@@ -112,7 +112,13 @@ export async function fetchSurface(opts: {
   const token = await getGaAccessToken(opts.creds, fetchImpl, now, SEARCH_CONSOLE_SCOPE);
   const url = `${API_ROOT}/${encodeURIComponent(opts.siteUrl)}/searchAnalytics/query`;
 
-  const out: SurfaceRow[] = [];
+  // Keyed by date|path, not appended: Google reports the trailing-slash and bare
+  // spellings of one URL as SEPARATE rows, and both normalise to the same
+  // pagePath — so appending blindly trips the (portal, pagePath, date, surface)
+  // unique index on write. Folding here also survives the same URL appearing on
+  // two pagination pages. Found the hard way: an 8-day window never collided,
+  // a 400-day backfill did.
+  const out = new Map<string, SurfaceRow>();
   let startRow = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const res = await fetchImpl(url, {
@@ -140,22 +146,29 @@ export async function fetchSurface(opts: {
       if (!date || !pageUrl) continue;
       const pagePath = surfacePagePath(pageUrl);
       if (!pagePath) continue; // non-article host (academy/shop) or unparseable
-      out.push({
-        date: parseApiDate(date),
-        pagePath,
-        surface: opts.surface,
-        clicks: Math.round(r.clicks ?? 0),
-        impressions: Math.round(r.impressions ?? 0),
-      });
+      const key = `${date}|${pagePath}`;
+      const existing = out.get(key);
+      if (existing) {
+        existing.clicks += Math.round(r.clicks ?? 0);
+        existing.impressions += Math.round(r.impressions ?? 0);
+      } else {
+        out.set(key, {
+          date: parseApiDate(date),
+          pagePath,
+          surface: opts.surface,
+          clicks: Math.round(r.clicks ?? 0),
+          impressions: Math.round(r.impressions ?? 0),
+        });
+      }
     }
-    if (rows.length < ROW_LIMIT) return out;
+    if (rows.length < ROW_LIMIT) return [...out.values()];
     startRow += rows.length;
   }
   // eslint-disable-next-line no-console
   console.warn(
     `[surfaces] hit the ${MAX_PAGES}-page cap for ${opts.type} — results may be truncated`,
   );
-  return out;
+  return [...out.values()];
 }
 
 /**
