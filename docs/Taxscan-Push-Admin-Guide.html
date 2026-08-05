@@ -96,7 +96,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 1.1 &nbsp;·&nbsp; Updated 5 August 2026
+    &nbsp;·&nbsp; Version 1.2 &nbsp;·&nbsp; Updated 5 August 2026
   </div>
 </div>
 
@@ -112,7 +112,7 @@
   <li><span class="n">5</span> Reading the Dashboard (what every number means)</li>
   <li><span class="n">6</span> The Review queue — your main task</li>
   <li><span class="n">7</span> Sending a notification yourself (Compose)</li>
-  <li><span class="n">8</span> The other screens — Campaigns, Reports &amp; Reads</li>
+  <li><span class="n">8</span> The other screens — Campaigns, Reports, Reads &amp; Surfaces</li>
   <li><span class="n">9</span> Quick reference card</li>
   <li><span class="n">10</span> Frequently asked questions</li>
 </ol>
@@ -392,7 +392,7 @@ notification will look before sending it to anyone.</p>
   <tbody>
     <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one to send it immediately instead of waiting its turn.</td></tr>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
-    <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court) and the <strong>Reads report</strong> (what readers actually opened). See below.</td></tr>
+    <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
     <tr><td><strong>Activity</strong></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
     <tr><td><strong>Users</strong> <span class="muted">(Admins only)</span></td><td>Add teammates by email invite or with a temporary password, change their role, or deactivate them. New members get a link to set their own password.</td></tr>
     <tr><td><strong>Change password</strong></td><td>Update your own password at any time.</td></tr>
@@ -438,7 +438,7 @@ notification will look before sending it to anyone.</p>
 — with the count in each cell shaded red (none) to green (plenty), plus a
 summary line (total articles, change vs the previous period, and where coverage was missing). It answers
 "<em>did we publish enough, across enough of the map?</em>"</p>
-<p>Four tabs across the top:</p>
+<p>Five tabs across the top:</p>
 <table>
   <thead><tr><th style="width:16%">Tab</th><th>What it shows</th></tr></thead>
   <tbody>
@@ -448,6 +448,7 @@ summary line (total articles, change vs the previous period, and where coverage 
         click <strong>Apply</strong>. Up to <strong>30 days</strong>, both ends included; "To" can be today if you
         want a so-far-this-week look.</td></tr>
     <tr><td><strong>Reads</strong></td><td>What readers actually opened, rather than what we published. See below.</td></tr>
+    <tr><td><strong>Surfaces</strong></td><td>What <strong>Google Discover</strong> and <strong>Google News</strong> picked up — the stories Google put in front of readers who weren't looking for us. See below.</td></tr>
   </tbody>
 </table>
 <ul>
@@ -458,7 +459,7 @@ summary line (total articles, change vs the previous period, and where coverage 
       <strong>"How it was read"</strong> section: reads by category and the ten most-read articles of the period.</li>
   <li><strong>Email me a test</strong> sends the current report to your own inbox so you can see how it looks.
       <span class="muted">Test emails always send the standing Weekly/Monthly report, so the button is off on the
-      Custom and Reads tabs.</span></li>
+      Custom, Reads and Surfaces tabs.</span></li>
 </ul>
 <div class="box info"><span class="box-t">Who gets the report email (Admins)</span>
   Everyone with a login receives it. To include other internal colleagues who don't need a login, add their email
@@ -487,6 +488,35 @@ cell for the exact figure and how many articles it covers.</p>
 <div class="box tip"><span class="box-t">The last two days always look low</span>
   Google Analytics keeps settling recent figures for about 48 hours, so the newest days undercount slightly and
   then catch up. Judge trends on the longer windows, not on yesterday.</div>
+
+<h3>The Surfaces tab — what Google Discover picked up</h3>
+<p><strong>Google Discover</strong> is the feed of articles Google shows people on their phone — in the Google
+app and on the Chrome home screen — <em>without them searching for anything</em>. Google decides what to put
+there. When it picks one of our stories, a lot of readers arrive at once.</p>
+<p>This matters more than it sounds: <strong>Discover brings taxscan.in several times more readers than Google
+search does</strong>. It simply never showed up in any report before, because Google's own analytics can't tell
+Discover apart from ordinary search. The Surfaces tab is the only place you can see it.</p>
+<p>It uses the same two maps as the other tabs — <strong>courts/benches</strong> and <strong>categories</strong> —
+over trailing windows, plus a list of the <strong>most picked-up articles</strong>. <strong>Google News</strong>
+is shown alongside, but it is tiny by comparison; if it's a small share it stays folded away behind
+<em>Show breakdown</em> so it doesn't crowd out the part that matters.</p>
+<div class="box warn"><span class="box-t">These are clicks, not Reads — don't mix them up</span>
+  A number here means someone <strong>tapped our headline in the Discover feed</strong>. The <strong>Reads</strong>
+  tab counts page views from every source. They measure different things and are collected differently, so never
+  add them together or compare one against the other. Hover any cell for the extra detail (how often the headline
+  was shown, and the click rate).</div>
+<div class="box tip"><span class="box-t">The newest 2–3 days are missing, not low</span>
+  Google reports this data a few days late, and for the very newest days it sends <em>nothing at all</em> — not
+  smaller numbers, none. A quiet-looking recent stretch is the delay, not a drop. That's why every column looks
+  backwards over a period instead of showing day by day.</div>
+<div class="box info"><span class="box-t">"We only hold N days of history so far"</span>
+  If you see this line, the longer columns (3, 6, 12 months) are showing everything collected to date rather than
+  a full period — so don't read "12 months" as a year yet. It fills out as the days accumulate, and the line
+  disappears by itself once there's enough history.</div>
+<div class="box tip"><span class="box-t">What to look for</span>
+  Discover concentrates hard: a handful of stories usually account for most of the clicks. So the useful question
+  isn't "how do we lift the average" — it's <strong>what did those few have in common</strong>. Look at the
+  most-picked-up list and check whether that kind of story is something you're publishing often, or by accident.</div>
 </section>
 
 <!-- 9 -->
@@ -565,6 +595,18 @@ Clicked is normal. <strong>via Push</strong> is the overlap: the readers we brou
 (academy / shop) aren't tracked, and articles from before read tracking started have no figures. Very recent
 sends also fill in over about 48 hours.</p>
 
+<h3>What is Google Discover, and why is it on the Reports screen?</h3>
+<p>Discover is the feed of articles Google shows people on their phones without them searching — in the Google
+app and on the Chrome home screen. Google chooses what appears there. It sends taxscan.in several times more
+readers than Google search does, and the <strong>Surfaces</strong> tab is the only place it's visible, because
+ordinary analytics can't separate Discover traffic from normal search traffic.</p>
+
+<h3>Discover clicks and Reads don't match. Which is right?</h3>
+<p>Both — they count different things. A Discover <strong>click</strong> is someone tapping our headline in the
+Google feed. A <strong>Read</strong> is a page view of the article from any source at all. They also arrive on
+different schedules: Reads appear within hours, Discover figures are 2–3 days behind. Use each for its own
+question and don't add them together.</p>
+
 <h3>The same headline turned up in my Review queue — why?</h3>
 <p>Because that headline was already published within the last 72 hours. The desk sometimes posts the same story
 twice, and rather than push it to your readers a second time the system asks you first. Reject it if it's a
@@ -587,7 +629,7 @@ reach everyone immediately, ignoring the normal spacing/frequency limits. They'r
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 1.1 · Updated 5 August 2026
+  Taxscan Push · Admin User Guide · Version 1.2 · Updated 5 August 2026
 </p>
 </section>
 
