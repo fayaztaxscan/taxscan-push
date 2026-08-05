@@ -216,6 +216,43 @@ model ArticleReadStat {
   @@index([pagePath])
 }
 
+// Which Google surface an article was picked up by. Kept as an enum rather
+// than a free string so a typo can't silently create a third, empty surface.
+enum SearchSurface {
+  DISCOVER
+  GOOGLE_NEWS
+}
+
+// Per-article Discover / Google News performance, synced from the Search
+// Console Search Analytics API (src/services/searchSurfaces.ts). One row per
+// (portal, pagePath, date, surface).
+//
+// WHY SEARCH CONSOLE AND NOT GA4: Discover is invisible to GA4 — its clicks
+// carry a plain google.com referrer, so they land in `google / organic`
+// alongside ordinary search (or in `(direct)` when the Google app strips the
+// referrer). Search Console's API is the only source that separates the
+// surfaces, via its `type` parameter (discover / googleNews).
+//
+// These are CLICKS AND IMPRESSIONS, not pageviews — they are NOT comparable
+// with ArticleReadStat.totalViews and must never be summed with it. Google
+// also reports against the CANONICAL url and settles 2-3 days late, which is
+// why this data is only ever shown in retrospective (trailing-window) views.
+model ArticleSurfaceStat {
+  id          String        @id @default(cuid())
+  portal      String        @default("taxscan")
+  pagePath    String
+  date        DateTime      @db.Date
+  surface     SearchSurface
+  clicks      Int           @default(0)
+  impressions Int           @default(0)
+  fetchedAt   DateTime      @default(now()) @updatedAt
+
+  @@unique([portal, pagePath, date, surface])
+  @@index([date])
+  @@index([pagePath])
+  @@index([surface])
+}
+
 // Cached "Reads" report: bench×window + category×window pageview aggregates
 // over trailing windows (1w/1m/3m/6m/12m), built by src/services/readsReport.ts
 // from the GA4 Data API on a daily cron. One row per portal — the API serves

@@ -181,6 +181,24 @@ export const env = {
     serviceAccountJson: process.env.GA_SERVICE_ACCOUNT_JSON ?? '',
     serviceAccountFile: process.env.GA_SERVICE_ACCOUNT_FILE ?? 'ga-service-account.json',
   },
+  // Google Discover / Google News pickup, synced from the Search Console Search
+  // Analytics API into ArticleSurfaceStat (src/services/searchSurfaces.ts).
+  // Default off. Reuses the GA service-account key, but Search Console does NOT
+  // inherit GA permissions — the service account must ALSO be added under
+  // Search Console → Settings → Users and permissions (Restricted is enough),
+  // and the Search Console API enabled in the same GCP project.
+  //
+  // `siteUrl` must match how the property is registered, and the two spellings
+  // are not interchangeable: a domain property is `sc-domain:taxscan.in`, a
+  // URL-prefix property is `https://www.taxscan.in/` (trailing slash included).
+  // Lookback defaults to 7 days — longer than the GA sync's 3, because Search
+  // Console settles 2-3 days late and back-fills as it does.
+  searchConsole: {
+    enabled: process.env.SEARCH_CONSOLE_ENABLED === 'true',
+    siteUrl: process.env.SEARCH_CONSOLE_SITE_URL ?? '',
+    cron: process.env.SEARCH_CONSOLE_CRON ?? '40 */6 * * *',
+    lookbackDays: intEnv('SEARCH_CONSOLE_LOOKBACK_DAYS', 7),
+  },
   // No-miss backstop: periodically reconcile against taxscan's complete daily
   // sitemap and capture any article the RSS feeds missed (feeds only show the
   // latest ~11 per poll). Default off.

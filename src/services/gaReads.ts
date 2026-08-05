@@ -41,7 +41,9 @@ export type GaReport = {
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
+export const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
+/** Search Console (Search Analytics API) — read-only. See searchSurfaces.ts. */
+export const SEARCH_CONSOLE_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
 
 /**
  * Inline JSON (GA_SERVICE_ACCOUNT_JSON — Railway) wins over the key file on
@@ -64,19 +66,37 @@ function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Service-account JWT → access token. Cached until shortly before expiry. */
-let tokenCache: { token: string; expiresAtMs: number } | null = null;
+/**
+ * Service-account JWT → access token. Cached until shortly before expiry.
+ *
+ * Keyed BY SCOPE, and that is not incidental: this module's token is
+ * analytics-scoped, while searchSurfaces.ts asks the same helper for a
+ * Search-Console-scoped one. A single shared slot would hand whichever caller
+ * ran second the other's token, and Google would reject it — surfacing as
+ * intermittent 403s that follow cron ordering rather than anything in the code.
+ */
+const tokenCache = new Map<string, { token: string; expiresAtMs: number }>();
+
+/** Test hook — drops cached access tokens. */
+export function __resetTokenCache(): void {
+  tokenCache.clear();
+}
 
 export async function getGaAccessToken(
   creds: GaCredentials,
   fetchImpl: FetchLike,
   now: Date,
+  scope: string = GA_SCOPE,
 ): Promise<string> {
-  if (tokenCache && tokenCache.expiresAtMs - 60_000 > now.getTime()) return tokenCache.token;
+  // Cache per (service account, scope) — one deploy could in principle carry
+  // separate credentials per API, and a token is only valid for its own pair.
+  const cacheKey = `${creds.client_email}|${scope}`;
+  const hit = tokenCache.get(cacheKey);
+  if (hit && hit.expiresAtMs - 60_000 > now.getTime()) return hit.token;
   const iat = Math.floor(now.getTime() / 1000);
   const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claims = b64url(
-    JSON.stringify({ iss: creds.client_email, scope: SCOPE, aud: TOKEN_URL, iat, exp: iat + 3600 }),
+    JSON.stringify({ iss: creds.client_email, scope, aud: TOKEN_URL, iat, exp: iat + 3600 }),
   );
   const signer = crypto.createSign('RSA-SHA256');
   signer.update(`${header}.${claims}`);
@@ -91,7 +111,10 @@ export async function getGaAccessToken(
   if (!res.ok || !body.access_token) {
     throw new Error(`GA token exchange failed (${res.status}): ${JSON.stringify(body)}`);
   }
-  tokenCache = { token: body.access_token, expiresAtMs: now.getTime() + (body.expires_in ?? 3600) * 1000 };
+  tokenCache.set(cacheKey, {
+    token: body.access_token,
+    expiresAtMs: now.getTime() + (body.expires_in ?? 3600) * 1000,
+  });
   return body.access_token;
 }
 

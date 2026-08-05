@@ -15,6 +15,7 @@ import { startReportScheduler } from './services/reportScheduler';
 import { startReconciler, startRetention } from './services/reconciler';
 import { startGaReadsSync } from './services/gaReads';
 import { startReadsReportCron } from './services/readsReport';
+import { startSearchSurfacesSync } from './services/searchSurfaces';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
 import type { Sender } from './services/send';
 
@@ -40,5 +41,6 @@ app.listen(env.port, () => {
   startRetention();
   startGaReadsSync();
   startReadsReportCron();
+  startSearchSurfacesSync();
   startAuditRetentionSweeper();
 });
