@@ -79,8 +79,24 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps: NONE in code — dead-link guards SHIPPED + LIVE 2026-07-28 (PR #42, both flags ON).
-One item sits with the user: send the editorial note.**
+**Open next steps: ONE in code — the Discover/News history backfill (below). Dead-link guards
+SHIPPED + LIVE 2026-07-28 (PR #42, both flags ON). One item still sits with the user: send the
+editorial note.**
+
+**Google Discover / News tracking — SHIPPED + LIVE 2026-08-05 (PRs #46/#47).** Discover turned out
+to be taxscan.in's biggest Google channel: **109,125 clicks/28d (84%) vs Search 19,752 (15%) and
+Google News 1,075 (0.8%)** — 5.5× Search, and invisible in GA4 by construction (a Discover click
+carries a plain google.com referrer, so GA4 files it as `google / organic`; the Google app strips
+the referrer into `(direct)`). Search Console's `type` parameter is the only authoritative split.
+`ArticleSurfaceStat` + `searchSurfaces.ts` (flag-gated ~6h cron, same never-call-Google-on-the-
+request-path invariant as GA reads) feed a fifth **Surfaces** tab on Reports: Discover/News clicks
+by category and bench over trailing windows + most-surfaced articles. Deliberately NOT columns on
+Campaigns — Search Console has no data at all for the newest 2-3 days, so fresh rows would always
+read as no-data. Flags: `SEARCH_CONSOLE_ENABLED`=ON, `SEARCH_CONSOLE_SITE_URL`=`https://www.taxscan.in/`
+(URL-prefix property), `SEARCH_CONSOLE_LOOKBACK_DAYS`=7. **⚠️ OPEN: a one-off history backfill** —
+the rolling 7-day lookback means every window currently shows the same ~8 days; raise the lookback,
+run one sync, put it back (see `NEXT_STEP.md` item -6). The panel is honest about this meanwhile
+via `dataFrom`. Suite **365**.
 A tapped notification hit taxscan's 404: the desk published one story twice (two ids/slugs), GUID
 dedupe can't see a re-post so the second copy pushed as fresh news, then the desk deleted one of the
 two posts. Not a URL bug on our side — and note taxscan resolves articles by the **trailing id and

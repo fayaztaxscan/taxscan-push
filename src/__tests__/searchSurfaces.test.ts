@@ -124,6 +124,44 @@ describe('fetchSurface', () => {
     expect(sink.urls[0]).toContain('sc-domain%3Ataxscan.in');
   });
 
+  /**
+   * Regression: Google reports the trailing-slash and bare spellings of one URL
+   * as separate rows. Both normalise to the same pagePath, so returning them
+   * unfolded trips the (portal, pagePath, date, surface) unique index on write.
+   * A 400-day backfill hit this in production; an 8-day window never had.
+   */
+  it('folds rows whose URLs normalise to the same path on the same day', async () => {
+    const out = await fetchSurface({
+      ...base,
+      fetchImpl: scFetch([
+        [
+          row('2026-08-01', `${URL_BASE}/top-stories/a-111111`, 100, 1000),
+          row('2026-08-01', `${URL_BASE}/top-stories/a-111111/`, 25, 300),
+        ],
+      ]),
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      pagePath: '/top-stories/a-111111',
+      clicks: 125,
+      impressions: 1300,
+    });
+  });
+
+  it('keeps the same path on different days apart', async () => {
+    const out = await fetchSurface({
+      ...base,
+      fetchImpl: scFetch([
+        [
+          row('2026-08-01', `${URL_BASE}/top-stories/a-111111`, 10, 100),
+          row('2026-08-02', `${URL_BASE}/top-stories/a-111111`, 20, 200),
+        ],
+      ]),
+    });
+    expect(out).toHaveLength(2);
+    expect(out.map((r) => r.clicks).sort((a, b) => a - b)).toEqual([10, 20]);
+  });
+
   it('stops paginating on a short page', async () => {
     const sink = { bodies: [] as unknown[], urls: [] as string[] };
     const out = await fetchSurface({
