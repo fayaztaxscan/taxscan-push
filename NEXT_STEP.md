@@ -5,10 +5,68 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-08-05) — code board CLEAN; ONE user-side item
+## ▶️ NEXT STEPS / open items (as of 2026-08-05) — ONE code item (surfaces backfill), ONE user-side
 
-Items -5 and -4 below are SHIPPED + LIVE. The only thing left is user-side: send the editorial note
-asking taxscan to 301-redirect deleted duplicates (the residual gap no code can close).
+-6 is LIVE but its history is only ~8 days deep until a one-off backfill runs (needs a Railway
+token). -5 and -4 are SHIPPED + LIVE. User-side item unchanged: send the editorial note asking
+taxscan to 301-redirect deleted duplicates (the residual gap no code can close).
+
+-6. **✅ SHIPPED + LIVE 2026-08-05 — GOOGLE DISCOVER / NEWS TRACKING (PRs #46 feature, #47 UI pass;
+   merges `5b890ff`, `8817272`). ⚠️ ONE OPEN ITEM: the history backfill (below).**
+   **THE HEADLINE FINDING — Discover is taxscan.in's biggest Google channel by a mile.** Measured
+   live over 28 days to 2026-08-03: **Discover 109,125 clicks (84.0%) · Search 19,752 (15.2%) ·
+   Google News 1,075 (0.8%)**. Discover sends **5.5× more traffic than Google Search**, and it had
+   been invisible the whole time. **WHY GA4 COULD NEVER SHOW THIS:** a Discover click carries a
+   plain `google.com` referrer, so GA4 files it under `google / organic` next to ordinary search;
+   via the Google app the referrer is stripped entirely into `(direct)`. Google News is only partly
+   visible (news.google.com referrals) and misses both the News app and the Search News tab.
+   **Search Console's `type` parameter (`discover` / `googleNews`) is the ONLY authoritative split.**
+   Top Discover pages cluster into two kinds: personal-tax stories a reader feels personally
+   (capital gains on a house, cash deposits, deductions) and CA-profession news (ICAI discipline,
+   stipends) — NOT the court-hierarchy material the push pacer prioritises. Real editorial signal.
+   **Shipped:** `ArticleSurfaceStat` + migration; `searchSurfaces.ts` (flag-gated cron, paginated
+   Search Analytics query per surface, canonical URLs normalised through the existing `readsPath()`
+   so the join key can't drift from the Reads columns, replace-by-date write, both surfaces fetched
+   BEFORE any delete so a second-surface failure can't wipe the first's dates); `surfacesReport.ts`
+   + `GET /api/reports/surfaces`; a fifth **Surfaces** tab on Reports. Suite 338 → **365**.
+   **Also fixed a latent auth bug this would have tripped:** `getGaAccessToken` cached ONE token in
+   a module-level slot with the scope hardcoded to `analytics.readonly`. The moment a
+   Search-Console-scoped caller existed, one cron would get the other's token and be rejected — as
+   intermittent 403s tracking CRON ORDER, not code. Cache is now keyed by (service account, scope).
+   **DESIGN CALL — deliberately NOT columns on Campaigns** (the user raised it and was right):
+   Search Console has NO data for the newest 2-3 days (not partial — none), so every fresh campaign
+   row would render as no-data, and the em-dash there already means "untracked link" — three states
+   collapsing into one glyph on the rows people look at most. Retrospective trailing-window view is
+   the honest home. Per-article need is served by a most-surfaced list inside the report instead.
+   **UI pass (PR #47)** after the first live read: lead with the answer (per-surface last-month
+   clicks) instead of a 90-word warning; a surface under 10% of clicks collapses behind "Show
+   breakdown" (threshold COMPUTED, not hardcoded — Discover 84% vs News 0.8% had identical billing);
+   cells show clicks only (impressions/CTR/share were already in every tooltip; 2 numbers × a 30-row
+   grid = 300 to read past); callout ~90 → ~45 words but still on-panel so it survives the PNG export.
+   **⚠️ OPEN — ONE-OFF HISTORY BACKFILL.** The sync fetches a rolling `SEARCH_CONSOLE_LOOKBACK_DAYS`
+   (=7), so on 2026-08-05 `dataFrom`=2026-07-29 and EVERY window (1w…12m) reads the same 9,218 —
+   the 12-month column would take a year to mean anything. Mitigated honestly, not hidden: the
+   payload carries `dataFrom` and the panel says "we only hold N days of history so far" whenever
+   history is shorter than the widest window (self-clearing as days accumulate). **To actually fill
+   it:** Search Console retains **16 months** — raise `SEARCH_CONSOLE_LOOKBACK_DAYS` (e.g. 180–400),
+   let ONE sync run, then put it back to 7. Same env dance as the GA reads 30-day backfill. **Do NOT
+   leave it high** — every 6h it would re-fetch and replace that whole span (heavy query, large
+   delete+insert). Revert is possible from the Railway dashboard → Variables if a CLI token expires
+   mid-way. Not done this session: the stored Railway OAuth token was ~15 min from expiry and the
+   user had not yet chosen to run it.
+   **Setup facts worth keeping:** property is **URL-prefix `https://www.taxscan.in/`**, NOT a domain
+   property (a domain property would also cover academy/shop and remove the apex-URL blind spot).
+   Search Console permissions do NOT inherit from GA or GCP — the service account needed adding
+   under Search Console → Settings → Users and permissions (**Restricted** is enough), AND the
+   Search Console API enabled in GCP project `taxscan-push-ga` (number **641507376203**). **GOTCHA
+   that cost a round-trip: Users-and-permissions is PER-PROPERTY**, so the first grant landed on
+   `academy.taxscan.in` and every surface read zero. Probe script pattern (mint JWT → `sites.list`
+   → per-`type` totals) is the fastest way to confirm both the grant and the volume.
+   **Built with a 5-agent workflow** (2 scouts → 2 parallel implementers against a contract fixed in
+   the script → 1 adversarial verifier). Fixing the contract in the SCRIPT rather than having an
+   agent derive it is what kept two blind implementers from drifting — the seam came back clean and
+   re-checked by hand. Verifier found 0 defects; a hand pass still caught a duplicated
+   `ARTICLE_PATH_JS_RE` (now exported from readsReport and shared).
 
 -5. **✅ SHIPPED + LIVE 2026-08-05 — ADMIN GUIDE v1.1 (PR #44, merge `88c8da5`).** Docs-only; no
    source/schema/env/flag change, zero subscriber impact. **Trigger:** user noticed the Campaigns
