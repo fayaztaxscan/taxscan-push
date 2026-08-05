@@ -186,8 +186,14 @@ export type ReadsEmailSummary = {
   topArticles: { title: string; reads: number; pushReads: number }[];
 };
 
-/** JS twin of ARTICLE_PATH_RE (which is a GA API filter string). */
-const ARTICLE_PATH_JS_RE = /-\d{5,}$/;
+/**
+ * JS twin of ARTICLE_PATH_RE (which is a GA API filter string). Exported
+ * because the Surfaces report needs the identical test: its rows are screened
+ * by host only, so the homepage and section pages reach the table and would be
+ * classified as if they were stories. Two copies of this would silently drift
+ * the day taxscan's URL format changes.
+ */
+export const ARTICLE_PATH_JS_RE = /-\d{5,}$/;
 
 /**
  * Readable pseudo-title from an article slug — used to classify paths whose

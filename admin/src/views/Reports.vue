@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { apiErrorMessage, useApi } from '../composables/useApi';
+import { apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { toPng } from 'html-to-image';
 
@@ -38,10 +38,33 @@ type ReadsReport = {
   benches?: ReadsRow[];
 };
 
+// The "Surfaces" report — how much traffic Google Discover and Google News sent
+// us, by category and bench, over the same trailing windows the Reads tab uses.
+// UNIT WARNING: these are Google CLICKS and IMPRESSIONS, not pageviews. They are
+// never comparable with (and must never be added to) the Reads figures above.
+type SurfaceKey = 'DISCOVER' | 'GOOGLE_NEWS';
+type SurfaceStat = { clicks: number; impressions: number; articles: number };
+/** null = no pickup at all for this row in this window (NOT a synced zero). */
+type SurfaceCell = SurfaceStat | null;
+type SurfaceRow = { label: string; cells: SurfaceCell[] };
+type SurfaceGrid = { surface: SurfaceKey; rows: SurfaceRow[] };
+type TopSurfacedArticle = { pagePath: string; title: string; clicks: number; impressions: number };
+type SurfacesReport = {
+  ready: boolean;
+  message?: string;
+  generatedAt?: string;
+  windows?: { label: string; days: number; totals: Record<SurfaceKey, SurfaceStat> }[];
+  byCategory?: SurfaceGrid[];
+  byBench?: SurfaceGrid[];
+  topArticles?: Record<SurfaceKey, TopSurfacedArticle[]>;
+  dataThrough?: string | null;
+};
+
 const api = useApi();
 const { user } = useAuth();
 const isAdmin = computed(() => user.value?.role === 'ADMIN');
-const period = ref<'weekly' | 'monthly' | 'custom' | 'reads'>('weekly');
+type Period = 'weekly' | 'monthly' | 'custom' | 'reads' | 'surfaces';
+const period = ref<Period>('weekly');
 
 // --- Custom date range (max 30 days, both ends inclusive) -------------------
 const MAX_CUSTOM_DAYS = 30;
@@ -114,6 +137,10 @@ async function removeRecipient(r: Recipient) {
 }
 const report = ref<Report | null>(null);
 const readsReport = ref<ReadsReport | null>(null);
+const surfacesReport = ref<SurfacesReport | null>(null);
+// Set only when the server says the feature is switched off (404 {error:'disabled'}).
+// Kept out of the red error banner: "off" is a state, not a failure.
+const surfacesOff = ref<string | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
@@ -129,6 +156,24 @@ async function load() {
       readsReport.value = await api.get<ReadsReport>('/api/reports/reads');
       return;
     }
+    if (period.value === 'surfaces') {
+      surfacesOff.value = null;
+      try {
+        surfacesReport.value = await api.get<SurfacesReport>('/api/reports/surfaces');
+      } catch (e) {
+        // The server returns 404 {error:'disabled'} when the Search Console sync
+        // is switched off. That is an expected state, so render it as a calm card
+        // rather than letting it fall through to the red error banner.
+        const err = e as ApiError;
+        if (err?.status === 404 && (err.body as { error?: string } | undefined)?.error === 'disabled') {
+          surfacesReport.value = null;
+          surfacesOff.value = apiErrorMessage(e);
+        } else {
+          throw e;
+        }
+      }
+      return;
+    }
     const query =
       period.value === 'custom'
         ? `period=custom&from=${customFrom.value}&to=${customTo.value}`
@@ -140,7 +185,7 @@ async function load() {
     loading.value = false;
   }
 }
-function setPeriod(p: 'weekly' | 'monthly' | 'custom' | 'reads') {
+function setPeriod(p: Period) {
   if (period.value === p) return;
   period.value = p;
   if (p === 'custom' && (!customFrom.value || !customTo.value)) {
@@ -218,6 +263,101 @@ const readsAsOf = computed(() => {
   return g ? new Date(g).toLocaleString() : '';
 });
 
+// --- Surfaces report helpers -------------------------------------------------
+// `fmtViews` is a plain magnitude abbreviator; aliased here so the Surfaces
+// markup never reads as if it were printing "views" (it prints Google clicks
+// and impressions, which are a different unit entirely).
+const fmtCount = fmtViews;
+
+const SURFACE_KEYS: SurfaceKey[] = ['DISCOVER', 'GOOGLE_NEWS'];
+const SURFACE_LABEL: Record<SurfaceKey, string> = {
+  DISCOVER: 'Google Discover',
+  GOOGLE_NEWS: 'Google News',
+};
+const EMPTY_STAT: SurfaceStat = { clicks: 0, impressions: 0, articles: 0 };
+
+/**
+ * One self-contained section per surface: its window totals (also the shading
+ * denominators), its two heat grids and its top-articles list. Built here so the
+ * template never has to hunt through the per-surface grid arrays.
+ */
+const surfaceSections = computed(() => {
+  const r = surfacesReport.value;
+  if (!r?.ready) return [];
+  return SURFACE_KEYS.map((key) => ({
+    key,
+    label: SURFACE_LABEL[key],
+    windows: (r.windows ?? []).map((w) => ({
+      label: w.label,
+      days: w.days,
+      ...(w.totals?.[key] ?? EMPTY_STAT),
+    })),
+    benches: r.byBench?.find((g) => g.surface === key)?.rows ?? [],
+    categories: r.byCategory?.find((g) => g.surface === key)?.rows ?? [],
+    top: r.topArticles?.[key] ?? [],
+  }));
+});
+/** True when Google has reported no pickup at all for this surface, in any window. */
+function surfaceHasNothing(s: { windows: SurfaceStat[]; benches: SurfaceRow[]; categories: SurfaceRow[] }): boolean {
+  return (
+    s.benches.length === 0 &&
+    s.categories.length === 0 &&
+    s.windows.every((w) => w.clicks === 0 && w.impressions === 0)
+  );
+}
+
+/** A cell's share of everything that surface sent us in that window (clicks). */
+function surfaceShare(clicks: number, windowClicks: number): number {
+  return windowClicks > 0 ? clicks / windowClicks : 0;
+}
+// Violet intensity — deliberately NOT the Reads blue and NOT the coverage
+// red→green, so a glance can never confuse Google clicks with reads or gaps.
+const surfacesMaxShare = computed(() => {
+  let m = 0;
+  for (const s of surfaceSections.value) {
+    for (const row of [...s.benches, ...s.categories]) {
+      row.cells.forEach((c, i) => {
+        if (!c) return;
+        const share = surfaceShare(c.clicks, s.windows[i]?.clicks ?? 0);
+        if (share > m) m = share;
+      });
+    }
+  }
+  return m;
+});
+function surfaceCellColor(share: number): string {
+  const p = Math.sqrt(share / Math.max(surfacesMaxShare.value, 0.0001)) * 0.55;
+  const mix = (w: number, v: number) => Math.round(w + (v - w) * p);
+  return `rgb(${mix(255, 109)}, ${mix(255, 40)}, ${mix(255, 217)})`; // white → #6d28d9
+}
+function ctrPct(clicks: number, impressions: number): string {
+  return impressions > 0 ? ((clicks / impressions) * 100).toFixed(1) + '%' : '—';
+}
+/** Full-sentence native tooltip: spells out the unit so nobody reads it as reads. */
+function surfaceCellTitle(
+  surfaceLabel: string,
+  rowLabel: string,
+  windowLabel: string,
+  c: SurfaceStat,
+  windowClicks: number,
+): string {
+  return (
+    `${rowLabel} — ${surfaceLabel}, last ${windowLabel}: ` +
+    `${c.clicks.toLocaleString()} clicks from ${c.impressions.toLocaleString()} impressions ` +
+    `(click rate ${ctrPct(c.clicks, c.impressions)}) across ${c.articles.toLocaleString()} articles — ` +
+    `${sharePct(surfaceShare(c.clicks, windowClicks))} of what ${surfaceLabel} sent in that window. ` +
+    `Google clicks, not reads.`
+  );
+}
+const surfacesThrough = computed(() => surfacesReport.value?.dataThrough ?? null);
+
+/** Whether the currently-shown tab actually has a sheet to export. */
+const sheetReady = computed(() => {
+  if (period.value === 'reads') return !!readsReport.value?.ready;
+  if (period.value === 'surfaces') return !!surfacesReport.value?.ready;
+  return !!report.value;
+});
+
 async function renderPng(): Promise<string> {
   const node = sheet.value;
   if (!node) throw new Error('Report not ready.');
@@ -248,9 +388,13 @@ async function downloadImage() {
     a.download =
       period.value === 'reads'
         ? `taxscan-reads-report-${new Date().toLocaleDateString('en-CA')}.png`
-        : period.value === 'custom'
-          ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
-          : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
+        : period.value === 'surfaces'
+          ? // Name it after the last day Google has actually reported, not "today" —
+            // the newest 2–3 days are never in the data.
+            `taxscan-google-surfaces-report-${surfacesThrough.value ?? new Date().toLocaleDateString('en-CA')}.png`
+          : period.value === 'custom'
+            ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
+            : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
     a.click();
     notice.value = 'Image downloaded — attach it in WhatsApp.';
   } catch (e) {
@@ -295,26 +439,19 @@ onMounted(() => {
         <button :class="{ on: period === 'monthly' }" @click="setPeriod('monthly')">Monthly</button>
         <button :class="{ on: period === 'custom' }" @click="setPeriod('custom')">Custom</button>
         <button :class="{ on: period === 'reads' }" @click="setPeriod('reads')">Reads</button>
+        <button :class="{ on: period === 'surfaces' }" @click="setPeriod('surfaces')">Surfaces</button>
       </div>
       <span class="spacer" style="flex: 1" />
+      <button class="btn" :disabled="loading || !sheetReady" @click="downloadImage">Download image</button>
+      <button class="btn" :disabled="loading || !sheetReady" @click="copyImage">Copy image</button>
       <button
         class="btn"
-        :disabled="loading || (period === 'reads' ? !readsReport?.ready : !report)"
-        @click="downloadImage"
-      >
-        Download image
-      </button>
-      <button
-        class="btn"
-        :disabled="loading || (period === 'reads' ? !readsReport?.ready : !report)"
-        @click="copyImage"
-      >
-        Copy image
-      </button>
-      <button
-        class="btn"
-        :disabled="!report || loading || period === 'custom' || period === 'reads'"
-        :title="period === 'custom' || period === 'reads' ? 'Test emails send the standing Weekly/Monthly report' : ''"
+        :disabled="!report || loading || period === 'custom' || period === 'reads' || period === 'surfaces'"
+        :title="
+          period === 'custom' || period === 'reads' || period === 'surfaces'
+            ? 'Test emails send the standing Weekly/Monthly report'
+            : ''
+        "
         @click="emailTest"
       >
         Email me a test
@@ -334,7 +471,14 @@ onMounted(() => {
     <div v-if="error" class="banner err">{{ error }}</div>
     <div v-if="notice" class="banner ok">{{ notice }}</div>
 
-    <div v-if="period !== 'reads' && report" ref="sheet" class="report-sheet">
+    <!-- Allow-list, not "!== reads": every panel below is an arm of ONE v-if
+         chain (only one ref="sheet" may ever be mounted, see renderPng), so a
+         new tab must be named here or it would render the coverage sheet. -->
+    <div
+      v-if="(period === 'weekly' || period === 'monthly' || period === 'custom') && report"
+      ref="sheet"
+      class="report-sheet"
+    >
       <div class="report-head">
         <div class="report-title">Taxscan {{ periodTitle }} Coverage Report</div>
         <div class="report-range">{{ rangeLabel(report) }}</div>
@@ -502,6 +646,196 @@ onMounted(() => {
 
     <div v-else-if="period === 'reads' && readsReport && !readsReport.ready" class="card">
       <p class="muted">{{ readsReport.message ?? 'The first reads report has not been built yet — check back shortly.' }}</p>
+    </div>
+
+    <!-- Surfaces report: what Google Discover / Google News picked up, by bench
+         and category, over the same trailing windows the Reads tab uses.
+         Aggregated on the server from stored Search Console data — the request
+         path never calls Google. -->
+    <div v-else-if="period === 'surfaces' && surfacesReport?.ready" ref="sheet" class="report-sheet">
+      <div class="report-head">
+        <div class="report-title">Taxscan Google Surfaces Report</div>
+        <div class="report-range">
+          What Google Discover &amp; Google News picked up ·
+          <template v-if="surfacesThrough">Google has reported up to {{ surfacesThrough }}</template>
+          <template v-else>Google has not reported any complete day yet</template>
+        </div>
+      </div>
+
+      <!-- The two things an editor must know before reading a single number.
+           Deliberately on the panel (and in the exported image), not in a tooltip. -->
+      <div class="gaps">
+        <p style="margin: 0 0 6px">
+          <strong>These are Google clicks — they are not the “Reads” figures.</strong>
+          A click here means someone tapped one of our headlines in the Google Discover feed or in
+          Google News. The Reads tab counts page views from all traffic. Two different measures of two
+          different things: never add them together and never compare one against the other.
+          Impressions (the small grey number) are how often a headline was shown, tapped or not.
+        </p>
+        <p style="margin: 0">
+          <strong>The last 2–3 days are always missing.</strong>
+          Google reports this data a few days late, and for the newest days it sends nothing at all —
+          not smaller numbers, none. So a quiet-looking recent stretch means Google has not reported
+          yet, not that pickup collapsed. That is why everything here is a trailing window looking
+          backwards, never a day-by-day chart.
+        </p>
+      </div>
+
+      <section v-for="s in surfaceSections" :key="s.key" class="surface-block">
+        <h3 class="surface-h">{{ s.label }}</h3>
+
+        <p v-if="surfaceHasNothing(s)" class="muted no-pickup">
+          Google sent us nothing from {{ s.label }} in any of these windows — no clicks and no
+          impressions. Either our stories are not being picked up there, or Google has not reported
+          them yet.
+        </p>
+
+        <template v-else>
+          <div class="insights">
+            <div v-for="w in s.windows" :key="w.label" class="ins">
+              <div class="ins-n">{{ fmtCount(w.clicks) }}</div>
+              <div class="ins-l">{{ s.label }} clicks · last {{ w.label }}</div>
+              <div class="ins-l">
+                {{ fmtCount(w.impressions) }} impressions · {{ w.articles.toLocaleString() }} articles
+              </div>
+            </div>
+          </div>
+
+          <!-- Bench above Category, matching the coverage and Reads tabs. -->
+          <h3 class="heat-h">Courts / benches × window</h3>
+          <p v-if="!s.benches.length" class="muted no-pickup">
+            No {{ s.label }} pickup on any court or bench story in these windows.
+          </p>
+          <div v-else class="heat-scroll">
+            <table class="heat surfaces">
+              <thead>
+                <tr>
+                  <th class="heat-label">Bench</th>
+                  <th v-for="w in s.windows" :key="w.label">{{ w.label }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in s.benches" :key="row.label">
+                  <td class="heat-label">{{ row.label }}</td>
+                  <td
+                    v-for="(c, i) in row.cells"
+                    :key="i"
+                    :style="c ? { background: surfaceCellColor(surfaceShare(c.clicks, s.windows[i]?.clicks ?? 0)) } : undefined"
+                    :title="
+                      c
+                        ? surfaceCellTitle(s.label, row.label, s.windows[i]?.label ?? '', c, s.windows[i]?.clicks ?? 0)
+                        : `${row.label} — no ${s.label} pickup in the last ${s.windows[i]?.label ?? ''}`
+                    "
+                  >
+                    <template v-if="c">
+                      <span class="rv">{{ fmtCount(c.clicks) }}</span>
+                      <span class="rs">{{ fmtCount(c.impressions) }} impr</span>
+                    </template>
+                    <span v-else class="muted">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="heat-h">Categories × window</h3>
+          <p v-if="!s.categories.length" class="muted no-pickup">
+            No {{ s.label }} pickup in any category in these windows.
+          </p>
+          <div v-else class="heat-scroll">
+            <table class="heat surfaces">
+              <thead>
+                <tr>
+                  <th class="heat-label">Category</th>
+                  <th v-for="w in s.windows" :key="w.label">{{ w.label }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in s.categories" :key="row.label">
+                  <td class="heat-label">{{ row.label }}</td>
+                  <td
+                    v-for="(c, i) in row.cells"
+                    :key="i"
+                    :style="c ? { background: surfaceCellColor(surfaceShare(c.clicks, s.windows[i]?.clicks ?? 0)) } : undefined"
+                    :title="
+                      c
+                        ? surfaceCellTitle(s.label, row.label, s.windows[i]?.label ?? '', c, s.windows[i]?.clicks ?? 0)
+                        : `${row.label} — no ${s.label} pickup in the last ${s.windows[i]?.label ?? ''}`
+                    "
+                  >
+                    <template v-if="c">
+                      <span class="rv">{{ fmtCount(c.clicks) }}</span>
+                      <span class="rs">{{ fmtCount(c.impressions) }} impr</span>
+                    </template>
+                    <span v-else class="muted">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="heat-h">Most picked-up articles · last 1 month</h3>
+          <p v-if="!s.top.length" class="muted no-pickup">
+            No single article drew a {{ s.label }} click in the last month.
+          </p>
+          <div v-else class="heat-scroll">
+            <table class="heat surfaces">
+              <thead>
+                <tr>
+                  <th class="heat-label">#</th>
+                  <th class="heat-label">Article</th>
+                  <th>Clicks</th>
+                  <th>Impressions</th>
+                  <th>Click rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(a, i) in s.top" :key="a.pagePath">
+                  <td class="heat-label rank">{{ i + 1 }}</td>
+                  <td class="heat-label art-title">
+                    <span class="rv">{{ a.title }}</span>
+                    <span class="rs">{{ a.pagePath }}</span>
+                  </td>
+                  <td>{{ a.clicks.toLocaleString() }}</td>
+                  <td class="dim">{{ a.impressions.toLocaleString() }}</td>
+                  <td class="dim">{{ ctrPct(a.clicks, a.impressions) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </section>
+
+      <div class="report-foot">
+        Big number = clicks from Google; small grey number = impressions (times shown). “—” means no
+        pickup at all in that window, which is not the same as zero clicks. Windows are trailing and
+        cumulative — 1 month includes the week. Deeper violet = a larger share of that surface’s clicks
+        in that window. Google credits whichever copy of a story it treats as the original, so a story
+        published twice can appear as two near-identical rows.
+        <span v-if="surfacesThrough">Data reported by Google up to {{ surfacesThrough }}.</span>
+      </div>
+    </div>
+
+    <!-- (a) Feature switched off — a state, not an error. -->
+    <div v-else-if="period === 'surfaces' && surfacesOff" class="card">
+      <p style="margin: 0 0 6px"><strong>Google Discover &amp; News tracking is switched off.</strong></p>
+      <p class="muted" style="margin: 0 0 6px">{{ surfacesOff }}</p>
+      <p class="muted" style="margin: 0">
+        Nothing is being collected at the moment, so there is nothing to show here. An admin can turn
+        it on; Google then starts filling in the numbers over the following few days.
+      </p>
+    </div>
+
+    <!-- (b) Switched on, but Google has not delivered a first day yet. -->
+    <div v-else-if="period === 'surfaces' && surfacesReport && !surfacesReport.ready" class="card">
+      <p style="margin: 0 0 6px"><strong>Nothing has come back from Google yet.</strong></p>
+      <p class="muted" style="margin: 0 0 6px">
+        {{ surfacesReport.message ?? 'Tracking is on, but no Discover or Google News data has been collected so far.' }}
+      </p>
+      <p class="muted" style="margin: 0">
+        Google reports this data 2–3 days behind, so the first numbers usually appear a couple of days
+        after tracking is turned on. Check back then — there is nothing to fix.
+      </p>
     </div>
 
     <div v-else-if="!loading" class="card">
@@ -706,22 +1040,63 @@ table.heat th.heat-total {
   color: var(--muted);
   text-align: right;
 }
-/* Reads report cells: value + share stacked, right-aligned (magnitudes), with
-   blue share-intensity backgrounds set inline by readsCellColor(). */
-table.heat.reads td {
+/* Reads + Surfaces cells: headline value with a secondary line under it,
+   right-aligned (magnitudes). Backgrounds are set inline — blue share-intensity
+   by readsCellColor(), violet click-share by surfaceCellColor(). */
+table.heat.reads td,
+table.heat.surfaces td {
   text-align: right;
   padding: 5px 10px;
 }
-table.heat.reads td.heat-label {
+table.heat.reads td.heat-label,
+table.heat.surfaces td.heat-label {
   text-align: left;
 }
-table.heat.reads .rv {
+table.heat.reads .rv,
+table.heat.surfaces .rv {
   display: block;
   font-weight: 600;
 }
-table.heat.reads .rs {
+table.heat.reads .rs,
+table.heat.surfaces .rs {
   display: block;
   font-size: 10px;
   color: #475569;
+}
+/* --- Surfaces report ------------------------------------------------------- */
+.surface-block + .surface-block {
+  margin-top: 26px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.surface-h {
+  margin: 18px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+/* Distinct from an error: "no pickup here" is a finding, not a fault. */
+.no-pickup {
+  font-size: 12px;
+  margin: 6px 0 2px;
+}
+table.heat.surfaces td.dim {
+  color: #475569;
+  font-weight: 400;
+}
+table.heat.surfaces td.rank {
+  text-align: right;
+  width: 1%;
+  background: #f1f5f9;
+}
+/* Headlines are long: this is the one column allowed to wrap, overriding the
+   shared `white-space: nowrap` so the table stays a sane width on phones. */
+table.heat.surfaces td.art-title {
+  white-space: normal;
+  max-width: 460px;
+  font-weight: 400;
+}
+table.heat.surfaces td.art-title .rv {
+  font-weight: 600;
 }
 </style>

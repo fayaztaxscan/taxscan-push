@@ -15,6 +15,7 @@ import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { customReportWindow, getReport, reportWindow } from '../services/reports';
 import { getReadsReport } from '../services/readsReport';
+import { getSurfacesReport } from '../services/surfacesReport';
 import { sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -594,6 +595,33 @@ export function createApiRouter(
         return res.json({ ready: false, message: 'The first reads report has not been built yet — check back shortly.' });
       }
       return res.json({ ready: true, generatedAt: row.generatedAt, ...row.payload });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // The "Surfaces" report: Google Discover / Google News pickup (CLICKS and
+  // IMPRESSIONS — never comparable with the "Reads" pageviews) by category and
+  // by bench over the same trailing windows the Reads tab uses. Aggregated from
+  // the locally-mirrored ArticleSurfaceStat, so this never calls Google either.
+  // `ready:false` while nothing has synced yet — the normal state for the first
+  // 2-3 days after enabling the flag, since Search Console back-fills nothing.
+  router.get('/reports/surfaces', requireBearerOrUser(), async (_req, res, next) => {
+    try {
+      if (!env.searchConsole.enabled) {
+        return res
+          .status(404)
+          .json({ error: 'disabled', message: 'Discover / Google News reporting is not enabled.' });
+      }
+      const payload = await getSurfacesReport(env.rss.portal);
+      if (payload.dataThrough === null) {
+        return res.json({
+          ready: false,
+          message:
+            'No Discover or Google News data has synced yet — Search Console reports 2-3 days late, so check back shortly.',
+        });
+      }
+      return res.json({ ready: true, generatedAt: new Date().toISOString(), ...payload });
     } catch (err) {
       return next(err);
     }
