@@ -5,10 +5,41 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-07-28) — code board CLEAN; ONE user-side item
+## ▶️ NEXT STEPS / open items (as of 2026-08-05) — code board CLEAN; ONE user-side item
 
-Item -4 below is SHIPPED + LIVE. The only thing left is user-side: send the editorial note asking
-taxscan to 301-redirect deleted duplicates (the residual gap no code can close).
+Items -5 and -4 below are SHIPPED + LIVE. The only thing left is user-side: send the editorial note
+asking taxscan to 301-redirect deleted duplicates (the residual gap no code can close).
+
+-5. **✅ SHIPPED + LIVE 2026-08-05 — ADMIN GUIDE v1.1 (PR #44, merge `88c8da5`).** Docs-only; no
+   source/schema/env/flag change, zero subscriber impact. **Trigger:** user noticed the Campaigns
+   screen's GA4 **Reads / via Push** columns were absent from the guide. Root cause was broader —
+   the guide was **Version 1.0 dated 2026-06-19**, so EVERYTHING shipped after that date was
+   missing, and one tip had become actively wrong. What went in: (1) Campaigns → new "the columns
+   explained" table (Sent · Clicked/CTR · **Reads** · **via Push**), stating that Clicked measures
+   the notification while Reads measures the article, and that **`—` is not a zero** (academy/shop
+   links untracked, pre-tracking articles, ~48h GA settling); (2) Reports → new **"The Reads tab"**
+   subsection (bench/category × trailing 1w–12m windows + how to read it against the coverage
+   report); (3) the **Custom** tab (shipped 07-10) was also undocumented — all four tabs now in a
+   table; (4) the emailed report's **"How it was read"** section; (5) Review → new **"Repeat
+   headlines"** subsection, because the 72h duplicate guard (item -4) is USER-VISIBLE and editors
+   would otherwise see held headlines unexplained; (6) **deleted a stale tip** claiming the
+   categories heat-map "fills in over the first week / mostly Uncategorised" — untrue since PR #28
+   + #39 (title inference; that row no longer exists); (7) FAQ +5 (Clicked vs Reads · the `—` ·
+   repeat headline in Review · article vanishing from the queue = dead-link check ·
+   redirect-don't-delete under "Can I undo a send?") and 3 quick-reference rows.
+   **Regenerated the PDF** with `npm run build:guide` (12 → 15 pages).
+   **PROCESS NOTE — read the rendered PDF, don't just build it:** the first pass pushed section 6
+   one box past the page and produced a ~90%-blank page; the block was condensed and rebuilt. The
+   HTML is the source of truth (`docs/Taxscan-Push-Admin-Guide.html`); the PDF is generated, and
+   BOTH are committed and ship with the deploy — `Guide.vue` only iframes `/api/guide.html` and
+   links `/api/guide?download=1`, so there is no third copy to sync.
+   **VERIFY-A-DOCS-DEPLOY TRICK (this service has no version endpoint —`/healthz` returns only
+   `{"status":"ok"}`):** the auth-gated guide endpoint doubles as one. Take a BASELINE read before
+   merging, then poll:
+   `curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://push.taxscan.in/api/guide.html | grep -oE 'Version 1\.[01]'`
+   Confirmed live at 12:33 UTC (~2.5 min after merge): v1.0/30,997 B → **v1.1/38,937 B**, "via Push"
+   present; PDF endpoint 706,852 B / 15 pages and **SHA-256 identical to the local build**; healthz
+   200 throughout.
 
 -4. **✅ SHIPPED + LIVE 2026-07-28 — DEAD PUSH LINKS: duplicate-title guard + pre-push link check.
    Merged via PR #42 (merge `83b9bfe`, commit `03c2fdb`); BOTH FLAGS SET TRUE on Railway at
