@@ -179,6 +179,16 @@ export async function fetchSurface(opts: {
  * surface can't leave the first one's dates wiped. Each date the API returned
  * rows for is then replaced wholesale, exactly like the GA reads sync; dates it
  * returned nothing for keep their previously-synced rows.
+ *
+ * TWO WAYS TO PICK THE WINDOW, and the difference matters:
+ *   - `lookbackDays` (the cron): [now - lookbackDays, now].
+ *   - `startDate`/`endDate` (backfills): an explicit YYYY-MM-DD span.
+ *
+ * Reach for the explicit span for ANY historical fetch. `now` is not only the
+ * window anchor — it is also the clock the service-account JWT is signed with,
+ * so back-dating it to move the window back-dates the token too and Google
+ * rejects the exchange outright ("Invalid JWT: Token must be a short-lived
+ * token"). Found the hard way running the Jan-2026 backfill month by month.
  */
 export async function syncSearchSurfaces(
   deps: {
@@ -188,6 +198,9 @@ export async function syncSearchSurfaces(
     portal?: string;
     siteUrl?: string;
     lookbackDays?: number;
+    /** Explicit window (YYYY-MM-DD, inclusive). Both or neither; wins over lookbackDays. */
+    startDate?: string;
+    endDate?: string;
   } = {},
 ): Promise<{ rows: number; dates: number; bySurface: Record<string, number> }> {
   const creds = deps.creds ?? loadGaCredentials();
@@ -198,8 +211,15 @@ export async function syncSearchSurfaces(
   const now = deps.now ?? new Date();
   const lookbackDays = deps.lookbackDays ?? env.searchConsole.lookbackDays;
 
-  const endDate = apiDate(now);
-  const startDate = apiDate(new Date(now.getTime() - lookbackDays * 86_400_000));
+  if ((deps.startDate === undefined) !== (deps.endDate === undefined)) {
+    throw new Error('syncSearchSurfaces: pass BOTH startDate and endDate, or neither');
+  }
+  const endDate = deps.endDate ?? apiDate(now);
+  const startDate =
+    deps.startDate ?? apiDate(new Date(now.getTime() - lookbackDays * 86_400_000));
+  if (startDate > endDate) {
+    throw new Error(`syncSearchSurfaces: startDate ${startDate} is after endDate ${endDate}`);
+  }
 
   const rows: SurfaceRow[] = [];
   const bySurface: Record<string, number> = {};

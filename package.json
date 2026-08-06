@@ -25,6 +25,7 @@
     "import:izooto": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/import-izooto.ts",
     "create-admin": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/create-admin.ts",
     "build:guide": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/build-guide.ts",
+    "backfill:surfaces": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/backfill-surfaces.ts",
     "test": "jest"
   },
   "dependencies": {

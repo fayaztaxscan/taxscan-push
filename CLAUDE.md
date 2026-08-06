@@ -79,7 +79,22 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Open next steps: ONE in code — the Discover/News history backfill (below). Dead-link guards
+**Surfaces rebuilt for stakeholders — BUILT + TESTED 2026-08-06, awaiting deploy (on `develop`).**
+Three asks: data from 01-Jan-2026, a custom date filter, month-to-month comparison. **The backfill is
+already IN PRODUCTION** (data only): `ArticleSurfaceStat` 3,744 → **31,832 rows**, 2026-01-01 →
+2026-08-06, via the new committed `scripts/backfill-surfaces.ts` (month-by-month, idempotent,
+replaces the raise-the-lookback env dance). **Discover clicks fell 954,691 (Jan) → 138,837 (Jul),
+−85% in seven months** — an SEO/editorial conversation, not a bug. The tab's columns are now
+**calendar months** (cumulative trailing windows structurally hid that trend), capped at 18, with the
+current month flagged partial; `?from&to` gives a custom range against the equally-long span before
+it (400-day cap, validated by `customSurfacesWindow`); each row carries a trend sparkline before its
+numbers and a Δ against the last complete month. `syncSearchSurfaces` gained explicit
+`startDate`/`endDate` — **its `now` also signs the service-account JWT, so back-dating it to fetch
+history gets the token rejected**. The payload now states `compare: {current, base}` because the two
+modes order columns differently and the client's own inference silently INVERTED every range delta.
+Guide → v1.3. Suite **382**.
+
+**Open next steps: NO code items open once the above deploys. Dead-link guards
 SHIPPED + LIVE 2026-07-28 (PR #42, both flags ON). One item still sits with the user: send the
 editorial note.**
 
@@ -110,7 +125,8 @@ read as no-data. Flags: `SEARCH_CONSOLE_ENABLED`=ON, `SEARCH_CONSOLE_SITE_URL`=`
 (URL-prefix property), `SEARCH_CONSOLE_LOOKBACK_DAYS`=7. **⚠️ OPEN: a one-off history backfill** —
 the rolling 7-day lookback means every window currently shows the same ~8 days; raise the lookback,
 run one sync, put it back (see `NEXT_STEP.md` item -6). The panel is honest about this meanwhile
-via `dataFrom`. Suite **371**.
+via `dataFrom`. **Superseded 2026-08-06 — the backfill is done and the tab is month-based; see the
+Surfaces-rebuild note above.**
 A tapped notification hit taxscan's 404: the desk published one story twice (two ids/slugs), GUID
 dedupe can't see a re-post so the second copy pushed as fresh news, then the desk deleted one of the
 two posts. Not a URL bug on our side — and note taxscan resolves articles by the **trailing id and

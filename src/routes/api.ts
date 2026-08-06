@@ -15,7 +15,7 @@ import { sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { customReportWindow, getReport, reportWindow } from '../services/reports';
 import { getReadsReport } from '../services/readsReport';
-import { getSurfacesReport } from '../services/surfacesReport';
+import { customSurfacesWindow, getSurfacesReport } from '../services/surfacesReport';
 import { sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
@@ -606,14 +606,31 @@ export function createApiRouter(
   // the locally-mirrored ArticleSurfaceStat, so this never calls Google either.
   // `ready:false` while nothing has synced yet — the normal state for the first
   // 2-3 days after enabling the flag, since Search Console back-fills nothing.
-  router.get('/reports/surfaces', requireBearerOrUser(), async (_req, res, next) => {
+  router.get('/reports/surfaces', requireBearerOrUser(), async (req, res, next) => {
     try {
       if (!env.searchConsole.enabled) {
         return res
           .status(404)
           .json({ error: 'disabled', message: 'Discover / Google News reporting is not enabled.' });
       }
-      const payload = await getSurfacesReport(env.rss.portal);
+      // ?from=&to= switches to the custom range (that span + the equally-long
+      // one before it). Validated server-side, like the coverage report's
+      // custom window — the SPA's own check is a courtesy, not the control.
+      let range: { from: string; to: string } | undefined;
+      if (req.query.from !== undefined || req.query.to !== undefined) {
+        const from = String(req.query.from ?? '');
+        const to = String(req.query.to ?? '');
+        try {
+          customSurfacesWindow(from, to);
+        } catch (e) {
+          return res.status(400).json({
+            error: 'bad_range',
+            message: e instanceof Error ? e.message : 'Invalid date range.',
+          });
+        }
+        range = { from, to };
+      }
+      const payload = await getSurfacesReport(env.rss.portal, { range });
       if (payload.dataThrough === null) {
         return res.json({
           ready: false,

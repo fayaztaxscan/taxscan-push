@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { toPng } from 'html-to-image';
+import TrendLine from '../components/TrendLine.vue';
 
 type Heatmap = {
   rows: { label: string; perDay: number[]; total: number }[];
@@ -39,24 +40,30 @@ type ReadsReport = {
 };
 
 // The "Surfaces" report — how much traffic Google Discover and Google News sent
-// us, by category and bench, over the same trailing windows the Reads tab uses.
+// us, by category and bench, month by month (or over a custom range).
 // UNIT WARNING: these are Google CLICKS and IMPRESSIONS, not pageviews. They are
 // never comparable with (and must never be added to) the Reads figures above.
 type SurfaceKey = 'DISCOVER' | 'GOOGLE_NEWS';
 type SurfaceStat = { clicks: number; impressions: number; articles: number };
-/** null = no pickup at all for this row in this window (NOT a synced zero). */
+/** null = no pickup at all for this row in this column (NOT a synced zero). */
 type SurfaceCell = SurfaceStat | null;
 type SurfaceRow = { label: string; cells: SurfaceCell[] };
 type SurfaceGrid = { surface: SurfaceKey; rows: SurfaceRow[] };
 type TopSurfacedArticle = { pagePath: string; title: string; clicks: number; impressions: number };
+/** A month, or one side of a custom range. `partial` = Google is still filling it. */
+type SurfaceColumn = { key: string; label: string; from: string; to: string; partial: boolean };
 type SurfacesReport = {
   ready: boolean;
   message?: string;
   generatedAt?: string;
-  windows?: { label: string; days: number; totals: Record<SurfaceKey, SurfaceStat> }[];
+  mode?: 'months' | 'range';
+  columns?: SurfaceColumn[];
+  totals?: Record<SurfaceKey, SurfaceStat>[];
   byCategory?: SurfaceGrid[];
   byBench?: SurfaceGrid[];
   topArticles?: Record<SurfaceKey, TopSurfacedArticle[]>;
+  compare?: { current: number; base: number };
+  topWindow?: { from: string; to: string; label: string };
   dataThrough?: string | null;
   dataFrom?: string | null;
 };
@@ -160,7 +167,11 @@ async function load() {
     if (period.value === 'surfaces') {
       surfacesOff.value = null;
       try {
-        surfacesReport.value = await api.get<SurfacesReport>('/api/reports/surfaces');
+        const q =
+          surfaceRangeOn.value && !surfaceRangeError.value
+            ? `?from=${surfFrom.value}&to=${surfTo.value}`
+            : '';
+        surfacesReport.value = await api.get<SurfacesReport>(`/api/reports/surfaces${q}`);
       } catch (e) {
         // The server returns 404 {error:'disabled'} when the Search Console sync
         // is switched off. That is an expected state, so render it as a calm card
@@ -277,10 +288,73 @@ const SURFACE_LABEL: Record<SurfaceKey, string> = {
 };
 const EMPTY_STAT: SurfaceStat = { clicks: 0, impressions: 0, articles: 0 };
 
+// --- Surfaces custom range ---------------------------------------------------
+// Its own control rather than the coverage tab's "Custom" button: that one
+// drives period=custom on a different report with a 30-day ceiling, while this
+// range aggregates into a single column and may span a year.
+const MAX_SURFACE_RANGE_DAYS = 400;
+const surfaceRangeOn = ref(false);
+const surfFrom = ref('');
+const surfTo = ref('');
+const surfaceRangeDays = computed(() => {
+  if (!surfFrom.value || !surfTo.value) return null;
+  const ms = new Date(surfTo.value).getTime() - new Date(surfFrom.value).getTime();
+  if (Number.isNaN(ms)) return null;
+  return Math.round(ms / 86_400_000) + 1;
+});
+const surfaceRangeError = computed(() => {
+  if (!surfaceRangeOn.value) return null;
+  if (!surfFrom.value || !surfTo.value) return 'Pick both dates.';
+  const days = surfaceRangeDays.value;
+  if (days === null) return 'Pick valid dates.';
+  if (days < 1) return '"From" must be on or before "To".';
+  if (surfFrom.value > todayKey) return 'The range cannot start in the future.';
+  if (days > MAX_SURFACE_RANGE_DAYS) return `Max ${MAX_SURFACE_RANGE_DAYS} days — this range is ${days}.`;
+  return null;
+});
+function openSurfaceRange() {
+  surfaceRangeOn.value = true;
+  if (!surfFrom.value || !surfTo.value) {
+    // Opens on the last complete month — the span most likely to be asked for,
+    // and one that is fully reported rather than still filling.
+    const now = new Date();
+    const firstOfThis = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastOfPrev = new Date(firstOfThis.getTime() - 86_400_000);
+    surfTo.value = dayKey(lastOfPrev);
+    surfFrom.value = dayKey(new Date(lastOfPrev.getFullYear(), lastOfPrev.getMonth(), 1));
+  }
+  void load();
+}
+function clearSurfaceRange() {
+  surfaceRangeOn.value = false;
+  void load();
+}
+
+const surfaceColumns = computed<SurfaceColumn[]>(() => surfacesReport.value?.columns ?? []);
+const surfacesMode = computed(() => surfacesReport.value?.mode ?? 'months');
+
 /**
- * One self-contained section per surface: its window totals (also the shading
- * denominators), its two heat grids and its top-articles list. Built here so the
- * template never has to hunt through the per-surface grid arrays.
+ * Column headings. In months mode the year is redundant on every column, so it
+ * shows only where it changes (the first column and each January) — the reader
+ * gets the year without 18 repetitions of it.
+ */
+const columnHeads = computed(() =>
+  surfaceColumns.value.map((c, i) => {
+    if (surfacesMode.value !== 'months') return { top: c.label, sub: '', partial: c.partial };
+    const [y, m] = c.from.split('-');
+    const prevYear = i > 0 ? surfaceColumns.value[i - 1].from.slice(0, 4) : null;
+    return {
+      top: c.label.split(' ')[0],
+      sub: prevYear === null || prevYear !== y || m === '01' ? y : '',
+      partial: c.partial,
+    };
+  }),
+);
+
+/**
+ * One self-contained section per surface: its per-column totals (also the
+ * shading denominators), its two grids and its top-articles list. Built here so
+ * the template never has to hunt through the per-surface grid arrays.
  */
 const surfaceSections = computed(() => {
   const r = surfacesReport.value;
@@ -288,34 +362,131 @@ const surfaceSections = computed(() => {
   return SURFACE_KEYS.map((key) => ({
     key,
     label: SURFACE_LABEL[key],
-    windows: (r.windows ?? []).map((w) => ({
-      label: w.label,
-      days: w.days,
-      ...(w.totals?.[key] ?? EMPTY_STAT),
-    })),
+    totals: (r.totals ?? []).map((t) => t?.[key] ?? EMPTY_STAT),
     benches: r.byBench?.find((g) => g.surface === key)?.rows ?? [],
     categories: r.byCategory?.find((g) => g.surface === key)?.rows ?? [],
     top: r.topArticles?.[key] ?? [],
+    // Bench above Category, matching the coverage and Reads tabs. Iterated in
+    // the template so the two grids can never drift apart in markup.
+    grids: [
+      { key: 'bench', title: 'Courts / benches', unit: 'court or bench story', rows: r.byBench?.find((g) => g.surface === key)?.rows ?? [] },
+      { key: 'category', title: 'Categories', unit: 'category', rows: r.byCategory?.find((g) => g.surface === key)?.rows ?? [] },
+    ],
   }));
 });
-/**
- * The one-line answer, before any grid: how much each surface actually sent us
- * last month. An editor opening this tab wants the comparison first — the grids
- * explain the "why" only once you know which surface matters.
- */
-const MONTH_WINDOW_INDEX = 1; // READ_WINDOWS: [1 week, 1 month, 3 months, ...]
-const surfaceHeadline = computed(() =>
-  surfaceSections.value.map((s) => ({
-    key: s.key,
-    label: s.label,
-    clicks: s.windows[MONTH_WINDOW_INDEX]?.clicks ?? 0,
-  })),
-);
 
 /**
- * Share of the last month's clicks across BOTH surfaces. Drives which section
- * opens by default: giving a surface worth a rounding error the same screen
- * space as the one carrying the traffic is what makes a report tiring to read.
+ * Which two columns every Δ on this screen compares, as {current, base}.
+ *
+ * Taken from the payload, NOT re-derived here. The two modes order their columns
+ * differently — months oldest-first ending on a still-filling month, a range
+ * subject-first — and inferring "newest is last" inverts every delta in range
+ * mode, reading as a rise when the truth is a fall. The server states the pair
+ * and its tests pin it.
+ */
+const compareIdx = computed<{ current: number; base: number }>(
+  () => surfacesReport.value?.compare ?? { current: -1, base: -1 },
+);
+
+function pctChange(now: number, before: number): number | null {
+  if (before <= 0) return null;
+  return Math.round(((now - before) / before) * 100);
+}
+
+/**
+ * Below this many clicks in the earlier period, a percentage stops being
+ * information: a row that went 9 → 2,800 reads as "▲ 30711%", which crowds out
+ * every meaningful figure in the column while saying less than "+2.8k" does.
+ * Small bases get the absolute movement instead.
+ */
+const MIN_BASE_FOR_PCT = 50;
+
+/**
+ * The answer before any grid: what each surface sent last complete month, which
+ * way it moved, and how far it sits from its best month on screen. The peak line
+ * exists because a single month's number reads as fine in isolation — the story
+ * in this data is the slope, and it belongs where nobody has to scroll for it.
+ */
+const surfaceHeadline = computed(() => {
+  const { current: i, base } = compareIdx.value;
+  const cols = surfaceColumns.value;
+  if (i < 0) return [];
+  const hasBase = base >= 0 && base < cols.length;
+  return surfaceSections.value.map((s) => {
+    const clicks = s.totals[i]?.clicks ?? 0;
+    let peakIdx = 0;
+    s.totals.forEach((t, ti) => {
+      if ((t?.clicks ?? 0) > (s.totals[peakIdx]?.clicks ?? 0)) peakIdx = ti;
+    });
+    // "Best month on screen" is a statement about a run of months. Across two
+    // range columns the peak is just whichever side is larger, which the Δ
+    // already says — so it is dropped rather than restated.
+    const showPeak = surfacesMode.value === 'months' && peakIdx !== i;
+    return {
+      key: s.key,
+      label: s.label,
+      clicks,
+      columnLabel: cols[i]?.label ?? '',
+      delta: hasBase ? move(clicks, s.totals[base]?.clicks ?? 0) : null,
+      prevLabel: hasBase ? (cols[base]?.label ?? '') : '',
+      peak: s.totals[peakIdx]?.clicks ?? 0,
+      peakLabel: cols[peakIdx]?.label ?? '',
+      fromPeak: showPeak ? move(clicks, s.totals[peakIdx]?.clicks ?? 0) : null,
+    };
+  });
+});
+
+/** Row values for the inline trend line, nulls read as zero pickup. */
+function rowValues(row: SurfaceRow): number[] {
+  return row.cells.map((c) => c?.clicks ?? 0);
+}
+function rowTrendLabel(rowLabel: string, surfaceLabel: string): string {
+  const cols = surfaceColumns.value;
+  return `${rowLabel} — ${surfaceLabel} clicks from ${cols[0]?.label ?? ''} to ${
+    cols[cols.length - 1]?.label ?? ''
+  }`;
+}
+/** A period-on-period movement, ready to render. */
+type Move = { pct: number | null; from: number; to: number };
+
+function move(to: number, from: number): Move {
+  return { pct: pctChange(to, from), from, to };
+}
+/** Row-level movement: the last complete column against the one before it. */
+function rowDelta(row: SurfaceRow): Move | null {
+  const { current, base } = compareIdx.value;
+  if (current < 0 || base < 0 || base >= row.cells.length) return null;
+  return move(row.cells[current]?.clicks ?? 0, row.cells[base]?.clicks ?? 0);
+}
+function deltaText(m: Move | null): string {
+  if (m === null || (m.from === 0 && m.to === 0)) return '—';
+  const dir = m.to >= m.from ? '▲' : '▼';
+  if (m.from < MIN_BASE_FOR_PCT) {
+    // Too small a base for a percentage to mean anything — state the movement.
+    const diff = Math.abs(m.to - m.from);
+    return diff === 0 ? 'flat' : `${dir} ${fmtCount(diff)}`;
+  }
+  if (m.pct === 0) return 'flat';
+  return `${dir} ${Math.abs(m.pct ?? 0)}%`;
+}
+function deltaTitle(m: Move | null, fromLabel: string, toLabel: string): string {
+  if (m === null) return '';
+  const base =
+    `${fromLabel}: ${m.from.toLocaleString()} clicks → ${toLabel}: ${m.to.toLocaleString()} clicks`;
+  return m.from < MIN_BASE_FOR_PCT && m.from !== m.to
+    ? `${base}. Shown as a count, not a percentage — ${m.from.toLocaleString()} is too small a base for a percentage to mean much.`
+    : base;
+}
+function deltaClass(m: Move | null): string {
+  if (m === null || m.to === m.from) return 'flat';
+  return m.to > m.from ? 'up' : 'down';
+}
+
+/**
+ * Share of the LATEST COMPLETE column's clicks across BOTH surfaces. Drives
+ * which section opens by default: giving a surface worth a rounding error the
+ * same screen space as the one carrying the traffic is what makes a report
+ * tiring to read.
  */
 function surfaceShareOfAll(key: SurfaceKey): number {
   const total = surfaceHeadline.value.reduce((n, h) => n + h.clicks, 0);
@@ -337,28 +508,34 @@ function toggleSurface(key: SurfaceKey): void {
     : [...openedSurfaces.value, key];
 }
 
-/** True when Google has reported no pickup at all for this surface, in any window. */
-function surfaceHasNothing(s: { windows: SurfaceStat[]; benches: SurfaceRow[]; categories: SurfaceRow[] }): boolean {
+/** True when Google has reported no pickup at all for this surface, anywhere on screen. */
+function surfaceHasNothing(s: { totals: SurfaceStat[]; benches: SurfaceRow[]; categories: SurfaceRow[] }): boolean {
   return (
     s.benches.length === 0 &&
     s.categories.length === 0 &&
-    s.windows.every((w) => w.clicks === 0 && w.impressions === 0)
+    s.totals.every((t) => t.clicks === 0 && t.impressions === 0)
   );
 }
 
-/** A cell's share of everything that surface sent us in that window (clicks). */
-function surfaceShare(clicks: number, windowClicks: number): number {
-  return windowClicks > 0 ? clicks / windowClicks : 0;
+/** A cell's share of everything that surface sent us in that column (clicks). */
+function surfaceShare(clicks: number, columnClicks: number): number {
+  return columnClicks > 0 ? clicks / columnClicks : 0;
 }
 // Violet intensity — deliberately NOT the Reads blue and NOT the coverage
 // red→green, so a glance can never confuse Google clicks with reads or gaps.
+//
+// Shaded on each cell's share of ITS OWN column, not of the whole grid. With
+// months as columns that distinction decides what the grid is for: absolute
+// shading would just restate the traffic collapse in every row and wash out the
+// recent months entirely, while share-of-column answers "what was Google picking
+// up that month" — a mix question the totals row above already contextualises.
 const surfacesMaxShare = computed(() => {
   let m = 0;
   for (const s of surfaceSections.value) {
     for (const row of [...s.benches, ...s.categories]) {
       row.cells.forEach((c, i) => {
         if (!c) return;
-        const share = surfaceShare(c.clicks, s.windows[i]?.clicks ?? 0);
+        const share = surfaceShare(c.clicks, s.totals[i]?.clicks ?? 0);
         if (share > m) m = share;
       });
     }
@@ -377,37 +554,34 @@ function ctrPct(clicks: number, impressions: number): string {
 function surfaceCellTitle(
   surfaceLabel: string,
   rowLabel: string,
-  windowLabel: string,
+  columnLabel: string,
   c: SurfaceStat,
-  windowClicks: number,
+  columnClicks: number,
 ): string {
   return (
-    `${rowLabel} — ${surfaceLabel}, last ${windowLabel}: ` +
+    `${rowLabel} — ${surfaceLabel}, ${columnLabel}: ` +
     `${c.clicks.toLocaleString()} clicks from ${c.impressions.toLocaleString()} impressions ` +
     `(click rate ${ctrPct(c.clicks, c.impressions)}) across ${c.articles.toLocaleString()} articles — ` +
-    `${sharePct(surfaceShare(c.clicks, windowClicks))} of what ${surfaceLabel} sent in that window. ` +
+    `${sharePct(surfaceShare(c.clicks, columnClicks))} of what ${surfaceLabel} sent that period. ` +
     `Google clicks, not reads.`
   );
 }
 const surfacesThrough = computed(() => surfacesReport.value?.dataThrough ?? null);
+const surfacesFrom = computed(() => surfacesReport.value?.dataFrom ?? null);
 
 /**
- * How many days of history we actually hold. The sync fetches a rolling
- * lookback, so a fresh install has days, not months — and a column headed
- * "12 months" would then be a week's data wearing a year's label. When history
- * is shorter than the widest window we say so rather than let the header lie.
+ * The earliest month on screen against the earliest data we hold. The sync only
+ * fetches a rolling lookback, so without a backfill the grid is a couple of
+ * columns wide — worth saying plainly rather than letting a short grid read as
+ * "Google sent us nothing before March".
  */
-const surfacesHistoryDays = computed(() => {
-  const from = surfacesReport.value?.dataFrom;
-  const through = surfacesReport.value?.dataThrough;
-  if (!from || !through) return null;
-  const ms = new Date(through).getTime() - new Date(from).getTime();
-  return Math.max(1, Math.round(ms / 86400000) + 1);
-});
-const surfacesWindowsArePartial = computed(() => {
-  const days = surfacesHistoryDays.value;
-  const widest = surfacesReport.value?.windows?.[(surfacesReport.value?.windows?.length ?? 1) - 1]?.days;
-  return days !== null && widest !== undefined && days < widest;
+const surfacesHistoryNote = computed(() => {
+  const from = surfacesFrom.value;
+  const cols = surfaceColumns.value;
+  if (!from || cols.length === 0 || surfacesMode.value !== 'months') return null;
+  // The first column is clipped by the data, not by choice, when history starts
+  // mid-month — that is normal. Only flag genuinely thin history.
+  return cols.length < 3 ? from : null;
 });
 
 /** Whether the currently-shown tab actually has a sheet to export. */
@@ -525,6 +699,28 @@ onMounted(() => {
       <button class="btn btn-primary" :disabled="loading || !!customError" @click="load">Apply</button>
       <span v-if="customError" class="range-err">{{ customError }}</span>
       <span v-else class="muted">{{ customDays }} day{{ customDays === 1 ? '' : 's' }}</span>
+    </div>
+
+    <!-- Surfaces range picker. Its own control, not the Custom tab's: that one
+         drives a different report with a 30-day ceiling. Sits outside the sheet,
+         so the exported image carries the report and not the controls that made
+         it. Placed here, above the v-if chain below, so it cannot break it. -->
+    <div v-if="period === 'surfaces' && (surfacesReport?.ready || surfaceRangeOn)" class="custom-range">
+      <template v-if="surfaceRangeOn">
+        <label>From <input v-model="surfFrom" type="date" :max="todayKey" /></label>
+        <label>To <input v-model="surfTo" type="date" :max="todayKey" /></label>
+        <button class="btn btn-primary" :disabled="loading || !!surfaceRangeError" @click="load">Apply</button>
+        <button class="btn" :disabled="loading" @click="clearSurfaceRange">Back to months</button>
+        <span v-if="surfaceRangeError" class="range-err">{{ surfaceRangeError }}</span>
+        <span v-else class="muted">
+          {{ surfaceRangeDays }} day{{ surfaceRangeDays === 1 ? '' : 's' }}, compared with the
+          {{ surfaceRangeDays }} before it
+        </span>
+      </template>
+      <template v-else>
+        <span class="muted">Every month we hold, side by side.</span>
+        <button class="btn" :disabled="loading" @click="openSurfaceRange">Pick a date range</button>
+      </template>
     </div>
 
     <div v-if="error" class="banner err">{{ error }}</div>
@@ -708,25 +904,38 @@ onMounted(() => {
     </div>
 
     <!-- Surfaces report: what Google Discover / Google News picked up, by bench
-         and category, over the same trailing windows the Reads tab uses.
-         Aggregated on the server from stored Search Console data — the request
-         path never calls Google. -->
+         and category, month by month (or over a chosen range). Aggregated on the
+         server from stored Search Console data — the request path never calls
+         Google. -->
     <div v-else-if="period === 'surfaces' && surfacesReport?.ready" ref="sheet" class="report-sheet">
       <div class="report-head">
         <div class="report-title">Taxscan Google Surfaces Report</div>
         <div class="report-range">
           What Google Discover &amp; Google News picked up ·
+          <template v-if="surfacesMode === 'range' && surfaceColumns.length">
+            {{ surfaceColumns[0].label }} against the {{ surfaceColumns[1]?.label?.toLowerCase() }} ·
+          </template>
           <template v-if="surfacesThrough">Google has reported up to {{ surfacesThrough }}</template>
           <template v-else>Google has not reported any complete day yet</template>
         </div>
       </div>
 
-      <!-- The answer first: which surface actually sends us traffic. Everything
-           below explains that number; nobody should have to scroll to find it. -->
+      <!-- The answer first: what each surface sent last complete month, which way
+           it moved, and how far that sits from its best month on screen. A single
+           month's number reads as fine in isolation; the slope is the story. -->
       <div class="surface-headline">
         <div v-for="h in surfaceHeadline" :key="h.key" class="sh-item">
           <span class="sh-n">{{ fmtCount(h.clicks) }}</span>
-          <span class="sh-l">{{ h.label }} clicks · last month</span>
+          <span class="sh-l">{{ h.label }} clicks · {{ h.columnLabel }}</span>
+          <span class="sh-d">
+            <span :class="['delta', deltaClass(h.delta)]">{{ deltaText(h.delta) }}</span>
+            <span v-if="h.prevLabel" class="sh-sub">vs {{ h.prevLabel }}</span>
+          </span>
+          <span v-if="h.fromPeak !== null" class="sh-sub">
+            Best month on screen: {{ h.peakLabel }} ({{ fmtCount(h.peak) }}) ·
+            <span :class="['delta', deltaClass(h.fromPeak)]">{{ deltaText(h.fromPeak) }}</span>
+            since
+          </span>
         </div>
       </div>
 
@@ -739,14 +948,19 @@ onMounted(() => {
           Someone tapped our headline in Discover or Google News. The Reads tab counts page views
           from every source — don’t add or compare the two.
         </p>
-        <p style="margin: 0">
-          <strong>The newest 2–3 days are always missing.</strong>
-          Google reports late, so a quiet recent stretch is the lag, not a drop.
+        <p v-if="surfaceColumns.some((c) => c.partial)" style="margin: 0">
+          <strong>The newest column is still filling.</strong>
+          Google reports 2–3 days late, so it is always short — the figures above compare the last
+          complete period instead.
         </p>
-        <p v-if="surfacesWindowsArePartial" style="margin: 4px 0 0">
-          <strong>We only hold {{ surfacesHistoryDays }} days of history so far.</strong>
-          Longer columns show everything collected to date, not a full period, so don’t read
-          “12 months” as a year yet. They fill out as the days accumulate.
+        <p v-else style="margin: 0">
+          <strong>Google reports 2–3 days late.</strong>
+          A range ending in the last few days will be short through no fault of the coverage.
+        </p>
+        <p v-if="surfacesHistoryNote" style="margin: 4px 0 0">
+          <strong>History starts {{ surfacesHistoryNote }}.</strong>
+          Earlier months were never collected, so their absence here says nothing about what
+          Google picked up then.
         </p>
       </div>
 
@@ -765,103 +979,130 @@ onMounted(() => {
         </div>
 
         <p v-if="surfaceHasNothing(s)" class="muted no-pickup">
-          Google sent us nothing from {{ s.label }} in any of these windows — no clicks and no
-          impressions. Either our stories are not being picked up there, or Google has not reported
-          them yet.
+          Google sent us nothing from {{ s.label }} in this period — no clicks and no impressions.
+          Either our stories are not being picked up there, or Google has not reported them yet.
         </p>
 
         <p v-else-if="!surfaceIsOpen(s.key)" class="muted no-pickup">
-          A small share of our Google traffic — {{ fmtCount(s.windows[MONTH_WINDOW_INDEX]?.clicks ?? 0) }}
-          clicks last month. Show the breakdown if you want the detail.
+          A small share of our Google traffic —
+          {{ fmtCount(surfaceHeadline.find((h) => h.key === s.key)?.clicks ?? 0) }} clicks in
+          {{ surfaceHeadline.find((h) => h.key === s.key)?.columnLabel }}. Show the breakdown if you
+          want the detail.
         </p>
 
         <template v-else>
-          <div class="insights">
-            <div v-for="w in s.windows" :key="w.label" class="ins">
-              <div class="ins-n">{{ fmtCount(w.clicks) }}</div>
-              <div class="ins-l">{{ s.label }} clicks · last {{ w.label }}</div>
-              <div class="ins-l">
-                {{ fmtCount(w.impressions) }} impressions · {{ w.articles.toLocaleString() }} articles
-              </div>
+          <div v-for="g in s.grids" :key="g.key">
+            <h3 class="heat-h">
+              {{ g.title }} × {{ surfacesMode === 'months' ? 'month' : 'period' }}
+            </h3>
+            <p v-if="!g.rows.length" class="muted no-pickup">
+              No {{ s.label }} pickup on any {{ g.unit }} in this period.
+            </p>
+            <div v-else class="heat-scroll">
+              <table class="heat surfaces">
+                <thead>
+                  <tr>
+                    <th class="heat-label">{{ g.key === 'bench' ? 'Bench' : 'Category' }}</th>
+                    <!-- Shape before numbers: 18 columns across 30 rows is 540
+                         figures, but 30 trajectories. The precise movement is the
+                         Δ column at the far end, where the eye lands last. -->
+                    <th v-if="surfacesMode === 'months' && surfaceColumns.length > 2" class="th-trend">
+                      Trend
+                    </th>
+                    <th
+                      v-for="(head, i) in columnHeads"
+                      :key="i"
+                      :class="{ 'th-partial': head.partial }"
+                      :title="head.partial ? 'Still filling — Google reports 2–3 days late' : undefined"
+                    >
+                      {{ head.top }}<span v-if="head.partial" aria-hidden="true">·</span>
+                      <span v-if="head.sub" class="th-year">{{ head.sub }}</span>
+                    </th>
+                    <th class="th-delta">Δ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in g.rows" :key="row.label">
+                    <td class="heat-label">{{ row.label }}</td>
+                    <td v-if="surfacesMode === 'months' && surfaceColumns.length > 2" class="td-trend">
+                      <TrendLine :values="rowValues(row)" :label="rowTrendLabel(row.label, s.label)" />
+                    </td>
+                    <td
+                      v-for="(c, i) in row.cells"
+                      :key="i"
+                      :class="{ 'td-partial': surfaceColumns[i]?.partial }"
+                      :style="c ? { backgroundColor: surfaceCellColor(surfaceShare(c.clicks, s.totals[i]?.clicks ?? 0)) } : undefined"
+                      :title="
+                        c
+                          ? surfaceCellTitle(s.label, row.label, surfaceColumns[i]?.label ?? '', c, s.totals[i]?.clicks ?? 0)
+                          : `${row.label} — no ${s.label} pickup in ${surfaceColumns[i]?.label ?? 'this period'}`
+                      "
+                    >
+                      <!-- Clicks only. Impressions, click rate and share are all in
+                           the cell's tooltip — two numbers in every cell of a 30-row
+                           grid is 300 numbers to read past to find the pattern. -->
+                      <span v-if="c" class="rv">{{ fmtCount(c.clicks) }}</span>
+                      <span v-else class="muted">—</span>
+                    </td>
+                    <td
+                      :class="['td-delta', deltaClass(rowDelta(row))]"
+                      :title="
+                        deltaTitle(
+                          rowDelta(row),
+                          surfaceColumns[compareIdx.base]?.label ?? '',
+                          surfaceColumns[compareIdx.current]?.label ?? '',
+                        )
+                      "
+                    >
+                      {{ deltaText(rowDelta(row)) }}
+                    </td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td class="heat-label">All {{ s.label }} clicks</td>
+                    <td v-if="surfacesMode === 'months' && surfaceColumns.length > 2" class="td-trend">
+                      <TrendLine
+                        :values="s.totals.map((t) => t.clicks)"
+                        :label="`${s.label} total clicks over the period shown`"
+                      />
+                    </td>
+                    <td v-for="(t, i) in s.totals" :key="i" :class="{ 'td-partial': surfaceColumns[i]?.partial }">
+                      {{ fmtCount(t.clicks) }}
+                    </td>
+                    <td
+                      :class="[
+                        'td-delta',
+                        deltaClass(
+                          compareIdx.base >= 0
+                            ? move(
+                                s.totals[compareIdx.current]?.clicks ?? 0,
+                                s.totals[compareIdx.base]?.clicks ?? 0,
+                              )
+                            : null,
+                        ),
+                      ]"
+                    >
+                      {{
+                        deltaText(
+                          compareIdx.base >= 0
+                            ? move(
+                                s.totals[compareIdx.current]?.clicks ?? 0,
+                                s.totals[compareIdx.base]?.clicks ?? 0,
+                              )
+                            : null,
+                        )
+                      }}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
 
-          <!-- Bench above Category, matching the coverage and Reads tabs. -->
-          <h3 class="heat-h">Courts / benches × window</h3>
-          <p v-if="!s.benches.length" class="muted no-pickup">
-            No {{ s.label }} pickup on any court or bench story in these windows.
-          </p>
-          <div v-else class="heat-scroll">
-            <table class="heat surfaces">
-              <thead>
-                <tr>
-                  <th class="heat-label">Bench</th>
-                  <th v-for="w in s.windows" :key="w.label">{{ w.label }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in s.benches" :key="row.label">
-                  <td class="heat-label">{{ row.label }}</td>
-                  <td
-                    v-for="(c, i) in row.cells"
-                    :key="i"
-                    :style="c ? { background: surfaceCellColor(surfaceShare(c.clicks, s.windows[i]?.clicks ?? 0)) } : undefined"
-                    :title="
-                      c
-                        ? surfaceCellTitle(s.label, row.label, s.windows[i]?.label ?? '', c, s.windows[i]?.clicks ?? 0)
-                        : `${row.label} — no ${s.label} pickup in the last ${s.windows[i]?.label ?? ''}`
-                    "
-                  >
-                    <!-- Clicks only. Impressions, click rate and share are all in
-                         the cell's tooltip — two numbers in every cell of a 30-row
-                         grid is 300 numbers to read past to find the pattern. -->
-                    <span v-if="c" class="rv">{{ fmtCount(c.clicks) }}</span>
-                    <span v-else class="muted">—</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <h3 class="heat-h">Categories × window</h3>
-          <p v-if="!s.categories.length" class="muted no-pickup">
-            No {{ s.label }} pickup in any category in these windows.
-          </p>
-          <div v-else class="heat-scroll">
-            <table class="heat surfaces">
-              <thead>
-                <tr>
-                  <th class="heat-label">Category</th>
-                  <th v-for="w in s.windows" :key="w.label">{{ w.label }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in s.categories" :key="row.label">
-                  <td class="heat-label">{{ row.label }}</td>
-                  <td
-                    v-for="(c, i) in row.cells"
-                    :key="i"
-                    :style="c ? { background: surfaceCellColor(surfaceShare(c.clicks, s.windows[i]?.clicks ?? 0)) } : undefined"
-                    :title="
-                      c
-                        ? surfaceCellTitle(s.label, row.label, s.windows[i]?.label ?? '', c, s.windows[i]?.clicks ?? 0)
-                        : `${row.label} — no ${s.label} pickup in the last ${s.windows[i]?.label ?? ''}`
-                    "
-                  >
-                    <!-- Clicks only. Impressions, click rate and share are all in
-                         the cell's tooltip — two numbers in every cell of a 30-row
-                         grid is 300 numbers to read past to find the pattern. -->
-                    <span v-if="c" class="rv">{{ fmtCount(c.clicks) }}</span>
-                    <span v-else class="muted">—</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <h3 class="heat-h">Most picked-up articles · last 1 month</h3>
+          <h3 class="heat-h">Most picked-up articles · {{ surfacesReport?.topWindow?.label ?? '' }}</h3>
           <p v-if="!s.top.length" class="muted no-pickup">
-            No single article drew a {{ s.label }} click in the last month.
+            No single article drew a {{ s.label }} click in that period.
           </p>
           <div v-else class="heat-scroll">
             <table class="heat surfaces">
@@ -893,9 +1134,10 @@ onMounted(() => {
 
       <div class="report-foot">
         Numbers are clicks from Google; hover a cell for impressions, click rate and share. “—” means
-        no pickup at all in that window, which is not the same as zero clicks. Windows are trailing and
-        cumulative — 1 month includes the week. Deeper violet = a larger share of that surface’s clicks
-        in that window. Google credits whichever copy of a story it treats as the original, so a story
+        no pickup at all, which is not the same as zero clicks. Deeper violet = a larger share of that
+        surface’s clicks <em>within its own column</em>, so shading shows what Google favoured that
+        month rather than restating the size of the month. Δ compares the last complete month with the
+        one before it. Google credits whichever copy of a story it treats as the original, so a story
         published twice can appear as two near-identical rows.
         <span v-if="surfacesThrough">Data reported by Google up to {{ surfacesThrough }}.</span>
       </div>
@@ -1173,6 +1415,87 @@ table.heat.surfaces .rs {
   display: block;
   font-size: 11px;
   color: var(--muted);
+}
+.sh-d {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+}
+.sh-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+/* Direction is carried by the same green/red the dashboard tiles use, and only
+   ever as text on a chip — the cell fills stay a single violet ramp, so nothing
+   here can be mistaken for the coverage report's red = gap semantics. */
+.delta {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.delta.up {
+  color: #16a34a;
+}
+.delta.down {
+  color: #dc2626;
+}
+.delta.flat {
+  color: var(--muted);
+}
+/* The signature column: shape before numbers. Narrow and unpadded so 18 month
+   columns still fit before the table needs to scroll. */
+th.th-trend,
+td.td-trend {
+  width: 76px;
+  padding: 2px 4px;
+  background: #fff;
+}
+td.td-trend {
+  border-color: var(--border);
+}
+th.th-delta,
+td.td-delta {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: #f8fafc;
+  border-color: var(--border);
+}
+td.td-delta.up {
+  color: #16a34a;
+}
+td.td-delta.down {
+  color: #dc2626;
+}
+td.td-delta.flat {
+  color: var(--muted);
+}
+/* The current month is always short a few days. Hatching it says "incomplete"
+   without dimming the number itself, which is real data. */
+th.th-partial,
+td.td-partial {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.22) 0 3px,
+    transparent 3px 6px
+  );
+}
+.th-year {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  opacity: 0.75;
+}
+table.heat.surfaces tfoot td {
+  background: #e2e8f0;
+  font-weight: 700;
+}
+table.heat.surfaces tfoot td.td-trend {
+  background: #fff;
 }
 /* Heading and its show/hide control on one line. */
 .surface-h-row {
