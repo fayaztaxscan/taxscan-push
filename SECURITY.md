@@ -33,7 +33,9 @@ Full suite after fixes: **198/198 green** (`jest --runInBand`); `tsc --noEmit` +
 
 ### Deferred to a hardening backlog (decided 2026-06-09 — none block go-live)
 
-**Low (12):** no absolute session lifetime cap (sliding 8h idle) · last-active-admin
+**Low (12):** no absolute session lifetime cap (sliding idle expiry — 8h when this
+audit ran, 7 days since 2026-06-19; the cookie half of it only started sliding with
+PR #50 on 2026-08-06, so re-read this item at the current TTL) · last-active-admin
 guard is non-transactional (TOCTOU) · `/api/users/picker` leaks full roster+roles to
 PUBLISHER · CSRF rests solely on SameSite=Lax (safe today — no GET mutators) · login
 timing user-enumeration (bcrypt skipped for unknown email) · invite endpoints

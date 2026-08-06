@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-07-15) — LIVE in production
+## Current state (updated 2026-08-06) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~2,400 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
 stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
@@ -83,6 +83,20 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 SHIPPED + LIVE 2026-07-28 (PR #42, both flags ON). One item still sits with the user: send the
 editorial note.**
 
+**Session cookie expiry — SHIPPED + LIVE 2026-08-06 (PR #50, merge `42db65d`).** Editors were being
+logged out ~daily despite the 7-day sliding session, because of the COOKIE, not the session row:
+(1) `SESSION_COOKIE_MAX_AGE_MS` stayed at 8h when `SESSION_TTL_HOURS` went 8h → 7 days (2026-06-19),
+so the browser dropped the cookie first and the slide was unreachable — now derived from
+`SESSION_TTL_HOURS`; (2) the cookie was written only at login, so it never actually slid —
+`requireUser` now re-issues it (**same token, only the expiry moves**) as soon as the session
+validates, before the role/reset checks, so cookie and DB expiry are always the same instant. The
+cookie helpers live in `src/lib/auth.ts` as the SINGLE definition (`clearCookie` only matches
+attributes it was written with), and `clearSessionCookie` strips the slide header logout would
+otherwise race with. Backend-only: no schema/env/flag change. **Not retroactive** — old 8h cookies
+can't be amended remotely, so each editor gets one more early logout and picks it up at next login.
+**Can't be verified from outside** (Set-Cookie only appears on a successful login); check via
+DevTools → Cookies → `tx_push_session` → Expires ~7 days. Suite **371**.
+
 **Google Discover / News tracking — SHIPPED + LIVE 2026-08-05 (PRs #46/#47).** Discover turned out
 to be taxscan.in's biggest Google channel: **109,125 clicks/28d (84%) vs Search 19,752 (15%) and
 Google News 1,075 (0.8%)** — 5.5× Search, and invisible in GA4 by construction (a Discover click
@@ -96,7 +110,7 @@ read as no-data. Flags: `SEARCH_CONSOLE_ENABLED`=ON, `SEARCH_CONSOLE_SITE_URL`=`
 (URL-prefix property), `SEARCH_CONSOLE_LOOKBACK_DAYS`=7. **⚠️ OPEN: a one-off history backfill** —
 the rolling 7-day lookback means every window currently shows the same ~8 days; raise the lookback,
 run one sync, put it back (see `NEXT_STEP.md` item -6). The panel is honest about this meanwhile
-via `dataFrom`. Suite **365**.
+via `dataFrom`. Suite **371**.
 A tapped notification hit taxscan's 404: the desk published one story twice (two ids/slugs), GUID
 dedupe can't see a re-post so the second copy pushed as fresh news, then the desk deleted one of the
 two posts. Not a URL bug on our side — and note taxscan resolves articles by the **trailing id and
@@ -139,7 +153,9 @@ by design). Proposal on the table: split both residual rows by content type + ad
 benches (report-only; history reclassifies). Details in memory `news-vs-articles-study` +
 NEXT_STEP.md item -3. GA4 reads (item 10) closed 2026-07-11 with all four pieces live.
 Closed for the record: keep-warm is fine (UptimeRobot 5-min pings, 100% uptime —
-the flaky GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19);
+the flaky GitHub `*/5` ping is redundant); session TTL raised 8h → 7-day sliding (2026-06-19 —
+but the COOKIE capped it at 8h until PR #50 on 2026-08-06, see above; that is why editors kept
+being logged out);
 watch items (backfill unsub 0.016%, report emails landing, retention-3d working) all verified
 healthy 2026-07-10; Compose "Force" stays default-OFF by explicit user decision — don't
 re-propose. First scheduled email with the reads section went out Mon 2026-07-13 07:00 IST —

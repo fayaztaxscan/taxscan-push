@@ -5,11 +5,58 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-08-05) — ONE code item (surfaces backfill), ONE user-side
+## ▶️ NEXT STEPS / open items (as of 2026-08-06) — ONE code item (surfaces backfill), ONE user-side
 
--6 is LIVE but its history is only ~8 days deep until a one-off backfill runs (needs a Railway
-token). -5 and -4 are SHIPPED + LIVE. User-side item unchanged: send the editorial note asking
-taxscan to 301-redirect deleted duplicates (the residual gap no code can close).
+-7 is SHIPPED + LIVE (session-cookie expiry; found by reading the code, not reported). -6 is LIVE
+but its history is only ~8 days deep until a one-off backfill runs (needs a Railway token). -5 and
+-4 are SHIPPED + LIVE. User-side item unchanged: send the editorial note asking taxscan to
+301-redirect deleted duplicates (the residual gap no code can close).
+
+-7. **✅ SHIPPED + LIVE 2026-08-06 — SESSION COOKIE EXPIRY: match the server TTL, and slide it.
+   PR #50 (merge `42db65d`), commits `271d055` + `1fd6c45`. Deploy SUCCESS 06:09:52 UTC, all ten
+   crons re-registered, healthz 200 throughout, no migration.** Backend-only; no schema, env, flag
+   or subscriber-facing change. **Symptom the code predicted:** editors logged out roughly daily
+   despite the documented 7-day sliding session. **Two defects, both about the COOKIE, not the
+   session row:**
+   (1) `SESSION_TTL_HOURS` went 8h → 7 days on 2026-06-19 but `SESSION_COOKIE_MAX_AGE_MS` in
+   `routes/auth.ts` stayed at 8h, so the browser stopped sending the cookie long before the row
+   expired and the sliding renewal was **unreachable**. Now derived from `SESSION_TTL_HOURS`.
+   (2) Even at the right length it never actually slid: `findValidSession` pushes
+   `UserSession.expiresAt` out on every request, but the cookie was written **only at login**, so
+   the browser copy kept counting down from sign-in — an editor working daily was still logged out
+   mid-week with a live session. `requireUser` now re-issues the cookie the moment the session
+   validates: **same token, same signature, only the expiry moves** (a new token would invalidate
+   requests already in flight from that browser). Re-issued before the role/reset checks so the
+   cookie tracks the DB even on a 403 — the two expiries are always the same instant. A rejected
+   session writes no cookie.
+   **Two things that fall out of sliding on every request:**
+   • **Logout** runs behind `requireUser`, which has already queued a fresh cookie — two Set-Cookie
+   lines for one name. Last-wins resolves it in practice, but that is not a bet worth taking on a
+   logout, so `clearSessionCookie` strips any queued slide header first. Response now carries
+   exactly one session cookie and it is the expiring one.
+   • **The cookie helpers moved to `lib/auth.ts` as the single definition** (`routes/auth.ts`
+   imports them). `res.clearCookie` only matches a cookie whose path/secure/sameSite match how it
+   was written, so set and clear MUST share attributes — the same class of drift as defect (1),
+   removed rather than kept in sync by convention.
+   **Suite 368 → 371** (+3: Max-Age equals the TTL — fails against the old constant; an authed
+   request re-issues the SAME token at full TTL; logout sends exactly one, expiring, cookie).
+   **⚠️ ROLLOUT — nothing to flip, but not retroactive:** browsers still holding the old 8h cookie
+   cannot be amended remotely, so everyone gets ONE more early logout and picks the fix up at their
+   **next login**. Telling the team to sign out and back in once makes it immediate.
+   **VERIFYING THIS ONE FROM OUTSIDE IS NOT POSSIBLE** — `Set-Cookie` only appears on a SUCCESSFUL
+   login, so it needs real credentials (a failed login correctly returns 401 with no cookie, which
+   is all an unauthenticated probe can confirm). The 30-second manual check: log out, log back in,
+   DevTools → Application → Cookies → `tx_push_session` → **Expires ~7 days out, not ~8 hours**;
+   reload any admin page and the expiry jumps forward again = the slide working.
+   **Deliberately unchanged:** genuinely idle for 7 days still logs you out. That is the security
+   boundary, not a leftover of the bug.
+   **Deploy-verification note (this service still has no version endpoint):** the Railway CLI binary
+   is broken locally (`railway status` → "could not find the CLI binary"), but `railway whoami` and
+   the **stored OAuth session against the GraphQL API still work** — query `project(id:){services}`
+   for the service id (it is NOT in `~/.railway/config.json` for this project; `service` is null),
+   then `deployments(first:N, input:{projectId, environmentId, serviceId})` for status + commit, and
+   `deploymentLogs(deploymentId:)` for the boot lines. Token lives at `config.json` →
+   `user.accessToken` (`user.token` is empty) and expires hourly.
 
 -6. **✅ SHIPPED + LIVE 2026-08-05 — GOOGLE DISCOVER / NEWS TRACKING (PRs #46 feature, #47 UI pass;
    merges `5b890ff`, `8817272`). ⚠️ ONE OPEN ITEM: the history backfill (below).**

@@ -377,7 +377,7 @@ npm run dev            # opens on http://localhost:5173
 ```
 
 Open `http://localhost:5173/login`, sign in with the email + password you just created. The backend
-sets a signed `tx_push_session` cookie (HTTP-only, 8h sliding expiry). The SPA stores nothing —
+sets a signed `tx_push_session` cookie (HTTP-only, 7-day sliding expiry). The SPA stores nothing —
 the cookie is the source of truth — and the router guard pings `GET /api/auth/me` on every
 navigation to refresh the user's role / `passwordResetRequired` flag.
 
@@ -485,9 +485,16 @@ password.**
 ### Cookie sessions — for the admin SPA and human users
 
 Per-user accounts authenticated via `POST /api/auth/login` with `{ email, password }`. The
-response sets a signed, HTTP-only, `SameSite=Lax`, 8-hour sliding-expiry cookie named
+response sets a signed, HTTP-only, `SameSite=Lax`, **7-day sliding-expiry** cookie named
 `tx_push_session`. Subsequent calls to `/api/auth/me`, `/api/auth/logout`, and admin endpoints
 (after Phase 4 wires them) read the cookie automatically.
+
+Sliding means BOTH halves move on every authenticated request: `findValidSession` pushes
+`UserSession.expiresAt` forward, and `requireUser` re-issues the cookie with a fresh `Max-Age`
+(same token — only the expiry changes). Both lengths come from `SESSION_TTL_HOURS`
+(`src/lib/sessions.ts`), and the cookie helpers live in `src/lib/auth.ts` as the single definition;
+a cookie shorter than the session silently caps it, which is what logged editors out daily until
+PR #50 (2026-08-06). Idle longer than the TTL and the session ends — that is the intended boundary.
 
 Endpoints:
 
