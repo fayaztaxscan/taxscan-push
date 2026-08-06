@@ -13,6 +13,7 @@ import bcrypt from 'bcrypt';
 import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { SESSION_TTL_HOURS } from '../lib/sessions';
 
 const app = createApp({
   // Pin rate limits high so per-IP throttling isn't the cause of any 4xx;
@@ -52,6 +53,17 @@ function setCookieToCookieHeader(setCookie: string | string[] | undefined): stri
   // Set-Cookie lines look like "name=val; HttpOnly; ...; Path=/". Cookie
   // header just needs "name=val" pairs joined by ';'.
   return arr.map((line) => line.split(';')[0]).join('; ');
+}
+
+/** Every Set-Cookie line for the session cookie, in the order sent. */
+function sessionCookieLines(setCookie: string | string[] | undefined): string[] {
+  if (!setCookie) return [];
+  const arr = Array.isArray(setCookie) ? setCookie : [setCookie];
+  return arr.filter((line) => line.startsWith('tx_push_session='));
+}
+
+function firstSessionCookieLine(setCookie: string | string[] | undefined): string | undefined {
+  return sessionCookieLines(setCookie)[0];
 }
 
 afterAll(async () => {
@@ -115,6 +127,23 @@ describe('POST /api/auth/login', () => {
     // lastLoginAt updated.
     const reloaded = await prisma.user.findUnique({ where: { id: user.id } });
     expect(reloaded?.lastLoginAt).not.toBeNull();
+  });
+
+  it('sets a cookie Max-Age that matches the server-side session TTL', async () => {
+    // Regression guard: the cookie must not expire before the sliding session
+    // does. When SESSION_TTL_HOURS went 8h → 7 days the cookie's Max-Age stayed
+    // at 8h, so the browser dropped it first and the slide was unreachable —
+    // every editor was logged out roughly daily.
+    const user = await makeUser('maxage', 'CookieMaxAge123!');
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'CookieMaxAge123!' });
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers['set-cookie'];
+    const cookieLine = Array.isArray(setCookie) ? setCookie[0] : (setCookie as string);
+    const maxAge = Number(/Max-Age=(\d+)/i.exec(cookieLine)?.[1]);
+    expect(maxAge).toBe(SESSION_TTL_HOURS * 3600);
   });
 
   it('returns 401 for wrong password and records LOGIN_FAILED', async () => {
@@ -246,6 +275,36 @@ describe('GET /api/auth/me', () => {
     expect(res.body.role).toBe(user.role);
   });
 
+  it('slides the cookie forward on an authenticated request, same token', async () => {
+    // The session row's expiry slides on every request (findValidSession); the
+    // cookie has to move with it, or the browser copy keeps counting down from
+    // login and expires mid-session on an actively-working editor.
+    const user = await makeUser('slide', 'SlidingCookiePw123');
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'SlidingCookiePw123' });
+    const loginLine = firstSessionCookieLine(login.headers['set-cookie']);
+    const cookieHeader = setCookieToCookieHeader(login.headers['set-cookie']);
+
+    const res = await request(app).get('/api/auth/me').set('Cookie', cookieHeader);
+    expect(res.status).toBe(200);
+
+    const refreshed = firstSessionCookieLine(res.headers['set-cookie']);
+    expect(refreshed).toBeDefined();
+    expect(Number(/Max-Age=(\d+)/i.exec(refreshed!)?.[1])).toBe(SESSION_TTL_HOURS * 3600);
+    // Re-issued, not re-minted: a new token would invalidate requests already
+    // in flight from the same browser.
+    expect(refreshed!.split(';')[0]).toBe(loginLine!.split(';')[0]);
+  });
+
+  it('does not slide the cookie when the session is rejected', async () => {
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Cookie', 'tx_push_session=s%3Atampered.value');
+    expect(res.status).toBe(401);
+    expect(firstSessionCookieLine(res.headers['set-cookie'])).toBeUndefined();
+  });
+
   it('returns 401 with a tampered (invalid signature) cookie', async () => {
     const res = await request(app)
       .get('/api/auth/me')
@@ -279,6 +338,24 @@ describe('POST /api/auth/logout', () => {
 
     const remaining = await prisma.userSession.count({ where: { userId: user.id } });
     expect(remaining).toBe(0);
+  });
+
+  it('sends only the clearing cookie — the slide header does not survive logout', async () => {
+    // requireUser re-issues the cookie before the logout handler runs, so the
+    // response must not carry both a fresh session cookie and the clear.
+    const user = await makeUser('logout-clear', 'ClearCookiePw456');
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'ClearCookiePw456' });
+    const cookieHeader = setCookieToCookieHeader(login.headers['set-cookie']);
+
+    const logout = await request(app).post('/api/auth/logout').set('Cookie', cookieHeader);
+    expect(logout.status).toBe(204);
+
+    const lines = sessionCookieLines(logout.headers['set-cookie']);
+    expect(lines).toHaveLength(1);
+    // An expiry in the past is what tells the browser to drop it.
+    expect(lines[0]).toMatch(/Expires=Thu, 01 Jan 1970|Max-Age=0/i);
   });
 
   it('returns 401 without a valid cookie', async () => {

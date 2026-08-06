@@ -1,10 +1,15 @@
-import { Router, type Response } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcrypt';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { createSession, revokeSession } from '../lib/sessions';
-import { requireUser, SESSION_COOKIE_NAME } from '../lib/auth';
+import {
+  clearSessionCookie,
+  requireUser,
+  setSessionCookie,
+  SESSION_COOKIE_NAME,
+} from '../lib/auth';
 import { makeLoginLimiter } from '../lib/rateLimit';
 import { passwordIssue } from '../lib/passwordPolicy';
 import { recordAudit } from '../lib/audit';
@@ -22,33 +27,10 @@ const AcceptInviteSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
-const SESSION_COOKIE_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-
 const LoginSchema = z.object({
   email: z.string().email().max(320),
   password: z.string().min(1).max(512),
 });
-
-function cookieOptions() {
-  return {
-    httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'lax' as const,
-    path: '/',
-    signed: true,
-  };
-}
-
-function setSessionCookie(res: Response, token: string): void {
-  res.cookie(SESSION_COOKIE_NAME, token, {
-    ...cookieOptions(),
-    maxAge: SESSION_COOKIE_MAX_AGE_MS,
-  });
-}
-
-function clearSessionCookie(res: Response): void {
-  res.clearCookie(SESSION_COOKIE_NAME, cookieOptions());
-}
 
 export function createAuthRouter(
   opts: { loginPerMin?: number } = {},
