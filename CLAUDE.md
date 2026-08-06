@@ -79,7 +79,7 @@ quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-fo
 `GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
 `REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
 
-**Surfaces rebuilt for stakeholders — BUILT + TESTED 2026-08-06, awaiting deploy (on `develop`).**
+**Surfaces rebuilt for stakeholders — SHIPPED + LIVE 2026-08-06 (PR #51, merge `e489404`).**
 Three asks: data from 01-Jan-2026, a custom date filter, month-to-month comparison. **The backfill is
 already IN PRODUCTION** (data only): `ArticleSurfaceStat` 3,744 → **31,832 rows**, 2026-01-01 →
 2026-08-06, via the new committed `scripts/backfill-surfaces.ts` (month-by-month, idempotent,
@@ -94,7 +94,7 @@ history gets the token rejected**. The payload now states `compare: {current, ba
 modes order columns differently and the client's own inference silently INVERTED every range delta.
 Guide → v1.3. Suite **382**.
 
-**Open next steps: NO code items open once the above deploys. Dead-link guards
+**Open next steps: NONE in code — board clean. Dead-link guards
 SHIPPED + LIVE 2026-07-28 (PR #42, both flags ON). One item still sits with the user: send the
 editorial note.**
 

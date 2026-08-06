@@ -5,16 +5,23 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-08-06) — NO code items open, ONE user-side
+## ▶️ NEXT STEPS / open items (as of 2026-08-06) — BOARD CLEAN in code, ONE user-side
 
--8 closes the surfaces backfill AND rebuilds the tab around months (stakeholder request); it is
-BUILT + TESTED but **NOT yet deployed** — the code sits on `develop`, while the Jan-2026 backfill it
-depends on is ALREADY in production. -7 (session-cookie expiry) is SHIPPED + LIVE. -6, -5 and -4 are
+-8 (surfaces: Jan-2026 history + calendar months + custom range) is SHIPPED + LIVE. -7
+(session-cookie expiry) is SHIPPED + LIVE. -6, -5 and -4 are
 SHIPPED + LIVE. User-side item unchanged: send the editorial note asking taxscan to 301-redirect
 deleted duplicates (the residual gap no code can close).
 
--8. **BUILT + TESTED, AWAITING DEPLOY (2026-08-06) — SURFACES: JAN-2026 HISTORY + CALENDAR MONTHS +
-   CUSTOM RANGE.** Stakeholders asked for three things off the new Surfaces tab: data from
+-8. **✅ SHIPPED + LIVE 2026-08-06 — SURFACES: JAN-2026 HISTORY + CALENDAR MONTHS + CUSTOM RANGE.
+   PR #51 (merge `e489404`), deployed and serving within ~25s of merge; healthz 200 throughout, no
+   migration, no env change.
+   VERIFIED IN PRODUCTION, not just by version string:** `/api/reports/surfaces` returns
+   `mode=months` with columns **Jan 2026 → Aug 2026\*** (Aug flagged partial) and Discover totals
+   `953,962 / 565,047 / 417,508 / 386,162 / 322,318 / 208,884 / 138,837 / 8,676`; `compare` is
+   `{current:6, base:5}` = Jul vs Jun, correctly skipping the part-month. `?from=2026-04-01&to=
+   2026-06-30` returns `mode=range`, `compare {0,1}`, and a **-53% FALL** — the direction that was
+   inverted pre-fix. A reversed range 400s. Guide endpoint serves **v1.3**, 16 pages, SHA-256
+   identical to the local build.** Stakeholders asked for three things off the new Surfaces tab: data from
    01-Jan-2026, a custom date filter, and month-to-month comparison. Months-as-columns delivers the
    first and third in one shape, so the tab was rebuilt around them.
    **(1) BACKFILL — DONE, IN PRODUCTION ALREADY (data only, no deploy needed).** `ArticleSurfaceStat`
