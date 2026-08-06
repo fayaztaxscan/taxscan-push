@@ -479,3 +479,69 @@ Don't rely on GitHub's `*/5` schedule for liveness. Options (pick one):
    removing the need to keep it warm at all.
 
 Until then, the client retry keeps the symptom mostly invisible to users.
+
+---
+
+## 7. Reconciler-captured articles target the topic `news`, which nobody subscribes to
+
+**Filed:** 2026-08-06. **Owner:** us. **Severity:** low (latent).
+
+### What's happening
+
+`reconcileOnce()` calls `pollOnce({ topic: 'news', … })`, and sitemap entries
+carry no RSS `<category>` tags — so `topicFromCategories()` returns null and the
+campaign is created with `target = { type: 'topics', topics: ['news'] }`.
+
+No subscriber ever holds a `news` topic: the SDK offers `all`, `gst`,
+`income-tax`, `customs`, `corporate` (`public/taxscan-push.js`, `TOPIC_OPTIONS`).
+
+### Why it is harmless today
+
+`resolveTargets()` folds `'all'` into every topic dispatch, and essentially the
+entire base is on "All news" — so these articles do reach subscribers normally.
+
+### When it would bite
+
+The day topic-narrowing becomes common. A subscriber who picked only GST would
+receive feed-captured GST articles but silently miss any article the RSS feeds
+dropped and the sitemap reconciler had to back-fill — which is precisely the
+long-tail the reconciler exists to catch, so the miss would be invisible.
+
+### Starting point for a fix
+
+In `reconcileOnce`, infer the topic from the article URL path (taxscan's
+permalinks carry the section, e.g. `/income-tax/…`) and fall back to `all`
+rather than `news`, so a reconciler capture is never narrower than the feeds.
+
+---
+
+## 8. `GET /api/audit` rejects five audit actions it can store
+
+**Filed:** 2026-08-06. **Owner:** us. **Severity:** low (cosmetic).
+
+### What's happening
+
+`AUDIT_ACTIONS` in `src/routes/audit.ts` — the zod enum backing the `?action=`
+filter — lists 11 of the 16 values in the `AuditAction` schema enum. Missing:
+`USER_INVITED`, `USER_INVITE_ACCEPTED`, `REVIEW_APPROVED`, `REVIEW_REJECTED`,
+`REVIEW_PUSHED`.
+
+Those rows are written normally and appear in the unfiltered list, but
+`GET /api/audit?action=REVIEW_PUSHED` returns 400 `invalid_request`. The
+Activity screen's filter dropdown is built from the same list, so the actions
+simply aren't offered.
+
+### Impact
+
+You cannot filter the audit log to "who pushed things out of the Review queue",
+which is one of the more useful questions it could answer.
+
+### Starting point for a fix
+
+Derive the enum from Prisma's `AuditAction` rather than hand-listing it, so it
+cannot drift again when a new action is added:
+
+```ts
+import { AuditAction } from '@prisma/client';
+const QuerySchema = z.object({ action: z.nativeEnum(AuditAction).optional(), … });
+```
