@@ -13,6 +13,7 @@ import bcrypt from 'bcrypt';
 import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { SESSION_TTL_HOURS } from '../lib/sessions';
 
 const app = createApp({
   // Pin rate limits high so per-IP throttling isn't the cause of any 4xx;
@@ -115,6 +116,23 @@ describe('POST /api/auth/login', () => {
     // lastLoginAt updated.
     const reloaded = await prisma.user.findUnique({ where: { id: user.id } });
     expect(reloaded?.lastLoginAt).not.toBeNull();
+  });
+
+  it('sets a cookie Max-Age that matches the server-side session TTL', async () => {
+    // Regression guard: the cookie must not expire before the sliding session
+    // does. When SESSION_TTL_HOURS went 8h → 7 days the cookie's Max-Age stayed
+    // at 8h, so the browser dropped it first and the slide was unreachable —
+    // every editor was logged out roughly daily.
+    const user = await makeUser('maxage', 'CookieMaxAge123!');
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: user.email, password: 'CookieMaxAge123!' });
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers['set-cookie'];
+    const cookieLine = Array.isArray(setCookie) ? setCookie[0] : (setCookie as string);
+    const maxAge = Number(/Max-Age=(\d+)/i.exec(cookieLine)?.[1]);
+    expect(maxAge).toBe(SESSION_TTL_HOURS * 3600);
   });
 
   it('returns 401 for wrong password and records LOGIN_FAILED', async () => {

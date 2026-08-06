@@ -3,7 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcrypt';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
-import { createSession, revokeSession } from '../lib/sessions';
+import { createSession, revokeSession, SESSION_TTL_HOURS } from '../lib/sessions';
 import { requireUser, SESSION_COOKIE_NAME } from '../lib/auth';
 import { makeLoginLimiter } from '../lib/rateLimit';
 import { passwordIssue } from '../lib/passwordPolicy';
@@ -22,7 +22,14 @@ const AcceptInviteSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
-const SESSION_COOKIE_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+// The cookie must outlive the server-side session, never the other way round:
+// `findValidSession` slides UserSession.expiresAt forward on every request, but
+// the browser stops sending the cookie the moment ITS own expiry passes, and
+// nothing re-sets it after login. A shorter cookie therefore silently caps the
+// session — which is exactly what happened when the TTL went 8h → 7 days
+// (2026-06-19) and this constant was left at 8h, logging editors out daily. It
+// is derived from SESSION_TTL_HOURS so the two can no longer drift apart.
+const SESSION_COOKIE_MAX_AGE_MS = SESSION_TTL_HOURS * 60 * 60 * 1000;
 
 const LoginSchema = z.object({
   email: z.string().email().max(320),
