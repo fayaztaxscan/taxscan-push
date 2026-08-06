@@ -43,7 +43,10 @@
   section { break-inside: avoid-page; }
 
   /* Callouts */
-  .box { border-radius: 10px; padding: 12px 14px; margin: 12px 0; border: 1px solid; }
+  /* Never let a callout split across a page: a heading stranded at the foot of
+     one page with its body on the next reads as two broken fragments. Applies
+     to print/PDF only; on screen it is inert. */
+  .box { border-radius: 10px; padding: 12px 14px; margin: 12px 0; border: 1px solid; break-inside: avoid; page-break-inside: avoid; }
   .box .box-t { font-weight: 700; margin: 0 0 4px; display: block; }
   .tip { background: #ecfdf5; border-color: #a7f3d0; }
   .tip .box-t { color: #047857; }
@@ -96,7 +99,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 1.2 &nbsp;·&nbsp; Updated 5 August 2026
+    &nbsp;·&nbsp; Version 1.3 &nbsp;·&nbsp; Updated 6 August 2026
   </div>
 </div>
 
@@ -497,9 +500,17 @@ there. When it picks one of our stories, a lot of readers arrive at once.</p>
 search does</strong>. It simply never showed up in any report before, because Google's own analytics can't tell
 Discover apart from ordinary search. The Surfaces tab is the only place you can see it.</p>
 <p>It uses the same two maps as the other tabs — <strong>courts/benches</strong> and <strong>categories</strong> —
-over trailing windows, plus a list of the <strong>most picked-up articles</strong>. <strong>Google News</strong>
+plus a list of the <strong>most picked-up articles</strong>. <strong>Google News</strong>
 is shown alongside, but it is tiny by comparison; if it's a small share it stays folded away behind
 <em>Show breakdown</em> so it doesn't crowd out the part that matters.</p>
+<p><strong>The columns are calendar months</strong>, oldest on the left, so you can see straight away whether a
+subject is rising or falling. Each row also carries a small <strong>trend line</strong> before the numbers — the
+shape of that row across every month on screen — and a <strong>&Delta;</strong> column at the far right comparing
+the last complete month with the one before it. The bottom row of each grid totals the whole surface.</p>
+<p>To look at one particular stretch of time instead, use <strong>Pick a date range</strong> above the report: it
+swaps the months for the period you choose next to the <em>same length of time immediately before it</em> — so you
+can ask "how did the Budget fortnight compare with the fortnight before". Ranges run up to 400 days, and
+<strong>Back to months</strong> returns to the month-by-month view.</p>
 <div class="box warn"><span class="box-t">These are clicks, not Reads — don't mix them up</span>
   A number here means someone <strong>tapped our headline in the Discover feed</strong>. The <strong>Reads</strong>
   tab counts page views from every source. They measure different things and are collected differently, so never
@@ -509,10 +520,16 @@ is shown alongside, but it is tiny by comparison; if it's a small share it stays
   Google reports this data a few days late, and for the very newest days it sends <em>nothing at all</em> — not
   smaller numbers, none. A quiet-looking recent stretch is the delay, not a drop. That's why every column looks
   backwards over a period instead of showing day by day.</div>
-<div class="box info"><span class="box-t">"We only hold N days of history so far"</span>
-  If you see this line, the longer columns (3, 6, 12 months) are showing everything collected to date rather than
-  a full period — so don't read "12 months" as a year yet. It fills out as the days accumulate, and the line
-  disappears by itself once there's enough history.</div>
+<div class="box info"><span class="box-t">The last column is always short</span>
+  The current month is marked with a dot and shaded with fine stripes, because Google has not finished reporting
+  it. Every headline figure and every &Delta; therefore compares the <strong>last complete month</strong>, never
+  the part-month — otherwise the report would show a collapse on the 1st of every month. History currently starts
+  in <strong>January 2026</strong>; if a line appears saying history starts later, earlier months were simply
+  never collected and their absence says nothing about what Google picked up then.</div>
+<div class="box info"><span class="box-t">Why some changes show a count instead of a percentage</span>
+  A row that went from 9 clicks to 2,800 is a true "+31,000%", which tells you nothing and swamps every real
+  figure next to it. Where the earlier month is too small for a percentage to mean anything, the &Delta; shows the
+  movement itself — <strong>&#9650; 2.8k</strong> — instead. Hover it for the exact before-and-after.</div>
 <div class="box tip"><span class="box-t">What to look for</span>
   Discover concentrates hard: a handful of stories usually account for most of the clicks. So the useful question
   isn't "how do we lift the average" — it's <strong>what did those few have in common</strong>. Look at the
@@ -553,6 +570,10 @@ is shown alongside, but it is tiny by comparison; if it's a small share it stays
     <tr><td>Review queue is piling up</td><td>Clear it: Approve the good pieces, Reject the rest.</td></tr>
     <tr><td>The same headline is sitting in Review</td><td>It was published twice within 72h. <strong>Reject</strong> a true duplicate; <strong>Approve</strong> a legitimate repeat (weekly Round-Up).</td></tr>
     <tr><td>A campaign shows <strong>—</strong> under Reads</td><td>No read data for that link (course/product page, or an older article) — not a zero. Nothing to fix.</td></tr>
+    <tr><td>Discover clicks falling month after month</td>
+      <td>Check it on <strong>complete</strong> months (the striped last column is unfinished). If the
+          <em>All Google Discover clicks</em> total is falling too, it's real — raise it with whoever owns
+          the site's search performance and bring the Surfaces tab as evidence.</td></tr>
     <tr><td>High Reads but low Clicked</td><td>The article works; the push headline undersold it. Sharpen the wording next time.</td></tr>
   </tbody>
 </table>
@@ -607,6 +628,23 @@ Google feed. A <strong>Read</strong> is a page view of the article from any sour
 different schedules: Reads appear within hours, Discover figures are 2–3 days behind. Use each for its own
 question and don't add them together.</p>
 
+<h3>The Surfaces tab shows Discover falling month after month. Is the report broken?</h3>
+<p>Almost certainly not. Two things to rule out first: the <strong>last column is always short</strong> (it is
+marked with a dot and fine stripes, because Google hasn't finished reporting it), and a single quiet month can be
+noise. Judge it on <strong>complete</strong> months and on the small <strong>trend line</strong> at the start of
+each row.</p>
+<p>If the fall shows up across most rows and in the <em>All Google Discover clicks</em> total at the foot of the
+grid, it is real. Discover is Google's choice, not ours — it can drop for reasons that have nothing to do with the
+quality of the desk's work. That makes it a conversation to have with whoever looks after the site's search
+performance, and the Surfaces tab is the evidence to bring: it shows when the change started and which categories
+and benches it hit hardest.</p>
+
+<h3>Can I look at one particular stretch of time?</h3>
+<p>Yes — <strong>Pick a date range</strong> above the report. Choose any <em>From</em> and <em>To</em> (up to 400
+days) and the grid switches to that single period alongside the <em>same length of time immediately before it</em>,
+with the change between them. That is the one to use for "how did the Budget fortnight compare with the fortnight
+before". <strong>Back to months</strong> returns to the month-by-month view.</p>
+
 <h3>The same headline turned up in my Review queue — why?</h3>
 <p>Because that headline was already published within the last 72 hours. The desk sometimes posts the same story
 twice, and rather than push it to your readers a second time the system asks you first. Reject it if it's a
@@ -629,7 +667,7 @@ reach everyone immediately, ignoring the normal spacing/frequency limits. They'r
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 1.2 · Updated 5 August 2026
+  Taxscan Push · Admin User Guide · Version 1.3 · Updated 6 August 2026
 </p>
 </section>
 
