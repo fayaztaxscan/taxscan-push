@@ -69,10 +69,13 @@ deleted duplicates (the residual gap no code can close).
    (**▲ 2.8k**) instead of a true-but-useless **▲ 30711%**.
    **VERIFIED IN A REAL BROWSER** against a copy of production data (local Postgres, dev servers,
    Chrome): months view, range view, the inverted-Δ fix, and that each grid scrolls inside its own
-   wrapper at 380px without the page overflowing. **NOT verifiable in that environment: the PNG
-   export** — `toPng` never completes there even for a tiny node, and it behaves identically on the
-   untouched Weekly tab, so it is the automation context, not a regression. The one real precaution
-   is in place: the sparkline SVGs carry explicit width/height, which html-to-image needs.
+   wrapper at 380px without the page overflowing. **PNG export: ✅ CONFIRMED WORKING by the user
+   post-deploy (2026-08-06).** It could NOT be exercised from the automated browser — `toPng` never
+   completes there, even for a tiny node, and behaves identically on the untouched Weekly tab — so
+   that was the automation context, not a regression, and the user's manual check settled it. The
+   precaution that mattered: the sparkline SVGs carry explicit width/height, which html-to-image
+   needs to rasterise inline SVG. **Lesson: html-to-image cannot be validated in this Chrome
+   automation setup at all — don't burn time re-testing it there, hand it to the user.**
    **Suite 371 → 382.** Guide → **v1.3** (Surfaces section rewritten for months/range/Δ; PDF rebuilt,
    16 pages) and `.box` callouts now carry `break-inside: avoid` after a rebuild split one across two
    pages.
