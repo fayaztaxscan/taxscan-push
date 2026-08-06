@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 import type { User, UserRole } from '@prisma/client';
 import { env } from './env';
-import { findValidSession, type SessionWithUser } from './sessions';
+import { findValidSession, SESSION_TTL_HOURS, type SessionWithUser } from './sessions';
 
 // Augment Express's Request so handlers downstream of requireUser see typed
 // req.user / req.session. Optional because most public routes never touch it.
@@ -17,6 +17,53 @@ declare global {
 }
 
 export const SESSION_COOKIE_NAME = 'tx_push_session';
+
+// --- Session cookie ---------------------------------------------------------
+//
+// The cookie must outlive the server-side session, never the other way round:
+// `findValidSession` slides UserSession.expiresAt forward on every request, so
+// a shorter cookie would silently cap the session (it did — the constant was
+// left at 8h when the TTL went to 7 days, logging editors out daily). Derived
+// from SESSION_TTL_HOURS so the two cannot drift apart again.
+export const SESSION_COOKIE_MAX_AGE_MS = SESSION_TTL_HOURS * 60 * 60 * 1000;
+
+/**
+ * Cookie attributes. Shared by set/clear — `res.clearCookie` only matches a
+ * cookie when path/domain/secure/sameSite line up with how it was written, so
+ * these MUST come from one place.
+ */
+export function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: env.nodeEnv === 'production',
+    sameSite: 'lax' as const,
+    path: '/',
+    signed: true,
+  };
+}
+
+export function setSessionCookie(res: Response, token: string): void {
+  res.cookie(SESSION_COOKIE_NAME, token, {
+    ...sessionCookieOptions(),
+    maxAge: SESSION_COOKIE_MAX_AGE_MS,
+  });
+}
+
+export function clearSessionCookie(res: Response): void {
+  // Logout runs behind requireUser, which has already queued a slide header for
+  // this same response. Two Set-Cookie lines for one name resolve last-wins in
+  // practice, but relying on header order to log someone out is not a bet worth
+  // taking — drop the refresh so the clear is the only session cookie sent.
+  const existing = res.getHeader('Set-Cookie');
+  if (existing !== undefined) {
+    const lines = (Array.isArray(existing) ? existing : [String(existing)]).filter(
+      (line) => !String(line).startsWith(`${SESSION_COOKIE_NAME}=`),
+    );
+    if (lines.length > 0) res.setHeader('Set-Cookie', lines);
+    else res.removeHeader('Set-Cookie');
+  }
+  res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions());
+}
 
 // Requests a user who still owes a forced password change (passwordResetRequired)
 // is allowed to make. Everything else is blocked server-side so an admin-issued
@@ -76,6 +123,16 @@ export function requireUser(roles?: UserRole[]) {
         res.status(401).json({ error: 'unauthorized' });
         return;
       }
+      // Slide the COOKIE forward in step with the session row. findValidSession
+      // has just pushed UserSession.expiresAt out by the full TTL; without this
+      // the browser copy still counts down from login, so an editor working
+      // every day would be logged out mid-week while their session was live.
+      // Re-issued here (as soon as the session validates) rather than after the
+      // checks below, so the cookie tracks the DB even on a 403 — the two
+      // expiries are then always the same instant. Same token, same signature:
+      // only the expiry moves, so a concurrent request can't be invalidated.
+      setSessionCookie(res, token);
+
       if (roles && roles.length > 0 && !roles.includes(session.user.role)) {
         res.status(403).json({ error: 'forbidden' });
         return;
