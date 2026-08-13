@@ -6,7 +6,8 @@
  * requireUser(['ADMIN']).
  *
  * Query params:
- *   action?         — exact match on AuditAction
+ *   action?         — exact match on AuditAction (every value the schema
+ *                     enum can store is accepted; see QuerySchema below)
  *   userId?         — exact match on actor's userId (nullable)
  *   since?, until?  — ISO timestamps; bounds on createdAt
  *   limit?          — default 50, max 200
@@ -18,26 +19,18 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import type { AuditAction, AuditLog, User } from '@prisma/client';
+import { AuditAction } from '@prisma/client';
+import type { AuditLog, User } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { requireUser } from '../lib/auth';
 
-const AUDIT_ACTIONS = [
-  'LOGIN_SUCCESS',
-  'LOGIN_FAILED',
-  'LOGOUT',
-  'PASSWORD_CHANGED',
-  'USER_CREATED',
-  'USER_DEACTIVATED',
-  'USER_REACTIVATED',
-  'USER_ROLE_CHANGED',
-  'USER_PASSWORD_RESET',
-  'CAMPAIGN_DISPATCHED',
-  'CAMPAIGN_DISPATCH_FAILED',
-] as const satisfies readonly AuditAction[];
-
+// Derived from Prisma's enum rather than hand-listed: a hand-written copy
+// silently drifted once (the five REVIEW_*/invite actions were writable but
+// not filterable, so `?action=REVIEW_PUSHED` 400'd on 35% of the log), and a
+// new AuditAction would drift it again. Adding a value to schema.prisma is
+// now enough. `auditActions.test.ts` locks the two together.
 const QuerySchema = z.object({
-  action: z.enum(AUDIT_ACTIONS).optional(),
+  action: z.nativeEnum(AuditAction).optional(),
   userId: z.string().min(1).optional(),
   since: z.string().datetime().optional(),
   until: z.string().datetime().optional(),

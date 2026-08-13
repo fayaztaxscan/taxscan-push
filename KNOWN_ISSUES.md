@@ -519,6 +519,15 @@ rather than `news`, so a reconciler capture is never narrower than the feeds.
 
 **Filed:** 2026-08-06. **Owner:** us. **Severity:** low (cosmetic).
 
+> **✅ RESOLVED 2026-08-13.** The route no longer hand-lists the actions — the
+> `?action=` filter is `z.nativeEnum(AuditAction)` straight off Prisma, so every
+> value the schema can store is accepted and a future action is covered the day
+> it's added. The Activity dropdown gained the five missing entries (it can't
+> import Prisma, so a test reads `Activity.vue` and asserts the list still
+> covers the enum), and `REVIEW_APPROVED`/`REVIEW_REJECTED`/`REVIEW_PUSHED` +
+> the two invite actions now render readable summaries instead of `{}`.
+> Measured before the fix: `REVIEW_APPROVED` alone was 229 of 659 live rows.
+
 ### What's happening
 
 `AUDIT_ACTIONS` in `src/routes/audit.ts` — the zod enum backing the `?action=`
