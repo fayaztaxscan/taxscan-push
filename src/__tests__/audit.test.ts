@@ -13,8 +13,11 @@
  *       reports total separately from items.length
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import request from 'supertest';
 import bcrypt from 'bcrypt';
+import { AuditAction } from '@prisma/client';
 import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
@@ -190,6 +193,25 @@ describe('GET /api/audit', () => {
     expect(outOfWindow.body.items).toHaveLength(0);
   });
 
+  it('accepts every AuditAction the schema can store', async () => {
+    // Regression lock for KNOWN_ISSUES #8: the filter enum was hand-listed and
+    // drifted from prisma/schema.prisma, so the five REVIEW_*/invite actions —
+    // ~35% of the live log — 400'd. Driving this off the Prisma enum means a
+    // newly added action is covered the moment it exists.
+    const u = await makeUser('all-actions', 'AllActPw1Aa', 'PUBLISHER');
+    const cookie = await loginAs(u, 'AllActPw1Aa');
+
+    for (const action of Object.values(AuditAction)) {
+      const res = await request(app)
+        .get(`/api/audit?action=${action}&userId=${u.id}`)
+        .set('Cookie', cookie);
+      expect([action, res.status]).toEqual([action, 200]);
+      for (const item of res.body.items) {
+        expect(item.action).toBe(action);
+      }
+    }
+  });
+
   it('returns 400 for an unknown action value', async () => {
     const u = await makeUser('bad-action', 'BadActPw1Aa', 'PUBLISHER');
     const cookie = await loginAs(u, 'BadActPw1Aa');
@@ -227,5 +249,22 @@ describe('GET /api/audit', () => {
     expect(page1.body.total).toBeGreaterThanOrEqual(
       page1.body.items.length + page2.body.items.length,
     );
+  });
+});
+
+describe('Activity screen action list', () => {
+  // The SPA can't import Prisma's enum, so its dropdown is hand-listed. That
+  // is exactly how KNOWN_ISSUES #8 happened on the API side — this locks the
+  // copy to the schema so a new AuditAction can't be silently unofferable.
+  it('offers every AuditAction in the filter dropdown', () => {
+    const src = readFileSync(
+      join(__dirname, '../../admin/src/views/Activity.vue'),
+      'utf8',
+    );
+    const block = src.match(/const ACTIONS = \[([\s\S]*?)\] as const;/);
+    expect(block).not.toBeNull();
+    for (const action of Object.values(AuditAction)) {
+      expect(block![1]).toContain(`'${action}'`);
+    }
   });
 });

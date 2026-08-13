@@ -19,6 +19,9 @@ type AuditItem = {
   createdAt: string;
 };
 
+// Must stay in step with the AuditAction enum in prisma/schema.prisma — the
+// SPA can't import it, so it's listed in the same order. The API derives its
+// filter from Prisma directly, so anything here is guaranteed accepted.
 const ACTIONS = [
   'LOGIN_SUCCESS',
   'LOGIN_FAILED',
@@ -29,8 +32,13 @@ const ACTIONS = [
   'USER_REACTIVATED',
   'USER_ROLE_CHANGED',
   'USER_PASSWORD_RESET',
+  'USER_INVITED',
+  'USER_INVITE_ACCEPTED',
   'CAMPAIGN_DISPATCHED',
   'CAMPAIGN_DISPATCH_FAILED',
+  'REVIEW_APPROVED',
+  'REVIEW_REJECTED',
+  'REVIEW_PUSHED',
 ] as const;
 
 const api = useApi();
@@ -98,12 +106,28 @@ function summarize(item: AuditItem): string {
     }
     case 'USER_PASSWORD_RESET':
       return `Reset password for ${m.email ?? '—'}`;
+    case 'USER_INVITED':
+      return `Invited ${m.email ?? '—'} as ${m.role ?? '—'}${
+        m.emailSent === false ? ' (email not sent — link shared manually)' : ''
+      }`;
+    case 'USER_INVITE_ACCEPTED':
+      return `${m.email ?? 'Invitee'} accepted their invite as ${m.role ?? '—'}`;
     case 'CAMPAIGN_DISPATCHED':
       return `Dispatched: sent ${m.sent ?? '?'}, failed ${m.failed ?? '?'}, capped ${m.capped ?? '?'}`;
     case 'CAMPAIGN_DISPATCH_FAILED':
       return `Dispatch failed — ${m.error ?? 'unknown error'}`;
-    default:
-      return JSON.stringify(item.metadata ?? {});
+    case 'REVIEW_APPROVED':
+      return 'Approved from Review — queued for the pacer';
+    case 'REVIEW_REJECTED':
+      return 'Rejected from Review — not sent';
+    case 'REVIEW_PUSHED':
+      return `Pushed from Review: sent ${m.sent ?? '?'}, failed ${m.failed ?? '?'}`;
+    default: {
+      // Anything without its own case (a newly added action) still reads as
+      // something rather than an empty "{}".
+      const json = JSON.stringify(item.metadata ?? {});
+      return json === '{}' ? '—' : json;
+    }
   }
 }
 
