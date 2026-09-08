@@ -17,6 +17,7 @@ import { customReportWindow, getReport, reportWindow } from '../services/reports
 import { getReadsReport } from '../services/readsReport';
 import { customSurfacesWindow, getSurfacesReport } from '../services/surfacesReport';
 import { lastReportEmailRun, sendScheduledReport } from '../services/reportScheduler';
+import { lastBackupRun } from '../services/backup';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
@@ -639,6 +640,37 @@ export function createApiRouter(
         });
       }
       return res.json({ ready: true, generatedAt: new Date().toISOString(), ...payload });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Outcome of the last off-platform backup, so the Dashboard can warn when the
+  // copy that survives losing Railway has gone stale. `overdue` is computed
+  // here rather than in the client: the schedule is server-side knowledge, and
+  // "no run at all" must read as a problem once the feature is switched on.
+  router.get('/backup-status', requireBearerOrUser(), async (_req, res, next) => {
+    try {
+      if (!env.backup.enabled) return res.json({ enabled: false, lastRun: null, overdue: false });
+      const run = await lastBackupRun();
+      // Weekly schedule; anything past 9 days means a run was missed entirely.
+      const staleAfterMs = 9 * 24 * 60 * 60 * 1000;
+      const overdue = !run || Date.now() - run.ranAt.getTime() > staleAfterMs;
+      return res.json({
+        enabled: true,
+        overdue,
+        lastRun: run
+          ? {
+              ranAt: run.ranAt,
+              ok: run.ok,
+              objectKey: run.objectKey,
+              rows: run.rows,
+              bytes: run.bytes,
+              tables: run.tables,
+              error: run.error,
+            }
+          : null,
+      });
     } catch (err) {
       return next(err);
     }

@@ -316,3 +316,23 @@ model ReportEmailRun {
 
   @@index([portal, ranAt])
 }
+
+/// One row per off-platform backup run (src/services/backup.ts).
+///
+/// Same reasoning as ReportEmailRun: a scheduled job whose only failure signal
+/// is a console line is a job nobody notices has stopped. The Dashboard reads
+/// the newest row and warns when the last run failed or is overdue.
+model BackupRun {
+  id        String   @id @default(cuid())
+  ranAt     DateTime @default(now())
+  /// Object key written to the bucket; null when the run failed before upload.
+  objectKey String?
+  rows      Int
+  bytes     Int
+  /// Per-table row counts, for spotting a table that silently stopped exporting.
+  tables    Json
+  ok        Boolean
+  error     String?
+
+  @@index([ranAt])
+}

@@ -17,6 +17,7 @@ import { startGaReadsSync } from './services/gaReads';
 import { startReadsReportCron } from './services/readsReport';
 import { startSearchSurfacesSync } from './services/searchSurfaces';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
+import { startBackupCron } from './services/backup';
 import type { Sender } from './services/send';
 
 // When E2E_MOCK_SENDER=true, swap web-push for an in-memory success sender so
@@ -43,4 +44,5 @@ app.listen(env.port, () => {
   startReadsReportCron();
   startSearchSurfacesSync();
   startAuditRetentionSweeper();
+  startBackupCron();
 });

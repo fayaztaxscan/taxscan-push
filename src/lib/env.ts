@@ -199,6 +199,31 @@ export const env = {
     cron: process.env.SEARCH_CONSOLE_CRON ?? '40 */6 * * *',
     lookbackDays: intEnv('SEARCH_CONSOLE_LOOKBACK_DAYS', 7),
   },
+  // Off-platform disaster copy. Exports the irreplaceable tables as gzipped
+  // NDJSON to S3-compatible object storage (Cloudflare R2) — see docs/BACKUPS.md.
+  //
+  // WHY THIS EXISTS SEPARATELY FROM RAILWAY'S VOLUME BACKUPS: those are
+  // copy-on-write snapshots that share blocks with the live volume, "wiping a
+  // volume deletes all backups", and they can only be restored back into the
+  // same Railway project. They cover a bad migration; they cover nothing about
+  // losing Railway itself — which happened for 2.5 days on 2026-09-01, with the
+  // data intact and completely unreachable.
+  //
+  // Default off. `endpoint` is derived from the account id when left empty.
+  backup: {
+    enabled: process.env.BACKUP_ENABLED === 'true',
+    // Sunday 02:20 IST — after the nightly sweepers, before the morning traffic.
+    cron: process.env.BACKUP_CRON ?? '20 2 * * 0',
+    bucket: process.env.R2_BUCKET ?? '',
+    accountId: process.env.R2_ACCOUNT_ID ?? '',
+    accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? '',
+    endpoint: process.env.R2_ENDPOINT ?? '',
+    prefix: process.env.BACKUP_PREFIX ?? 'taxscan-push',
+    // Objects older than this are deleted after a successful upload. R2's free
+    // tier is 10 GB and one export is ~3 MB, so this is about tidiness, not cost.
+    keepDays: intEnv('BACKUP_KEEP_DAYS', 180),
+  },
   // No-miss backstop: periodically reconcile against taxscan's complete daily
   // sitemap and capture any article the RSS feeds missed (feeds only show the
   // latest ~11 per poll). Default off.
