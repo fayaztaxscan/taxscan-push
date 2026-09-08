@@ -93,11 +93,11 @@ model Campaign {
   // filler only) / REVIEW (unclassified, awaiting an editor). Null for manual
   // /api/send campaigns and legacy rows. `authority` is the matched source
   // (e.g. "CESTAT", "Supreme Court") for ranking + display.
-  sendQueue SendQueue?
-  authority String?
+  sendQueue  SendQueue?
+  authority  String?
   // The article's RSS <category> tags (e.g. ["Income Tax","Top Stories"]),
   // captured for the weekly/monthly coverage reports. Empty for manual sends.
-  categories String[] @default([])
+  categories String[]   @default([])
   // Set when an editor handles a REVIEW item (approve / reject / push-now). A
   // REVIEW DRAFT with reviewedAt = null is still pending in the review queue.
   reviewedAt DateTime?
@@ -292,4 +292,27 @@ model Event {
   @@index([subscriberId])
   @@index([type])
   @@index([createdAt])
+}
+
+/// One row per SCHEDULED coverage-report email run (weekly/monthly).
+///
+/// Exists so a failed run is visible in the product instead of only in the
+/// deploy logs: on 2026-08-31 and 2026-09-01 every send failed with
+/// "plan expired" at the email provider and nobody noticed for a week.
+/// The Reports screen reads the newest row and warns while `failed > 0`.
+///
+/// Deliberately NOT written by the "Email me a test" route — a personal
+/// preview must not overwrite the standing state of the scheduled send.
+model ReportEmailRun {
+  id         String   @id @default(cuid())
+  portal     String
+  period     String
+  ranAt      DateTime @default(now())
+  recipients Int
+  sent       Int
+  failed     Int
+  /// First provider error of the run, truncated. Null when nothing failed.
+  error      String?
+
+  @@index([portal, ranAt])
 }
