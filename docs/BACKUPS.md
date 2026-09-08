@@ -76,8 +76,18 @@ to keep.
 ## Layer 2 — off-platform export to Cloudflare R2
 
 `src/services/backup.ts`, daily cron, flag-gated. Writes gzipped NDJSON of
-`Subscriber`, `User`, `ReportRecipient`, `Campaign`, `FeedItem` (~3 MB) to an
-S3-compatible bucket. Free at this size: R2 gives 10 GB and charges nothing for
+`Subscriber` (live rows only), `User`, `ReportRecipient`, `Campaign` and
+`FeedItem` — about 1 MB — to an S3-compatible bucket.
+
+**EXPIRED subscribers are excluded**, and that is safe rather than merely
+smaller. A row expires when the push service answers 404/410, which means the
+endpoint has been *permanently* retired and can never be presented again, so
+the row can never be revived. (The other path, `/api/unsubscribe`, has fired
+once in the platform's history.) Even then nothing is lost: `/api/subscribe`
+upserts on endpoint, so a returning endpoint with no row simply creates a fresh
+`ACTIVE` one — the same outcome. Excluding them drops ~72% of the rows and stops
+us storing thousands of dead push endpoints, which are personal data with no
+remaining purpose. The header line in each file records the exclusion. Free at this size: R2 gives 10 GB and charges nothing for
 egress, so this layer cannot be switched off by a failed payment.
 
 The uploader (`src/lib/r2.ts`) signs SigV4 by hand with `node:crypto` — no new

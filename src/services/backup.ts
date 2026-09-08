@@ -72,6 +72,28 @@ export type BackupResult = {
   tables: Record<string, number>;
 };
 
+/**
+ * Per-table row filter. Only `Subscriber` has one.
+ *
+ * EXPIRED subscribers are excluded, and this is safe rather than merely small:
+ * a row expires when the push service answers 404/410, which means that
+ * endpoint has been PERMANENTLY retired and can never be presented again — so
+ * the row can never be revived. (The other path, /api/unsubscribe, has fired
+ * exactly once in the platform's history.) And even in that case nothing is
+ * lost: /api/subscribe upserts on endpoint, so a returning endpoint with no
+ * row simply creates a fresh ACTIVE one — the same outcome.
+ *
+ * What it buys: ~72% of the rows and ~70% of the file, and we stop carrying
+ * thousands of dead push endpoints, which are personal data with no remaining
+ * purpose.
+ *
+ * `not: 'EXPIRED'` rather than `equals: 'ACTIVE'` deliberately — a status added
+ * later should be backed up by default, not silently dropped.
+ */
+function whereFor(table: BackupTable): Record<string, unknown> | undefined {
+  return table === 'Subscriber' ? { status: { not: 'EXPIRED' } } : undefined;
+}
+
 /** Prisma delegates keyed by the table name, so the list above drives the export. */
 function delegateFor(table: BackupTable) {
   switch (table) {
@@ -118,6 +140,9 @@ export async function buildBackup(opts?: { now?: Date }): Promise<{ body: Buffer
       version: 1,
       generatedAt: now.toISOString(),
       tables: BACKUP_TABLES,
+      // Say so in the file itself: someone restoring years from now should not
+      // have to infer why the subscriber count is lower than they expected.
+      excludes: 'Subscriber rows with status=EXPIRED (permanently dead endpoints)',
       note:
         'One JSON object per line: {"_table":"<name>", ...row}. Restore with ' +
         'scripts/restore-backup.ts. Push subscriptions are useless without the ' +
@@ -130,8 +155,10 @@ export async function buildBackup(opts?: { now?: Date }): Promise<{ body: Buffer
     let count = 0;
     let cursor: string | undefined;
     for (;;) {
+      const where = whereFor(table);
       const batch: Array<{ id: string }> = await (delegate as { findMany: (a: unknown) => Promise<Array<{ id: string }>> }).findMany({
         take: 1000,
+        ...(where ? { where } : {}),
         ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
         orderBy: { id: 'asc' },
       });

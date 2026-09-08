@@ -55,6 +55,40 @@ describe('buildBackup', () => {
     expect(result.tables.Subscriber).toBeGreaterThan(0);
   });
 
+  it('carries live subscribers but not EXPIRED ones', async () => {
+    const tag = uniq();
+    const live = await prisma.subscriber.create({
+      data: { portal: 'taxscan', endpoint: `https://push.example/live-${tag}`, p256dh: 'p', auth: 'a', topics: ['all'] },
+    });
+    const dead = await prisma.subscriber.create({
+      data: {
+        portal: 'taxscan',
+        endpoint: `https://push.example/dead-${tag}`,
+        p256dh: 'p',
+        auth: 'a',
+        topics: ['all'],
+        status: 'EXPIRED',
+      },
+    });
+    subscriberIds.push(live.id, dead.id);
+
+    const { body, result } = await buildBackup();
+    const { rows } = parse(body);
+    const ids = new Set(rows.filter((r) => r._table === 'Subscriber').map((r) => r.id));
+
+    expect(ids.has(live.id)).toBe(true);
+    // An expired row means the push service returned 404/410 and permanently
+    // retired that endpoint — it can never be presented again, so the row can
+    // never be revived and carrying it only stores a dead personal identifier.
+    expect(ids.has(dead.id)).toBe(false);
+
+    // And the header says so, so a future restorer is not left guessing why
+    // the subscriber count is lower than production's row count.
+    const { header } = parse(body);
+    expect(header.excludes).toContain('EXPIRED');
+    expect(result.tables.Subscriber).toBe(ids.size);
+  });
+
   it('excludes the tables that would make the export enormous or misleading', async () => {
     const { body } = await buildBackup();
     const { rows } = parse(body);
