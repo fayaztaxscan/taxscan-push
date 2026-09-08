@@ -99,6 +99,20 @@ dependency, following the same call the GA sync made, because a
 Keep the bucket **private** — no `r2.dev` public domain. Push endpoints are
 delivery keys for real people.
 
+### Getting a backup back out
+
+```
+npm run backup:fetch                      # newest object, saved under its own name
+npm run backup:fetch -- --list            # what is in the bucket
+npm run backup:fetch -- --key <key>       # a specific one
+```
+
+Keys are ISO-timestamped, so lexical order is chronological and "newest" is the
+last one. This exists so recovery never depends on the Cloudflare dashboard
+being reachable, or on anyone reconstructing an `aws-cli` command under
+pressure. Locally, `railway run --service taxscan-push npm run backup:fetch`
+supplies the credentials without copying them anywhere.
+
 ### Running it by hand
 
 ```
@@ -153,10 +167,37 @@ format are never touched.
 
 ## Rehearsals
 
-An unrehearsed restore is a hypothesis. Drill run 2026-09-08 against the local
-dev database: seeded 3 subscribers, exported, deleted them, restored from the
-file, confirmed `endpoint`, `p256dh`, `auth`, `topics` and `status` came back
-identical. Repeat after any change to the export format.
+An unrehearsed restore is a hypothesis. Repeat both after any change to the
+export format.
+
+**Drill 1 — round trip (2026-09-08).** Seeded 3 subscribers in dev, exported,
+deleted them, restored from the file: `endpoint`, `p256dh`, `auth`, `topics`
+and `status` all came back identical.
+
+**Drill 2 — full rebuild from nothing (2026-09-08).** The real thing, end to
+end, on a scratch database with no schema:
+
+1. `createdb` → 0 tables.
+2. `prisma migrate deploy` → 15 tables.
+3. `npm run backup:fetch` — downloaded the **actual production object** from R2
+   (`2026-09-08T07-25-00Z.ndjson.gz`, 3,154,171 bytes).
+4. `npm run restore:backup --yes` → Subscriber 10,430 · Campaign 2,995 ·
+   FeedItem 2,355 · User 7 · ReportRecipient 1.
+5. Booted `node dist/index.js` against it with every dispatcher explicitly off.
+6. `/healthz` 200; `/api/metrics` reported **2,954 active subscribers** and the
+   campaign history; **`/api/config` returned the ORIGINAL VAPID public key**
+   (fingerprint `195c52144fda`, matching production) — the check that decides
+   whether restored subscribers are pushable at all.
+
+Production held 10,434 rows at that moment against 10,430 restored: the 4-row
+gap is drift since the snapshot, which is the recovery point behaving exactly
+as designed.
+
+The scratch database and the downloaded file were destroyed afterwards — both
+held real subscriber endpoints.
+
+**Not yet rehearsed:** an actual push send from a rebuilt deployment, because
+that would deliver real notifications to real people.
 
 ## Failure visibility
 
