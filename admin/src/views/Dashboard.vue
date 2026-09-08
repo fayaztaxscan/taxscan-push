@@ -122,7 +122,51 @@ const recentCampaigns = computed(() => {
     .slice(0, 5);
 });
 
-onMounted(load);
+// --- Standing warning: is the off-platform copy still being made? -----------
+// The weekly backup is the only copy that survives losing Railway. A cron that
+// quietly stops is invisible by default, so its state gets a surface here — on
+// the screen someone actually looks at — rather than living only in the logs.
+type BackupStatus = {
+  enabled: boolean;
+  overdue: boolean;
+  lastRun: { ranAt: string; ok: boolean; rows: number; error: string | null } | null;
+};
+const backup = ref<BackupStatus | null>(null);
+
+async function loadBackupStatus() {
+  try {
+    backup.value = await api.get<BackupStatus>('/api/backup-status');
+  } catch {
+    // Secondary signal: never let it make the Dashboard look broken, and never
+    // invent a failure we haven't actually observed.
+    backup.value = null;
+  }
+}
+
+const backupWarning = computed(() => {
+  const b = backup.value;
+  if (!b || !b.enabled) return null; // Feature off: nothing to promise, nothing to warn about.
+  if (b.lastRun && !b.lastRun.ok) {
+    return {
+      headline: 'The last off-site backup failed.',
+      detail: `Attempted ${fmtDate(b.lastRun.ranAt)}.${b.lastRun.error ? ` ${b.lastRun.error}` : ''}`,
+    };
+  }
+  if (b.overdue) {
+    return {
+      headline: b.lastRun ? 'No off-site backup in over a week.' : 'No off-site backup has run yet.',
+      detail: b.lastRun
+        ? `The last successful copy was ${fmtDate(b.lastRun.ranAt)}. The weekly job may have stopped.`
+        : 'The backup is switched on but has not completed a run.',
+    };
+  }
+  return null;
+});
+
+onMounted(() => {
+  void load();
+  void loadBackupStatus();
+});
 </script>
 
 <template>
@@ -132,6 +176,17 @@ onMounted(load);
       <button class="btn" :disabled="loading" @click="load">
         {{ loading ? 'Loading…' : 'Refresh' }}
       </button>
+    </div>
+
+    <!-- Standing condition, like the Reports email warning: amber, not the red
+         used for "the request you just made failed". -->
+    <div v-if="backupWarning" class="banner warn" role="status">
+      <p class="banner-lead">{{ backupWarning.headline }}</p>
+      <p class="banner-detail">{{ backupWarning.detail }}</p>
+      <p class="banner-detail">
+        Subscribers cannot be recreated if the database is lost. Check the backup job before
+        anything else.
+      </p>
     </div>
 
     <div v-if="error" class="banner err">{{ error }}</div>
