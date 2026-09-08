@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import type { ReportEmailRun } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../lib/email';
@@ -31,12 +32,51 @@ export async function reportRecipientEmails(): Promise<string[]> {
   return [...set];
 }
 
+/** The newest scheduled run for a portal, or null before the first one. */
+export async function lastReportEmailRun(portal: string): Promise<ReportEmailRun | null> {
+  return prisma.reportEmailRun.findFirst({
+    where: { portal },
+    orderBy: { ranAt: 'desc' },
+  });
+}
+
+/**
+ * Persists the outcome of a scheduled run so the Reports screen can warn
+ * about a failed send. Never throws: the email has already gone out (or
+ * not) by the time this runs, and a bookkeeping failure must not turn a
+ * successful send into a crashed cron.
+ */
+async function recordReportEmailRun(input: {
+  portal: string;
+  period: 'weekly' | 'monthly';
+  ranAt: Date;
+  recipients: number;
+  sent: number;
+  failed: number;
+  error: string | null;
+}): Promise<void> {
+  try {
+    await prisma.reportEmailRun.create({
+      data: { ...input, error: input.error ? input.error.slice(0, 500) : null },
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[report] could not record the run', e);
+  }
+}
+
 export async function sendScheduledReport(opts: {
   period: 'weekly' | 'monthly';
   now?: Date;
   sender?: EmailSender;
   portal?: string;
   recipients?: string[];
+  /**
+   * Whether this run becomes the state the Reports banner reads. False for
+   * the "Email me a test" preview: a personal test must neither raise the
+   * warning nor clear one a real failed send has raised.
+   */
+  record?: boolean;
 }): Promise<ReportRunResult> {
   const now = opts.now ?? new Date();
   const sender = opts.sender ?? defaultEmailSender;
@@ -61,11 +101,15 @@ export async function sendScheduledReport(opts: {
   const emails = opts.recipients ?? (await reportRecipientEmails());
   let sent = 0;
   let failed = 0;
+  // The provider usually fails the same way for every recipient (an expired
+  // plan, a bad key), so the first error is the one worth surfacing.
+  let firstError: string | null = null;
   for (const to of emails) {
     const r = await sender({ to, subject, html, text });
     if (r.ok) sent += 1;
     else {
       failed += 1;
+      if (firstError === null) firstError = r.error;
       // eslint-disable-next-line no-console
       console.error('[report] email failed', { to, error: r.error });
     }
@@ -74,6 +118,17 @@ export async function sendScheduledReport(opts: {
   console.log(
     `[report] ${opts.period} sent=${sent} failed=${failed} recipients=${emails.length} articles=${report.total}`,
   );
+  if (opts.record !== false) {
+    await recordReportEmailRun({
+      portal,
+      period: opts.period,
+      ranAt: now,
+      recipients: emails.length,
+      sent,
+      failed,
+      error: firstError,
+    });
+  }
   return { period: opts.period, recipients: emails.length, sent, failed, total: report.total };
 }
 

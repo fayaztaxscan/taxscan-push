@@ -16,7 +16,7 @@ import { getMetrics, listCampaigns } from '../services/metrics';
 import { customReportWindow, getReport, reportWindow } from '../services/reports';
 import { getReadsReport } from '../services/readsReport';
 import { customSurfacesWindow, getSurfacesReport } from '../services/surfacesReport';
-import { sendScheduledReport } from '../services/reportScheduler';
+import { lastReportEmailRun, sendScheduledReport } from '../services/reportScheduler';
 import { pendingQueue } from '../services/pacer';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
@@ -644,6 +644,30 @@ export function createApiRouter(
     }
   });
 
+  // Outcome of the last SCHEDULED report email run, so the Reports screen can
+  // warn when one failed. Before PR #54 a failed run existed only as a line in
+  // the deploy logs: the 2026-08-31 weekly and 2026-09-01 monthly both sent
+  // zero of six ("plan expired" at the provider) and went unnoticed for a week.
+  // `lastRun: null` until the first scheduled run after deploy — not an error.
+  router.get('/reports/email-status', requireBearerOrUser(), async (_req, res, next) => {
+    try {
+      const run = await lastReportEmailRun(env.rss.portal);
+      if (!run) return res.json({ lastRun: null });
+      return res.json({
+        lastRun: {
+          period: run.period,
+          ranAt: run.ranAt,
+          recipients: run.recipients,
+          sent: run.sent,
+          failed: run.failed,
+          error: run.error,
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   // Preview the report email — sends it to the requesting user only, so they can
   // check how it looks before the scheduled run reaches everyone.
   router.post('/reports/test-email', requireUser(), async (req, res, next) => {
@@ -653,7 +677,9 @@ export function createApiRouter(
         ? await prisma.user.findUnique({ where: { id: req.user.id }, select: { email: true } })
         : null;
       if (!u?.email) return res.status(400).json({ error: 'no_email_for_user' });
-      const result = await sendScheduledReport({ period, recipients: [u.email] });
+      // record:false — a preview to one person must not become the state the
+      // Reports banner reports on, in either direction.
+      const result = await sendScheduledReport({ period, recipients: [u.email], record: false });
       if (result.failed > 0) {
         return res.status(502).json({ error: 'email_failed', message: 'Email could not be sent — check email config.' });
       }

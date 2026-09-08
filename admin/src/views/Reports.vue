@@ -657,9 +657,64 @@ async function emailTest() {
   }
 }
 
+// --- Standing warning: did the last SCHEDULED report email actually go out? --
+// A failed send used to be invisible here — it existed only in the deploy logs,
+// which is how two runs (31 Aug, 1 Sep 2026) failed unnoticed for a week. This
+// stays up until a later scheduled run succeeds; there is nothing to dismiss,
+// because the condition is not resolved by reading about it.
+type EmailRun = {
+  period: 'weekly' | 'monthly';
+  ranAt: string;
+  recipients: number;
+  sent: number;
+  failed: number;
+  error: string | null;
+};
+const emailRun = ref<EmailRun | null>(null);
+
+async function loadEmailStatus() {
+  try {
+    const d = await api.get<{ lastRun: EmailRun | null }>('/api/reports/email-status');
+    emailRun.value = d.lastRun;
+  } catch {
+    // Silent: this is a secondary signal. Failing to fetch it must never make
+    // the Reports screen look broken, and a false "email failed" would be
+    // worse than showing nothing.
+    emailRun.value = null;
+  }
+}
+
+/** The provider's own words, trimmed of the wrapper our sender adds. */
+const emailRunProviderMessage = computed(() => {
+  const raw = emailRun.value?.error;
+  if (!raw) return null;
+  const m = raw.match(/"Error"\s*:\s*"([^"]+)"/);
+  return m ? m[1] : raw;
+});
+
+const emailRunWarning = computed(() => {
+  const r = emailRun.value;
+  if (!r || r.failed === 0) return null;
+  const when = new Date(r.ranAt).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const none = r.sent === 0;
+  return {
+    headline: none
+      ? `The ${r.period} report email did not reach anyone.`
+      : `The ${r.period} report email reached only some recipients.`,
+    detail: `Sent to ${r.sent} of ${r.recipients} on ${when}.`,
+    provider: emailRunProviderMessage.value,
+  };
+});
+
 onMounted(() => {
   void load();
   void loadRecipients();
+  void loadEmailStatus();
 });
 </script>
 
@@ -721,6 +776,22 @@ onMounted(() => {
         <span class="muted">Every month we hold, side by side.</span>
         <button class="btn" :disabled="loading" @click="openSurfaceRange">Pick a date range</button>
       </template>
+    </div>
+
+    <!-- Standing condition, not a response to anything just clicked — hence
+         its own colour rather than the red used for request errors below. -->
+    <div v-if="emailRunWarning" class="banner warn" role="status">
+      <p class="banner-lead">{{ emailRunWarning.headline }}</p>
+      <p class="banner-detail">
+        {{ emailRunWarning.detail }}
+        <template v-if="emailRunWarning.provider">
+          The email provider said: “{{ emailRunWarning.provider }}”
+        </template>
+      </p>
+      <p class="banner-detail">
+        Once the provider is working again, use “Email me a test” to check delivery. This notice
+        clears itself when the next scheduled report sends.
+      </p>
     </div>
 
     <div v-if="error" class="banner err">{{ error }}</div>
