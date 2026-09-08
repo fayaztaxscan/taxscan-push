@@ -9,6 +9,7 @@
   },
   "scripts": {
     "backfill:surfaces": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/backfill-surfaces.ts",
+    "backup:fetch": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/backup-fetch.ts",
     "backup:now": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/backup-now.ts",
     "build": "prisma generate && tsc -p tsconfig.json && npm run build:admin",
     "build:admin": "cd admin && npm ci --include=dev --no-audit --no-fund && npm run build",

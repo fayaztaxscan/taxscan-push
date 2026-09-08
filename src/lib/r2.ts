@@ -187,6 +187,28 @@ export async function putObject(
   }
 }
 
+/**
+ * Downloads one object.
+ *
+ * Separate from `send()` because that helper reads the body as text, and these
+ * objects are gzip. Recovery must not depend on the Cloudflare dashboard being
+ * reachable or on anyone remembering an aws-cli invocation.
+ */
+export async function getObject(cfg: R2Config, key: string): Promise<Buffer> {
+  const path = `/${cfg.bucket}/${key}`;
+  const headers = signRequest({ cfg, method: 'GET', path, payload: Buffer.alloc(0), now: new Date() });
+  const res = await fetch(`${endpointFor(cfg)}${encodeKey(path)}`, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`R2 GET ${key} failed: ${res.status} ${body.slice(0, 300)}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 /** Object keys under a prefix. Follows continuation tokens. */
 export async function listObjects(cfg: R2Config, prefix: string): Promise<string[]> {
   const keys: string[] = [];
