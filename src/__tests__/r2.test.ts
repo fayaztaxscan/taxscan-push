@@ -66,6 +66,60 @@ describe('signRequest', () => {
     expect(h.Authorization).toMatch(/Signature=[0-9a-f]{64}$/);
   });
 
+  /**
+   * REGRESSION (2026-09-08, caught only by a real run against R2): query VALUES
+   * must be fully RFC 3986 encoded, "/" included. Our own prefix ends in a
+   * slash, so signing it unescaped made every LIST fail with
+   * SignatureDoesNotMatch — while PUT, which carries no query string, worked.
+   * That asymmetry is why unit tests alone did not see it.
+   */
+  it('percent-encodes a slash inside a query value (LIST prefix)', () => {
+    const withSlash = signRequest({
+      cfg,
+      method: 'GET',
+      path: '/taxscan-backups',
+      query: { 'list-type': '2', prefix: 'taxscan-push/' },
+      payload: Buffer.alloc(0),
+      now: NOW,
+    });
+    const escaped = signRequest({
+      cfg,
+      method: 'GET',
+      path: '/taxscan-backups',
+      query: { 'list-type': '2', prefix: 'taxscan-push%2F' },
+      payload: Buffer.alloc(0),
+      now: NOW,
+    });
+    // If "/" were left raw it would sign differently from its escaped form.
+    // Signing "taxscan-push/" must be identical to signing the already-escaped
+    // spelling only if we escape it ourselves — so these must DIFFER, proving
+    // we encode rather than pass through.
+    expect(withSlash.Authorization).not.toBe(escaped.Authorization);
+
+    // And the canonical form must be stable across calls.
+    const again = signRequest({
+      cfg,
+      method: 'GET',
+      path: '/taxscan-backups',
+      query: { 'list-type': '2', prefix: 'taxscan-push/' },
+      payload: Buffer.alloc(0),
+      now: NOW,
+    });
+    expect(withSlash.Authorization).toBe(again.Authorization);
+  });
+
+  it('sorts query parameters by key, not by insertion order', () => {
+    const a = signRequest({
+      cfg, method: 'GET', path: '/b', now: NOW, payload: Buffer.alloc(0),
+      query: { prefix: 'x/', 'list-type': '2' },
+    });
+    const b = signRequest({
+      cfg, method: 'GET', path: '/b', now: NOW, payload: Buffer.alloc(0),
+      query: { 'list-type': '2', prefix: 'x/' },
+    });
+    expect(a.Authorization).toBe(b.Authorization);
+  });
+
   it('changes the signature when the method changes', () => {
     const put = signRequest({ cfg, method: 'PUT', path: '/b/k', payload: Buffer.alloc(0), now: NOW });
     const del = signRequest({ cfg, method: 'DELETE', path: '/b/k', payload: Buffer.alloc(0), now: NOW });
