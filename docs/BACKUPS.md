@@ -75,7 +75,7 @@ to keep.
 
 ## Layer 2 — off-platform export to Cloudflare R2
 
-`src/services/backup.ts`, weekly cron, flag-gated. Writes gzipped NDJSON of
+`src/services/backup.ts`, daily cron, flag-gated. Writes gzipped NDJSON of
 `Subscriber`, `User`, `ReportRecipient`, `Campaign`, `FeedItem` (~3 MB) to an
 S3-compatible bucket. Free at this size: R2 gives 10 GB and charges nothing for
 egress, so this layer cannot be switched off by a failed payment.
@@ -89,12 +89,12 @@ dependency, following the same call the GA sync made, because a
 | Variable | Notes |
 |---|---|
 | `BACKUP_ENABLED` | `true` to start the cron. Default off. |
-| `BACKUP_CRON` | Default `20 2 * * 0` — Sunday 02:20 IST. |
+| `BACKUP_CRON` | Default `20 2 * * *` — daily 02:20 IST. |
 | `R2_BUCKET` | Bucket name. |
 | `R2_ACCOUNT_ID` | Cloudflare account id; the endpoint is derived from it. |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | From an R2 API token, **Object Read & Write**, scoped to this bucket. |
 | `BACKUP_PREFIX` | Key prefix, default `taxscan-push`. |
-| `BACKUP_KEEP_DAYS` | Prune older objects after a successful upload. Default 180. |
+| `BACKUP_KEEP_DAYS` | Prune older objects after a successful upload. Default 180; **set to 14 in production**. |
 
 Keep the bucket **private** — no `r2.dev` public domain. Push endpoints are
 delivery keys for real people.
@@ -138,6 +138,19 @@ software that just failed is not a backup.
 5. Confirm `GET /api/config` returns the **original** public key. If it does
    not, restored subscribers are inert and will fail silently at send time.
 
+### Retention in production
+
+`BACKUP_KEEP_DAYS=14` with a daily cadence — about 14 recovery points, ~44 MB
+total, comfortably inside R2's 10 GB free tier. Retention here is not about
+storing history: the newest copy is the one you would ever restore. It buys
+**detection time** — the window in which a silent corruption can still be found
+in an uncorrupted copy. Fourteen days assumes damage would be noticed inside a
+fortnight.
+
+Pruning runs only after a **successful** upload, so a broken export can never
+delete the good copies before it, and objects whose key carries no date in our
+format are never touched.
+
 ## Rehearsals
 
 An unrehearsed restore is a hypothesis. Drill run 2026-09-08 against the local
@@ -149,6 +162,6 @@ identical. Repeat after any change to the export format.
 
 Every scheduled run writes a `BackupRun` row and `GET /api/backup-status`
 serves the newest one; the Dashboard warns when the last run failed or is
-overdue. This exists because a silent weekly job is a job nobody notices has
+overdue. This exists because a silent scheduled job is a job nobody notices has
 stopped — exactly how two report emails failed unnoticed for a week in
 August 2026.

@@ -212,8 +212,10 @@ export const env = {
   // Default off. `endpoint` is derived from the account id when left empty.
   backup: {
     enabled: process.env.BACKUP_ENABLED === 'true',
-    // Sunday 02:20 IST — after the nightly sweepers, before the morning traffic.
-    cron: process.env.BACKUP_CRON ?? '20 2 * * 0',
+    // 02:20 IST daily — quiet hours, before the morning traffic. Daily rather
+    // than weekly because each copy is ~3 MB: with a short retention window,
+    // frequency is what gives you usable recovery points, and it costs nothing.
+    cron: process.env.BACKUP_CRON ?? '20 2 * * *',
     bucket: process.env.R2_BUCKET ?? '',
     accountId: process.env.R2_ACCOUNT_ID ?? '',
     accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',

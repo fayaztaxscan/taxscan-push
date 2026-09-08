@@ -266,6 +266,17 @@ export function startBackupCron(): void {
       console.log(
         `[backup] uploaded key=${r.objectKey} rows=${r.rows} bytes=${r.bytes} subscribers=${r.tables.Subscriber ?? 0}`,
       );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[backup] FAILED — the off-platform copy is now stale', e);
+      return; // Nothing was written, so there is nothing to prune.
+    }
+
+    // Pruning is housekeeping, NOT protection, and is deliberately outside the
+    // block above: on 2026-09-08 a failing prune made a perfectly good backup
+    // log "FAILED — the off-platform copy is now stale", which is the opposite
+    // of what had happened. A tidying error must never read as data loss.
+    try {
       const pruned = await pruneOldBackups(r2ConfigFromEnv(), env.backup.prefix, env.backup.keepDays, new Date());
       if (pruned) {
         // eslint-disable-next-line no-console
@@ -273,7 +284,10 @@ export function startBackupCron(): void {
       }
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[backup] FAILED — the off-platform copy is now stale', e);
+      console.error(
+        `[backup] copy uploaded fine, but pruning failed — retention (${env.backup.keepDays}d) was not enforced this run`,
+        e,
+      );
     }
   };
 

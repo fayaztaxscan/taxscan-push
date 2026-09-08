@@ -49,11 +49,27 @@ function encodeKey(key: string): string {
     .join('/');
 }
 
+/**
+ * Full RFC 3986 encoding, "/" INCLUDED.
+ *
+ * This is not the same as the path encoder above, and conflating them is a
+ * real bug we shipped: a query VALUE containing a slash (our `prefix=
+ * taxscan-push/`) must be sent as %2F, and signing it unescaped produced
+ * `SignatureDoesNotMatch` on every LIST while PUT — which carries no query
+ * string — kept working perfectly.
+ */
+function encodeRfc3986(s: string): string {
+  return encodeURIComponent(s).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 /** Query strings must be sorted by key, with both halves RFC 3986 encoded. */
 function canonicalQuery(query: Record<string, string>): string {
   return Object.keys(query)
     .sort()
-    .map((k) => `${encodeKey(k)}=${encodeKey(query[k])}`)
+    .map((k) => `${encodeRfc3986(k)}=${encodeRfc3986(query[k])}`)
     .join('&');
 }
 

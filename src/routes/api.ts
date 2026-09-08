@@ -653,8 +653,9 @@ export function createApiRouter(
     try {
       if (!env.backup.enabled) return res.json({ enabled: false, lastRun: null, overdue: false });
       const run = await lastBackupRun();
-      // Weekly schedule; anything past 9 days means a run was missed entirely.
-      const staleAfterMs = 9 * 24 * 60 * 60 * 1000;
+      // Daily schedule, so two consecutive misses is the signal — short enough
+      // to be actionable, long enough not to cry wolf over one blip.
+      const staleAfterMs = 50 * 60 * 60 * 1000;
       const overdue = !run || Date.now() - run.ranAt.getTime() > staleAfterMs;
       return res.json({
         enabled: true,
