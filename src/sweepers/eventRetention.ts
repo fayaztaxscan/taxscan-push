@@ -191,7 +191,12 @@ export async function sweepEventRetention(deps: SweepDeps = {}): Promise<SweepRe
     }
     const batch = await nextBatch(cutoff, batchSize);
     if (batch.length === 0) break;
-    await prisma.$transaction((tx) => foldAndDelete(tx, batch));
+    // Prisma's interactive-transaction default is a 5 s timeout. The first
+    // production run hit it on batch 1 (P2028) and rolled back cleanly — a
+    // 5,000-row delete maintains five indexes on a 6M-row table, plus the
+    // roll-up writes, plus network latency when run from a laptop. Sixty
+    // seconds is ample and still bounds a stuck batch.
+    await prisma.$transaction((tx) => foldAndDelete(tx, batch), { timeout: 60_000, maxWait: 10_000 });
     for (const row of batch) bump(row.type, 1);
     batches += 1;
     if (batch.length < batchSize) break;
