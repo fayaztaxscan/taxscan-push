@@ -88,6 +88,125 @@ const campaignSelect = {
   createdBy: { select: { id: true, email: true, role: true } },
 } as const;
 
+// ---- Lifetime aggregates, refreshed in the background ----
+//
+// Two of the dashboard's numbers need EVERY row of Event: the lifetime
+// sent/clicked/failed/prompt counts (a groupBy on type) and subscribers-by-
+// source (a JSONB scan over SUBSCRIBED). Event is 6.4M rows and grows ~75k a
+// day, Postgres has a 128 MB buffer cache, and the nightly jobs evict the
+// index — so the first Dashboard load each morning read 58 MB from disk and
+// took 6-7 s, while the same scan warm took 370 ms (measured 2026-09-22).
+//
+// These totals change slowly and are read as round numbers, so they are
+// computed here on a timer and served from memory. The request path never
+// waits for them once the first refresh has landed — the same invariant the
+// GA and Search Console syncs follow: crons do the expensive work, requests
+// read the result. Everything that must be live (active subscribers, growth,
+// recent campaigns) stays on the request path; all of it is indexed and cheap.
+//
+// Single-instance (in-memory), like the metrics cache below. Under NODE_ENV=test
+// the warmer is never started, so tests always compute inline and see fresh
+// counts.
+export type HeavyAggregates = {
+  byType: Map<string, number>;
+  bySource: Map<string, number>;
+  computedAt: Date;
+};
+
+let heavyCache: HeavyAggregates | null = null;
+let heavyInFlight: Promise<HeavyAggregates> | null = null;
+let heavyTimer: NodeJS.Timeout | null = null;
+
+async function computeHeavyAggregates(): Promise<HeavyAggregates> {
+  const [eventTypeCounts, subscribedBySource] = await Promise.all([
+    prisma.event.groupBy({ by: ['type'], _count: { _all: true } }),
+    // One grouped scan replaces five separate JSONB event.count queries.
+    // Static SQL, no user input — not an injection surface. COUNT(*) comes
+    // back as bigint, so coerce with Number() below.
+    prisma.$queryRaw<Array<{ source: string | null; count: bigint }>>`
+      SELECT meta->>'source' AS source, COUNT(*)::bigint AS count
+      FROM "Event"
+      WHERE type = 'SUBSCRIBED'
+      GROUP BY meta->>'source'
+    `,
+  ]);
+  const byType = new Map<string, number>();
+  for (const row of eventTypeCounts) byType.set(row.type, row._count._all);
+  const bySource = new Map<string, number>();
+  for (const row of subscribedBySource) bySource.set(row.source ?? '', Number(row.count));
+  return { byType, bySource, computedAt: new Date() };
+}
+
+/** Recomputes and stores; concurrent callers share the one in-flight run. */
+async function refreshHeavyAggregates(): Promise<HeavyAggregates> {
+  if (heavyInFlight) return heavyInFlight;
+  heavyInFlight = computeHeavyAggregates()
+    .then((h) => {
+      heavyCache = h;
+      return h;
+    })
+    .finally(() => {
+      heavyInFlight = null;
+    });
+  return heavyInFlight;
+}
+
+/**
+ * The cached aggregates when the warmer has produced them; otherwise the
+ * in-flight refresh if one is running; otherwise an inline computation. Only
+ * the warmer writes the cache, so a process that never starts it (tests, a
+ * one-off script) behaves exactly as before: fresh numbers, every call.
+ */
+async function getHeavyAggregates(): Promise<HeavyAggregates> {
+  if (heavyCache) return heavyCache;
+  if (heavyInFlight) return heavyInFlight;
+  return computeHeavyAggregates();
+}
+
+function heavyRefreshMs(): number {
+  const raw = process.env.METRICS_HEAVY_REFRESH_MS;
+  if (raw !== undefined && raw !== '') return Number(raw);
+  return 5 * 60 * 1000;
+}
+
+/**
+ * Starts the background refresh: one pass immediately (so the first Dashboard
+ * load after a deploy is fast, not merely the second) and then every
+ * METRICS_HEAVY_REFRESH_MS (default 5 min; 0 disables and every request
+ * computes inline, i.e. the pre-2026-09-22 behaviour).
+ */
+export function startMetricsWarmer(): void {
+  const every = heavyRefreshMs();
+  if (every <= 0) {
+    // eslint-disable-next-line no-console
+    console.log('[metrics] warmer disabled (METRICS_HEAVY_REFRESH_MS=0) — totals computed per request');
+    return;
+  }
+  if (heavyTimer) return;
+  const run = () =>
+    refreshHeavyAggregates().catch((e) => {
+      // Keep serving the last good numbers; a failed refresh must never take
+      // the Dashboard down, and the next tick retries.
+      // eslint-disable-next-line no-console
+      console.error('[metrics] lifetime aggregate refresh failed (serving previous values)', e);
+    });
+  void run();
+  heavyTimer = setInterval(run, every);
+  heavyTimer.unref();
+  // eslint-disable-next-line no-console
+  console.log(`[metrics] warmer scheduled every ${Math.round(every / 1000)}s`);
+}
+
+/** Test hook — drops cached aggregates and stops the timer. */
+export function __resetHeavyAggregates(): void {
+  heavyCache = null;
+  heavyInFlight = null;
+  if (heavyTimer) {
+    clearInterval(heavyTimer);
+    heavyTimer = null;
+  }
+}
+
 export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   const today = startOfDayIST(now);
   const windowStart = new Date(today.getTime() - 29 * MS_PER_DAY);
@@ -100,19 +219,16 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   // below. Bound the SENT scan to the last 7 days — older isn't "recent".
   const pushedSince = new Date(today.getTime() - 7 * MS_PER_DAY);
 
-  // Wave 1: five queries in parallel (was thirteen). Consolidations:
-  //  - subscriber ACTIVE/EXPIRED counts → one groupBy on status.
-  //  - PROMPT_*/SUBSCRIBED/UNSUBSCRIBED/SENT/CLICKED/FAILED counts → one
-  //    groupBy on event type (we read the buckets we need off the result).
-  //  - the soft-prompt funnel count + the four per-source counts (five JSONB
-  //    event.count queries) → one grouped raw scan on meta->>'source'.
-  // Fewer round-trips is the win: data volume is tiny, so per-query latency to
-  // Postgres dominated the old 13-query fan-out.
+  // Wave 1: the LIVE queries, in parallel. Every one of these is bounded and
+  // indexed (a status groupBy on ~10k subscribers, a 30-day window, the newest
+  // 20 captures, SENT events from the last 7 days). The two whole-of-Event
+  // aggregates that used to sit in this list are served from the background
+  // warmer above — see the note there for the 6-second morning load that
+  // moved them out.
   const [
     subscriberStatusCounts,
     recentSubs,
-    eventTypeCounts,
-    subscribedBySource,
+    heavy,
     recentlyCaptured,
     recentlyPushedGroups,
   ] = await Promise.all([
@@ -121,16 +237,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
         where: { createdAt: { gte: windowStart } },
         select: { createdAt: true },
       }),
-      prisma.event.groupBy({ by: ['type'], _count: { _all: true } }),
-      // One grouped scan replaces five separate JSONB event.count queries.
-      // Static SQL, no user input — not an injection surface. COUNT(*) comes
-      // back as bigint, so coerce with Number() below.
-      prisma.$queryRaw<Array<{ source: string | null; count: bigint }>>`
-        SELECT meta->>'source' AS source, COUNT(*)::bigint AS count
-        FROM "Event"
-        WHERE type = 'SUBSCRIBED'
-        GROUP BY meta->>'source'
-      `,
+      getHeavyAggregates(),
       prisma.campaign.findMany({
         orderBy: { createdAt: 'desc' },
         take: 20,
@@ -170,8 +277,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   // Per-source SUBSCRIBED counts. Funnel `subscribed` is scoped to the
   // soft-prompt path so it lines up with PROMPT_SHOWN / PROMPT_ACCEPTED;
   // recapture / pushsubscriptionchange SUBSCRIBED events never see the prompt.
-  const sourceCount = new Map<string, number>();
-  for (const row of subscribedBySource) sourceCount.set(row.source ?? '', Number(row.count));
+  const sourceCount = heavy.bySource;
   const softPromptSubscribed = sourceCount.get('soft-prompt') ?? 0;
 
   // 30-day growth bucketed by IST date.
@@ -189,8 +295,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
     newSubscribers,
   }));
 
-  const byType = new Map<string, number>();
-  for (const row of eventTypeCounts) byType.set(row.type, row._count._all);
+  const byType = heavy.byType;
   const promptShown = byType.get('PROMPT_SHOWN') ?? 0;
   const promptAccepted = byType.get('PROMPT_ACCEPTED') ?? 0;
   const totalSubscribed = byType.get('SUBSCRIBED') ?? 0;
