@@ -240,6 +240,22 @@ export const env = {
     days: intEnv('RETENTION_DAYS', 0),
     cron: process.env.RETENTION_CRON ?? '30 3 * * *',
   },
+  // Event retention (src/sweepers/eventRetention.ts). Bounds the delivery log
+  // to a rolling window by folding old SENT/CLICKED/FAILED rows into per-
+  // campaign and lifetime roll-ups and deleting them; DISMISSED goes at any
+  // age (no reader). Nothing reads a SENT row older than 7 days except to
+  // count it, so 30 is generous. Default OFF: it deletes rows, so it is
+  // switched on deliberately — dry-run first with `npm run event-retention`.
+  eventRetention: {
+    enabled: process.env.EVENT_RETENTION_ENABLED === 'true',
+    cron: process.env.EVENT_RETENTION_CRON ?? '30 3 * * *', // 03:30 IST, after the audit sweep
+    days: intEnv('EVENT_RETENTION_DAYS', 30),
+    batchSize: intEnv('EVENT_RETENTION_BATCH', 5000),
+    // Batches per nightly run. 0 = until the backlog is clear. The default
+    // caps a run at 2M rows so a first pass over a large backlog is bounded;
+    // the next night continues from where it stopped.
+    maxBatches: nonNegIntEnv('EVENT_RETENTION_MAX_BATCHES', 400),
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.

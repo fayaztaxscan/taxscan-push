@@ -102,6 +102,16 @@ model Campaign {
   // REVIEW DRAFT with reviewedAt = null is still pending in the review queue.
   reviewedAt DateTime?
 
+  // Event rows the retention sweeper has already folded in and DELETED for
+  // this campaign (src/sweepers/eventRetention.ts). Every per-campaign figure
+  // is `rolled + a live count of the rows that remain` — see campaignStats()
+  // in src/services/metrics.ts. Zero until the sweeper first touches the
+  // campaign; the send path never writes these.
+  rolledSent        Int       @default(0)
+  rolledClicked     Int       @default(0)
+  rolledFailed      Int       @default(0)
+  rolledFirstSentAt DateTime?
+
   createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]
   feedItems FeedItem[]
@@ -335,4 +345,18 @@ model BackupRun {
   error     String?
 
   @@index([ranAt])
+}
+
+/// Lifetime count of Event rows the retention sweeper has deleted, per type.
+///
+/// Dashboard lifetime totals are `this + a live count of remaining rows`,
+/// which stays exact as the raw table is bounded to a rolling window. One row
+/// per EventType, written only by the sweeper, inside the same transaction as
+/// the delete. Included in the off-platform backup: once the rows are gone
+/// these numbers cannot be re-derived.
+model EventRollup {
+  id        String    @id @default(cuid())
+  type      EventType @unique
+  count     Int       @default(0)
+  updatedAt DateTime  @default(now()) @updatedAt
 }
