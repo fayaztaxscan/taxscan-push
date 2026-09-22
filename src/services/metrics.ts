@@ -88,6 +88,51 @@ const campaignSelect = {
   createdBy: { select: { id: true, email: true, role: true } },
 } as const;
 
+// ---- Per-campaign stats: rolled-up + live ----
+//
+// The retention sweeper (src/sweepers/eventRetention.ts) folds old Event rows
+// into Campaign.rolled* and deletes them. So a campaign's sent/clicked/failed
+// is ALWAYS `rolled + a live count of whatever rows remain`, and sentAt is the
+// earlier of the rolled first-sent and the live minimum. Recent campaigns have
+// rolled = 0 and are entirely live; old ones are entirely rolled; the maths is
+// the same either way. This is the single place that rule is implemented —
+// both the Dashboard and the Campaigns list call it.
+export type CampaignCounts = { sent: number; clicked: number; failed: number; sentAt: Date | null };
+
+export async function campaignStats(ids: string[]): Promise<Map<string, CampaignCounts>> {
+  const out = new Map<string, CampaignCounts>();
+  if (ids.length === 0) return out;
+
+  const [rolled, live] = await Promise.all([
+    prisma.campaign.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, rolledSent: true, rolledClicked: true, rolledFailed: true, rolledFirstSentAt: true },
+    }),
+    prisma.event.groupBy({
+      by: ['campaignId', 'type'],
+      where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED', 'FAILED'] } },
+      _count: { _all: true },
+      _min: { createdAt: true },
+    }),
+  ]);
+
+  for (const c of rolled) {
+    out.set(c.id, { sent: c.rolledSent, clicked: c.rolledClicked, failed: c.rolledFailed, sentAt: c.rolledFirstSentAt });
+  }
+  for (const row of live) {
+    if (!row.campaignId) continue;
+    const c = out.get(row.campaignId) ?? { sent: 0, clicked: 0, failed: 0, sentAt: null };
+    if (row.type === 'SENT') {
+      c.sent += row._count._all;
+      const liveMin = row._min.createdAt;
+      if (liveMin && (!c.sentAt || liveMin < c.sentAt)) c.sentAt = liveMin;
+    } else if (row.type === 'CLICKED') c.clicked += row._count._all;
+    else if (row.type === 'FAILED') c.failed += row._count._all;
+    out.set(row.campaignId, c);
+  }
+  return out;
+}
+
 // ---- Lifetime aggregates, refreshed in the background ----
 //
 // Two of the dashboard's numbers need EVERY row of Event: the lifetime
@@ -118,8 +163,10 @@ let heavyInFlight: Promise<HeavyAggregates> | null = null;
 let heavyTimer: NodeJS.Timeout | null = null;
 
 async function computeHeavyAggregates(): Promise<HeavyAggregates> {
-  const [eventTypeCounts, subscribedBySource] = await Promise.all([
+  const [eventTypeCounts, rollups, subscribedBySource] = await Promise.all([
     prisma.event.groupBy({ by: ['type'], _count: { _all: true } }),
+    // Rows the retention sweeper has already deleted. Lifetime = these + live.
+    prisma.eventRollup.findMany({ select: { type: true, count: true } }),
     // One grouped scan replaces five separate JSONB event.count queries.
     // Static SQL, no user input — not an injection surface. COUNT(*) comes
     // back as bigint, so coerce with Number() below.
@@ -132,6 +179,7 @@ async function computeHeavyAggregates(): Promise<HeavyAggregates> {
   ]);
   const byType = new Map<string, number>();
   for (const row of eventTypeCounts) byType.set(row.type, row._count._all);
+  for (const r of rollups) byType.set(r.type, (byType.get(r.type) ?? 0) + r.count);
   const bySource = new Map<string, number>();
   for (const row of subscribedBySource) bySource.set(row.source ?? '', Number(row.count));
   return { byType, bySource, computedAt: new Date() };
@@ -307,35 +355,11 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   // can unsubscribe — the rate is a measure of churn against the whole base).
   const unsubscribeRate = totalSubscribed > 0 ? unsubscribed / totalSubscribed : null;
 
-  // Per-campaign sent/clicked/failed. One groupBy keyed by campaignId + type.
-  const campaignIds = recentCampaigns.map((c) => c.id);
-  const perCampaign = await prisma.event.groupBy({
-    by: ['campaignId', 'type'],
-    where: {
-      campaignId: { in: campaignIds },
-      type: { in: ['SENT', 'CLICKED', 'FAILED'] },
-    },
-    _count: { _all: true },
-    _min: { createdAt: true },
-  });
-  const byCampaign = {
-    SENT: new Map<string, number>(),
-    CLICKED: new Map<string, number>(),
-    FAILED: new Map<string, number>(),
-  };
-  const sentAtByCampaign = new Map<string, Date>();
-  for (const row of perCampaign) {
-    if (!row.campaignId) continue;
-    byCampaign[row.type as keyof typeof byCampaign]?.set(row.campaignId, row._count._all);
-    if (row.type === 'SENT' && row._min.createdAt) {
-      sentAtByCampaign.set(row.campaignId, row._min.createdAt);
-    }
-  }
+  // Per-campaign sent/clicked/failed — rolled-up + live, see campaignStats().
+  const stats = await campaignStats(recentCampaigns.map((c) => c.id));
 
   const campaigns: CampaignStat[] = recentCampaigns.map((c) => {
-    const sent = byCampaign.SENT.get(c.id) ?? 0;
-    const clicked = byCampaign.CLICKED.get(c.id) ?? 0;
-    const failed = byCampaign.FAILED.get(c.id) ?? 0;
+    const { sent, clicked, failed, sentAt } = stats.get(c.id) ?? { sent: 0, clicked: 0, failed: 0, sentAt: null };
     return {
       id: c.id,
       title: c.title,
@@ -346,7 +370,7 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
       ctr: sent > 0 ? clicked / sent : null,
       deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
-      sentAt: sentAtByCampaign.get(c.id)?.toISOString() ?? null,
+      sentAt: sentAt?.toISOString() ?? null,
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
       createdByUserId: c.createdByUserId,
       createdBy: c.createdBy
@@ -521,32 +545,10 @@ export async function listCampaigns(
   const uniquePaths = [
     ...new Set([...pathByCampaign.values()].filter((p): p is string => p !== null)),
   ];
-  const [events, reads] = await Promise.all([
-    prisma.event.groupBy({
-      by: ['campaignId', 'type'],
-      where: { campaignId: { in: ids }, type: { in: ['SENT', 'CLICKED', 'FAILED'] } },
-      _count: { _all: true },
-      _min: { createdAt: true },
-    }),
-    readsByPath(uniquePaths),
-  ]);
-  const byCampaign = {
-    SENT: new Map<string, number>(),
-    CLICKED: new Map<string, number>(),
-    FAILED: new Map<string, number>(),
-  };
-  const sentAtByCampaign = new Map<string, Date>();
-  for (const row of events) {
-    if (!row.campaignId) continue;
-    byCampaign[row.type as keyof typeof byCampaign]?.set(row.campaignId, row._count._all);
-    if (row.type === 'SENT' && row._min.createdAt) {
-      sentAtByCampaign.set(row.campaignId, row._min.createdAt);
-    }
-  }
+  // Per-campaign sent/clicked/failed — rolled-up + live, see campaignStats().
+  const [stats, reads] = await Promise.all([campaignStats(ids), readsByPath(uniquePaths)]);
   return campaigns.map((c) => {
-    const sent = byCampaign.SENT.get(c.id) ?? 0;
-    const clicked = byCampaign.CLICKED.get(c.id) ?? 0;
-    const failed = byCampaign.FAILED.get(c.id) ?? 0;
+    const { sent, clicked, failed, sentAt } = stats.get(c.id) ?? { sent: 0, clicked: 0, failed: 0, sentAt: null };
     const path = pathByCampaign.get(c.id);
     const r = path ? reads.get(path) : undefined;
     return {
@@ -559,7 +561,7 @@ export async function listCampaigns(
       ctr: sent > 0 ? clicked / sent : null,
       deliveryRate: sent + failed > 0 ? sent / (sent + failed) : null,
       createdAt: c.createdAt.toISOString(),
-      sentAt: sentAtByCampaign.get(c.id)?.toISOString() ?? null,
+      sentAt: sentAt?.toISOString() ?? null,
       scheduledAt: c.scheduledAt ? c.scheduledAt.toISOString() : null,
       createdByUserId: c.createdByUserId,
       createdBy: c.createdBy

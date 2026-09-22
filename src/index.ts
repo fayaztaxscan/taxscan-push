@@ -17,6 +17,7 @@ import { startGaReadsSync } from './services/gaReads';
 import { startReadsReportCron } from './services/readsReport';
 import { startSearchSurfacesSync } from './services/searchSurfaces';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
+import { startEventRetentionSweeper } from './sweepers/eventRetention';
 import { startBackupCron } from './services/backup';
 import { startMetricsWarmer } from './services/metrics';
 import type { Sender } from './services/send';
@@ -45,6 +46,7 @@ app.listen(env.port, () => {
   startReadsReportCron();
   startSearchSurfacesSync();
   startAuditRetentionSweeper();
+  startEventRetentionSweeper();
   startBackupCron();
   startMetricsWarmer();
 });

@@ -61,6 +61,9 @@ export const BACKUP_TABLES = [
   // article in the feeds as new and re-pushes articles subscribers already
   // received. It is small and it prevents a very loud failure.
   'FeedItem',
+  // Lifetime counts of Event rows the retention sweeper has deleted. A few
+  // rows, and they cannot be re-derived once the rows are gone.
+  'EventRollup',
 ] as const;
 
 export type BackupTable = (typeof BACKUP_TABLES)[number];
@@ -107,6 +110,8 @@ function delegateFor(table: BackupTable) {
       return prisma.campaign;
     case 'FeedItem':
       return prisma.feedItem;
+    case 'EventRollup':
+      return prisma.eventRollup;
   }
 }
 

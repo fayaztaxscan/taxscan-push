@@ -23,6 +23,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "event-retention": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/event-retention-run.ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "gen:vapid": "ts-node-dev --transpile-only --no-notify scripts/gen-vapid.ts",
     "import:izooto": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/import-izooto.ts",

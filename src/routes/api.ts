@@ -210,6 +210,14 @@ export function createApiRouter(
       if (!parsed.success) return badRequest(res, parsed.error);
       const { type, endpoint, campaignId } = parsed.data;
 
+      // DISMISSED is accepted (older service workers still post it) but no
+      // longer stored. Nothing in the codebase ever read it, and it had grown
+      // to 1.17M rows — 18% of the Event table — for no consumer. Recording
+      // data with no reader is how the delivery log reached 6.4M rows; see
+      // src/sweepers/eventRetention.ts. Still 204: the SW treats this as
+      // best-effort and must not retry.
+      if (type === 'DISMISSED') return res.status(204).end();
+
       let subscriberId: string | null = null;
       if (endpoint) {
         const sub = await prisma.subscriber.findUnique({ where: { endpoint } });

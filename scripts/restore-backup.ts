@@ -25,7 +25,7 @@ import { prisma } from '../src/lib/prisma';
 
 type Row = Record<string, unknown> & { _table?: string };
 
-const RESTORABLE = ['Subscriber', 'User', 'ReportRecipient', 'Campaign', 'FeedItem'] as const;
+const RESTORABLE = ['Subscriber', 'User', 'ReportRecipient', 'Campaign', 'FeedItem', 'EventRollup'] as const;
 type Restorable = (typeof RESTORABLE)[number];
 
 function arg(name: string): string | undefined {
@@ -68,6 +68,9 @@ async function upsert(table: Restorable, data: Record<string, unknown>): Promise
       return;
     case 'FeedItem':
       await prisma.feedItem.upsert({ where: { guid: data.guid as string }, create: data as never, update: data as never });
+      return;
+    case 'EventRollup':
+      await prisma.eventRollup.upsert({ where: { type: data.type as never }, create: data as never, update: data as never });
       return;
   }
 }
