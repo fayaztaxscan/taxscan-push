@@ -5,9 +5,9 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-08-06) — LIVE in production
+## Current state (updated 2026-09-29) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
-~2,400 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
+~3,080 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
 stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
 plan to decommission it.
 
@@ -73,11 +73,56 @@ plan to decommission it.
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
 `RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
-`RECONCILER_ENABLED`=ON, `RETENTION_DAYS`=3, `DAILY_SEND_CEILING`=999 (ceiling disabled;
-quiet-hours+spacing pace the pacer), `FREQ_CAP_PER_DAY`=30 (was 4; manual non-force path only),
-`MIN_GAP_MINUTES`=0, `GA_READS_ENABLED`=ON + `GA_SERVICE_ACCOUNT_JSON` +
-`GA_READS_LOOKBACK_DAYS`=3. (`METRICS_CACHE_TTL_MS`=20s and
-`REPORTS_CACHE_TTL_MS`=60s default in code; not set on Railway.)
+`RECONCILER_ENABLED`=ON + `RECONCILER_SITEMAP`=`https://www.taxscan.in/news-sitemap.xml`
+(the old `news-sitemap-daily.xml` was removed by the 2026-09-28 CMS migration and now 301s),
+`RETENTION_DAYS`=3, `DAILY_SEND_CEILING`=999 (ceiling disabled; quiet-hours+spacing pace the
+pacer), `FREQ_CAP_PER_DAY`=30 (manual non-force path only), `MIN_GAP_MINUTES`=0,
+`GA_READS_ENABLED`=ON + `GA_SERVICE_ACCOUNT_JSON` + `GA_READS_LOOKBACK_DAYS`=3,
+`SEARCH_CONSOLE_ENABLED`=ON, `DUPLICATE_TITLE_GUARD_ENABLED`=ON +
+**`DUPLICATE_TITLE_WINDOW_HOURS`=720** (raised from 72 on 2026-09-29 — see KNOWN_ISSUES #9),
+`LINK_CHECK_ENABLED`=ON, `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
+**`EVENT_RETENTION_ENABLED`=ON** (30d window, nightly 03:30 IST),
+**`BACKUP_ENABLED`=ON** (daily 02:20 IST to Cloudflare R2, `BACKUP_KEEP_DAYS`=14, `R2_*` creds).
+(`METRICS_CACHE_TTL_MS`=20s, `REPORTS_CACHE_TTL_MS`=60s and `METRICS_HEAVY_REFRESH_MS`=5min
+default in code; not set on Railway.) **Secrets live only in Railway — never in this file.**
+
+**Durability + performance work, 2026-09-08 → 2026-09-22 (PRs #54–#61, all LIVE):**
+- **Backups now exist, in two layers** (`docs/BACKUPS.md`). Railway volume snapshots
+  (daily 6d / weekly 27d / monthly 89d) are a *rollback only* — they are copy-on-write, are deleted
+  with the volume, and restore only into the same Railway project. The real disaster copy is a
+  **daily gzipped-NDJSON export to Cloudflare R2** (`src/services/backup.ts` + a zero-dependency
+  SigV4 client in `src/lib/r2.ts`): live `Subscriber` rows, `User`, `ReportRecipient`, `Campaign`,
+  `FeedItem`, `EventRollup`. `npm run backup:now` / `backup:fetch` / `restore:backup`.
+  **A restore also needs the VAPID keypair, which is deliberately NOT in the backup** — subscriptions
+  are bound to it, so the rows are inert without it. Rehearsed twice, including a full rebuild from
+  an empty database.
+- **`Event` is now bounded** (`docs/EVENT_RETENTION.md`). It had reached **6.4M rows / 1.45 GB**,
+  growing ~75k/day, with the volume ~4 months from full. `src/sweepers/eventRetention.ts` folds
+  SENT/CLICKED/FAILED older than 30 days into `Campaign.rolled*` + `EventRollup` and deletes them;
+  DISMISSED is purged at any age and `/api/track` no longer stores it (nothing ever read it).
+  **The rule: every statistic is `rolled-up + live`, and `campaignStats()` in `metrics.ts` is the
+  single implementation — do not add a per-campaign event query anywhere else.** Backlog cleared
+  2026-09-22: 6.4M → 1.77M rows, then `VACUUM FULL` took the table 1,449 → 370 MB. Disk 29%.
+- **Dashboard cold-load fixed.** The lifetime totals used to scan every `Event` row, which took
+  6–7 s on the first load each morning. They now come from a 5-minute in-process warmer
+  (`startMetricsWarmer`); the request path never waits for them.
+- **Silent failures are now visible.** `ReportEmailRun` + `GET /api/reports/email-status` drive a
+  standing amber banner on **Reports** when a scheduled coverage email fails (two failed unnoticed
+  for a week in Aug); `BackupRun` + `GET /api/backup-status` drive the same on **Dashboard** when a
+  backup fails or is >50 h old.
+
+**taxscan.in moved to a NEW CMS on 2026-09-28 (Nuxt SPA, was Hocalwire).** What this means for us:
+- **The page HTML no longer contains any push reference — scripts are injected at runtime.**
+  Verify the SDK/service worker **in a browser**, never with `curl | grep`, or you will conclude
+  capture is dead when it is fine.
+- Verified intact: all six RSS feeds at unchanged URLs, old pushed links still resolve (the
+  trailing-numeric-id pattern survived, so `readsPath()` still holds), `www.taxscan.in/sw.js` is
+  still our worker, and a live subscription's `applicationServerKey` matches `/api/config`.
+- Fixed *by* the migration: `apiBase` is now `https://push.taxscan.in` (was the raw Railway
+  domain, so migrating off Railway is now a DNS change we control) and `cutoverMode` is gone.
+- Broken *by* the migration: every article got a new RSS GUID, so the poller re-captured the whole
+  site and re-pushed 12 already-sent articles to ~2,900 subscribers. See **KNOWN_ISSUES #9** —
+  widen `DUPLICATE_TITLE_WINDOW_HOURS` *before* the poller reads a re-platformed feed.
 
 **Surfaces rebuilt for stakeholders — SHIPPED + LIVE 2026-08-06 (PR #51, merge `e489404`).**
 Three asks: data from 01-Jan-2026, a custom date filter, month-to-month comparison. **The backfill is
@@ -94,9 +139,15 @@ history gets the token rejected**. The payload now states `compare: {current, ba
 modes order columns differently and the client's own inference silently INVERTED every range delta.
 Guide → v1.3. Suite **382**.
 
-**Open next steps: NONE in code — board clean. Dead-link guards
-SHIPPED + LIVE 2026-07-28 (PR #42, both flags ON). One item still sits with the user: send the
-editorial note.**
+**Open next steps: NONE in code — board clean, `develop` == `main`, suite 423.** Everything
+outstanding sits with the user, not the codebase: send the editorial 301-redirect note
+(`docs/NOTE-TO-EDITORIAL-deleted-articles.email.txt`); the SEO conversation about Discover being
+down ~85% since January; the CMS team's Search Console sitemap fetch failures (handed over
+2026-09-29 — everything testable from outside passes, so the live candidates are Cloudflare
+blocking Googlebot or a stale status); and confirming the Railway e-mandate ceiling was raised so
+the billing outage does not repeat. Two slow-burn items: `ArticleReadStat` grows ~2.2 MB/day and
+keeps every GA path forever (~4 years of headroom — the `Event` treatment applies), and there is
+still no disk-size alert.
 
 **Session cookie expiry — SHIPPED + LIVE 2026-08-06 (PR #50, merge `42db65d`).** Editors were being
 logged out ~daily despite the 7-day sliding session, because of the COOKIE, not the session row:

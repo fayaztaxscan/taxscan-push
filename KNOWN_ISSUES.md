@@ -13,6 +13,15 @@ inserted at the top.
 
 ## 1. Hocalwire's `Utils.loadScripts` injects the SDK 20–28 s after navigation
 
+> **⚠️ OBSOLETE AS WRITTEN 2026-09-29 — taxscan.in left Hocalwire on 2026-09-28.**
+> The site is now a Nuxt SPA and `Utils.loadScripts` no longer exists (zero
+> "hocalwire" references on the page). The SDK loads from
+> `https://push.taxscan.in/taxscan-push.js` with
+> `TAXSCAN_PUSH_CONFIG = { apiBase: 'https://push.taxscan.in' }`, browser-verified.
+> **The underlying question — how late in page load the SDK runs, and whether that
+> costs opt-ins — has NOT been re-measured on the new stack.** Re-measure before
+> assuming it is fixed; the 2026-06-16 resolution note below refers to the old CMS.
+
 **Filed:** 2026-06-06. **Owner:** vendor (Hocalwire). **Severity:** moderate.
 
 > **✅ RESOLVED & RUNTIME-VERIFIED 2026-06-16.** Hocalwire shipped the fix: the live
@@ -168,6 +177,12 @@ stay filed.
 ---
 
 ## 3. `taxscan.in/sw.js` served with `Cache-Control: immutable, max-age=31536000`
+
+> **✅ RESOLVED 2026-09-29 by the CMS migration.** The new portal (live 2026-09-28)
+> serves the worker as `cache-control: public, max-age=0, must-revalidate` with a
+> live `last-modified`, so an updated worker now propagates on the next visit
+> instead of being pinned for a year. Verified against the live site. Nothing was
+> changed on our side — record it so nobody re-opens it.
 
 **Filed:** 2026-06-06. **Owner:** vendor (Hocalwire). **Severity:** low (mostly defused by the SW spec).
 
@@ -554,3 +569,52 @@ cannot drift again when a new action is added:
 import { AuditAction } from '@prisma/client';
 const QuerySchema = z.object({ action: z.nativeEnum(AuditAction).optional(), … });
 ```
+
+---
+
+## 9. GUID-based RSS dedupe cannot survive a CMS re-platform
+
+**Filed:** 2026-09-29. **Owner:** us. **Severity:** high when it fires (subscriber-facing), otherwise dormant.
+
+> **Fired once, 2026-09-28.** taxscan.in moved to a new CMS and every article was
+> re-issued with a new RSS GUID. `FeedItem.guid` is our only dedupe key, so the
+> poller saw the entire site as new: **237 captures on 09-28** against a normal
+> 10–39, and **12 already-sent articles were re-pushed to ~2,900 subscribers.**
+
+### What's happening
+
+Dedupe is a single unique column on `FeedItem.guid` (see
+`src/services/poller.ts`). It is exactly right for day-to-day operation and
+cannot detect that a "new" GUID is a story we already sent.
+
+The one backstop is `DUPLICATE_TITLE_GUARD_ENABLED` + `DUPLICATE_TITLE_WINDOW_HOURS`,
+which routes a repeat headline to REVIEW instead of the auto queue. The window was
+**72 h** — the re-pushed articles were 6–17 days old, so the guard never saw them.
+
+### Impact
+
+Subscribers receive notifications they already got, at the pacer's rate
+(~20/day) for as long as the re-captured backlog lasts. Unsubscribe risk, and a
+delivered notification cannot be recalled.
+
+### How to measure
+
+```sql
+-- queued items whose normalised title was already SENT before the migration date
+WITH q AS (SELECT id, title FROM "Campaign" WHERE status IN ('DRAFT','SCHEDULED') AND "createdAt" >= '<migration date>'),
+     s AS (SELECT lower(regexp_replace(title,'[^a-z0-9]+','','gi')) k FROM "Campaign" WHERE status='SENT' AND "createdAt" < '<migration date>')
+SELECT count(*) FROM q WHERE lower(regexp_replace(q.title,'[^a-z0-9]+','','gi')) IN (SELECT k FROM s);
+```
+
+### Mitigation applied
+
+`DUPLICATE_TITLE_WINDOW_HOURS` raised **72 → 720** (30 days) on 2026-09-29, and the
+109 already-queued duplicates archived to `EXPIRED`.
+
+### Proposed fix
+
+**If the source site is ever re-platformed again, widen the window BEFORE the
+poller first reads the new feed** — that is the whole fix, and it costs nothing.
+A durable version would dedupe on the article's trailing numeric id (stable
+across both CMS platforms) in addition to the GUID; `readsPath()` already
+extracts it. Not worth building speculatively — the flag covers it.
