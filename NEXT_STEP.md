@@ -5,12 +5,39 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-08-06) — BOARD CLEAN in code, ONE user-side
+## ▶️ NEXT STEPS / open items (as of 2026-09-29) — BOARD CLEAN in code, all open items user-side
 
--8 (surfaces: Jan-2026 history + calendar months + custom range) is SHIPPED + LIVE. -7
-(session-cookie expiry) is SHIPPED + LIVE. -6, -5 and -4 are
-SHIPPED + LIVE. User-side item unchanged: send the editorial note asking taxscan to 301-redirect
-deleted duplicates (the residual gap no code can close).
+`develop` == `main`, suite **423**, nothing awaiting deploy. Since the 2026-08-06 entries below,
+PRs **#54–#61** shipped and are live; the detail lives in `CLAUDE.md` (current state + flags),
+`docs/BACKUPS.md` and `docs/EVENT_RETENTION.md` rather than being restated here.
+
+**Shipped since 2026-08-13 (newest first):**
+- **2026-09-29 — taxscan.in moved to a new CMS (Nuxt SPA).** No code change needed. Config:
+  `DUPLICATE_TITLE_WINDOW_HOURS` 72 → **720**, `RECONCILER_SITEMAP` → `news-sitemap.xml` (the old
+  daily sitemap was removed). 109 duplicate drafts archived to `EXPIRED` after the CMS re-issued
+  every RSS GUID and the poller re-captured the whole site — see **KNOWN_ISSUES #9**.
+- **2026-09-22 — `Event` bounded** (PRs #60/#61). 6.4M → 1.77M rows, table 1,449 → 370 MB after
+  `VACUUM FULL`; disk 29%. Nightly sweeper at 03:30 IST, `EVENT_RETENTION_ENABLED=true`.
+- **2026-09-22 — dashboard cold load** (PR #59). Lifetime totals moved to a 5-min warmer; the
+  first load each morning was 6–7 s and is now sub-second.
+- **2026-09-08 — backups, in two layers** (PRs #55–#58). Railway volume snapshots (a rollback) plus
+  a daily R2 export (the real disaster copy). Restore rehearsed twice, including a rebuild from an
+  empty database.
+- **2026-09-08 — report-email failure banner** (PR #54). Two scheduled coverage emails had failed
+  unnoticed for a week; failures are now visible on Reports, and backup failures on Dashboard.
+
+**OPEN — none are code:**
+1. Send the editorial 301-redirect note (`docs/NOTE-TO-EDITORIAL-deleted-articles.email.txt`).
+2. The SEO conversation: Discover down ~85% since January, on the largest Google channel.
+3. Search Console sitemap "Couldn't fetch" — handed to the CMS team 2026-09-29. Everything
+   testable from outside passes; live candidates are Cloudflare blocking Googlebot, or a stale
+   status. Definitive test: URL Inspection → Test Live URL.
+4. Confirm the Railway e-mandate ceiling was raised, or the billing outage repeats.
+5. ElasticEmail renews on the 1st on the same India-card exposure — a lapse silently kills invites
+   and coverage reports.
+6. **Slow-burn:** `ArticleReadStat` grows ~2.2 MB/day and keeps every GA path forever (~4 years of
+   headroom; the `Event` rolled-up+live treatment applies). No disk-size alert exists yet.
+7. **Admin guide is at v1.4** — keep it in step with any future user-visible change, in the same PR.
 
 -8. **✅ SHIPPED + LIVE 2026-08-06 — SURFACES: JAN-2026 HISTORY + CALENDAR MONTHS + CUSTOM RANGE.
    PR #51 (merge `e489404`), deployed and serving within ~25s of merge; healthz 200 throughout, no
