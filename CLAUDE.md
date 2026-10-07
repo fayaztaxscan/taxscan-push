@@ -67,6 +67,8 @@ plan to decommission it.
   2026-10-07):** data tables carry `class="stack"` and render one card per row — `data-label` on each
   `<td>` names it, `cell-lead/-wide/-full/-late/-actions` place it (app.css); fields are 16px (no iOS
   zoom); Reports heat-table row labels are sticky; **Share image** (Web Share, touch devices only).
+  **Report images are a summary card** (`ShareCard.vue`: headline + change + two top-5 lists, fixed
+  480px → 1080px PNG, identical from any device); the full heat-table PNG is desktop-only "Full report image".
   **Push now (Queue + Review) asks "Send to everyone now?"** (`ConfirmPush.vue`, Cancel focused) —
   added 2026-10-07 at the user's request; kept button-sized on phones too. "Recent campaigns"
   (Dashboard) and the Campaigns list union in recently-PUSHED items so they aren't dropped by
