@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
 import PipelineStrip from '../components/PipelineStrip.vue';
+import ConfirmPush from '../components/ConfirmPush.vue';
 
 type ReviewItem = {
   id: string;
@@ -16,6 +17,8 @@ const api = useApi();
 const items = ref<ReviewItem[]>([]);
 const loading = ref(false);
 const busyId = ref<string | null>(null);
+// The item awaiting "Send to everyone now?" — Push now never fires on one tap.
+const confirming = ref<ReviewItem | null>(null);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
 
@@ -52,6 +55,13 @@ async function act(item: ReviewItem, action: 'approve' | 'reject' | 'push', labe
   } finally {
     busyId.value = null;
   }
+}
+
+async function confirmPush() {
+  const item = confirming.value;
+  if (!item) return;
+  await act(item, 'push', 'Pushed');
+  confirming.value = null;
 }
 
 onMounted(load);
@@ -101,7 +111,7 @@ onMounted(load);
               <button class="btn btn-primary" :disabled="busyId === item.id" @click="act(item, 'approve', 'Approved')">
                 Approve
               </button>
-              <button class="btn" :disabled="busyId === item.id" @click="act(item, 'push', 'Pushed')">
+              <button class="btn" :disabled="busyId === item.id" @click="confirming = item">
                 Push now
               </button>
               <button class="btn" :disabled="busyId === item.id" @click="act(item, 'reject', 'Rejected')">
@@ -117,5 +127,13 @@ onMounted(load);
         </tbody>
       </table>
     </div>
+
+    <ConfirmPush
+      v-if="confirming"
+      :title="confirming.title"
+      :busy="busyId === confirming.id"
+      @confirm="confirmPush"
+      @cancel="confirming = null"
+    />
   </main>
 </template>

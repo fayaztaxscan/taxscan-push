@@ -934,9 +934,9 @@ td .badge {
   table.stack td.cell-actions .btn {
     flex: 1 1 auto;
   }
-  /* A single action that fires immediately (Queue's Push now — no confirm
-     step) stays button-sized at the right, not a full-width slab a scrolling
-     thumb can land on. */
+  /* A single high-stakes action (Queue's Push now — confirmed in a dialog,
+     but still) stays button-sized at the right, not a full-width slab a
+     scrolling thumb lands on. */
   table.stack td.cell-actions-end {
     justify-content: flex-end;
   }

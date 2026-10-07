@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { prisma } from '../lib/prisma';
 import {
+  articleKey,
   benchRowKey,
   buildReport,
   categoryRowKey,
@@ -351,6 +352,39 @@ describe('buildReport', () => {
     expect(r.byBench.rows.find((x) => x.label === 'Bombay High Court')?.total).toBe(1);
   });
 
+  it('does not count a re-captured article as new (2026-09-28 CMS migration: new path, same id)', async () => {
+    const p = `test-report-recapture-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    const start = ist(2026, 9, 23);
+    const end = ist(2026, 9, 30); // 7 days: 09-23 .. 09-29
+    const slug = 'itat-rules-only-profit-element-is-taxable';
+    // Captured weeks earlier under the old CMS path…
+    await art({ title: 'ITAT rules only profit element is taxable [Read Order]', categories: ['Income Tax'], at: ist(2026, 9, 5, 10), url: `https://www.taxscan.in/top-stories/${slug}-1451580`, portal: p });
+    // …re-captured on migration day under the new section path, same trailing id.
+    await art({ title: 'ITAT rules only profit element is taxable [Read Order]', categories: ['Income Tax'], at: ist(2026, 9, 28, 11), url: `https://www.taxscan.in/income-tax/${slug}-1451580`, portal: p });
+    // A genuinely new article that day still counts.
+    await art({ title: 'Bombay HC quashes notice [Read Order]', categories: ['Income Tax'], at: ist(2026, 9, 28, 12), url: 'https://www.taxscan.in/income-tax/bombay-hc-quashes-notice-1452001', portal: p });
+    // The previous window (09-16 .. 09-22) holds one article, plus a re-capture
+    // of something from before it — only the first is new output.
+    await art({ title: 'GST circular issued', categories: ['GST'], at: ist(2026, 9, 18, 9), url: 'https://www.taxscan.in/top-stories/gst-circular-issued-1450900', portal: p });
+    await art({ title: 'ITAT rules only profit element is taxable [Read Order]', categories: ['Income Tax'], at: ist(2026, 9, 20, 9), url: `https://www.taxscan.in/top-stories/${slug}-1451580/`, portal: p });
+
+    const r = await buildReport({ portal: p, period: 'weekly', start, end });
+    expect(r.total).toBe(1);
+    expect(r.byBench.rows.find((x) => x.label === 'ITAT')).toBeUndefined();
+    expect(r.prevTotal).toBe(1);
+  });
+
+  it('counts one article once when it appears under two paths in the same window', async () => {
+    const p = `test-report-twopaths-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    const start = ist(2026, 10, 1);
+    const end = ist(2026, 10, 8);
+    await art({ title: 'CBDT revises Form 169 [Read Notification]', categories: ['Income Tax'], at: ist(2026, 10, 2, 9), url: 'https://www.taxscan.in/top-stories/cbdt-revises-form-169-1451577', portal: p });
+    await art({ title: 'CBDT revises Form 169 [Read Notification]', categories: ['Income Tax'], at: ist(2026, 10, 3, 9), url: 'https://www.taxscan.in/income-tax/cbdt-revises-form-169-1451577', portal: p });
+    const r = await buildReport({ portal: p, period: 'weekly', start, end });
+    expect(r.total).toBe(1);
+    expect(r.byCategory.rows.find((x) => x.label === 'Income Tax')?.total).toBe(1);
+  });
+
   it('excludes academy/shop storefront pushes (not editorial articles)', async () => {
     const p = `test-report-stores-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const start = ist(2026, 9, 7);
@@ -365,5 +399,19 @@ describe('buildReport', () => {
     expect(r.total).toBe(1); // only the taxscan.in article
     expect(r.prevTotal).toBe(0); // the prior academy promo is excluded
     expect(r.byCategory.rows.find((x) => x.label === 'GST')?.total).toBe(1);
+  });
+});
+
+describe('articleKey', () => {
+  it("keys taxscan articles by their trailing id, so a path or slug change doesn't make a new article", () => {
+    const k = (url: string) => articleKey({ id: 'x', url });
+    expect(k('https://www.taxscan.in/top-stories/some-ruling-1451580')).toBe('article:1451580');
+    expect(k('https://www.taxscan.in/income-tax/some-ruling-1451580/')).toBe('article:1451580');
+    expect(k('https://taxscan.in/gst/renamed-headline-1451580')).toBe('article:1451580');
+  });
+  it('falls back to the URL without an article id, off taxscan.in, or when empty', () => {
+    expect(articleKey({ id: 'x', url: 'https://www.taxscan.in/gst/1' })).toBe('https://www.taxscan.in/gst/1');
+    expect(articleKey({ id: 'x', url: 'https://academy.example.com/course-1451580' })).toBe('https://academy.example.com/course-1451580');
+    expect(articleKey({ id: 'abc', url: '' })).toBe('__id:abc');
   });
 });

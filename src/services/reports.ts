@@ -9,7 +9,9 @@ import { prisma } from '../lib/prisma';
  * Plus an insight layer (totals, vs-previous-period, coverage gaps, quality
  * split) and a no-undercount cross-check. Counts every UNIQUE captured article
  * in the window (any status), keyed by its URL and bucketed by capture date —
- * the report is about what was published, not what we sent. A re-send of the
+ * the report is about what was published, not what we sent. "Unique" means by
+ * taxscan's article id (see articleKey), and an article captured in the 90 days
+ * before the window is a re-capture, not new output. A re-send of the
  * same article (the morning backfill clones yesterday's piece into a fresh row
  * keeping the original createdAt; an editor may also manually re-push) shares
  * the article's URL, so it is counted ONCE, not again. Manual pushes that link
@@ -329,10 +331,38 @@ function buildHeatmap(
  * carries the same URL. Falls back to the row id when the URL is missing/blank
  * so an unusual urlless row is never collapsed into another.
  */
-function articleKey(c: { id: string; url?: string | null }): string {
+/**
+ * An article's identity. taxscan resolves articles by the trailing numeric id
+ * of the slug ("…-1451580") and 301s any path to it, so the id — not the URL —
+ * is what stays fixed: the 2026-09-28 CMS migration moved every article from
+ * /top-stories/<slug>-<id> to /<section>/<slug>-<id>. Anything without such an
+ * id (or off taxscan.in) falls back to its URL.
+ */
+const ARTICLE_ID = /-(\d{4,})$/;
+const TAXSCAN_HOST = /(^|\.)taxscan\.in$/i;
+export function articleKey(c: { id: string; url?: string | null }): string {
   const u = (c.url ?? '').trim().replace(/\/+$/, '');
-  return u || `__id:${c.id}`;
+  if (!u) return `__id:${c.id}`;
+  try {
+    const parsed = new URL(u);
+    if (TAXSCAN_HOST.test(parsed.hostname)) {
+      const m = parsed.pathname.replace(/\/+$/, '').match(ARTICLE_ID);
+      if (m) return `article:${m[1]}`;
+    }
+  } catch {
+    // unparseable — key on the raw string
+  }
+  return u;
 }
+
+/**
+ * How far back a capture still marks an article as "already seen". When the
+ * source site re-issues its RSS GUIDs (it did on 2026-09-28) the poller
+ * re-captures recent articles as new rows; without this the report counts them
+ * as that day's output (235 "articles" on 09-28, ~198 of them weeks old).
+ * Re-captures only ever reach articles still in the feeds, so 90 days is ample.
+ */
+const RECAPTURE_LOOKBACK_DAYS = 90;
 
 /**
  * Coverage is about taxscan.in editorial articles. Manual pushes that link out
@@ -394,23 +424,39 @@ export async function buildReport(opts: {
   const spanMs = end.getTime() - start.getTime();
   const prevStart = new Date(start.getTime() - spanMs);
 
-  const [campaigns, prevCampaigns] = await Promise.all([
+  const lookbackStart = new Date(prevStart.getTime() - RECAPTURE_LOOKBACK_DAYS * 86_400_000);
+  const [campaigns, earlier] = await Promise.all([
     prisma.campaign.findMany({
       where: { portal, createdAt: { gte: start, lt: end } },
       select: { id: true, url: true, title: true, categories: true, createdAt: true, sendQueue: true },
     }),
+    // The previous window plus the lookback before it, in one read.
     prisma.campaign.findMany({
-      where: { portal, createdAt: { gte: prevStart, lt: start } },
-      select: { id: true, url: true },
+      where: { portal, createdAt: { gte: lookbackStart, lt: start } },
+      select: { id: true, url: true, createdAt: true },
     }),
   ]);
+  const earlierArticles = earlier.filter((c) => isArticleUrl(c.url));
+  const seenBeforeStart = new Set(earlierArticles.map(articleKey));
+  const seenBeforePrev = new Set(
+    earlierArticles.filter((c) => c.createdAt < prevStart).map(articleKey),
+  );
 
   const dates = dayKeys(start, end);
   // Collapse re-sends to one row per unique article (see file header): group by
   // URL, keep the richest-classified row (RSS categories first, then a send
   // queue), and bucket on the earliest capture instant in the group.
-  const rows = dedupeByArticle(campaigns.filter((c) => isArticleUrl(c.url)));
-  const prevTotal = new Set(prevCampaigns.filter((c) => isArticleUrl(c.url)).map(articleKey)).size;
+  // An article already captured before the window is a re-capture, not new
+  // output, in either window.
+  const rows = dedupeByArticle(
+    campaigns.filter((c) => isArticleUrl(c.url) && !seenBeforeStart.has(articleKey(c))),
+  );
+  const prevTotal = new Set(
+    earlierArticles
+      .filter((c) => c.createdAt >= prevStart)
+      .map(articleKey)
+      .filter((k) => !seenBeforePrev.has(k)),
+  ).size;
 
   const byCategory = buildHeatmap((c) => categoryRowKey(c), rows, dates);
   // Bench heatmap is ordered by judicial hierarchy (SC → priority HCs → other

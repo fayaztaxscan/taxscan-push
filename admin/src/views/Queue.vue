@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
 import PipelineStrip from '../components/PipelineStrip.vue';
+import ConfirmPush from '../components/ConfirmPush.vue';
 
 type QueueItem = {
   id: string;
@@ -17,6 +18,8 @@ const api = useApi();
 const items = ref<QueueItem[]>([]);
 const loading = ref(false);
 const busyId = ref<string | null>(null);
+// The item awaiting "Send to everyone now?" — Push now never fires on one tap.
+const confirming = ref<QueueItem | null>(null);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
 
@@ -31,6 +34,13 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+async function confirmPush() {
+  const item = confirming.value;
+  if (!item) return;
+  await pushNow(item);
+  confirming.value = null;
 }
 
 async function pushNow(item: QueueItem) {
@@ -104,7 +114,7 @@ onMounted(load);
               {{ new Date(item.createdAt).toLocaleString() }}
             </td>
             <td class="cell-actions cell-actions-end" style="text-align: right; white-space: nowrap">
-              <button class="btn btn-primary" :disabled="busyId === item.id" @click="pushNow(item)">
+              <button class="btn btn-primary" :disabled="busyId === item.id" @click="confirming = item">
                 Push now
               </button>
             </td>
@@ -117,5 +127,13 @@ onMounted(load);
         </tbody>
       </table>
     </div>
+
+    <ConfirmPush
+      v-if="confirming"
+      :title="confirming.title"
+      :busy="busyId === confirming.id"
+      @confirm="confirmPush"
+      @cancel="confirming = null"
+    />
   </main>
 </template>
