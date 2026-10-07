@@ -173,6 +173,11 @@ button {
   flex: 1;
   min-width: 200px;
 }
+.filter-actions {
+  flex-direction: row;
+  align-self: flex-end;
+  gap: 6px;
+}
 .filter-col label {
   font-size: 11px;
   text-transform: uppercase;
@@ -446,9 +451,15 @@ label {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+/* Two columns hold down to 320px: the values are short, and one tile per row
+   made the Dashboard a 2,600px scroll on a phone. Tighter padding buys the
+   label room. */
 @media (max-width: 480px) {
   .metric-grid {
-    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .metric {
+    padding: 12px;
   }
 }
 
@@ -807,5 +818,161 @@ td .badge {
   }
   .radio-row {
     gap: 12px;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Phones: tables become stacked rows, fields stop iOS zoom, targets grow.
+   ------------------------------------------------------------------------- */
+
+/* Shown only on phones (e.g. Campaigns' sort picker, which stands in for the
+   sortable column headers a stacked table no longer has). */
+.only-sm {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .only-sm {
+    display: revert;
+  }
+
+  /* iOS Safari zooms the whole page when a field under 16px takes focus. */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  /* Touch targets: ~40px for buttons, 36px for the small ones. */
+  .btn {
+    min-height: 40px;
+  }
+  .btn-mini {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  .nav-toggle {
+    padding: 9px 14px;
+  }
+
+  /* table.stack — each row becomes a block: the .cell-lead (title / email)
+     runs full width on top, the other cells sit in a three-column grid with
+     their column name (data-label) above the value, and .cell-actions spans
+     the bottom with full-size buttons. Same label style as the desktop
+     headers, so the two layouts read as one product. */
+  table.stack thead {
+    display: none;
+  }
+  table.stack,
+  table.stack tbody {
+    display: block;
+  }
+  table.stack tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  table.stack tr:first-child {
+    padding-top: 4px;
+  }
+  table.stack td {
+    display: block;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal !important;
+    text-align: left !important;
+  }
+  table.stack td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+  }
+  table.stack td.cell-lead {
+    grid-column: 1 / -1;
+    order: -1;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  table.stack td.cell-wide {
+    grid-column: span 2;
+  }
+  table.stack td.cell-full,
+  table.stack td[colspan] {
+    grid-column: 1 / -1;
+  }
+  table.stack td.cell-hide-sm {
+    display: none;
+  }
+  /* Pushed below the in-order cells, e.g. a long "Who" email under a short
+     When + Action pair rather than between them. */
+  table.stack td.cell-late {
+    order: 1;
+  }
+  /* A lead cell's secondary line (Queue's article summary) stays regular. */
+  table.stack td.cell-lead .muted {
+    font-weight: 400;
+    margin-top: 2px;
+  }
+  table.stack td.cell-actions {
+    grid-column: 1 / -1;
+    order: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  table.stack td.cell-actions .btn {
+    flex: 1 1 auto;
+  }
+  /* A single action that fires immediately (Queue's Push now — no confirm
+     step) stays button-sized at the right, not a full-width slab a scrolling
+     thumb can land on. */
+  table.stack td.cell-actions-end {
+    justify-content: flex-end;
+  }
+  table.stack td.cell-actions-end .btn {
+    flex: 0 0 auto;
+    min-width: 120px;
+  }
+}
+
+/* Paired toolbar buttons (Activity: Filters + Refresh) stay together when the
+   toolbar wraps. */
+.toolbar-group {
+  display: inline-flex;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  /* Activity's filter form folds away until "Filters" is tapped. */
+  .filters-card.collapsed-sm {
+    display: none;
+  }
+  .filter-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .filter-col,
+  .filter-col.grow {
+    min-width: 0;
+  }
+  .filter-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .pagination .btn-mini {
+    min-width: 72px;
   }
 }

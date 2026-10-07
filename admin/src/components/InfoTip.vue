@@ -74,6 +74,18 @@ function hide() {
   align-items: center;
   justify-content: center;
 }
+/* Touch screens: a 44px invisible hit area around the 16px circle, so the
+   tip opens on the first tap without the icon growing. */
+@media (pointer: coarse) {
+  .infotip-btn {
+    position: relative;
+  }
+  .infotip-btn::after {
+    content: '';
+    position: absolute;
+    inset: -14px;
+  }
+}
 .infotip-btn:hover,
 .infotip-btn:focus-visible {
   border-color: #0b2545;

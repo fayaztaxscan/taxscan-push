@@ -353,7 +353,7 @@ onMounted(() => {
     <div v-if="listError" class="banner err">{{ listError }}</div>
 
     <div class="card">
-      <table>
+      <table class="stack">
         <thead>
           <tr>
             <th>Email</th>
@@ -366,16 +366,16 @@ onMounted(() => {
         </thead>
         <tbody>
           <tr v-for="u in items" :key="u.id">
-            <td>
+            <td class="cell-lead">
               {{ u.email }}
               <span v-if="u.id === meUser?.id" class="muted" style="font-size: 11px"
                 >· you</span
               >
             </td>
-            <td>
+            <td data-label="Role">
               <span class="role-badge" :class="u.role.toLowerCase()">{{ u.role }}</span>
             </td>
-            <td>
+            <td class="cell-wide" data-label="Status">
               <span v-if="u.isActive" class="status-pill active">Active</span>
               <span v-else class="status-pill inactive">Deactivated</span>
               <span
@@ -385,9 +385,9 @@ onMounted(() => {
                 >· must change pw</span
               >
             </td>
-            <td class="muted">{{ fmtDate(u.lastLoginAt) }}</td>
-            <td class="muted">{{ fmtDate(u.createdAt) }}</td>
-            <td class="row-actions">
+            <td class="muted cell-wide" data-label="Last login">{{ fmtDate(u.lastLoginAt) }}</td>
+            <td class="muted" data-label="Created">{{ fmtDate(u.createdAt) }}</td>
+            <td class="row-actions cell-actions">
               <button class="btn btn-mini" @click="openReset(u)">Reset password</button>
               <button class="btn btn-mini" @click="askChangeRole(u)">
                 Make {{ u.role === 'ADMIN' ? 'PUBLISHER' : 'ADMIN' }}
@@ -429,7 +429,7 @@ onMounted(() => {
         </button>
       </div>
       <div v-if="invitesError" class="banner err">{{ invitesError }}</div>
-      <table>
+      <table class="stack">
         <thead>
           <tr>
             <th>Email</th>
@@ -441,13 +441,13 @@ onMounted(() => {
         </thead>
         <tbody>
           <tr v-for="inv in invites" :key="inv.id">
-            <td>{{ inv.email }}</td>
-            <td>
+            <td class="cell-lead">{{ inv.email }}</td>
+            <td data-label="Role">
               <span class="role-badge" :class="inv.role.toLowerCase()">{{ inv.role }}</span>
             </td>
-            <td class="muted">{{ inv.invitedByEmail ?? '—' }}</td>
-            <td class="muted">{{ fmtDate(inv.expiresAt) }}</td>
-            <td class="row-actions">
+            <td class="muted cell-wide" data-label="Invited by">{{ inv.invitedByEmail ?? '—' }}</td>
+            <td class="muted cell-full" data-label="Expires">{{ fmtDate(inv.expiresAt) }}</td>
+            <td class="row-actions cell-actions">
               <button
                 class="btn btn-mini"
                 :disabled="inviteActionId === inv.id"

@@ -73,7 +73,7 @@ onMounted(load);
         </button>
       </div>
 
-      <table>
+      <table class="stack">
         <thead>
           <tr>
             <th style="width: 40px">#</th>
@@ -85,12 +85,12 @@ onMounted(load);
         </thead>
         <tbody>
           <tr v-for="(item, i) in items" :key="item.id">
-            <td class="muted">{{ i + 1 }}</td>
-            <td>
+            <td class="muted" data-label="Position">{{ i + 1 }}</td>
+            <td class="cell-lead">
               <a :href="item.url" target="_blank" rel="noopener">{{ item.title }}</a>
               <div class="muted" style="font-size: 12px">{{ item.body }}</div>
             </td>
-            <td style="white-space: nowrap">
+            <td class="cell-wide" data-label="Source" style="white-space: nowrap">
               <span>{{ item.authority || '—' }}</span>
               <span
                 v-if="item.sendQueue === 'FALLBACK'"
@@ -100,10 +100,10 @@ onMounted(load);
                 >filler</span
               >
             </td>
-            <td class="muted" style="white-space: nowrap">
+            <td class="muted cell-full" data-label="Captured" style="white-space: nowrap">
               {{ new Date(item.createdAt).toLocaleString() }}
             </td>
-            <td style="text-align: right; white-space: nowrap">
+            <td class="cell-actions cell-actions-end" style="text-align: right; white-space: nowrap">
               <button class="btn btn-primary" :disabled="busyId === item.id" @click="pushNow(item)">
                 Push now
               </button>

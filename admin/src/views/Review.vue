@@ -80,7 +80,7 @@ onMounted(load);
         </button>
       </div>
 
-      <table>
+      <table class="stack">
         <thead>
           <tr>
             <th>Article</th>
@@ -90,14 +90,14 @@ onMounted(load);
         </thead>
         <tbody>
           <tr v-for="item in items" :key="item.id">
-            <td>
+            <td class="cell-lead">
               <a :href="item.url" target="_blank" rel="noopener">{{ item.title }}</a>
               <div class="muted" style="font-size: 12px">{{ item.body }}</div>
             </td>
-            <td class="muted" style="white-space: nowrap">
+            <td class="muted cell-full" data-label="Captured" style="white-space: nowrap">
               {{ new Date(item.createdAt).toLocaleString() }}
             </td>
-            <td style="text-align: right; white-space: nowrap">
+            <td class="cell-actions" style="text-align: right; white-space: nowrap">
               <button class="btn btn-primary" :disabled="busyId === item.id" @click="act(item, 'approve', 'Approved')">
                 Approve
               </button>
