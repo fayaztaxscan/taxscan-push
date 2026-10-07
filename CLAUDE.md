@@ -252,6 +252,11 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
 - All work happens on the `develop` branch. NEVER commit directly to `main`.
 - Ship by opening a PR `develop` → `main` (`gh`) and merging it; Railway auto-deploys `main`.
   Behaviour-changing features land behind a flag (default off) and are enabled deliberately.
+- Build/deploy settings (Nixpacks builder, the `--include=dev` build command, start command,
+  `/healthz` healthcheck, restart on-failure ×5) live in the Railway **service settings**, not in
+  the repo — `railway.json` was removed 2026-10-07 ahead of Railway's 2026-12-01 Config-as-Code
+  cutoff. **Never `railway config apply` a generated IaC file**: its plan showed it would delete
+  all 65 service variables (incl. VAPID keys) and disconnect GitHub.
 - Work one numbered task at a time. After each, run the acceptance check, then stop and summarize.
 - Commit to `develop` after each task with a clear message (e.g. "Task 3: VAPID config").
 - Write tests as you go. Keep functions small and documented.
