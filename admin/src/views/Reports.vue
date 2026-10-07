@@ -4,6 +4,7 @@ import { apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { toPng } from 'html-to-image';
 import TrendLine from '../components/TrendLine.vue';
+import ShareCard, { type CardDelta, type CardModel } from '../components/ShareCard.vue';
 
 type Heatmap = {
   rows: { label: string; perDay: number[]; total: number }[];
@@ -585,6 +586,143 @@ const surfacesHistoryNote = computed(() => {
   return cols.length < 3 ? from : null;
 });
 
+// --- Share card ---------------------------------------------------------------
+// What Download / Copy / Share image send: a short, readable summary of the tab
+// on screen (see ShareCard.vue). Built from the same computeds the screen uses,
+// so the picture can never disagree with the report. The full heat tables are
+// still one click away on desktop via "Full report image".
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** "2026-09-30" → "30 Sep" (with the year when asked). */
+function dayLabel(key: string, withYear = false): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]}${withYear ? ` ${y}` : ''}`;
+}
+/** Residual rows ("No bench – News", …) say nothing about which courts we cover. */
+const isResidual = (label: string) => /^No bench/i.test(label);
+const SHARE_TOP = 5;
+const clip = (t: string, n = 76) => (t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t);
+const pctDelta = (now: number, before: number): CardDelta | null => {
+  if (before <= 0) return null;
+  const pct = Math.round(((now - before) / before) * 100);
+  if (pct === 0) return { text: 'flat', dir: 'flat' };
+  return { text: `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%`, dir: pct > 0 ? 'up' : 'down' };
+};
+
+const shareCard = computed<CardModel | null>(() => {
+  const today = dayLabel(todayKey, true);
+  if (period.value === 'surfaces') {
+    const r = surfacesReport.value;
+    const head = surfaceHeadline.value;
+    const disc = head.find((h) => h.key === 'DISCOVER');
+    const sec = surfaceSections.value.find((x) => x.key === 'DISCOVER');
+    if (!r?.ready || !disc || !sec) return null;
+    const { current } = compareIdx.value;
+    const news = head.find((h) => h.key === 'GOOGLE_NEWS');
+    const benches = sec.benches
+      .filter((b) => !isResidual(b.label) && (b.cells[current]?.clicks ?? 0) > 0)
+      .sort((a, b) => (b.cells[current]?.clicks ?? 0) - (a.cells[current]?.clicks ?? 0))
+      .slice(0, SHARE_TOP);
+    const dir = (m: Move | null) => deltaClass(m) as CardDelta['dir'];
+    // The screen's delta text, except that a jump of 500%+ (a row waking from
+    // ~100 clicks) shows the click difference: "▲ 13.3k" says it, "▲ 13386%" doesn't.
+    const cardDelta = (m: Move | null): CardDelta | null => {
+      if (!m) return null;
+      if (m.pct !== null && Math.abs(m.pct) >= 500) {
+        return { text: `${m.to >= m.from ? '▲' : '▼'} ${fmtCount(Math.abs(m.to - m.from))}`, dir: dir(m) };
+      }
+      return { text: deltaText(m), dir: dir(m) };
+    };
+    return {
+      kicker: 'Taxscan · Google Discover',
+      title: disc.columnLabel,
+      hero: {
+        value: fmtCount(disc.clicks),
+        label: 'clicks from Google Discover',
+        delta: cardDelta(disc.delta),
+        deltaNote: disc.prevLabel ? ` vs ${disc.prevLabel}` : '',
+      },
+      secondary: news
+        ? [{ label: 'Google News', value: fmtCount(news.clicks), delta: cardDelta(news.delta) }]
+        : [],
+      sections: [
+        {
+          title: `Top courts & benches · ${disc.columnLabel}`,
+          rows: benches.map((b) => {
+            return { label: b.label, value: fmtCount(b.cells[current]?.clicks ?? 0), delta: cardDelta(rowDelta(b)) };
+          }),
+        },
+        {
+          title: `Most picked-up articles · ${r.topWindow?.label ?? ''}`,
+          numbered: true,
+          rows: sec.top.slice(0, SHARE_TOP).map((a) => ({ label: clip(a.title), value: fmtCount(a.clicks) })),
+        },
+      ].filter((x) => x.rows.length),
+      footer: `Taxscan Push · Google Search Console · data through ${r.dataThrough ? dayLabel(r.dataThrough, true) : today}`,
+    };
+  }
+  if (period.value === 'reads') {
+    const r = readsReport.value;
+    const w = r?.windows ?? [];
+    if (!r?.ready || !w.length) return null;
+    // The month window is the headline: long enough to be stable, short enough to be news.
+    const i = Math.max(0, w.findIndex((x) => x.days >= 28));
+    const top = (rows: ReadsRow[] = []) =>
+      rows
+        .filter((x) => !isResidual(x.label) && (x.cells[i]?.views ?? 0) > 0)
+        .sort((a, b) => (b.cells[i]?.views ?? 0) - (a.cells[i]?.views ?? 0))
+        .slice(0, SHARE_TOP)
+        .map((x) => ({ label: x.label, value: fmtViews(x.cells[i]?.views ?? 0) }));
+    // "1 month" → "Past month"; "3 months" stays "Past 3 months".
+    const past = (label: string) => `Past ${label.replace(/^1 /, '')}`;
+    return {
+      kicker: 'Taxscan · Article reads',
+      title: `${past(w[i].label)} · to ${today}`,
+      hero: { value: fmtViews(w[i].articleViews), label: `article page views · ${w[i].articlesRead.toLocaleString()} articles read` },
+      secondary: i > 0 ? [{ label: past(w[0].label), value: fmtViews(w[0].articleViews) }] : [],
+      sections: [
+        { title: 'Most-read courts & benches', rows: top(r.benches) },
+        { title: 'Most-read categories', rows: top(r.categories) },
+      ].filter((x) => x.rows.length),
+      footer: 'Taxscan Push · Google Analytics · all traffic, not just push',
+    };
+  }
+  const r = report.value;
+  if (!r) return null;
+  const top = (h: Heatmap) =>
+    h.rows
+      .filter((x) => !isResidual(x.label) && x.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, SHARE_TOP)
+      .map((x) => ({ label: x.label, value: String(x.total) }));
+  const [sy, sm] = r.start.split('-').map(Number);
+  const title =
+    r.period === 'monthly'
+      ? `${MONTHS_LONG[sm - 1]} ${sy}`
+      : `${dayLabel(r.start)} – ${dayLabel(r.end, true)}`;
+  const gaps = r.gaps.benchesWithNothing;
+  return {
+    kicker: `Taxscan · ${periodTitle.value} coverage`,
+    title,
+    hero: {
+      value: r.total.toLocaleString(),
+      label: 'articles published',
+      delta: pctDelta(r.total, r.prevTotal),
+      deltaNote: r.prevTotal > 0 ? ` vs previous ${prevNoun.value} (${r.prevTotal.toLocaleString()})` : '',
+    },
+    sections: [
+      { title: 'Top courts & benches', rows: top(r.byBench) },
+      { title: 'Top categories', rows: top(r.byCategory) },
+    ].filter((x) => x.rows.length),
+    note: gaps.length
+      ? `No coverage: ${gaps.slice(0, 4).join(', ')}${gaps.length > 4 ? ` and ${gaps.length - 4} more` : ''}`
+      : undefined,
+    footer: `Taxscan Push · coverage report · ${r.start} → ${r.end}`,
+  };
+});
+const cardHost = ref<HTMLElement | null>(null);
+
 /** Whether the currently-shown tab actually has a sheet to export. */
 const sheetReady = computed(() => {
   if (period.value === 'reads') return !!readsReport.value?.ready;
@@ -592,7 +730,13 @@ const sheetReady = computed(() => {
   return !!report.value;
 });
 
-async function renderPng(): Promise<string> {
+async function renderPng(kind: 'card' | 'sheet' = 'card'): Promise<string> {
+  if (kind === 'card') {
+    const node = cardHost.value?.firstElementChild as HTMLElement | null;
+    if (!node) throw new Error('Report not ready.');
+    // 480px card × 2.25 = 1080px: WhatsApp's native width, identical from any device.
+    return toPng(node, { backgroundColor: '#ffffff', pixelRatio: 2.25 });
+  }
   const node = sheet.value;
   if (!node) throw new Error('Report not ready.');
   // On narrow viewports the heat tables live inside horizontally-scrollable
@@ -613,7 +757,11 @@ async function renderPng(): Promise<string> {
     node.classList.remove('exporting');
   }
 }
-function imageFilename(): string {
+function imageFilename(kind: 'card' | 'sheet' = 'card'): string {
+  const name = baseFilename();
+  return kind === 'sheet' ? name.replace(/\.png$/, '-full.png') : name;
+}
+function baseFilename(): string {
   return period.value === 'reads'
     ? `taxscan-reads-report-${new Date().toLocaleDateString('en-CA')}.png`
     : period.value === 'surfaces'
@@ -624,13 +772,13 @@ function imageFilename(): string {
         ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
         : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
 }
-async function downloadImage() {
+async function downloadImage(kind: 'card' | 'sheet' = 'card') {
   error.value = null;
   notice.value = null;
   try {
     const a = document.createElement('a');
-    a.href = await renderPng();
-    a.download = imageFilename();
+    a.href = await renderPng(kind);
+    a.download = imageFilename(kind);
     a.click();
     notice.value = 'Image downloaded — attach it in WhatsApp.';
   } catch (e) {
@@ -785,8 +933,16 @@ onMounted(() => {
       >
         Share image
       </button>
-      <button class="btn" :disabled="loading || !sheetReady" @click="downloadImage">Download image</button>
+      <button class="btn" :disabled="loading || !sheetReady" @click="downloadImage('card')">Download image</button>
       <button class="btn copy-btn" :disabled="loading || !sheetReady" @click="copyImage">Copy image</button>
+      <button
+        class="btn full-btn"
+        :disabled="loading || !sheetReady"
+        title="Every row and column, as one large image"
+        @click="downloadImage('sheet')"
+      >
+        Full report image
+      </button>
       <button
         class="btn"
         :disabled="!report || loading || period === 'custom' || period === 'reads' || period === 'surfaces'"
@@ -1334,6 +1490,12 @@ onMounted(() => {
         </tbody>
       </table>
     </div>
+
+    <!-- The share image's source: rendered off-screen at its fixed width, never
+         shown, captured by renderPng('card'). -->
+    <div ref="cardHost" class="share-card-host" aria-hidden="true">
+      <ShareCard v-if="shareCard" :card="shareCard" />
+    </div>
   </main>
 </template>
 
@@ -1355,6 +1517,12 @@ onMounted(() => {
   background: var(--primary);
   color: #fff;
   font-weight: 600;
+}
+.share-card-host {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  pointer-events: none;
 }
 /* Desktop: the action buttons sit inline in the toolbar as before. */
 .report-actions {
@@ -1382,6 +1550,11 @@ onMounted(() => {
   /* The phone share sheet already offers Copy, so where Share exists the
      Copy button steps aside and the actions stay at two rows. */
   .report-actions.has-share .copy-btn {
+    display: none;
+  }
+  /* The full heat tables are a desktop artefact; on a phone they're the
+     unreadable image this card replaced. */
+  .report-actions .full-btn {
     display: none;
   }
   .custom-range input[type='date'] {
