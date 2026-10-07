@@ -32,7 +32,9 @@ plan to decommission it.
 - **Coverage reports** (`src/services/reports.ts` + `reportScheduler.ts`) — weekly + monthly
   Category×dates and Bench×dates heatmaps + insights (totals, vs-prev, gaps, quality split),
   counting every UNIQUE captured taxscan.in article by capture date (re-sends — e.g. the
-  morning backfill clone or a manual re-push — collapse by URL; academy/shop storefront
+  morning backfill clone or a manual re-push — collapse by **article id** (taxscan's trailing
+  `-<id>`, `articleKey`), and anything captured in the 90 days before a window is a re-capture, not
+  new output (2026-10-07: the 09-28 re-GUID had inflated Sep 23–29 344→128 and September 903→685); academy/shop storefront
   pushes are excluded as non-articles). Category rows (2026-07-07, PR #28): taxscan's feed
   emits ONE comma-joined tag string, aliased to clean rows incl. "Other Taxations" (guides);
   title inference covers tag-less reconciler captures — Audit/Profession, JobScan, and the
@@ -65,7 +67,8 @@ plan to decommission it.
   2026-10-07):** data tables carry `class="stack"` and render one card per row — `data-label` on each
   `<td>` names it, `cell-lead/-wide/-full/-late/-actions` place it (app.css); fields are 16px (no iOS
   zoom); Reports heat-table row labels are sticky; **Share image** (Web Share, touch devices only).
-  Queue's **Push now has NO confirm step** — kept button-sized on phones on purpose. "Recent campaigns"
+  **Push now (Queue + Review) asks "Send to everyone now?"** (`ConfirmPush.vue`, Cancel focused) —
+  added 2026-10-07 at the user's request; kept button-sized on phones too. "Recent campaigns"
   (Dashboard) and the Campaigns list union in recently-PUSHED items so they aren't dropped by
   the capture-time window.
 - **Resilient data fetch** — the shared `useApi` adds a 15s timeout + retry (network/502/503/504,

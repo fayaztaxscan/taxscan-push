@@ -611,6 +611,13 @@ SELECT count(*) FROM q WHERE lower(regexp_replace(q.title,'[^a-z0-9]+','','gi'))
 `DUPLICATE_TITLE_WINDOW_HOURS` raised **72 → 720** (30 days) on 2026-09-29, and the
 109 already-queued duplicates archived to `EXPIRED`.
 
+**Second casualty, fixed 2026-10-07: the coverage reports.** The new CMS also moved every
+article from `/top-stories/<slug>-<id>` to `/<section>/<slug>-<id>`, so the reports' URL-based
+dedupe counted the re-captures as new: 28 Sep showed 235 articles (198 weeks old), the week of
+23–29 Sep read 344 instead of 128 (so the next week showed a false "▼62%"), and the September
+monthly email reported 903 instead of 685. Reports now key an article by its trailing id and
+treat anything captured in the 90 days before a window as a re-capture.
+
 ### Proposed fix
 
 **If the source site is ever re-platformed again, widen the window BEFORE the
