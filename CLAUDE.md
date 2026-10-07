@@ -233,7 +233,7 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
 `NEXT_STEP.md` current when shipping.
 
 ## Stack (do not change without asking)
-- Backend: Node.js (18+) + TypeScript + Express
+- Backend: Node.js 24 LTS (pinned via `engines`; Railway builds from it) + TypeScript + Express
 - DB: PostgreSQL via Prisma ORM, hosted on Railway (see section 0.6)
 - Push: the `web-push` library (VAPID)
 - Scheduling: `node-cron` for RSS polling (NO Redis/BullMQ in Phase 1 — keep it simple)

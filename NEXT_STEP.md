@@ -532,7 +532,7 @@ section went out **Mon 2026-07-13 07:00 IST** — confirm with the user it lande
 ## What this system is + what's built (capability overview)
 
 **What it is:** a self-hosted web-push notification platform for taxscan.in (a GST/Income-Tax
-legal-news site), replacing/paralleling the third-party iZooto. Backend = Node 20 + TypeScript +
+legal-news site), replacing/paralleling the third-party iZooto. Backend = Node 24 LTS + TypeScript +
 Express + Prisma/PostgreSQL on Railway; admin SPA = Vue 3 at `push.taxscan.in/admin`; push via the
 `web-push` library (VAPID); RSS polling via `node-cron`. Architecture is portal-tagged so
 academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 active subscribers.**
