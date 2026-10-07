@@ -51,6 +51,16 @@ const filterSince = ref<string>('');
 const filterUntil = ref<string>('');
 const filterResourceId = ref<string>('');
 
+// Phones: the filter form folds away behind a "Filters" button so the log is
+// what you see first. Desktop always shows it (the class only bites ≤720px).
+const filtersOpen = ref(false);
+const activeFilterCount = computed(
+  () =>
+    [filterAction, filterUserId, filterSince, filterUntil, filterResourceId].filter(
+      (f) => f.value !== '',
+    ).length,
+);
+
 // Data
 const items = ref<AuditItem[]>([]);
 const total = ref(0);
@@ -190,6 +200,7 @@ function prevPage(): void {
 
 function applyFilters(): void {
   offset.value = 0;
+  filtersOpen.value = false;
   load();
 }
 function resetFilters(): void {
@@ -199,12 +210,14 @@ function resetFilters(): void {
   filterUntil.value = '';
   filterResourceId.value = '';
   offset.value = 0;
+  filtersOpen.value = false;
   load();
 }
 function filterMine(): void {
   if (!meUser.value) return;
   filterUserId.value = meUser.value.id;
   offset.value = 0;
+  filtersOpen.value = false;
   load();
 }
 
@@ -228,12 +241,23 @@ onMounted(async () => {
   <main class="page">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">Activity</h1>
-      <button class="btn" :disabled="loading" @click="load">
-        {{ loading ? 'Loading…' : 'Refresh' }}
-      </button>
+      <span class="toolbar-group">
+        <button
+          type="button"
+          class="btn only-sm"
+          :aria-expanded="filtersOpen"
+          aria-controls="activity-filters"
+          @click="filtersOpen = !filtersOpen"
+        >
+          Filters{{ activeFilterCount ? ` (${activeFilterCount})` : '' }}
+        </button>
+        <button class="btn" :disabled="loading" @click="load">
+          {{ loading ? 'Loading…' : 'Refresh' }}
+        </button>
+      </span>
     </div>
 
-    <div class="card filters-card">
+    <div id="activity-filters" class="card filters-card" :class="{ 'collapsed-sm': !filtersOpen }">
       <div class="filter-row">
         <div class="filter-col">
           <label>Action</label>
@@ -273,7 +297,7 @@ onMounted(async () => {
           />
         </div>
 
-        <div class="filter-col" style="align-self: flex-end; display: flex; gap: 6px">
+        <div class="filter-col filter-actions">
           <button class="btn btn-mini" @click="filterMine">Only mine</button>
           <button class="btn btn-mini" @click="applyFilters">Apply</button>
           <button class="btn btn-mini" @click="resetFilters">Reset</button>
@@ -284,7 +308,7 @@ onMounted(async () => {
     <div v-if="listError" class="banner err">{{ listError }}</div>
 
     <div class="card">
-      <table>
+      <table class="stack">
         <thead>
           <tr>
             <th>When</th>
@@ -296,8 +320,8 @@ onMounted(async () => {
         </thead>
         <tbody>
           <tr v-for="it in items" :key="it.id">
-            <td class="muted" style="white-space: nowrap">{{ fmtTimestamp(it.createdAt) }}</td>
-            <td>
+            <td class="muted" data-label="When" style="white-space: nowrap">{{ fmtTimestamp(it.createdAt) }}</td>
+            <td class="cell-full cell-late" data-label="Who">
               <template v-if="it.user">
                 <span>{{ it.user.email }}</span>
                 <span class="role-badge" :class="it.user.role.toLowerCase()" style="margin-left: 4px">
@@ -306,8 +330,8 @@ onMounted(async () => {
               </template>
               <span v-else class="muted" style="font-size: 12px">system / bearer</span>
             </td>
-            <td><code style="font-size: 12px">{{ it.action }}</code></td>
-            <td>
+            <td class="cell-wide" data-label="Action"><code style="font-size: 12px">{{ it.action }}</code></td>
+            <td class="cell-full cell-late" data-label="Resource">
               <template v-if="it.resourceType === 'campaign' && it.resourceId">
                 <button
                   type="button"
@@ -323,7 +347,7 @@ onMounted(async () => {
               </template>
               <span v-else class="muted">—</span>
             </td>
-            <td>{{ summarize(it) }}</td>
+            <td class="cell-lead">{{ summarize(it) }}</td>
           </tr>
           <tr v-if="items.length === 0 && !loading">
             <td colspan="5" class="muted" style="text-align: center; padding: 24px">

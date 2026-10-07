@@ -293,7 +293,7 @@ onMounted(() => {
 
       <div class="card">
         <h2>Recent campaigns <InfoTip heading="Recent campaigns" :text="INFO.campaigns" /></h2>
-        <table>
+        <table class="stack">
           <thead>
             <tr>
               <th>Pushed</th>
@@ -306,14 +306,14 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-for="c in recentCampaigns" :key="c.id">
-              <td :class="c.sentAt ? '' : 'muted'" style="white-space: nowrap">
+              <td :class="c.sentAt ? '' : 'muted'" class="cell-wide" data-label="Pushed" style="white-space: nowrap">
                 {{ c.sentAt ? fmtDate(c.sentAt) : '— not sent' }}
               </td>
-              <td>{{ c.title }}</td>
-              <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
-              <td>{{ c.sent }}</td>
-              <td>{{ c.clicked }}</td>
-              <td>
+              <td class="cell-lead">{{ c.title }}</td>
+              <td data-label="Status"><span class="badge" :class="c.status">{{ c.status }}</span></td>
+              <td data-label="Sent">{{ c.sent }}</td>
+              <td data-label="Clicked">{{ c.clicked }}</td>
+              <td data-label="CTR">
                 <span :class="['band-pill', classify(c.ctr, THRESHOLDS.ctr)]" :title="bandTooltip('ctr')">
                   {{ pct(c.ctr) }}
                 </span>

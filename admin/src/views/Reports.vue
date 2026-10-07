@@ -156,6 +156,7 @@ const sheet = ref<HTMLElement | null>(null);
 
 async function load() {
   if (period.value === 'custom' && customError.value) return;
+  pendingShare.value = null; // a held image belongs to the report that made it
   loading.value = true;
   error.value = null;
   notice.value = null;
@@ -612,22 +613,24 @@ async function renderPng(): Promise<string> {
     node.classList.remove('exporting');
   }
 }
+function imageFilename(): string {
+  return period.value === 'reads'
+    ? `taxscan-reads-report-${new Date().toLocaleDateString('en-CA')}.png`
+    : period.value === 'surfaces'
+      ? // Name it after the last day Google has actually reported, not "today" —
+        // the newest 2–3 days are never in the data.
+        `taxscan-google-surfaces-report-${surfacesThrough.value ?? new Date().toLocaleDateString('en-CA')}.png`
+      : period.value === 'custom'
+        ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
+        : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
+}
 async function downloadImage() {
   error.value = null;
   notice.value = null;
   try {
     const a = document.createElement('a');
     a.href = await renderPng();
-    a.download =
-      period.value === 'reads'
-        ? `taxscan-reads-report-${new Date().toLocaleDateString('en-CA')}.png`
-        : period.value === 'surfaces'
-          ? // Name it after the last day Google has actually reported, not "today" —
-            // the newest 2–3 days are never in the data.
-            `taxscan-google-surfaces-report-${surfacesThrough.value ?? new Date().toLocaleDateString('en-CA')}.png`
-          : period.value === 'custom'
-            ? `taxscan-report-${report.value?.start ?? ''}-to-${report.value?.end ?? ''}.png`
-            : `taxscan-${period.value}-report-${report.value?.end ?? ''}.png`;
+    a.download = imageFilename();
     a.click();
     notice.value = 'Image downloaded — attach it in WhatsApp.';
   } catch (e) {
@@ -643,6 +646,48 @@ async function copyImage() {
     notice.value = 'Image copied — paste it into WhatsApp.';
   } catch {
     error.value = 'Copy isn’t supported in this browser — use Download instead.';
+  }
+}
+
+// Share image — the phone's own share sheet, so the report goes straight into
+// WhatsApp without a download-then-attach detour. Offered on touch devices that
+// can share files (phones, tablets); desktop keeps Download/Copy, even where
+// its browser could share too.
+const canShareFiles = ref(false);
+function detectFileShare(): void {
+  try {
+    canShareFiles.value =
+      window.matchMedia('(pointer: coarse)').matches &&
+      typeof navigator.canShare === 'function' &&
+      navigator.canShare({ files: [new File([new Blob()], 'report.png', { type: 'image/png' })] });
+  } catch {
+    canShareFiles.value = false;
+  }
+}
+// Safari only lets a page open the share sheet shortly after a tap. Rendering
+// the image can outlast that window, so on NotAllowedError the finished file is
+// kept here and the next tap shares it instantly.
+const pendingShare = ref<File | null>(null);
+async function shareImage() {
+  error.value = null;
+  notice.value = null;
+  let file = pendingShare.value;
+  pendingShare.value = null;
+  try {
+    if (!file) {
+      const blob = await (await fetch(await renderPng())).blob();
+      file = new File([blob], imageFilename(), { type: 'image/png' });
+    }
+    await navigator.share({ files: [file] });
+  } catch (e) {
+    const name = e instanceof DOMException ? e.name : '';
+    if (name === 'AbortError') return; // closed the share sheet — not an error
+    if (name === 'NotAllowedError' && file) {
+      pendingShare.value = file;
+      notice.value = 'Image ready — tap Share image again to send it.';
+      return;
+    }
+    error.value = `Could not share the image: ${e instanceof Error ? e.message : String(e)}`;
   }
 }
 
@@ -712,6 +757,7 @@ const emailRunWarning = computed(() => {
 });
 
 onMounted(() => {
+  detectFileShare();
   void load();
   void loadRecipients();
   void loadEmailStatus();
@@ -722,7 +768,7 @@ onMounted(() => {
   <main class="page page-wide">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">Coverage report</h1>
-      <div class="seg">
+      <div class="seg" role="group" aria-label="Report">
         <button :class="{ on: period === 'weekly' }" @click="setPeriod('weekly')">Weekly</button>
         <button :class="{ on: period === 'monthly' }" @click="setPeriod('monthly')">Monthly</button>
         <button :class="{ on: period === 'custom' }" @click="setPeriod('custom')">Custom</button>
@@ -730,8 +776,17 @@ onMounted(() => {
         <button :class="{ on: period === 'surfaces' }" @click="setPeriod('surfaces')">Surfaces</button>
       </div>
       <span class="spacer" style="flex: 1" />
+      <div class="report-actions" :class="{ 'has-share': canShareFiles }">
+      <button
+        v-if="canShareFiles"
+        class="btn btn-primary share-btn"
+        :disabled="loading || !sheetReady"
+        @click="shareImage"
+      >
+        Share image
+      </button>
       <button class="btn" :disabled="loading || !sheetReady" @click="downloadImage">Download image</button>
-      <button class="btn" :disabled="loading || !sheetReady" @click="copyImage">Copy image</button>
+      <button class="btn copy-btn" :disabled="loading || !sheetReady" @click="copyImage">Copy image</button>
       <button
         class="btn"
         :disabled="!report || loading || period === 'custom' || period === 'reads' || period === 'surfaces'"
@@ -745,6 +800,7 @@ onMounted(() => {
         Email me a test
       </button>
       <button class="btn" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+      </div>
     </div>
 
     <!-- Custom range picker — any window of up to 30 days, both ends inclusive. -->
@@ -1300,6 +1356,43 @@ onMounted(() => {
   color: #fff;
   font-weight: 600;
 }
+/* Desktop: the action buttons sit inline in the toolbar as before. */
+.report-actions {
+  display: contents;
+}
+@media (max-width: 720px) {
+  /* The five tabs need 373px in one row; the bar used to clip whatever didn't
+     fit (Surfaces vanished entirely on a 320px phone). Now they share the full
+     width, and wrap to two rows below 360px. */
+  .seg {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    width: 100%;
+  }
+  .seg button {
+    padding: 10px 2px;
+    min-height: 40px;
+  }
+  .report-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  /* The phone share sheet already offers Copy, so where Share exists the
+     Copy button steps aside and the actions stay at two rows. */
+  .report-actions.has-share .copy-btn {
+    display: none;
+  }
+  .custom-range input[type='date'] {
+    font-size: 16px; /* stop iOS zoom-on-focus */
+  }
+}
+@media (max-width: 359px) {
+  .seg {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
 .custom-range {
   display: flex;
   align-items: center;
@@ -1419,6 +1512,26 @@ table.heat th.heat-label {
 table.heat th.heat-label {
   background: #1e293b;
   color: #fff;
+}
+/* Row labels stay put while a wide heat table scrolls sideways, so a swipe
+   never leaves a grid of unlabelled numbers. Both label backgrounds are
+   opaque, so the cells slide underneath cleanly. Static again for the PNG
+   export, where nothing scrolls. */
+table.heat td.heat-label,
+table.heat th.heat-label {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  /* A seam on the pinned edge, so a column sliding under it reads as
+     "scrolled" rather than as a stray sliver of number. A background layer,
+     not box-shadow: Chrome doesn't paint shadows on collapsed-border cells.
+     background-image (never the shorthand) so the label colour survives. */
+  background-image: linear-gradient(to left, #94a3b8 2px, transparent 2px);
+}
+.report-sheet.exporting table.heat td.heat-label,
+.report-sheet.exporting table.heat th.heat-label {
+  position: static;
+  background-image: none;
 }
 table.heat td.heat-total,
 table.heat th.heat-total {

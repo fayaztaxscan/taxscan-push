@@ -67,6 +67,22 @@ function setSort(key: SortKey): void {
     sortDir.value = 'desc';
   }
 }
+// Phones get a picker instead: a stacked table has no headers to tap.
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'sentAt', label: 'Pushed' },
+  { key: 'createdAt', label: 'Captured' },
+  { key: 'status', label: 'Status' },
+  { key: 'sent', label: 'Sent' },
+  { key: 'clicked', label: 'Clicked' },
+  { key: 'ctr', label: 'CTR' },
+  { key: 'reads', label: 'Reads' },
+  { key: 'pushReads', label: 'via Push' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'deliveryRate', label: 'Delivery' },
+];
+function flipSortDir(): void {
+  sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+}
 function sortInd(key: SortKey): string {
   if (sortKey.value !== key) return '';
   return sortDir.value === 'desc' ? ' ▼' : ' ▲';
@@ -177,12 +193,26 @@ onMounted(load);
       <button class="btn" :disabled="loading" @click="load">
         {{ loading ? 'Loading…' : 'Refresh' }}
       </button>
+      <div class="sort-sm only-sm">
+        <label for="campaign-sort" class="sort-sm-label">Sort by</label>
+        <select id="campaign-sort" v-model="sortKey">
+          <option v-for="o in SORT_OPTIONS" :key="o.key" :value="o.key">{{ o.label }}</option>
+        </select>
+        <button
+          type="button"
+          class="btn"
+          :aria-label="sortDir === 'desc' ? 'Highest or newest first — tap to reverse' : 'Lowest or oldest first — tap to reverse'"
+          @click="flipSortDir"
+        >
+          {{ sortDir === 'desc' ? '▼' : '▲' }}
+        </button>
+      </div>
     </div>
 
     <div v-if="error" class="banner err">{{ error }}</div>
 
     <div class="card">
-      <table>
+      <table class="stack">
         <thead>
           <tr>
             <th class="th-sort" title="Sort by capture time" @click="setSort('createdAt')">
@@ -234,32 +264,32 @@ onMounted(load);
             class="row-clickable"
             @click="openDetail(c.id)"
           >
-            <td class="muted" style="white-space: nowrap">{{ fmtDate(c.createdAt) }}</td>
-            <td :class="c.sentAt ? '' : 'muted'" style="white-space: nowrap">
+            <td class="muted" data-label="Captured" style="white-space: nowrap">{{ fmtDate(c.createdAt) }}</td>
+            <td :class="c.sentAt ? '' : 'muted'" data-label="Pushed" style="white-space: nowrap">
               {{ c.sentAt ? fmtDate(c.sentAt) : '—' }}
             </td>
-            <td>{{ c.title }}</td>
-            <td>
+            <td class="cell-lead">{{ c.title }}</td>
+            <td data-label="Source">
               <template v-if="c.createdBy">
                 <span class="tag-manual">Manual</span>
                 <span class="muted" style="font-size: 11px; margin-left: 4px">{{ c.createdBy.email }}</span>
               </template>
               <span v-else class="tag-auto">Automatic</span>
             </td>
-            <td><span class="badge" :class="c.status">{{ c.status }}</span></td>
-            <td>{{ c.sent }}</td>
-            <td>{{ c.clicked }}</td>
-            <td>
+            <td data-label="Status"><span class="badge" :class="c.status">{{ c.status }}</span></td>
+            <td data-label="Sent">{{ c.sent }}</td>
+            <td data-label="Clicked">{{ c.clicked }}</td>
+            <td data-label="CTR">
               <span :class="['band-pill', classify(c.ctr, THRESHOLDS.ctr)]" :title="bandTooltip('ctr')">
                 {{ pct(c.ctr) }}
               </span>
             </td>
-            <td :class="c.reads === null ? 'muted' : ''" :title="c.reads === null ? 'No read data for this URL yet' : ''">
+            <td :class="c.reads === null ? 'muted' : ''" data-label="Reads" :title="c.reads === null ? 'No read data for this URL yet' : ''">
               {{ fmtReads(c.reads) }}
             </td>
-            <td :class="c.pushReads === null ? 'muted' : ''">{{ fmtReads(c.pushReads) }}</td>
-            <td>{{ c.failed }}</td>
-            <td>
+            <td :class="c.pushReads === null ? 'muted' : ''" data-label="via Push">{{ fmtReads(c.pushReads) }}</td>
+            <td data-label="Failed">{{ c.failed }}</td>
+            <td data-label="Delivery">
               <span
                 :class="['band-pill', classify(c.deliveryRate, THRESHOLDS.deliveryRate)]"
                 :title="bandTooltip('deliveryRate')"
@@ -313,5 +343,23 @@ onMounted(load);
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
+}
+@media (max-width: 720px) {
+  .sort-sm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .sort-sm-label {
+    margin: 0;
+    white-space: nowrap;
+  }
+  .sort-sm select {
+    flex: 1;
+  }
+  .sort-sm .btn {
+    min-width: 44px;
+  }
 }
 </style>

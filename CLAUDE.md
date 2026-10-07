@@ -61,7 +61,11 @@ plan to decommission it.
   (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
   Manual/Automatic — Push-now sets `createdByUserId`), **Reports**,
   **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
-  Responsive phone→tablet→desktop (nav collapses to a hamburger ≤1024px). "Recent campaigns"
+  Responsive phone→tablet→desktop (nav collapses to a hamburger ≤1024px). **Phones (≤720px,
+  2026-10-07):** data tables carry `class="stack"` and render one card per row — `data-label` on each
+  `<td>` names it, `cell-lead/-wide/-full/-late/-actions` place it (app.css); fields are 16px (no iOS
+  zoom); Reports heat-table row labels are sticky; **Share image** (Web Share, touch devices only).
+  Queue's **Push now has NO confirm step** — kept button-sized on phones on purpose. "Recent campaigns"
   (Dashboard) and the Campaigns list union in recently-PUSHED items so they aren't dropped by
   the capture-time window.
 - **Resilient data fetch** — the shared `useApi` adds a 15s timeout + retry (network/502/503/504,
