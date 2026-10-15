@@ -26,6 +26,10 @@
     scrollThreshold: 0.5,
     dwellMs: 30000,
     secondPageDelayMs: 2000,
+    // Prompt v2 only: on a reader's FIRST page (most arrive from Google/Discover
+    // on one article and leave), ask only after real engagement.
+    landingScrollThreshold: 0.6,
+    landingDwellMs: 45000,
     // When true, after registering our own SW we unregister any OTHER
     // service worker the page has (e.g. iZooto's). Leave false during the
     // parallel-run cutover phase so both push systems coexist; flip to true
@@ -51,6 +55,11 @@
   var registration = null;
   var vapidKey = null;
   var promptShown = false;
+  // 'v1' = original prompt (topic chips, never on a first page); 'v2' = yes/no,
+  // may appear on a first page after engagement. Chosen server-side
+  // (SOFT_PROMPT_V2 → /api/config) so it can be switched without touching the site.
+  var promptVariant = 'v1';
+  var promptLanding = false;
 
   /* ---------------- helpers ---------------- */
 
@@ -64,6 +73,23 @@
 
   function track(type, extra) {
     return post('/api/track', Object.assign({ type: type }, extra || {}));
+  }
+
+  function deviceClass() {
+    try {
+      if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return 'mobile';
+    } catch (_) {}
+    return (window.innerWidth || 1024) <= 720 ? 'mobile' : 'desktop';
+  }
+
+  // Every soft-prompt funnel event carries the same small context, so the
+  // losing step can be split by phone/desktop, first page or not, and variant.
+  function trackPrompt(type, extra) {
+    var meta = Object.assign(
+      { device: deviceClass(), landing: promptLanding, variant: promptVariant },
+      extra || {},
+    );
+    return track(type, { meta: meta });
   }
 
   function urlBase64ToUint8Array(base64String) {
@@ -210,11 +236,13 @@
     document.head.appendChild(style);
   }
 
-  function showSoftPrompt() {
+  function showSoftPrompt(trigger) {
     if (promptShown) return;
     promptShown = true;
-    track('PROMPT_SHOWN');
+    var shownTrigger = trigger || 'manual';
+    trackPrompt('PROMPT_SHOWN', { trigger: shownTrigger });
     injectStyles();
+    var simple = promptVariant === 'v2';
 
     var titleId = 'txnpush-title-' + Date.now();
     var descId = 'txnpush-desc-' + Date.now();
@@ -229,7 +257,9 @@
     wrap.setAttribute('aria-labelledby', titleId);
     wrap.setAttribute('aria-describedby', descId);
 
-    var topicsHtml = TOPIC_OPTIONS.map(function (t, i) {
+    // v2 drops the topic chips: ~70% of subscribers kept the default "All news"
+    // and most of the rest ticked "All news" plus topics, which changes nothing.
+    var topicsHtml = simple ? '' : TOPIC_OPTIONS.map(function (t, i) {
       return (
         '<label class="txnpush-topic">' +
         '<input type="checkbox" data-slug="' +
@@ -254,10 +284,16 @@
       '">Get notified of new GST &amp; Income Tax rulings?</h2>' +
       '<p class="txnpush-sub" id="' +
       descId +
-      '">Pick the topics you care about. You can change this anytime.</p>' +
-      '<div class="txnpush-topics" role="group" aria-label="Notification topics">' +
-      topicsHtml +
-      '</div>' +
+      '">' +
+      (simple
+        ? 'Free, and you can turn them off anytime.'
+        : 'Pick the topics you care about. You can change this anytime.') +
+      '</p>' +
+      (simple
+        ? ''
+        : '<div class="txnpush-topics" role="group" aria-label="Notification topics">' +
+          topicsHtml +
+          '</div>') +
       '<div class="txnpush-actions">' +
       '<button type="button" class="txnpush-no">No thanks</button>' +
       '<button type="button" class="txnpush-yes">Allow notifications</button>' +
@@ -283,7 +319,8 @@
 
     // Product decision: Escape, × close, and No thanks ALL persist the 7-day
     // dismissed flag. Consistency over leniency — three "no" actions, one outcome.
-    function dismiss() {
+    function dismiss(how) {
+      trackPrompt('PROMPT_DECLINED', { trigger: shownTrigger, how: how });
       setDismissed();
       close();
     }
@@ -300,7 +337,7 @@
     function onKey(e) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        dismiss();
+        dismiss('escape');
         return;
       }
       if (e.key !== 'Tab') return;
@@ -322,8 +359,12 @@
       focusables[nextIdx].focus();
     }
 
-    xBtn.addEventListener('click', dismiss);
-    noBtn.addEventListener('click', dismiss);
+    xBtn.addEventListener('click', function () {
+      dismiss('close');
+    });
+    noBtn.addEventListener('click', function () {
+      dismiss('no');
+    });
     document.addEventListener('keydown', onKey);
 
     wrap.querySelectorAll('input[type="checkbox"]').forEach(function (cb) {
@@ -341,12 +382,16 @@
       if (slugs.length === 0) slugs = ['all'];
       storeTopics(slugs);
       close();
+      trackPrompt('PROMPT_ALLOW_CLICKED', { trigger: shownTrigger });
       try {
         var perm = await Notification.requestPermission();
         if (perm === 'granted') {
-          track('PROMPT_ACCEPTED');
+          trackPrompt('PROMPT_ACCEPTED', { trigger: shownTrigger });
           await ensureSubscribedSilently('soft-prompt', slugs);
         } else {
+          // 'denied' = blocked in the browser's own prompt; 'default' = closed
+          // or ignored it (also what Chrome's quiet bell-icon prompt yields).
+          trackPrompt(perm === 'denied' ? 'PROMPT_BLOCKED' : 'PROMPT_IGNORED', { trigger: shownTrigger });
           setDismissed();
         }
       } catch (_) {
@@ -362,34 +407,58 @@
 
   /* ---------------- engagement gating ---------------- */
 
-  function armSoftPrompt(isLanding) {
-    if (isLanding) return; // never on landing
-    if (loadDismissed()) return;
-    if (Notification.permission !== 'default') return;
-
-    // "Viewed a 2nd page" trigger — show after a short grace delay.
-    setTimeout(maybeShow, cfg.secondPageDelayMs);
-    // 30s timer.
-    setTimeout(maybeShow, cfg.dwellMs);
-    // 50% scroll.
-    var onScroll = function () {
-      var h = document.documentElement;
-      var max = h.scrollHeight - h.clientHeight;
-      if (max <= 0) return;
-      var ratio = (h.scrollTop || document.body.scrollTop || 0) / max;
-      if (ratio >= cfg.scrollThreshold) {
-        window.removeEventListener('scroll', onScroll);
-        maybeShow();
-      }
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
+  /**
+   * When the prompt may appear, as data (pure — unit-tested). A later page of a
+   * visit: 2 s after load, after 30 s, or at 50% scroll (both variants). A
+   * first page: never in v1; in v2 only after real engagement — 60% scroll or
+   * 45 s on the page.
+   */
+  function promptTriggers(isLanding, variant) {
+    if (isLanding) {
+      if (variant !== 'v2') return [];
+      return [
+        { kind: 'dwell', ms: cfg.landingDwellMs },
+        { kind: 'scroll', ratio: cfg.landingScrollThreshold },
+      ];
+    }
+    return [
+      { kind: 'second-page', ms: cfg.secondPageDelayMs },
+      { kind: 'dwell', ms: cfg.dwellMs },
+      { kind: 'scroll', ratio: cfg.scrollThreshold },
+    ];
   }
 
-  function maybeShow() {
+  function armSoftPrompt(isLanding) {
+    if (loadDismissed()) return;
+    if (Notification.permission !== 'default') return;
+    promptLanding = isLanding;
+
+    promptTriggers(isLanding, promptVariant).forEach(function (t) {
+      if (t.kind === 'scroll') {
+        var onScroll = function () {
+          var h = document.documentElement;
+          var max = h.scrollHeight - h.clientHeight;
+          if (max <= 0) return;
+          var ratio = (h.scrollTop || document.body.scrollTop || 0) / max;
+          if (ratio >= t.ratio) {
+            window.removeEventListener('scroll', onScroll);
+            maybeShow('scroll');
+          }
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+      } else {
+        setTimeout(function () {
+          maybeShow(t.kind);
+        }, t.ms);
+      }
+    });
+  }
+
+  function maybeShow(trigger) {
     if (promptShown) return;
     if (loadDismissed()) return;
     if (Notification.permission !== 'default') return;
-    showSoftPrompt();
+    showSoftPrompt(trigger);
   }
 
   /* ---------------- cutover: unregister iZooto's service worker ---------------- */
@@ -469,7 +538,9 @@
 
     try {
       var cfgRes = await fetch(cfg.apiBase + '/api/config');
-      vapidKey = (await cfgRes.json()).vapidPublicKey;
+      var serverCfg = await cfgRes.json();
+      vapidKey = serverCfg.vapidPublicKey;
+      promptVariant = serverCfg.promptVariant === 'v2' ? 'v2' : 'v1';
     } catch (_) {
       return;
     }
@@ -499,7 +570,7 @@
     },
     showPromptNow: function () {
       promptShown = false;
-      showSoftPrompt();
+      showSoftPrompt('manual');
     },
     getState: async function () {
       var perm = Notification.permission;
@@ -522,6 +593,7 @@
     window.__taxscanPushTest__ = {
       isIzootoWorker: isIzootoWorker,
       maybeUnregisterForeignWorkers: maybeUnregisterForeignWorkers,
+      promptTriggers: promptTriggers,
       cfg: cfg,
     };
     return;

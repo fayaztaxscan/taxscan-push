@@ -17,7 +17,14 @@ browsers after endpoint rotation, so it barely grows the base.
 
 **What's been built:**
 - **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of
-  iZooto-granted browsers, `pushsubscriptionchange`).
+  iZooto-granted browsers, `pushsubscriptionchange`). **Soft-prompt funnel tracked step by step since
+  2026-10-15:** `PROMPT_SHOWN` → `PROMPT_ALLOW_CLICKED` | `PROMPT_DECLINED` (meta.how) → `PROMPT_ACCEPTED`
+  | `PROMPT_BLOCKED` (browser denied) | `PROMPT_IGNORED` (browser prompt closed/ignored), each with
+  `meta {device, landing, variant, trigger}` (strict enum allow-list on public `/api/track`).
+  **Prompt v2** behind `SOFT_PROMPT_V2` (default OFF, served via `/api/config.promptVariant`): yes/no
+  with no topic chips, and may show on a reader's FIRST page after 60% scroll or 45 s (v1 never asks on
+  a first page). Baseline before v2: ~1–1.5% of prompts → granted; the SDK is injected ~6 s after
+  navigation on the new CMS.
 - **RSS → editorial classifier** (`src/services/classify.ts`) — polls 5 section feeds
   (corporate / gst / income-tax / customs / jobs) PLUS the master feed (`RSS_FEED_NEWS`
   = taxscan.in/feed, all sections); stores each article's RSS `<category>` tags and routes
@@ -93,7 +100,7 @@ pacer), `FREQ_CAP_PER_DAY`=30 (manual non-force path only), `MIN_GAP_MINUTES`=0,
 `GA_READS_ENABLED`=ON + `GA_SERVICE_ACCOUNT_JSON` + `GA_READS_LOOKBACK_DAYS`=3,
 `SEARCH_CONSOLE_ENABLED`=ON, `DUPLICATE_TITLE_GUARD_ENABLED`=ON +
 **`DUPLICATE_TITLE_WINDOW_HOURS`=720** (raised from 72 on 2026-09-29 — see KNOWN_ISSUES #9),
-`LINK_CHECK_ENABLED`=ON, `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
+`LINK_CHECK_ENABLED`=ON, `SOFT_PROMPT_V2`=OFF (until a funnel baseline exists), `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
 **`EVENT_RETENTION_ENABLED`=ON** (30d window, nightly 03:30 IST),
 **`BACKUP_ENABLED`=ON** (daily 02:20 IST to Cloudflare R2, `BACKUP_KEEP_DAYS`=14, `R2_*` creds).
 (`METRICS_CACHE_TTL_MS`=20s, `REPORTS_CACHE_TTL_MS`=60s and `METRICS_HEAVY_REFRESH_MS`=5min

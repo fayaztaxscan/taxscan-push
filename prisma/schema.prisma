@@ -31,6 +31,13 @@ enum EventType {
   PROMPT_SHOWN
   PROMPT_ACCEPTED
   FAILED
+  // Soft-prompt funnel steps between SHOWN and ACCEPTED (2026-10-15), so the
+  // losing step is measurable: tapped "Allow", said no (No thanks / × / Esc),
+  // or the browser's own prompt came back denied / unanswered.
+  PROMPT_ALLOW_CLICKED
+  PROMPT_DECLINED
+  PROMPT_BLOCKED
+  PROMPT_IGNORED
 }
 
 enum UserRole {
