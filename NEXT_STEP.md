@@ -578,8 +578,9 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
 - **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
-- **iZooto** — KEPT (its ~3M base is cryptographically un-migratable; self-hosted is a parallel,
-  growing channel).
+- **iZooto** — STOPPED (confirmed 2026-10-15: account access disabled, no longer sending). Its ~3M
+  base is unreachable without iZooto's subscriber export + VAPID keys; this platform is now
+  taxscan's only push channel (~3,040 active).
 
 Deeper detail lives in `SEND_PACING_PLAN.md`, `KNOWN_ISSUES.md`, `README.md`, `SECURITY.md`, and the
 auto-memory (which loads into every Claude session in this folder). History continues below.
