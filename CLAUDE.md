@@ -22,7 +22,7 @@ browsers after endpoint rotation, so it barely grows the base.
   | `PROMPT_BLOCKED` (browser denied) | `PROMPT_IGNORED` (browser prompt closed/ignored), each with
   `meta {device, landing, variant, trigger}` (strict enum allow-list on public `/api/track`).
   **Prompt v2** behind `SOFT_PROMPT_V2` (default OFF, served via `/api/config.promptVariant`): yes/no
-  with no topic chips, and may show on a reader's FIRST page after 60% scroll or 45 s (v1 never asks on
+  with no topic chips and the approved copy "Be first to know about new tax rulings — Supreme Court and High Court rulings as they’re published. About 20 a day, never at night." / "Turn on alerts"; it may show on a reader's FIRST page after 60% scroll or 45 s (v1 never asks on
   a first page). Baseline before v2: ~1–1.5% of prompts → granted; the SDK is injected ~6 s after
   navigation on the new CMS.
 - **RSS → editorial classifier** (`src/services/classify.ts`) — polls 5 section feeds

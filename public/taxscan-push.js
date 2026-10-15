@@ -281,12 +281,18 @@
       '<button type="button" class="txnpush-x" aria-label="Dismiss">&times;</button>' +
       '<h2 class="txnpush-head" id="' +
       titleId +
-      '">Get notified of new GST &amp; Income Tax rulings?</h2>' +
+      '">' +
+      (simple
+        ? 'Be first to know about new tax rulings'
+        : 'Get notified of new GST &amp; Income Tax rulings?') +
+      '</h2>' +
       '<p class="txnpush-sub" id="' +
       descId +
       '">' +
+      // v2 copy approved 2026-10-15 (option A). Volume is stated because it is
+      // real: ~21 pushes/day, none 23:00–07:00 (0 of 1,257 in the prior 60 days).
       (simple
-        ? 'Free, and you can turn them off anytime.'
+        ? 'Supreme Court and High Court rulings as they’re published. About 20 a day, never at night.'
         : 'Pick the topics you care about. You can change this anytime.') +
       '</p>' +
       (simple
@@ -296,7 +302,9 @@
           '</div>') +
       '<div class="txnpush-actions">' +
       '<button type="button" class="txnpush-no">No thanks</button>' +
-      '<button type="button" class="txnpush-yes">Allow notifications</button>' +
+      '<button type="button" class="txnpush-yes">' +
+      (simple ? 'Turn on alerts' : 'Allow notifications') +
+      '</button>' +
       '</div>' +
       '</div>';
 
