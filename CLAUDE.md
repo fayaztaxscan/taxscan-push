@@ -5,11 +5,15 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-09-29) — LIVE in production
+## Current state (updated 2026-10-15) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
-~3,080 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto runs in parallel and
-stays** — its ~3M base is cryptographically un-migratable (origin+VAPID bound); do NOT
-plan to decommission it.
+~3,080 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto has STOPPED (confirmed 2026-10-15)**
+— taxscan's iZooto account access is disabled and it no longer sends. Its ~3M base is unreachable
+from here: a send needs each subscription's endpoint + p256dh + auth (iZooto's database) AND iZooto's
+VAPID private key, and the pushes land in iZooto's service worker. Only an export from iZooto could
+change that. **This platform's ~3,040 active subscribers are now taxscan's entire push audience.**
+Recapture of previously-granted browsers still runs (~300/week) but mostly re-subscribes the same
+browsers after endpoint rotation, so it barely grows the base.
 
 **What's been built:**
 - **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of
