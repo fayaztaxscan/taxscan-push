@@ -104,6 +104,9 @@ describe('dispatchCampaign', () => {
 
     const campaign = await prisma.campaign.findUnique({ where: { id: result.campaignId } });
     expect(campaign?.status).toBe('SENT');
+    // Stamped at dispatch: "recently pushed" (Dashboard, Campaigns) reads it.
+    expect(campaign?.lastSentAt).toBeInstanceOf(Date);
+    expect(Date.now() - (campaign?.lastSentAt?.getTime() ?? 0)).toBeLessThan(60_000);
   });
 
   it('filters by topics', async () => {

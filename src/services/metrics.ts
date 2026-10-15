@@ -291,15 +291,16 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
         take: 20,
         select: campaignSelect,
       }),
-      // The most-recently-pushed campaigns (latest SENT event per campaign),
-      // newest first. Unioned with the newest captures below so push-ordered
-      // "Recent campaigns" never drops a recently-sent-but-older-captured item.
-      prisma.event.groupBy({
-        by: ['campaignId'],
-        where: { type: 'SENT', campaignId: { not: null }, createdAt: { gte: pushedSince } },
-        _max: { createdAt: true },
-        orderBy: { _max: { createdAt: 'desc' } },
+      // The most-recently-pushed campaigns, newest first. Unioned with the
+      // newest captures below so push-ordered "Recent campaigns" never drops a
+      // recently-sent-but-older-captured item. Reads Campaign.lastSentAt (10
+      // indexed rows) — it used to group every SENT Event of the past week
+      // (~460k rows, ~72 MB), which was the slow first Dashboard load.
+      prisma.campaign.findMany({
+        where: { lastSentAt: { gte: pushedSince } },
+        orderBy: { lastSentAt: 'desc' },
         take: 10,
+        select: { id: true },
       }),
     ]);
 
@@ -307,8 +308,8 @@ export async function buildMetrics(now: Date = new Date()): Promise<Metrics> {
   // most-recently-pushed campaigns that fell outside that capture window.
   const capturedIds = new Set(recentlyCaptured.map((c) => c.id));
   const missingPushedIds = recentlyPushedGroups
-    .map((g) => g.campaignId)
-    .filter((id): id is string => id !== null && !capturedIds.has(id));
+    .map((g) => g.id)
+    .filter((id) => !capturedIds.has(id));
   const extraPushed = missingPushedIds.length
     ? await prisma.campaign.findMany({
         where: { id: { in: missingPushedIds } },
@@ -519,16 +520,17 @@ export async function listCampaigns(
   // already; this matters most for the unfiltered, pacer-dominated list.)
   const capturedIds = new Set(captured.map((c) => c.id));
   const pushedSince = new Date(Date.now() - 14 * MS_PER_DAY);
-  const recentlyPushed = await prisma.event.groupBy({
-    by: ['campaignId'],
-    where: { type: 'SENT', campaignId: { not: null }, createdAt: { gte: pushedSince } },
-    _max: { createdAt: true },
-    orderBy: { _max: { createdAt: 'desc' } },
+  // Campaign.lastSentAt, not a groupBy over two weeks of SENT Events (~900k
+  // rows) — see the schema note.
+  const recentlyPushed = await prisma.campaign.findMany({
+    where: { lastSentAt: { gte: pushedSince } },
+    orderBy: { lastSentAt: 'desc' },
     take: 50,
+    select: { id: true },
   });
   const missingPushedIds = recentlyPushed
-    .map((g) => g.campaignId)
-    .filter((id): id is string => id !== null && !capturedIds.has(id));
+    .map((g) => g.id)
+    .filter((id) => !capturedIds.has(id));
   const extra = missingPushedIds.length
     ? await prisma.campaign.findMany({
         where: { id: { in: missingPushedIds }, ...userFilter },

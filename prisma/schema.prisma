@@ -111,6 +111,11 @@ model Campaign {
   rolledClicked     Int       @default(0)
   rolledFailed      Int       @default(0)
   rolledFirstSentAt DateTime?
+  /// When this campaign was last dispatched. Stamped by executeCampaign when it
+  /// marks the campaign SENT, so "recently pushed" (Dashboard, Campaigns list)
+  /// reads a handful of indexed Campaign rows instead of grouping a week or two
+  /// of delivery Events (~460k-900k rows; the cold-cache cause of slow loads).
+  lastSentAt        DateTime?
 
   createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]
@@ -120,6 +125,7 @@ model Campaign {
   @@index([status])
   @@index([scheduledAt])
   @@index([sendQueue])
+  @@index([lastSentAt])
 }
 
 enum SendQueue {

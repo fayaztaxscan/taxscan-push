@@ -279,7 +279,8 @@ export async function executeCampaign(
 
     await prisma.campaign.update({
       where: { id: campaign.id },
-      data: { status: 'SENT' },
+      // lastSentAt feeds "recently pushed" (Dashboard, Campaigns) — see schema.
+      data: { status: 'SENT', lastSentAt: new Date() },
     });
 
     return {

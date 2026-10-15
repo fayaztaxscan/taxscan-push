@@ -27,6 +27,7 @@ async function makeCampaign(opts: { createdAt: Date; sentAt?: Date; title: strin
       target: { type: 'all' },
       status: opts.sentAt ? 'SENT' : 'DRAFT',
       createdAt: opts.createdAt,
+      lastSentAt: opts.sentAt ?? null,
     },
   });
   ids.push(c.id);
