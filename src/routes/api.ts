@@ -63,11 +63,32 @@ const UnsubscribeSchema = z.object({
   endpoint: z.string().min(1),
 });
 
-const TRACK_TYPES = ['PROMPT_SHOWN', 'PROMPT_ACCEPTED', 'CLICKED', 'DISMISSED'] as const;
+const TRACK_TYPES = [
+  'PROMPT_SHOWN',
+  'PROMPT_ALLOW_CLICKED',
+  'PROMPT_DECLINED',
+  'PROMPT_BLOCKED',
+  'PROMPT_IGNORED',
+  'PROMPT_ACCEPTED',
+  'CLICKED',
+  'DISMISSED',
+] as const;
+// Soft-prompt context. A closed set of short enums — this is a public,
+// unauthenticated endpoint, so nothing free-form reaches the database.
+const PromptMetaSchema = z
+  .object({
+    device: z.enum(['mobile', 'desktop']).optional(),
+    landing: z.boolean().optional(),
+    variant: z.enum(['v1', 'v2']).optional(),
+    trigger: z.enum(['second-page', 'dwell', 'scroll', 'manual']).optional(),
+    how: z.enum(['no', 'close', 'escape']).optional(),
+  })
+  .strict();
 const TrackSchema = z.object({
   type: z.enum(TRACK_TYPES),
   endpoint: z.string().min(1).optional(),
   campaignId: z.string().min(1).optional(),
+  meta: PromptMetaSchema.optional(),
 });
 
 const TargetSchema = z.discriminatedUnion('type', [
@@ -208,7 +229,7 @@ export function createApiRouter(
     try {
       const parsed = TrackSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
-      const { type, endpoint, campaignId } = parsed.data;
+      const { type, endpoint, campaignId, meta } = parsed.data;
 
       // DISMISSED is accepted (older service workers still post it) but no
       // longer stored. Nothing in the codebase ever read it, and it had grown
@@ -231,7 +252,12 @@ export function createApiRouter(
       }
 
       await prisma.event.create({
-        data: { type, subscriberId, campaignId: resolvedCampaignId },
+        data: {
+          type,
+          subscriberId,
+          campaignId: resolvedCampaignId,
+          ...(meta && Object.keys(meta).length ? { meta } : {}),
+        },
       });
 
       return res.status(204).end();
@@ -241,7 +267,10 @@ export function createApiRouter(
   });
 
   router.get('/config', publicLimiter, (_req, res) => {
-    return res.json({ vapidPublicKey: env.vapid.publicKey });
+    return res.json({
+      vapidPublicKey: env.vapid.publicKey,
+      promptVariant: env.softPrompt.v2 ? 'v2' : 'v1',
+    });
   });
 
   router.post('/send', requireBearerOrUser(), async (req, res, next) => {

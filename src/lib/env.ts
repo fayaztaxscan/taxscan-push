@@ -128,6 +128,14 @@ export const env = {
   // FAIL-OPEN by design: only an explicit 404/410 counts as dead — timeouts,
   // network errors and 5xx all send as normal, because a flaky check must never
   // block the channel. Default off.
+  /**
+   * Soft-prompt v2 (2026-10-15): a yes/no ask with no topic chips that may also
+   * appear on a reader's first page, after real engagement. Off = the original
+   * prompt. Served to the SDK via /api/config.
+   */
+  softPrompt: {
+    v2: process.env.SOFT_PROMPT_V2 === 'true',
+  },
   linkCheck: {
     enabled: process.env.LINK_CHECK_ENABLED === 'true',
     timeoutMs: intEnv('LINK_CHECK_TIMEOUT_MS', 5000),

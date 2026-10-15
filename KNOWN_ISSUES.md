@@ -21,6 +21,11 @@ inserted at the top.
 > **The underlying question — how late in page load the SDK runs, and whether that
 > costs opt-ins — has NOT been re-measured on the new stack.** Re-measure before
 > assuming it is fixed; the 2026-06-16 resolution note below refers to the old CMS.
+>
+> **Re-measured 2026-10-15 on the Nuxt site (Chrome, homepage):** the script request starts
+> **~6.2 s** after navigation and finishes at ~6.6 s (`async`+`defer` tag injected by the CMS) —
+> much better than Hocalwire's 20–28 s, still late. Article links do FULL page loads, so the
+> SDK's sessionStorage page counter (first page vs later page) still works.
 
 **Filed:** 2026-06-06. **Owner:** vendor (Hocalwire). **Severity:** moderate.
 
