@@ -183,9 +183,17 @@ async function backfillSelect(portal: string, now: Date): Promise<Campaign | nul
   const todayStart = startOfTodayIST(now);
   const yStart = new Date(todayStart.getTime() - DAY_MS);
 
-  // Rotation: never re-send a URL that already went out today.
+  // Rotation: never re-send a URL that already went out today — or whose send
+  // STARTED today (claimedAt): a clone that crashed mid-send may have reached
+  // subscribers without its delivery events landing.
   const sentTodayRows = await prisma.campaign.findMany({
-    where: { portal, events: { some: { type: 'SENT', createdAt: { gte: todayStart } } } },
+    where: {
+      portal,
+      OR: [
+        { events: { some: { type: 'SENT', createdAt: { gte: todayStart } } } },
+        { claimedAt: { gte: todayStart } },
+      ],
+    },
     select: { url: true },
   });
   const sentUrlsToday = new Set(sentTodayRows.map((c) => c.url));

@@ -1,4 +1,4 @@
-import type { Campaign, Subscriber } from '@prisma/client';
+import type { Campaign, Prisma, Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/push';
@@ -145,6 +145,9 @@ export type ExecuteResult = {
   failed: number;
 };
 
+/** Delivery events per createMany while a send runs (see executeCampaign). */
+const EVENT_BATCH = 100;
+
 async function resolveTargets(portal: string, target: Target): Promise<Subscriber[]> {
   if (target.type === 'all') {
     return prisma.subscriber.findMany({ where: { portal, status: 'ACTIVE' } });
@@ -221,59 +224,57 @@ export async function executeCampaign(
       campaignId: campaign.id,
     };
 
-    // Per-item try/catch isolates failures: a sender that throws (custom or
-    // web-push's synchronous validation throw on bad keys) becomes a `failed`
-    // outcome for that one subscriber instead of aborting the whole batch.
-    const outcomes = await workerPool(kept, concurrency, async (sub) => {
-      try {
-        return await sender(sub, payload);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          ok: false,
-          expired: false,
-          failed: true,
-          error: message,
-        } satisfies SendOutcome;
-      }
-    });
-
+    // Delivery events are written in batches AS the send runs, not after it:
+    // ~3,000 one-row inserts used to dominate send time, and a crash mid-send
+    // left no record at all of who had been reached (so recovery could only
+    // call it FAILED, and the morning backfill could pick the article again).
+    // A crash now loses at most one unflushed batch.
     let sent = 0;
     let expiredPruned = 0;
     let failed = 0;
-    for (let i = 0; i < kept.length; i++) {
-      const outcome = outcomes[i];
-      const sub = kept[i];
+    let pending: Prisma.EventCreateManyInput[] = [];
+    const flush = async (): Promise<void> => {
+      if (pending.length === 0) return;
+      const batch = pending;
+      pending = []; // swap first so a concurrent lane never writes the same rows
+      await prisma.event.createMany({ data: batch });
+    };
+
+    // Per-item try/catch isolates failures: a sender that throws (custom or
+    // web-push's synchronous validation throw on bad keys) becomes a `failed`
+    // outcome for that one subscriber instead of aborting the whole batch.
+    await workerPool(kept, concurrency, async (sub) => {
+      let outcome: SendOutcome;
+      try {
+        outcome = await sender(sub, payload);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        outcome = { ok: false, expired: false, failed: true, error: message };
+      }
       if (outcome.ok) {
         sent++;
-        await prisma.event.create({
-          data: { type: 'SENT', campaignId: campaign.id, subscriberId: sub.id },
-        });
+        pending.push({ type: 'SENT', campaignId: campaign.id, subscriberId: sub.id });
       } else if (outcome.expired) {
         // 404/410: the subscription is dead. sendToSubscriber has already
         // flipped the subscriber to EXPIRED; record the FAILED event so the
         // delivery-rate metric counts it as a non-delivery.
         expiredPruned++;
-        await prisma.event.create({
-          data: {
-            type: 'FAILED',
-            campaignId: campaign.id,
-            subscriberId: sub.id,
-            meta: { reason: 'expired', statusCode: outcome.statusCode },
-          },
+        pending.push({
+          type: 'FAILED',
+          campaignId: campaign.id,
+          subscriberId: sub.id,
+          meta: { reason: 'expired', statusCode: outcome.statusCode },
         });
       } else {
         failed++;
-        await prisma.event.create({
-          data: {
-            type: 'FAILED',
-            campaignId: campaign.id,
-            subscriberId: sub.id,
-            meta: {
-              reason: 'error',
-              statusCode: outcome.statusCode ?? null,
-              message: outcome.error ?? null,
-            },
+        pending.push({
+          type: 'FAILED',
+          campaignId: campaign.id,
+          subscriberId: sub.id,
+          meta: {
+            reason: 'error',
+            statusCode: outcome.statusCode ?? null,
+            message: outcome.error ?? null,
           },
         });
         // eslint-disable-next-line no-console
@@ -281,7 +282,9 @@ export async function executeCampaign(
           `push failed for subscriber ${sub.id}: ${outcome.statusCode} ${outcome.error}`,
         );
       }
-    }
+      if (pending.length >= EVENT_BATCH) await flush();
+    });
+    await flush();
 
     await prisma.campaign.update({
       where: { id: campaign.id },

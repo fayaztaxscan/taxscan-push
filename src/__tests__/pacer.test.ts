@@ -400,6 +400,25 @@ describe('runPacerTick — morning backfill (§5a)', () => {
     expect(r.reason).toBe('empty');
   });
 
+  it('does not re-send a URL whose send STARTED today but recorded no deliveries (crashed clone)', async () => {
+    const portal = uniquePortal('bf-crashed');
+    const now = ist(2026, 6, 18, 8, 0);
+    const url = 'https://taxscan.in/sc-crashed';
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url, at: ist(2026, 6, 17, 10, 0) });
+    // This morning's clone was claimed, then the process died before any event landed.
+    const clone = await prisma.campaign.create({
+      data: {
+        portal, title: 'Supreme Court ruling [Read Judgment]', body: '.', url, target: { type: 'all' },
+        status: 'SCHEDULED', sendQueue: 'QUALIFIED', authority: 'Supreme Court',
+        createdAt: ist(2026, 6, 17, 10, 0), claimedAt: ist(2026, 6, 18, 7, 15),
+      },
+    });
+    campaignIds.push(clone.id);
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.backfill).toBe(false);
+    expect(r.reason).toBe('empty');
+  });
+
   it('is inert when the flag is off (existing behaviour)', async () => {
     const portal = uniquePortal('bf-off');
     const now = ist(2026, 6, 18, 8, 0);
