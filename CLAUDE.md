@@ -81,7 +81,11 @@ browsers after endpoint rotation, so it barely grows the base.
   **Report images are a summary card** (`ShareCard.vue`: headline + change + two top-5 lists, fixed
   480px → 1080px PNG, identical from any device); the full heat-table PNG is desktop-only "Full report image".
   **Push now (Queue + Review) asks "Send to everyone now?"** (`ConfirmPush.vue`, Cancel focused) —
-  added 2026-10-07 at the user's request; kept button-sized on phones too. "Recent campaigns"
+  added 2026-10-07 at the user's request; kept button-sized on phones too. **Compose "Send now" confirms
+  too (2026-10-21) and can't double-send:** each composed message carries a one-time `clientRequestId`
+  (unique on `Campaign`); a repeat `/api/send` with the same id gets **409 `duplicate_send`** and sends
+  nothing. Push requests wait 90 s (`PUSH_REQUEST` in `useApi`; Cloudflare cuts at 100 s/524), and a
+  write with no reply says "may still be sending — check Campaigns", never "try again". "Recent campaigns"
   (Dashboard) and the Campaigns list union in recently-PUSHED items so they aren't dropped by
   the capture-time window.
 - **Resilient data fetch** — the shared `useApi` adds a 15s timeout + retry (network/502/503/504,

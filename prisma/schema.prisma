@@ -123,6 +123,11 @@ model Campaign {
   /// reads a handful of indexed Campaign rows instead of grouping a week or two
   /// of delivery Events (~460k-900k rows; the cold-cache cause of slow loads).
   lastSentAt        DateTime?
+  /// One-time id the admin SPA attaches to a Compose send. A second /api/send
+  /// carrying the same id (a retry after a timeout, a double click) is refused
+  /// instead of pushing the same message to every subscriber twice. Null for
+  /// RSS captures, bearer/curl sends and rows from before 2026-10-21.
+  clientRequestId   String?   @unique
 
   createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]

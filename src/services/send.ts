@@ -96,6 +96,12 @@ export type CampaignInput = {
   authority?: string | null;
   /** RSS <category> tags for the coverage reports (poller-set). */
   categories?: string[];
+  /**
+   * One-time id from the admin SPA's Compose screen. Stored on the Campaign
+   * under a unique index, so a second dispatch with the same id fails at
+   * create — before anything is sent. See /api/send.
+   */
+  clientRequestId?: string | null;
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -338,6 +344,7 @@ export async function dispatchCampaign(
       sendQueue: input.sendQueue ?? null,
       authority: input.authority ?? null,
       categories: input.categories ?? [],
+      clientRequestId: input.clientRequestId ?? null,
     },
   });
 

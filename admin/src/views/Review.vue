@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { useApi } from '../composables/useApi';
+import { PUSH_REQUEST, useApi } from '../composables/useApi';
 import PipelineStrip from '../components/PipelineStrip.vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
 
@@ -44,7 +44,11 @@ async function act(item: ReviewItem, action: 'approve' | 'reject' | 'push', labe
   error.value = null;
   notice.value = null;
   try {
-    const res = await api.post<{ sent?: number }>(`/api/review/${item.id}/${action}`, {});
+    const res = await api.post<{ sent?: number }>(
+      `/api/review/${item.id}/${action}`,
+      {},
+      action === 'push' ? PUSH_REQUEST : undefined,
+    );
     drop(item.id);
     notice.value =
       action === 'push'
