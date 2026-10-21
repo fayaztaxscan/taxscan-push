@@ -124,6 +124,7 @@ describe('send queue API', () => {
 
     const after = await prisma.campaign.findUnique({ where: { id: c.id } });
     expect(after?.status).toBe('SENT');
+    expect(after?.claimedAt).toBeInstanceOf(Date); // lets recoverStrandedClaims see a crash
     const sent = await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } });
     expect(sent).toBeGreaterThanOrEqual(1);
   });

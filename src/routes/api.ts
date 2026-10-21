@@ -566,7 +566,7 @@ export function createApiRouter(
       // not Automatic).
       const claim = await prisma.campaign.updateMany({
         where: { id: req.params.id, status: 'DRAFT', sendQueue: { in: ['QUALIFIED', 'FALLBACK'] } },
-        data: { status: 'SCHEDULED', createdByUserId: userId },
+        data: { status: 'SCHEDULED', createdByUserId: userId, claimedAt: new Date() },
       });
       if (claim.count === 0) return res.status(404).json({ error: 'queue_item_not_found' });
       const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });

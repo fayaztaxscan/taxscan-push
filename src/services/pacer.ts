@@ -333,7 +333,7 @@ export async function runPacerTick(deps: PacerDeps = {}): Promise<PacerResult> {
   // tick (or a manual send) racing on the same row.
   const claim = await prisma.campaign.updateMany({
     where: { id: campaign.id, status: 'DRAFT' },
-    data: { status: 'SCHEDULED' },
+    data: { status: 'SCHEDULED', claimedAt: now },
   });
   if (claim.count === 0) {
     return { released: null, campaignId: null, reason: 'empty', sentToday, backfill: false };
@@ -348,7 +348,14 @@ export async function runPacerTick(deps: PacerDeps = {}): Promise<PacerResult> {
   const linkCheckEnabled = deps.linkCheck ?? env.linkCheck.enabled;
   if (linkCheckEnabled) {
     const isDead = deps.isUrlDead ?? ((u: string) => isUrlDeadDefault(u, env.linkCheck.timeoutMs));
-    if (await isDead(campaign.url)) {
+    // Fail open, like isUrlDeadDefault: a check that THROWS must not leave the
+    // claimed row stranded as SCHEDULED — only a confirmed 404/410 stops a send.
+    const dead = await isDead(campaign.url).catch((err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.warn('[pacer] link check threw — sending anyway', { campaignId: campaign.id, err });
+      return false;
+    });
+    if (dead) {
       await prisma.campaign.update({
         where: { id: campaign.id },
         data: { status: 'EXPIRED' },
@@ -387,6 +394,61 @@ export async function runPacerTick(deps: PacerDeps = {}): Promise<PacerResult> {
   }
 }
 
+/**
+ * Close out campaigns stranded mid-send. The pacer and Queue "Push now" claim a
+ * row DRAFT → SCHEDULED (scheduledAt = null, claimedAt = now) and executeCampaign
+ * flips it to SENT/FAILED when done. If the process dies in between, nothing
+ * else ever touches the row: the sweeper only picks scheduledAt <= now, and
+ * retention only expires DRAFTs.
+ *
+ * A stranded row may already have reached part of the audience, so it is NEVER
+ * re-sent: with any delivery recorded it becomes SENT (lastSentAt = the last
+ * delivery), otherwise FAILED. `staleMinutes` must comfortably exceed the
+ * longest send — during a deploy the old container can still be sending.
+ */
+export async function recoverStrandedClaims(
+  deps: { now?: Date; staleMinutes?: number; portal?: string } = {},
+): Promise<{ sent: number; failed: number }> {
+  const now = deps.now ?? new Date();
+  const cutoff = new Date(now.getTime() - (deps.staleMinutes ?? 30) * 60_000);
+  const stranded = await prisma.campaign.findMany({
+    where: {
+      status: 'SCHEDULED',
+      scheduledAt: null,
+      claimedAt: { lte: cutoff },
+      ...(deps.portal ? { portal: deps.portal } : {}),
+    },
+    select: { id: true, rolledSent: true },
+  });
+
+  let sent = 0;
+  let failed = 0;
+  for (const c of stranded) {
+    const last = await prisma.event.findFirst({
+      where: { campaignId: c.id, type: 'SENT' },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    const delivered = last !== null || c.rolledSent > 0;
+    // Guarded on the stranded shape, so a row something else just finished is left alone.
+    const r = await prisma.campaign.updateMany({
+      where: { id: c.id, status: 'SCHEDULED', scheduledAt: null },
+      data: delivered
+        ? { status: 'SENT', ...(last ? { lastSentAt: last.createdAt } : {}) }
+        : { status: 'FAILED' },
+    });
+    if (r.count === 0) continue;
+    if (delivered) sent += 1;
+    else failed += 1;
+    // eslint-disable-next-line no-console
+    console.warn('[pacer] closed out a campaign stranded mid-send — not re-sent', {
+      campaignId: c.id,
+      status: delivered ? 'SENT' : 'FAILED',
+    });
+  }
+  return { sent, failed };
+}
+
 let isPacing = false;
 
 export function startPacer(): void {
@@ -408,6 +470,10 @@ export function startPacer(): void {
       }
       isPacing = true;
       try {
+        await recoverStrandedClaims().catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error('[pacer] stranded-claim recovery failed', err);
+        });
         const r = await runPacerTick();
         if (r.reason === 'sent') {
           // eslint-disable-next-line no-console
