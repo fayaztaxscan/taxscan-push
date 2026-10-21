@@ -34,8 +34,13 @@ status changes so a fresh Claude session can pick up cleanly.
   — truncated GA/Search Console responses deleting data, `/api/admin/subscribers` exposing endpoints,
   campaigns stranded SCHEDULED after a crash (`Campaign.claimedAt` + `recoverStrandedClaims`, never
   re-sends), delivery events written in batches during the send (also closes a crashed-backfill-clone
-  re-send). Still open, highest first: report-email banner misses pre-send failures; Push now skips
-  the link check; "never at night" is habit, not code; plus the L-severity list.
+  re-send), report-email banner now catches pre-send failures, Push now runs the dead-link check, and
+  **quiet hours: only Breaking gets through at night** (owner's decision 2026-10-21 — Queue/Review Push
+  now answer 409 and the admin offers "Send now as Breaking" / "Leave for morning"; guide v1.9).
+  All seven M-severity findings are done; the L-severity list remains.
+- **Flaky test:** `eventRetention.test.ts` "lifetime totals… identical before and after a sweep" compares
+  DB-wide totals, so another file writing Events mid-sweep can fail it under parallel workers (passes
+  alone; seen once in three full runs on 2026-10-21). Fix needs a portal-scoped totals helper.
 
 **OPEN — owner-side (carried from 2026-09-29, unchanged unless noted):** items 1–6 below; item 7's
 guide is now **v1.8**.
