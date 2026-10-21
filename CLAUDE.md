@@ -277,6 +277,12 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
   the repo — `railway.json` was removed 2026-10-07 ahead of Railway's 2026-12-01 Config-as-Code
   cutoff. **Never `railway config apply` a generated IaC file**: its plan showed it would delete
   all 65 service variables (incl. VAPID keys) and disconnect GitHub.
+- **Agents + machine resources (owner's standing rule, 2026-10-21):** at most **two** agents or
+  background programs in parallel, together using **no more than half this Mac** (4 cores / 8 GB) —
+  jest is capped at `maxWorkers: 2`, long work runs under `nice`, one test run / dev server / browser
+  at a time. Project roles live in `.claude/agents/` (software-architect, product-manager,
+  backend-developer, ui-developer, qa-verifier, devops-engineer, record-keeper, authz-sweeper,
+  audience-strategist); default pipeline Architect → Developer → QA. Agents never push or merge.
 - Work one numbered task at a time. After each, run the acceptance check, then stop and summarize.
 - Commit to `develop` after each task with a clear message (e.g. "Task 3: VAPID config").
 - Write tests as you go. Keep functions small and documented.
