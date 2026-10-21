@@ -887,13 +887,22 @@ const emailRunProviderMessage = computed(() => {
 
 const emailRunWarning = computed(() => {
   const r = emailRun.value;
-  if (!r || r.failed === 0) return null;
+  if (!r || (r.failed === 0 && !r.error)) return null;
   const when = new Date(r.ranAt).toLocaleString(undefined, {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   });
+  // Failed before the first email (report or recipient list couldn't be
+  // prepared): nobody was tried, and the error is ours, not the provider's.
+  if (r.recipients === 0 && r.sent === 0 && r.failed === 0) {
+    return {
+      headline: `The ${r.period} report email was not sent.`,
+      detail: `It failed before sending on ${when}: ${(r.error ?? '').replace(/^Not sent — failed before sending: /, '')}`,
+      provider: null,
+    };
+  }
   const none = r.sent === 0;
   return {
     headline: none
