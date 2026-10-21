@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { useApi } from '../composables/useApi';
+import { PUSH_REQUEST, useApi } from '../composables/useApi';
 import PipelineStrip from '../components/PipelineStrip.vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
 
@@ -48,7 +48,7 @@ async function pushNow(item: QueueItem) {
   error.value = null;
   notice.value = null;
   try {
-    const res = await api.post<{ sent?: number }>(`/api/queue/${item.id}/push`, {});
+    const res = await api.post<{ sent?: number }>(`/api/queue/${item.id}/push`, {}, PUSH_REQUEST);
     items.value = items.value.filter((i) => i.id !== item.id);
     notice.value = `Pushed “${item.title.slice(0, 60)}” to ${res.sent ?? 0} subscribers.`;
   } catch (e) {

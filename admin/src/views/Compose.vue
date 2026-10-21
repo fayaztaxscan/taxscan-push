@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { apiErrorMessage, useApi } from '../composables/useApi';
+import { computed, onMounted, ref, watch } from 'vue';
+import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
 import { useTestDevice } from '../composables/useTestDevice';
+import ConfirmPush from '../components/ConfirmPush.vue';
 
 type DispatchResult = {
   campaignId: string;
@@ -47,6 +48,7 @@ const scheduleMode = ref<'now' | 'later'>('now');
 const scheduledAtLocal = ref('');
 
 const submitting = ref(false);
+const confirming = ref(false);
 const result = ref<DispatchResult | null>(null);
 const errorBanner = ref<string | null>(null);
 const testNotice = ref<string | null>(null);
@@ -73,6 +75,57 @@ function clearStatus() {
   testNotice.value = null;
 }
 
+// One-time id for this composed message. The server refuses a second send
+// carrying the same id, so a retry after "no reply in time" — or a double
+// click — can't push the same notification to every subscriber twice. It is
+// kept across retries and replaced only when the message itself changes.
+const requestId = ref<string | null>(null);
+
+function newRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+watch(
+  [title, body, url, icon, targetMode, selectedTopics, breaking, force, scheduleMode, scheduledAtLocal],
+  () => {
+    requestId.value = null;
+  },
+  { deep: true },
+);
+
+// Who the confirm dialog names. Topic sends also reach "All news" subscribers.
+const TOPIC_LABEL = new Map(TOPICS.map((t) => [t.slug, t.label]));
+const confirmHeading = computed(() =>
+  targetMode.value === 'all'
+    ? 'Send to everyone now?'
+    : `Send to ${selectedTopics.value.map((s) => TOPIC_LABEL.get(s) ?? s).join(', ')} subscribers now?`,
+);
+const confirmDetail = computed(() => {
+  const who =
+    targetMode.value === 'all'
+      ? 'It goes to all subscribers straight away.'
+      : 'It goes out straight away — subscribers who chose “All news” get it too.';
+  const night = breaking.value ? ' Breaking: it is sent even during quiet hours (11 pm – 7 am).' : '';
+  return `${who}${night} A sent notification can't be recalled.`;
+});
+
+// "Send now" asks first; a scheduled send sends nothing yet, so it doesn't.
+function onSendClick() {
+  if (scheduleMode.value === 'later' && !force.value) {
+    void send();
+    return;
+  }
+  confirming.value = true;
+}
+
+async function confirmSend() {
+  await send();
+  confirming.value = false;
+}
+
 function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; scheduledAt?: string }> = {}) {
   const payload: Record<string, unknown> = {
     portal: 'taxscan',
@@ -84,6 +137,7 @@ function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; s
   };
   if (icon.value) payload.icon = icon.value;
   if (force.value) payload.force = true;
+  if (requestId.value) payload.clientRequestId = requestId.value;
   // force is immediate-only — never attach a schedule when it's on.
   if (!force.value) {
     if (overrides.scheduledAt) payload.scheduledAt = overrides.scheduledAt;
@@ -97,8 +151,9 @@ function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; s
 async function send() {
   clearStatus();
   submitting.value = true;
+  if (!requestId.value) requestId.value = newRequestId();
   try {
-    const res = await api.post<DispatchResult>('/api/send', buildPayload());
+    const res = await api.post<DispatchResult>('/api/send', buildPayload(), PUSH_REQUEST);
     result.value = res;
   } catch (e) {
     errorBanner.value = apiErrorMessage(e);
@@ -219,7 +274,7 @@ onMounted(() => {
           type="button"
           class="btn btn-primary"
           :disabled="!canSend || submitting"
-          @click="send"
+          @click="onSendClick"
         >
           {{ submitting ? 'Sending…' : scheduleMode === 'later' ? 'Schedule' : 'Send now' }}
         </button>
@@ -267,5 +322,16 @@ onMounted(() => {
       <div v-if="testError" class="banner err" style="margin-top: 10px">{{ testError }}</div>
       <div v-if="testNotice" class="banner ok" style="margin-top: 10px">{{ testNotice }}</div>
     </div>
+
+    <ConfirmPush
+      v-if="confirming"
+      :title="title"
+      :busy="submitting"
+      :heading="confirmHeading"
+      :detail="confirmDetail"
+      confirm-label="Send now"
+      @confirm="confirmSend"
+      @cancel="confirming = false"
+    />
   </main>
 </template>

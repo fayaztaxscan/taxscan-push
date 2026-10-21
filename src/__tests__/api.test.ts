@@ -293,6 +293,91 @@ describe('POST /api/send', () => {
   });
 });
 
+describe('POST /api/send — one-time clientRequestId (Compose double-send guard)', () => {
+  const PORTAL = 'test-api-send-dup';
+  let calls = 0;
+  const countingSender: Sender = async () => {
+    calls += 1;
+    return { ok: true, statusCode: 201 };
+  };
+  const dupApp = createApp({ sender: countingSender });
+  const auth = () => `Bearer ${process.env.ADMIN_TOKEN}`;
+  const message = (extra: Record<string, unknown> = {}) => ({
+    portal: PORTAL,
+    title: 'dup guard',
+    body: 'compose send',
+    url: 'https://taxscan.in/dup',
+    target: { type: 'all' },
+    breaking: true, // deterministic regardless of quiet hours
+    ...extra,
+  });
+  const requestId = () => `req-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+
+  beforeAll(async () => {
+    await request(dupApp)
+      .post('/api/subscribe')
+      .send({ subscription: makeSubscription('dup'), portal: PORTAL })
+      .expect(201);
+  });
+
+  afterAll(async () => {
+    const rows = await prisma.campaign.findMany({ where: { portal: PORTAL }, select: { id: true } });
+    apiCampaignIds.push(...rows.map((r) => r.id));
+  });
+
+  beforeEach(() => {
+    calls = 0;
+  });
+
+  it('refuses a repeat with the same id: 409, the original campaign, nothing sent again', async () => {
+    const id = requestId();
+    const first = await request(dupApp).post('/api/send').set('Authorization', auth()).send(message({ clientRequestId: id }));
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe('SENT');
+    const sentByFirst = calls;
+    expect(sentByFirst).toBeGreaterThanOrEqual(1);
+
+    const repeat = await request(dupApp).post('/api/send').set('Authorization', auth()).send(message({ clientRequestId: id }));
+    expect(repeat.status).toBe(409);
+    expect(repeat.body.error).toBe('duplicate_send');
+    expect(repeat.body.campaignId).toBe(first.body.campaignId);
+    expect(calls).toBe(sentByFirst);
+    expect(await prisma.campaign.count({ where: { clientRequestId: id } })).toBe(1);
+  });
+
+  it('two requests with the same id at the same instant send exactly once', async () => {
+    const id = requestId();
+    const [a, b] = await Promise.all([
+      request(dupApp).post('/api/send').set('Authorization', auth()).send(message({ clientRequestId: id })),
+      request(dupApp).post('/api/send').set('Authorization', auth()).send(message({ clientRequestId: id })),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const winner = a.status === 200 ? a : b;
+    expect(calls).toBe(winner.body.sent + winner.body.failed + winner.body.expiredPruned);
+    expect(await prisma.campaign.count({ where: { clientRequestId: id } })).toBe(1);
+  });
+
+  it('refuses a repeat of a scheduled send too', async () => {
+    const id = requestId();
+    const scheduledAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const first = await request(dupApp).post('/api/send').set('Authorization', auth()).send(message({ clientRequestId: id, scheduledAt }));
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe('SCHEDULED');
+    const repeat = await request(dupApp).post('/api/send').set('Authorization', auth()).send(message({ clientRequestId: id, scheduledAt }));
+    expect(repeat.status).toBe(409);
+    expect(repeat.body.campaignId).toBe(first.body.campaignId);
+    expect(await prisma.campaign.count({ where: { clientRequestId: id } })).toBe(1);
+  });
+
+  it('without an id, sends are not deduplicated (bearer/curl behaviour unchanged)', async () => {
+    const one = await request(dupApp).post('/api/send').set('Authorization', auth()).send(message());
+    const two = await request(dupApp).post('/api/send').set('Authorization', auth()).send(message());
+    expect(one.status).toBe(200);
+    expect(two.status).toBe(200);
+    expect(two.body.campaignId).not.toBe(one.body.campaignId);
+  });
+});
+
 describe('GET /api/guide (auth-gated admin guide PDF)', () => {
   it('rejects an unauthenticated request', async () => {
     const res = await request(app).get('/api/guide');

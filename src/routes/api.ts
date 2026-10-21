@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { requireBearerOrUser, requireUser } from '../lib/auth';
-import type { Subscriber } from '@prisma/client';
+import { Prisma, type Subscriber } from '@prisma/client';
 import {
   dispatchCampaign,
   executeCampaign,
@@ -114,7 +114,17 @@ const SendSchema = z.object({
   // cooldown so the send reaches every eligible subscriber. See CampaignInput.
   force: z.boolean().optional(),
   scheduledAt: z.string().datetime().optional(),
+  // One-time id per composed message (the SPA's Compose screen). A repeat with
+  // the same id is refused with 409 — see duplicateSend below.
+  clientRequestId: z.string().min(8).max(100).optional(),
 });
+
+/** P2002 on Campaign.clientRequestId: a concurrent twin of this send won the create. */
+function isDuplicateRequestId(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;
+  const target = (err.meta as { target?: unknown } | undefined)?.target;
+  return Array.isArray(target) ? target.includes('clientRequestId') : String(target ?? '').includes('clientRequestId');
+}
 
 // Test-on-this-device: the admin's own browser subscribes (via the SPA) and
 // posts its subscription here to receive a one-off preview of the composed
@@ -297,40 +307,72 @@ export function createApiRouter(
       // Campaign.createdByUserId and the audit row.
       const createdByUserId = req.user?.id ?? null;
 
-      if (scheduledAt) {
-        const when = new Date(scheduledAt);
-        if (when.getTime() > Date.now()) {
-          const campaign = await prisma.campaign.create({
-            data: {
-              portal: input.portal,
-              title: input.title,
-              body: input.body,
-              url: input.url,
-              icon: input.icon ?? null,
-              target: input.target as object,
-              status: 'SCHEDULED',
-              scheduledAt: when,
-              createdByUserId,
-            },
-          });
-          return res.status(200).json({
-            campaignId: campaign.id,
-            status: 'SCHEDULED',
-            sent: 0,
-            capped: 0,
-            cooled: 0,
-            expiredPruned: 0,
-            failed: 0,
-            deferred: { scheduledAt: when.toISOString() },
-          });
-        }
+      // A Compose send that arrives twice with the same one-time id — a retry
+      // after the browser gave up waiting, or a double click — must not push the
+      // same message to every subscriber again. The first request owns the id;
+      // the repeat gets 409 with the original campaign, and nothing is sent.
+      // The unique index on clientRequestId backs this check for two requests
+      // that arrive at the same instant.
+      const duplicateSend = async (): Promise<Response> => {
+        const original = await prisma.campaign.findUnique({
+          where: { clientRequestId: input.clientRequestId! },
+          select: { id: true, status: true },
+        });
+        return res.status(409).json({
+          error: 'duplicate_send',
+          campaignId: original?.id ?? null,
+          status: original?.status ?? null,
+          message:
+            'This message was already sent (or is still sending). Nothing was sent again — check Campaigns.',
+        });
+      };
+      if (input.clientRequestId) {
+        const seen = await prisma.campaign.findUnique({
+          where: { clientRequestId: input.clientRequestId },
+          select: { id: true },
+        });
+        if (seen) return duplicateSend();
       }
 
-      const result = await dispatchCampaign(
-        { ...input, createdByUserId },
-        { sender: opts.sender },
-      );
-      return res.status(200).json(result);
+      const run = async () => {
+        if (scheduledAt) {
+          const when = new Date(scheduledAt);
+          if (when.getTime() > Date.now()) {
+            const campaign = await prisma.campaign.create({
+              data: {
+                portal: input.portal,
+                title: input.title,
+                body: input.body,
+                url: input.url,
+                icon: input.icon ?? null,
+                target: input.target as object,
+                status: 'SCHEDULED',
+                scheduledAt: when,
+                createdByUserId,
+                clientRequestId: input.clientRequestId ?? null,
+              },
+            });
+            return {
+              campaignId: campaign.id,
+              status: 'SCHEDULED' as const,
+              sent: 0,
+              capped: 0,
+              cooled: 0,
+              expiredPruned: 0,
+              failed: 0,
+              deferred: { scheduledAt: when.toISOString() },
+            };
+          }
+        }
+        return dispatchCampaign({ ...input, createdByUserId }, { sender: opts.sender });
+      };
+
+      try {
+        return res.status(200).json(await run());
+      } catch (err) {
+        if (input.clientRequestId && isDuplicateRequestId(err)) return duplicateSend();
+        throw err;
+      }
     } catch (err) {
       return next(err);
     }
