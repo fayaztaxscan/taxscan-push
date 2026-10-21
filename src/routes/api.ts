@@ -126,6 +126,17 @@ function isDuplicateRequestId(err: unknown): boolean {
   return Array.isArray(target) ? target.includes('clientRequestId') : String(target ?? '').includes('clientRequestId');
 }
 
+/** "fcm.googleapis.com…a1b2c3": enough to recognise a device, useless for sending to it. */
+export function endpointHint(endpoint: string): string {
+  let host = 'unknown';
+  try {
+    host = new URL(endpoint).host || host;
+  } catch {
+    // not a URL (e.g. a test fixture) — host stays 'unknown'
+  }
+  return `${host}…${endpoint.slice(-6)}`;
+}
+
 // Test-on-this-device: the admin's own browser subscribes (via the SPA) and
 // posts its subscription here to receive a one-off preview of the composed
 // notification. No DB row, no portal — it reaches ONLY the device that asked.
@@ -839,10 +850,13 @@ export function createApiRouter(
     }
   });
 
-  router.get('/admin/subscribers', requireBearerOrUser(), async (req, res, next) => {
+  // Lists recent subscribers so an operator can find their own device for the
+  // test segment. The push endpoint is a delivery credential, so only a short
+  // hint (push-service host + last 6 chars) leaves the server — never the URL.
+  router.get('/admin/subscribers', requireBearerOrUser(['ADMIN']), async (req, res, next) => {
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
-      const subscribers = await prisma.subscriber.findMany({
+      const rows = await prisma.subscriber.findMany({
         where: { status: 'ACTIVE' },
         orderBy: { createdAt: 'desc' },
         take: limit,
@@ -855,13 +869,17 @@ export function createApiRouter(
           portal: true,
         },
       });
+      const subscribers = rows.map(({ endpoint, ...rest }) => ({
+        ...rest,
+        endpointHint: endpointHint(endpoint),
+      }));
       return res.json({ subscribers, testSegmentTopic: env.testSegmentTopic });
     } catch (err) {
       return next(err);
     }
   });
 
-  router.post('/admin/subscribers/:id/test-segment', requireBearerOrUser(), async (req, res, next) => {
+  router.post('/admin/subscribers/:id/test-segment', requireBearerOrUser(['ADMIN']), async (req, res, next) => {
     try {
       const sub = await prisma.subscriber.findUnique({ where: { id: req.params.id } });
       if (!sub) return res.status(404).json({ error: 'subscriber_not_found' });
