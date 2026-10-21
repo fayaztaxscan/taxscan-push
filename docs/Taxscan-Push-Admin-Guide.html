@@ -99,7 +99,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 1.8 &nbsp;·&nbsp; Updated 21 October 2026
+    &nbsp;·&nbsp; Version 1.9 &nbsp;·&nbsp; Updated 21 October 2026
   </div>
 </div>
 
@@ -279,7 +279,9 @@ posts</strong> (see below). For each one you have three choices:</p>
         <td>Adds it to the normal send queue. It goes out on the next available slot, alongside everything else.</td>
         <td>It's a good piece worth sending, but not urgent.</td></tr>
     <tr><td><span class="pill">Push now</span></td>
-        <td><strong>Sends it immediately to everyone</strong>, skipping the wait. You'll be asked to confirm first.</td>
+        <td><strong>Sends it immediately to everyone</strong>, skipping the wait. You'll be asked to confirm first.
+            Between 11 pm and 7 am you'll be asked again — readers are promised no alerts at night, so only
+            <strong>Send now as Breaking</strong> gets through; <em>Leave for morning</em> changes nothing.</td>
         <td>It's important and you want it out right away.</td></tr>
     <tr><td><span class="pill" style="background:#dc2626">Reject</span></td>
         <td>Drops it — it will never be sent.</td>
@@ -399,7 +401,7 @@ notification will look before sending it to anyone.</p>
 <table>
   <thead><tr><th style="width:22%">Screen</th><th>What it's for</th></tr></thead>
   <tbody>
-    <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one, then confirm, to send it immediately instead of waiting its turn.</td></tr>
+    <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one, then confirm, to send it immediately instead of waiting its turn. At night (11 pm – 7 am) it only goes as Breaking. If the article has been deleted from the site, it is archived instead of sent.</td></tr>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
     <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
     <tr><td><strong>Activity</strong></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
@@ -587,6 +589,9 @@ nothing on screen to say why. The notice exists so that can't happen again.</p>
   <thead><tr><th style="width:40%">Situation</th><th>What to do</th></tr></thead>
   <tbody>
     <tr><td>An article didn't send the instant it published</td><td>Normal — it's waiting its ~45-min turn. If urgent, <strong>Push now</strong> / <strong>Force send</strong>.</td></tr>
+    <tr><td><strong>Push now</strong> asks "It's quiet hours"</td><td>It's between 11 pm and 7 am. <em>Leave for morning</em> (nothing changes), or <strong>Send now as Breaking</strong> if it truly can't wait.</td></tr>
+    <tr><td><strong>Push now</strong> says "deleted from the site"</td><td>The desk removed that article, so it was archived instead of sending everyone a dead link. Nothing to do.</td></tr>
+    <tr><td>Reports shows "The report email was not sent"</td><td>It failed before sending (the report or recipient list couldn't be prepared). Tell whoever runs the platform; the notice clears when the next scheduled email sends.</td></tr>
     <tr><td>CTR is drifting down</td><td>Be choosier about what's sent; sharpen headlines. Don't send more — send better.</td></tr>
     <tr><td>Unsubscribe rate ticking up</td><td>A fatigue signal — ease off volume; make sure only genuinely useful items go out.</td></tr>
     <tr><td>Delivery rate dipped</td><td>Usually dead subscriptions; it self-heals. Only worry if it stays low for days.</td></tr>
@@ -698,7 +703,7 @@ reach everyone immediately, ignoring the normal spacing/frequency limits. They'r
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 1.8 · Updated 21 October 2026
+  Taxscan Push · Admin User Guide · Version 1.9 · Updated 21 October 2026
 </p>
 </section>
 

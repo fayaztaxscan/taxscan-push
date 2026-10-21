@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { PUSH_REQUEST, useApi } from '../composables/useApi';
+import { PUSH_REQUEST, useApi, type ApiError } from '../composables/useApi';
 import PipelineStrip from '../components/PipelineStrip.vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
 
@@ -20,6 +20,9 @@ const loading = ref(false);
 const busyId = ref<string | null>(null);
 // The item awaiting "Send to everyone now?" — Push now never fires on one tap.
 const confirming = ref<QueueItem | null>(null);
+// Set when the server refused a Push now for quiet hours: the second dialog
+// offers the one deliberate way through — send it as Breaking.
+const quietHold = ref<QueueItem | null>(null);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
 
@@ -43,16 +46,36 @@ async function confirmPush() {
   confirming.value = null;
 }
 
-async function pushNow(item: QueueItem) {
+async function confirmBreaking() {
+  const item = quietHold.value;
+  if (!item) return;
+  await pushNow(item, true);
+  quietHold.value = null;
+}
+
+async function pushNow(item: QueueItem, breaking = false) {
   busyId.value = item.id;
   error.value = null;
   notice.value = null;
   try {
-    const res = await api.post<{ sent?: number }>(`/api/queue/${item.id}/push`, {}, PUSH_REQUEST);
+    const res = await api.post<{ sent?: number }>(
+      `/api/queue/${item.id}/push`,
+      breaking ? { breaking: true } : {},
+      PUSH_REQUEST,
+    );
     items.value = items.value.filter((i) => i.id !== item.id);
     notice.value = `Pushed “${item.title.slice(0, 60)}” to ${res.sent ?? 0} subscribers.`;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    const err = e as ApiError;
+    const code = (err.body as { error?: string } | undefined)?.error;
+    if (err.status === 409 && code === 'quiet_hours') {
+      quietHold.value = item; // nothing was sent or changed
+    } else if (err.status === 410 && code === 'dead_link') {
+      items.value = items.value.filter((i) => i.id !== item.id);
+      error.value = `Not sent — “${item.title.slice(0, 60)}” has been deleted from the site, so it was archived.`;
+    } else {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
   } finally {
     busyId.value = null;
   }
@@ -134,6 +157,17 @@ onMounted(load);
       :busy="busyId === confirming.id"
       @confirm="confirmPush"
       @cancel="confirming = null"
+    />
+    <ConfirmPush
+      v-if="quietHold"
+      :title="quietHold.title"
+      :busy="busyId === quietHold.id"
+      heading="It’s quiet hours (11 pm – 7 am)"
+      detail="Readers are promised no alerts at night. Leave it and it goes out in its normal slot from 7 am — or send it now as Breaking news."
+      confirm-label="Send now as Breaking"
+      cancel-label="Leave for morning"
+      @confirm="confirmBreaking"
+      @cancel="quietHold = null"
     />
   </main>
 </template>

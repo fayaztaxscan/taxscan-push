@@ -22,6 +22,11 @@ export type CreateAppOptions = {
   // Overrides the directory the admin SPA is served from. Production reads the
   // real `admin/dist/`; tests pass a fixture path.
   adminDistDir?: string;
+  // Push now (Queue/Review) guards — injectable so tests don't depend on the
+  // wall clock (quiet hours) or the network (link check).
+  clock?: () => Date;
+  linkCheck?: boolean;
+  isUrlDead?: (url: string) => Promise<boolean>;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -66,6 +71,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     createApiRouter({
       sender: opts.sender,
       publicPerMin: opts.rateLimit?.publicPerMin ?? env.rateLimit.publicPerMin,
+      clock: opts.clock,
+      linkCheck: opts.linkCheck,
+      isUrlDead: opts.isUrlDead,
     }),
   );
 
