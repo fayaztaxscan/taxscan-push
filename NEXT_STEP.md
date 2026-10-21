@@ -30,10 +30,10 @@ status changes so a fresh Claude session can pick up cleanly.
   temporarily paused" incident (since 07:24 UTC; a variable change redeploys). Owner sets it, then
   verify `/api/config` → `"promptVariant":"v2"`, record the switch time, compare ≥2 weeks with the
   funnel SQL (grants/day + shown/day, not rates alone).
-- **29 findings from the 2026-10-21 whole-repo review** remain unfixed (only the Compose double-send
-  is done). Highest: report-email banner misses pre-send failures; a truncated GA/Search Console
-  response deletes data; sends insert Event rows one at a time; `/api/admin/subscribers` shows full
-  endpoints to any logged-in user; a crash mid-send strands a campaign as SCHEDULED; Push now skips
+- **Findings from the 2026-10-21 whole-repo review.** Fixed: Compose double-send (PR #73); a
+  truncated GA/Search Console response deleting data, and `/api/admin/subscribers` exposing full
+  endpoints (PR #74). Still open, highest first: a crash mid-send strands a campaign as SCHEDULED;
+  sends insert Event rows one at a time; report-email banner misses pre-send failures; Push now skips
   the link check; "never at night" is habit, not code.
 
 **OPEN — owner-side (carried from 2026-09-29, unchanged unless noted):** items 1–6 below; item 7's
