@@ -239,6 +239,20 @@ export async function executeCampaign(
       pending = []; // swap first so a concurrent lane never writes the same rows
       await prisma.event.createMany({ data: batch });
     };
+    // Mid-send, a failed write must not abort the fan-out: Promise.all would
+    // reject while the other lanes kept pushing behind a FAILED status and an
+    // early error reply. The rows go back in the buffer for the next write;
+    // the final flush below (after every lane is done) is the one that throws.
+    const flushMidSend = async (): Promise<void> => {
+      const batch = pending;
+      try {
+        await flush();
+      } catch (err) {
+        pending = batch.concat(pending);
+        // eslint-disable-next-line no-console
+        console.warn('[send] event write failed mid-send — will retry', { campaignId: campaign.id, err });
+      }
+    };
 
     // Per-item try/catch isolates failures: a sender that throws (custom or
     // web-push's synchronous validation throw on bad keys) becomes a `failed`
@@ -282,7 +296,7 @@ export async function executeCampaign(
           `push failed for subscriber ${sub.id}: ${outcome.statusCode} ${outcome.error}`,
         );
       }
-      if (pending.length >= EVENT_BATCH) await flush();
+      if (pending.length >= EVENT_BATCH) await flushMidSend();
     });
     await flush();
 

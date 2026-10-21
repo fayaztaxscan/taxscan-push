@@ -713,6 +713,38 @@ describe('executeCampaign — delivery events land while the send runs', () => {
     expect(await prisma.event.count({ where: { campaignId: c.id, type: 'FAILED' } })).toBe(7);
   });
 
+  it('a failed event write mid-send neither aborts the fan-out nor loses rows', async () => {
+    const portal = uniquePortal('flakydb');
+    await Promise.all(Array.from({ length: 350 }, (_, i) => makeSubscriber(portal, `f${i}`)));
+    const c = await prisma.campaign.create({
+      data: { portal, title: 't', body: 'b', url: 'https://taxscan.in/x', target: { type: 'all' }, status: 'SCHEDULED' },
+    });
+    campaignIds.push(c.id);
+    const real = prisma.event.createMany.bind(prisma.event);
+    let first = true;
+    const spy = jest.spyOn(prisma.event, 'createMany').mockImplementation(((args: Parameters<typeof real>[0]) => {
+      if (first) {
+        first = false;
+        return Promise.reject(new Error('db blip'));
+      }
+      return real(args);
+    }) as unknown as typeof prisma.event.createMany);
+    let calls = 0;
+    const sender: Sender = async () => {
+      calls += 1;
+      return { ok: true, statusCode: 201 };
+    };
+    try {
+      const r = await executeCampaign(c, { sender, cap: Infinity, minGapMinutes: 0, concurrency: 4 });
+      expect(r.sent).toBe(350);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(calls).toBe(350);
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } })).toBe(350);
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
+  });
+
   it('a send that stalls mid-way has already recorded the deliveries made so far', async () => {
     const portal = uniquePortal('stall');
     await Promise.all(Array.from({ length: 150 }, (_, i) => makeSubscriber(portal, `s${i}`)));
