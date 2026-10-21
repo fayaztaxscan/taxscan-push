@@ -295,6 +295,19 @@ describe('dispatchCampaign', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('force WITHOUT breaking is still held at night (readers are promised "never at night")', async () => {
+    const portal = uniquePortal('force-night');
+    await makeSubscriber(portal, 'force-night');
+    const now = ist(2026, 6, 1, 2, 0);
+    const result = await dispatchCampaign(
+      { portal, title: 'forced late', body: '...', url: 'https://taxscan.in', target: { type: 'all' }, force: true },
+      { sender: okSender(), now, quietStart: '23:00', quietEnd: '07:00' },
+    );
+    campaignIds.push(result.campaignId);
+    expect(result.status).toBe('SCHEDULED');
+    expect(result.sent).toBe(0);
+  });
+
   it('breaking flag bypasses quiet hours', async () => {
     const portal = uniquePortal('breaking');
     await makeSubscriber(portal, 'breaking');

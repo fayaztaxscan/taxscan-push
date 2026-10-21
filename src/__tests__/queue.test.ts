@@ -13,6 +13,14 @@ const NIGHT_IST = new Date('2026-07-28T19:00:00.000Z'); // 00:30 IST
 const app = createApp({ sender: okSender, clock: () => NOON_IST, linkCheck: false });
 const nightApp = createApp({ sender: okSender, clock: () => NIGHT_IST, linkCheck: false });
 const deadLinkApp = createApp({ sender: okSender, clock: () => NOON_IST, linkCheck: true, isUrlDead: async () => true });
+const throwingLinkApp = createApp({
+  sender: okSender,
+  clock: () => NOON_IST,
+  linkCheck: true,
+  isUrlDead: async () => {
+    throw new Error('link check exploded');
+  },
+});
 const AUTH = `Bearer ${process.env.ADMIN_TOKEN}`;
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
@@ -172,6 +180,20 @@ describe('send queue API', () => {
     expect(res.body.error).toBe('dead_link');
     expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('EXPIRED');
     expect(await prisma.event.count({ where: { campaignId: c.id } })).toBe(0);
+  });
+
+  it('Push now still sends when the link check itself throws (fail open)', async () => {
+    const portal = `test-queue-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Judgment]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 6, 18, 9, 0),
+    });
+    const res = await request(throwingLinkApp).post(`/api/queue/${c.id}/push`).set('Authorization', AUTH).send({});
+    expect(res.status).toBe(200);
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
   });
 
   it('pushing an already-sent / non-pending item returns 404', async () => {

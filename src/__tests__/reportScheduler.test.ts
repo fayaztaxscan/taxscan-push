@@ -177,6 +177,21 @@ describe('report email run bookkeeping', () => {
     expect(run?.error).toBe('Not sent — failed before sending: db unavailable');
   });
 
+  it('does NOT record a pre-send failure when record:false (a test email never raises the banner)', async () => {
+    const portal = `test-runrec-${uniq()}`;
+    runPortals.push(portal);
+    const { sender } = recordingSender();
+    const spy = jest.spyOn(prisma.user, 'findMany').mockRejectedValueOnce(new Error('db unavailable'));
+    try {
+      await expect(
+        sendScheduledReport({ period: 'weekly', now: ist(2026, 9, 7, 7), portal, sender, record: false }),
+      ).rejects.toThrow('db unavailable');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await lastReportEmailRun(portal)).toBeNull();
+  });
+
   it('does NOT record when record:false — a personal test must not set the banner', async () => {
     const portal = `test-runrec-${uniq()}`;
     runPortals.push(portal);
