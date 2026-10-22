@@ -3,6 +3,7 @@ import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import { advanceRun, ensureRun } from '../services/digest/runner';
 import { createMailercloudSender } from '../services/digest/mailercloud';
 import { FakeMailercloud } from './digestMailercloudFake';
+import { placeholderContent } from './digestPlaceholderContent';
 
 /**
  * Email digest task 2 integration (docs/EMAIL_DIGEST_DESIGN.md §13): the
@@ -47,7 +48,7 @@ afterAll(async () => {
 it('advanceRun with the real client: draft created, scheduled now, confirmed SENT', async () => {
   const sender = createMailercloudSender(cfg, { baseV1: fake.base.v1, baseV2: fake.base.v2, timeoutMs: 2000 });
   const run = await ensureRun({ portal: `${PORTAL_PREFIX}${Date.now()}`, now: ist(6, 0), cfg });
-  const step = (now: Date) => advanceRun(run.id, 'cron', { sender, now, cfg, quiet: QUIET });
+  const step = (now: Date) => advanceRun(run.id, 'cron', { sender, now, cfg, quiet: QUIET, buildContent: placeholderContent });
 
   // 06:30 IST: build + create both drafts; nothing is scheduled before the send time.
   await step(ist(6, 30));
