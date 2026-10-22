@@ -4,6 +4,7 @@ import { env, type DigestEnv } from '../../lib/env';
 import { isEmailConfigured } from '../../lib/email';
 import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, runDateKey } from './retryPolicy';
+import { validateDigestSchedule } from './scheduler';
 import { BLOCKING_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
 
 /**
@@ -135,6 +136,8 @@ export type DigestStatusPayload = {
     sendLive: boolean;
     approvalRequired: boolean;
     sendAt: string;
+    /** When the daily build runs (IST HH:MM), or null when the schedule is invalid. */
+    buildAt: string | null;
     cutoff: string;
     providerConfigured: boolean;
     alertEmailConfigured: boolean;
@@ -170,6 +173,16 @@ export type DigestStatusPayload = {
   history: { runDate: string; state: DigestRunState }[];
 };
 
+/** The daily build time for the "no run yet" line; never throws (a bad QUIET_HOURS_* would). */
+function buildAtOf(cfg: DigestEnv): string | null {
+  try {
+    const check = validateDigestSchedule(cfg);
+    return check.ok ? check.schedule.buildAt : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Builds the status payload for `portal` at `now`. */
 export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: DigestEnv } = {}): Promise<DigestStatusPayload> {
   const cfg = opts.cfg ?? env.digest;
@@ -182,6 +195,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       sendLive: cfg.sendLive,
       approvalRequired: cfg.approvalRequired,
       sendAt: cfg.sendAt,
+      buildAt: buildAtOf(cfg),
       cutoff: cfg.cutoff,
       providerConfigured: cfg.mailercloud.apiKey.trim() !== '',
       alertEmailConfigured: isEmailConfigured(),

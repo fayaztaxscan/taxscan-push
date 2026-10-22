@@ -7,6 +7,7 @@ import Review from './views/Review.vue';
 import Queue from './views/Queue.vue';
 import Guide from './views/Guide.vue';
 import Reports from './views/Reports.vue';
+import Digests from './views/Digests.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
 import AcceptInvite from './views/AcceptInvite.vue';
@@ -38,6 +39,7 @@ export const router = createRouter({
     { path: '/queue', name: 'queue', component: Queue },
     { path: '/campaigns', name: 'campaigns', component: Campaigns },
     { path: '/reports', name: 'reports', component: Reports },
+    { path: '/digests', name: 'digests', component: Digests },
     {
       path: '/users',
       name: 'users',

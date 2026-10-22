@@ -309,7 +309,7 @@ label {
   display: flex;
   /* Wrap rather than overflow if the full link row ever exceeds the viewport
      above the hamburger breakpoint (long email, narrow laptop). The collapse
-     to a hamburger below 1024px is the primary handling — see the media query
+     to a hamburger below 1200px is the primary handling — see the media query
      at the bottom of this file. */
   flex-wrap: wrap;
   gap: 4px;
@@ -737,11 +737,12 @@ td .badge {
    blocks adapt it for phones. The nav collapses to a hamburger, dense rows
    wrap, and padding tightens so content isn't cramped or clipped.
    ------------------------------------------------------------------------- */
-/* The full desktop nav row (8 links + account + utilities) needs ~1100px, so it
-   overflows the whole tablet band (iPad portrait 768, landscape 1024). Collapse
-   to the hamburger across that band, not just on phones. Content-layout tweaks
-   stay at the 720/480 breakpoints below. */
-@media (max-width: 1024px) {
+/* The full desktop nav row (9 links incl. Digests + account + utilities) needs
+   ~1180px with a typical email (8 links needed ~1100px; at 1100px the 9-link row
+   wrapped, 2026-10-22). Collapse to the hamburger below 1200px, which covers the
+   whole tablet band (iPad portrait 768, landscape 1024) and small laptops.
+   Content-layout tweaks stay at the 720/480 breakpoints below. */
+@media (max-width: 1199px) {
   /* Collapsible nav: brand + hamburger on the top row; the menu drops below as
      a full-width vertical list when toggled open. */
   .nav {
