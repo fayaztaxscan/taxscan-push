@@ -34,16 +34,30 @@ Owner rulings this design is bound by (all 2026-10-22):
 pipeline already ranks them. Send it to two audiences through the Mailercloud API without anyone having
 to assemble it by hand. Fix the known defects of today's hand-made digest along the way:
 
-| Defect in today's digest | How this design fixes it |
-|---|---|
-| The subject line is not the lead story | The subject is the lead story's headline |
-| Stale visible date | The date is computed from the run date |
-| Empty preheader | The template requires a preheader |
-| Images have no alt text | The editor blocks any image without alt text |
-| No postal address | The address is a footer block the template cannot remove |
-| Size is ~98 KB, close to Gmail's ~102 KB clip | A size budget is checked when the template is saved and on every build |
-| Paid members are shown the subscription ad | The ad picker filters by audience, with a second hard guard |
-| Ad text exists only inside images | Every ad has a live-text headline and a CTA button |
+Every defect found in two of today's digest copies (22 Oct 2026, sent identically to both audiences) has a
+fix here. Each fix is either enforced by code (the template validator or the renderer refuses to proceed)
+or is a gate in the rollout (§10), so none of them can quietly come back.
+
+| # | Defect in today's digest | Fix in this design | Enforced by |
+|---|---|---|---|
+| 1 | No RFC 8058 one-click unsubscribe (List-Unsubscribe is `mailto:` only) | Campaign sends carry Mailercloud's own unsubscribe headers, which we cannot set through the campaign API. **Rollout gate:** a live send to staff must show `List-Unsubscribe` with an https URL **and** `List-Unsubscribe-Post: List-Unsubscribe=One-Click` before stage 3 (§10). If it is missing, stage 3 stops and the owner decides (account setting, or sending through the Email API, which lets us set both headers) | Rollout gate |
+| 2 | HTML ~98 KB, close to Gmail's ~102 KB clip | Size budget: warn at 80 KB, **refuse at 90 KB** of HTML, checked when a template is saved and on every build | Validator + renderer |
+| 3 | Stale visible date ("Oct 15 2026" on a 22 Oct mail; inconsistent case) | Date is generated from `runDate` in IST, one fixed format ("22 October 2026") | Renderer |
+| 4 | Subject is not the lead story | Subject = the lead story's headline (≤ 90 chars) | Renderer |
+| 5 | All-or-nothing unsubscribe ("opt out of all type of emails") | Campaigns are created with Mailercloud's `mailing_preference` on, so the footer offers **manage preferences** as well as unsubscribe; footer wording no longer says "all types". Service mail to paid members (later phase) uses the Email API stream, so a digest unsubscribe never blocks it | Template footer block + campaign payload |
+| 6 | No postal address | A footer block the template cannot remove | Validator |
+| 7 | Empty preheader (inbox shows "Oct 15 2026 View this email in your browser") | Preheader generated: "Plus N more: <2nd headline>…", sent as `email_preheader` and as hidden preview text | Renderer + validator |
+| 8 | 26 images, all `alt=""` | Every image needs alt text; article thumbnails get the headline as alt | Validator + renderer |
+| 9 | `noreply@` From and Reply-To | **Monitored reply address** on the verified sending subdomain (owner-approved) | Config (refuses a `noreply` address) |
+| 10 | 15 items per mail (rulings + ICAI + explainers + job ads) | **Cap 12**, minimum 5; phase 1 takes only queue-approved items, so unreviewed explainers and job posts stay out (owner-approved) | Builder |
+| 11 | No visible premium benefit; both groups get the same copy | Separate **Premium** variant: its own active template (premium header label), no subscription ad, its own ad pool | Builder + ad picker |
+| 12 | Paid members shown "Subscribe now — ₹2,599/year" | Ad picker filters by audience, plus a hard guard that refuses a subscription ad in a Premium send; the slot is filled from the pool, never left empty | Ad picker (fails closed) |
+| 13 | Ad text and "Buy now" exist only inside images | Every ad has a live-text headline + a real CTA button + alt text | Ads screen validation |
+| 14 | Ad images heavy (1080×1080, ~200–225 KB each, shown at 300 px), plus a desktop/mobile copy swap | **One scalable creative per ad** (≤ 1200 px wide, ≤ 150 KB); no `display:none` swaps. **Total image weight budget per email: 600 KB**, with a warning on build | Ads validation + renderer |
+| 15 | "46% off" with no end date; the same ads every day | Every ad has start/end dates (expired offers drop out on their own) and rotates by priority within its slot | Ad picker |
+| 16 | No conversion attribution (Mailercloud conversions = 0) | UTM on every article and ad link; each ad placement recorded per send for later order matching | Renderer |
+| 17 | Generic header banner from April; copy-of-copy campaign names ("Copy (85) … (Copy)") | Header comes from the active template; campaign names are generated ("Taxscan Digest · 22 Oct 2026 · Free") | Template + runner |
+| 18 | Not designed for every screen or for dark mode | Fluid single column, works without media queries, Outlook fallback, ≥ 16 px body, ≥ 44 px taps; **dark-mode check** in the template preview (logos and colours readable on dark backgrounds) | Template validator + preview |
 
 **In scope (phase 1):**
 
@@ -633,48 +647,40 @@ Selection and failure-handling tests:
 
 ---
 
-## 12. Open decisions for the owner
+## 12. Decisions
 
-1. **Provider.** Confirm the Mailercloud API (campaign v2) as the sending route for the digest.
-   *Recommended: yes.*
-2. **Plan inclusion.** Are API access and the Email API included in the current plan or billed
-   separately? Check in the account; do not ask support.
-3. **Morning send time.** *Recommended: 07:30 IST* (the build runs at 06:30; the cut-off at 17:00 is
-   already decided).
-4. **Pilot list and approval mode.** Which ~10 internal addresses and which ~1,000/~200 pilot segments?
-   If approval is missing at the send time, should the digest hold until the cut-off (then skip) or send
-   automatically at, say, T+60? *Recommended: hold during the pilot; decide auto-send before going to
-   full.*
-5. **MJML** (a new npm dependency, which touches `package-lock`; Nixpacks build risk). It would be used
-   only when a template is saved; the send path never compiles. *Recommended: approve, on condition that
-   one Railway build is verified on a branch first.* Without it, phase 1 ships a fixed set of
-   hand-written fluid-hybrid partials, and templates become layout parameters only (no free HTML).
-6. **`scheduled_at` timezone.** This design avoids depending on it by scheduling "now" at T. Confirm
-   anyway, in case a future-scheduled send is wanted.
-7. **Can a batch upsert re-subscribe an unsubscribed contact?** This must be tested on internal
-   addresses before any contact sync (a later phase). Until then, phase 1 never writes contacts.
-8. **Grace length before "expired"** (later phase). *Recommended default: 7 days, as a setting.*
-9. **Roles.** May publishers approve, hold, Send now and Retry, the same as Push now? *Recommended: yes.*
-   Templates and Ads: admins only.
-10. **ICYMI after a partial send.** Readers who *were* reached will see those 2–3 stories again, under a
-    labelled "In case you missed it" heading, because the campaign cannot target only the unreached.
-    *Recommended: accept.*
-11. **Content scope.** Should analytical articles, explainers and job posts that sit unreviewed in
-    REVIEW be included? *Recommended: no in phase 1* (the push queues are the editorial signal).
-    Editors can approve items into the queue.
-12. **Item cap.** *Recommended: 12*, down from 15 today. The minimum to send is 5.
-13. **From and reply address.** Today's digest uses `noreply@`. *Recommended: a monitored reply
-    address on the same verified sending subdomain.*
-14. **Mailercloud checks before stage 2.** Self-serve in the account:
-    - the exact unsubscribe merge tag;
-    - whether **live** campaign sends carry RFC 8058 one-click;
-    - whether a v2 draft (`is_publish "0"`) can be scheduled through v1 `schedule/{id}`;
-    - that re-scheduling a scheduled or sent campaign is rejected or a no-op, never a second send;
-    - the campaign status values;
-    - whether there is a webhook-status read endpoint.
-15. **Ad images.** Ads are validated (1200 px wide, ≤150 KB) but not resized, because there is no image
-    library and adding one would mean a native dependency. Images are hosted at `push.taxscan.in/email-assets`.
-    *Recommended: accept.*
+**Approved by the owner (2026-10-22):**
+
+- **Provider: to be confirmed by the owner when the API is set up.** This document details the Mailercloud
+  campaign-v2 route. All provider calls sit behind the `DigestSender` interface (`health`, `createDraft`,
+  `schedule`, `status`, webhook parsing), so a different sending API can be plugged in by writing another
+  implementation of that interface; the builder, renderer, runner, retry rules, templates, ads and
+  admin screens do not change. Task 2 (§13) waits for this confirmation; task 1 does not depend on it.
+- **Send time: 07:30 IST** (the build runs at 06:30; the cut-off at 17:00 IST). **All digest times are IST**,
+  computed by our own scheduler; Mailercloud is only ever told to send "now", so its `scheduled_at`
+  timezone does not matter.
+- **Pilot:** an internal list, then a small engaged segment. If approval is missing at send time, the
+  digest **holds until the cut-off**, then skips. Auto-send is decided before going to full.
+- **MJML** approved, on condition that one Railway build is verified on a branch first.
+- **Roles:** publishers may approve, hold, Send now and Retry (like Push now); Templates and Ads are admin-only.
+- **Item cap 12**, minimum 5. **Content:** queue-approved items only (no unreviewed explainers or job posts).
+- **Reply address:** a monitored address on the verified sending subdomain, replacing `noreply@`.
+- **Ad images:** validated (≤ 1200 px wide, ≤ 150 KB), not resized; hosted at `push.taxscan.in/email-assets`.
+- **ICYMI after a partial send:** accepted (readers already reached may see 2–3 stories again, labelled).
+- **Grace period before "expired"** (later phase): a setting, default 7 days.
+
+**Still open (owner checks in the Mailercloud account; do not ask Mailercloud support):**
+
+1. Are API access and the Email API included in the current plan, or billed separately?
+2. Do **live** campaign sends carry RFC 8058 one-click unsubscribe? (Also a rollout gate; §1 defect #1.)
+3. Before stage 2: the exact unsubscribe merge tag; that `mailing_preference` shows a preference link;
+   whether a v2 draft (`is_publish "0"`) can be scheduled through v1 `schedule/{id}`; that re-scheduling a
+   scheduled or sent campaign is rejected or a no-op, never a second send; the campaign status values;
+   whether there is a webhook-status read endpoint.
+4. Can a batch upsert re-subscribe an unsubscribed contact? Tested on internal addresses before any contact
+   sync (later phase). Phase 1 never writes contacts.
+5. Pilot membership: the internal addresses and the engaged segment. **Pilot readers must be removed from
+   the hand-made Mailercloud digest**, or they get two digests a day.
 
 ---
 
