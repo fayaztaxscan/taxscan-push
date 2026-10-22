@@ -71,9 +71,10 @@ or is a gate in the rollout (§10), so none of them can quietly come back.
 
 **Non-goals (phase 1). Each one leaves a seam:**
 
-- **Lifecycle mail** (welcome, renewal due, expiry after the grace period, win-back). The seam: the
-  `Sender` interface gains a `sendTransactional()` method, and `EmailSuppression` already exists for
-  those sends to check.
+- **Welcome and marketing mail** (later phase). Per the CMS team (22 Oct 2026), **receipts, renewal
+  reminders, expiry notices and invoices stay with the CMS**; this platform never sends them. It sends only
+  the welcome email, the digest and marketing. The seam: the `DigestSender` interface gains a
+  `sendTransactional()` method, and `EmailSuppression` already exists for those sends to check.
 - **CMS → contact-tag sync** (premium / free / expired, plus nightly reconciliation). The seam: audiences
   are referenced by Mailercloud list, segment or tag IDs held in config. When tags start being maintained
   automatically, the digest code does not change.
@@ -668,6 +669,25 @@ Selection and failure-handling tests:
 - **Ad images:** validated (≤ 1200 px wide, ≤ 150 KB), not resized; hosted at `push.taxscan.in/email-assets`.
 - **ICYMI after a partial send:** accepted (readers already reached may see 2–3 stories again, labelled).
 - **Grace period before "expired"** (later phase): a setting, default 7 days.
+
+**Decided 22 Oct 2026 (after the CMS team's reply on data feeds):**
+
+- **Audiences and consent.** The **Premium digest is part of the paid subscription** (a service email): every
+  active paid member, including the grace period, receives it whatever their newsletter opt-in, with a footer
+  line "You're receiving this daily digest as part of your Taxscan Premium subscription" and a working
+  unsubscribe that stops only the digest. The **Free digest** goes to newsletter subscribers, free sign-ups and
+  expired members on the basis of consent given at sign-up. **Always excluded:** an explicit
+  `marketing_consent = false`, anyone unsubscribed, hard bounces and spam complaints. The consent rule is a
+  single setting so it can be tightened later.
+- **Ads.** Only taxscan's own products (Academy, Shopscan), never outside advertisers. Every Premium member
+  sees the normal house ads; never the subscription ad (its slot is refilled from the pool).
+- **Article identity.** Stories written in the new CMS carry no number in their URL (checked: 0 of 70 recent
+  captures), so `articleKey()` currently falls back to the URL. When the CMS feeds arrive, identity moves to
+  the CMS `article_id` (plus `url` and `legacy_id`). Requested: `article_id` as an extra RSS field without
+  changing `<guid>`.
+- **Ranking signal.** Within a group, organic reads per hour (views minus push views) — see §4.1 and the task 4
+  notes. Reads come through a swappable `ReadsSource`: GA4 today, CMS view counts (bots excluded, push views
+  split) when Feed 2 exists, with GA as the fallback.
 
 **Still open (owner checks in the Mailercloud account; do not ask Mailercloud support):**
 
