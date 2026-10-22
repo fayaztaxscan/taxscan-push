@@ -66,6 +66,76 @@ function nonNegIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
+/** Comma-separated list → trimmed, non-empty entries (Mailercloud list/segment/tag ids). */
+function listEnv(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Positive integer from `src[name]`, else `fallback` (intEnv for an explicit source). */
+function intFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const n = Number(src[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+/**
+ * Automatic daily email digest (docs/EMAIL_DIGEST_DESIGN.md §5). Every flag
+ * defaults OFF except DIGEST_APPROVAL_REQUIRED, which defaults ON (an editor
+ * approves each send unless it is switched off deliberately). Times are IST
+ * HH:MM strings, validated by the digest scheduler at boot — a send time
+ * inside quiet hours or at/after the cut-off stops the scheduler, it does not
+ * crash the app. Takes the source as a parameter so the defaults are testable.
+ */
+export function parseDigestEnv(src: NodeJS.ProcessEnv) {
+  return {
+    enabled: src.DIGEST_ENABLED === 'true',
+    // Off = the run stops at CREATED ("preview only"); nothing reaches an audience.
+    sendLive: src.DIGEST_SEND_LIVE === 'true',
+    approvalRequired: src.DIGEST_APPROVAL_REQUIRED !== 'false',
+    webhooksEnabled: src.DIGEST_WEBHOOKS_ENABLED === 'true',
+    sendAt: (src.DIGEST_SEND_AT ?? '07:30').trim(),
+    buildLeadMinutes: intFrom(src, 'DIGEST_BUILD_LEAD_MINUTES', 60),
+    cutoff: (src.DIGEST_CUTOFF ?? '17:00').trim(),
+    maxItems: intFrom(src, 'DIGEST_MAX_ITEMS', 12),
+    minItems: intFrom(src, 'DIGEST_MIN_ITEMS', 5),
+    rollforwardItems: intFrom(src, 'DIGEST_ROLLFORWARD_ITEMS', 3),
+    sanityMaxCandidates: intFrom(src, 'DIGEST_SANITY_MAX_CANDIDATES', 150),
+    maxHtmlKb: intFrom(src, 'DIGEST_MAX_HTML_KB', 90),
+    htmlWarnKb: intFrom(src, 'DIGEST_HTML_WARN_KB', 75),
+    htmlRetentionDays: intFrom(src, 'DIGEST_HTML_RETENTION_DAYS', 30),
+    emailEventRetentionDays: intFrom(src, 'EMAIL_EVENT_RETENTION_DAYS', 90),
+    // Required at build time (later task); the build fails closed when empty.
+    postalAddress: (src.DIGEST_POSTAL_ADDRESS ?? '').trim(),
+    // Internal addresses allowed for test sends, besides active app users. Never logged.
+    testRecipients: listEnv(src.DIGEST_TEST_RECIPIENTS).map((e) => e.toLowerCase()),
+    audiences: {
+      // Fail closed (later task): the Free campaign is never created without a premium exclude.
+      free: {
+        listIds: listEnv(src.DIGEST_FREE_LIST_IDS),
+        excludeListIds: listEnv(src.DIGEST_FREE_EXCLUDE_LIST_IDS),
+        excludeTagIds: listEnv(src.DIGEST_FREE_EXCLUDE_TAG_IDS),
+      },
+      premium: {
+        listIds: listEnv(src.DIGEST_PREMIUM_LIST_IDS),
+        segmentIds: listEnv(src.DIGEST_PREMIUM_SEGMENT_IDS),
+        tagIds: listEnv(src.DIGEST_PREMIUM_TAG_IDS),
+      },
+    },
+    // Railway secrets. Never logged, never put into an error message.
+    mailercloud: {
+      apiKey: src.MAILERCLOUD_API_KEY ?? '',
+      webhookToken: src.MAILERCLOUD_WEBHOOK_TOKEN ?? '',
+      senderName: src.MAILERCLOUD_SENDER_NAME ?? '',
+      senderEmail: src.MAILERCLOUD_SENDER_EMAIL ?? '',
+      replyEmail: src.MAILERCLOUD_REPLY_EMAIL ?? '',
+    },
+  };
+}
+
+export type DigestEnv = ReturnType<typeof parseDigestEnv>;
+
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -275,6 +345,8 @@ export const env = {
       30,
     ),
   },
+  // Automatic daily email digest — see parseDigestEnv above. Default off.
+  digest: parseDigestEnv(process.env),
   // Absolute origin the admin SPA is reachable at — used to build invite
   // links (`<appBaseUrl>/admin/accept-invite?token=…`). Falls back to the
   // request origin at call time when unset (dev / preview).

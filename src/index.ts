@@ -20,6 +20,7 @@ import { startAuditRetentionSweeper } from './sweepers/auditRetention';
 import { startEventRetentionSweeper } from './sweepers/eventRetention';
 import { startBackupCron } from './services/backup';
 import { startMetricsWarmer } from './services/metrics';
+import { startDigestScheduler } from './services/digest/scheduler';
 import type { Sender } from './services/send';
 
 // When E2E_MOCK_SENDER=true, swap web-push for an in-memory success sender so
@@ -49,4 +50,5 @@ app.listen(env.port, () => {
   startEventRetentionSweeper();
   startBackupCron();
   startMetricsWarmer();
+  startDigestScheduler();
 });

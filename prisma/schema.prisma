@@ -62,6 +62,20 @@ enum AuditAction {
   REVIEW_APPROVED
   REVIEW_REJECTED
   REVIEW_PUSHED
+  // Email digest (docs/EMAIL_DIGEST_DESIGN.md §6)
+  DIGEST_APPROVED
+  DIGEST_HELD
+  DIGEST_SEND_NOW
+  DIGEST_RETRY
+  DIGEST_TEST_SENT
+  DIGEST_SCHEDULED
+  DIGEST_SKIPPED
+  DIGEST_TEMPLATE_SAVED
+  DIGEST_TEMPLATE_ACTIVATED
+  DIGEST_TEMPLATE_ARCHIVED
+  DIGEST_TEMPLATE_REVERTED
+  DIGEST_AD_SAVED
+  DIGEST_AD_ARCHIVED
 }
 
 model Subscriber {
@@ -382,4 +396,109 @@ model EventRollup {
   type      EventType @unique
   count     Int       @default(0)
   updatedAt DateTime  @default(now()) @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Automatic daily email digest (docs/EMAIL_DIGEST_DESIGN.md §3). Task 1 adds
+// only the run + per-audience send rows; items, templates, ads, webhook events
+// and suppressions arrive with the tasks that read them. Never touches Event.
+// ---------------------------------------------------------------------------
+
+enum DigestAudience {
+  FREE
+  PREMIUM
+}
+
+enum DigestBuild {
+  BUILDING
+  BUILT
+  BUILD_FAILED
+  SKIPPED
+}
+
+enum DigestApproval {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  HELD
+}
+
+enum DigestSendState {
+  PENDING
+  CREATED
+  SCHEDULED
+  SENT
+  PARTIALLY_SENT
+  FAILED
+  SKIPPED
+}
+
+enum SenderErrorKind {
+  RETRYABLE
+  FATAL
+  AMBIGUOUS
+}
+
+/// One per IST calendar day. The unique (portal, runDate) IS the "max one per day" rule.
+model DigestRun {
+  id               String         @id @default(cuid())
+  portal           String         @default("taxscan")
+  runDate          DateTime       @db.Date // IST date
+  windowStart      DateTime // = previous run's builtAt (cap 72 h)
+  builtAt          DateTime? // freeze instant = next run's windowStart
+  build            DigestBuild    @default(BUILDING)
+  // too_little_news | cutoff_passed | not_approved | held_by_editor |
+  // build_failed | config_invalid | sanity_hold_expired
+  skipReason       String?
+  approval         DigestApproval @default(NOT_REQUIRED)
+  approvedByUserId String?
+  approvedAt       DateTime?
+  candidateCount   Int            @default(0) // for the re-platform sanity guard
+  healthOk         Boolean?
+  healthCheckedAt  DateTime?
+  healthError      String?
+  alerts           Json           @default("{}") // {kind: sentAt}, so one alert per kind per run
+  createdAt        DateTime       @default(now())
+
+  sends DigestSend[]
+
+  @@unique([portal, runDate])
+}
+
+/// One per (run, audience): each variant is its own provider campaign with its own state.
+model DigestSend {
+  id              String           @id @default(cuid())
+  runId           String
+  audience        DigestAudience
+  state           DigestSendState  @default(PENDING)
+  templateId      String?
+  subject         String
+  preheader       String
+  html            String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
+  text            String?
+  htmlBytes       Int
+  mcCampaignName  String           @unique // TS-DIGEST-2026-10-23-FREE-<runId>
+  mcCampaignId    String?          @unique // persisted the instant create returns
+  sendAfter       DateTime // planned send instant (Send now moves it earlier)
+  scheduledAt     DateTime? // when we called schedule
+  sentConfirmedAt DateTime?
+  sentVia         String? // status_poll | webhook
+  stepClaimedAt   DateTime? // DB claim; protects against two containers mid-deploy
+  attempts        Int              @default(0)
+  firstFailureAt  DateTime?
+  nextAttemptAt   DateTime?
+  lastError       String? // truncated, email-shaped substrings redacted
+  lastErrorKind   SenderErrorKind?
+  targeted        Int? // from the provider report
+  reached         Int?
+  opens           Int? // aggregate from the report API, trend only
+  clicks          Int?
+  rolledUnsub     Int              @default(0) // EmailEvent rows folded by the sweeper
+  rolledBounce    Int              @default(0)
+  rolledSpam      Int              @default(0)
+
+  run DigestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, audience])
+  @@index([state, nextAttemptAt])
 }

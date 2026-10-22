@@ -39,6 +39,20 @@ const ACTIONS = [
   'REVIEW_APPROVED',
   'REVIEW_REJECTED',
   'REVIEW_PUSHED',
+  // Email digest (written by later digest tasks; listed now so the filter covers the enum)
+  'DIGEST_APPROVED',
+  'DIGEST_HELD',
+  'DIGEST_SEND_NOW',
+  'DIGEST_RETRY',
+  'DIGEST_TEST_SENT',
+  'DIGEST_SCHEDULED',
+  'DIGEST_SKIPPED',
+  'DIGEST_TEMPLATE_SAVED',
+  'DIGEST_TEMPLATE_ACTIVATED',
+  'DIGEST_TEMPLATE_ARCHIVED',
+  'DIGEST_TEMPLATE_REVERTED',
+  'DIGEST_AD_SAVED',
+  'DIGEST_AD_ARCHIVED',
 ] as const;
 
 const api = useApi();
