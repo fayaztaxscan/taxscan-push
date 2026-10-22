@@ -15,6 +15,7 @@ import { isPastCutoff, istDateOf, istInstant, nextAttemptAt, runDateKey } from '
 import { digestRunState, type DigestRunState } from './runState';
 import { renderDigestContent, senderAddressProblems, type BuildContent } from './renderer';
 import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
+import { sendDigestAlerts } from './alerts';
 
 /**
  * The digest state machine and the ONLY door a digest leaves through
@@ -88,6 +89,16 @@ export type AdvanceDeps = {
   selectItems?: SelectItems;
   /** A step claim older than this is considered abandoned (crashed container). */
   claimStaleMinutes?: number;
+  /**
+   * Runs after every advance (task 6): emails the run's new alert markers.
+   * Default: `sendDigestAlerts` with the real ElasticEmail sender. `false`
+   * turns it off. It is started after the state machine has finished and is
+   * NOT awaited — a slow mailer never holds up a tick, Retry now or Send now —
+   * and a throw is swallowed. Await it with `awaitDigestAlerts()`.
+   */
+  alerts?: ((runId: string) => Promise<unknown>) | false;
+  /** Tests: wait for the alert pass before returning (default false: fire-and-forget). */
+  awaitAlerts?: boolean;
 };
 
 export type AdvanceResult = {
@@ -100,7 +111,7 @@ export type AdvanceResult = {
   state: DigestRunState | null;
 };
 
-/** Alert kinds recorded on `DigestRun.alerts` for task 6 to email (one per kind per run). */
+/** Alert kinds recorded on `DigestRun.alerts`; `alerts.ts` emails each once per run (task 6). */
 export type DigestAlertKind =
   | 'fatal'
   | 'config_invalid'
@@ -282,11 +293,11 @@ function isTerminal(s: Pick<DigestSend, 'state' | 'lastError'>): boolean {
 
 /**
  * Records an alert-needed marker, at most once per kind per run (§3
- * `alerts {kind: …}`). Task 6 sends the email and stamps `sentAt`. Atomic in
+ * `alerts {kind: …}`). `alerts.ts` emails it and stamps `emailedAt`. Atomic in
  * SQL so two runners cannot both raise it. Never throws.
  */
 async function raiseAlert(ctx: Ctx, kind: DigestAlertKind, detail: Record<string, unknown> = {}): Promise<void> {
-  const value = JSON.stringify({ raisedAt: ctx.now.toISOString(), sentAt: null, ...detail });
+  const value = JSON.stringify({ raisedAt: ctx.now.toISOString(), emailedAt: null, ...detail });
   try {
     await prisma.$executeRaw`
       UPDATE "DigestRun"
@@ -314,11 +325,50 @@ function log(ctx: Ctx, audience: DigestAudience | null, what: string): void {
 /* The door                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Moves one run forward as far as its gates allow. See the file header. */
+/**
+ * Moves one run forward as far as its gates allow (see the file header), then
+ * starts the alert mailer without waiting for it. The mailer runs after the
+ * state machine is done — even when a step threw — and can neither throw
+ * into it, delay it, nor change its result.
+ */
 export async function advanceRun(runId: string, trigger: DigestTrigger, deps: AdvanceDeps): Promise<AdvanceResult> {
   const cfg = deps.cfg ?? env.digest;
   if (!cfg.enabled) return { runId, outcome: 'disabled', steps: [], state: null };
+  let found = true;
+  try {
+    const r = await advanceRunInner(runId, trigger, deps, cfg);
+    found = r.outcome !== 'not_found';
+    return r;
+  } finally {
+    if (found) {
+      const pass = afterAdvance(runId, deps, cfg);
+      inFlightAlerts.add(pass);
+      void pass.finally(() => inFlightAlerts.delete(pass));
+      if (deps.awaitAlerts) await pass;
+    }
+  }
+}
 
+/** Alert passes started by `advanceRun` and not finished yet. */
+const inFlightAlerts = new Set<Promise<void>>();
+
+/** Resolves when every alert pass started so far has finished (tests, graceful shutdown). Never rejects. */
+export async function awaitDigestAlerts(): Promise<void> {
+  while (inFlightAlerts.size > 0) await Promise.all([...inFlightAlerts]);
+}
+
+async function afterAdvance(runId: string, deps: AdvanceDeps, cfg: DigestEnv): Promise<void> {
+  if (deps.alerts === false) return;
+  const hook = deps.alerts ?? ((id: string) => sendDigestAlerts(id, { cfg, ...(deps.now ? { now: deps.now } : {}) }));
+  try {
+    await hook(runId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[digest] run=${runId} alert hook failed: ${redactError(err)}`);
+  }
+}
+
+async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: AdvanceDeps, cfg: DigestEnv): Promise<AdvanceResult> {
   const run = await prisma.digestRun.findUnique({ where: { id: runId } });
   if (!run) return { runId, outcome: 'not_found', steps: [], state: null };
 

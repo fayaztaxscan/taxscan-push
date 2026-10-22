@@ -163,9 +163,31 @@ const backupWarning = computed(() => {
   return null;
 });
 
+// --- Standing warning: does today's email digest need a human? ------------
+// The server decides (GET /api/digest/status → `attention`, the same pattern as
+// backup-status's `overdue`): the schedule, cut-off and sanity limit are
+// server-side knowledge, and the rule is table-tested there. This only renders
+// it. Silent when the digest is off, nothing is wrong, or the fetch fails.
+type DigestStatus = {
+  enabled: boolean;
+  attention: { code: string; headline: string; action: string; link: string } | null;
+};
+const digest = ref<DigestStatus | null>(null);
+
+async function loadDigestStatus() {
+  try {
+    digest.value = await api.get<DigestStatus>('/api/digest/status');
+  } catch {
+    digest.value = null; // Secondary signal: never break the Dashboard over it.
+  }
+}
+
+const digestWarning = computed(() => (digest.value?.enabled ? digest.value.attention : null));
+
 onMounted(() => {
   void load();
   void loadBackupStatus();
+  void loadDigestStatus();
 });
 </script>
 
@@ -186,6 +208,14 @@ onMounted(() => {
       <p class="banner-detail">
         Subscribers cannot be recreated if the database is lost. Check the backup job before
         anything else.
+      </p>
+    </div>
+
+    <div v-if="digestWarning" class="banner warn" role="status">
+      <p class="banner-lead">{{ digestWarning.headline }}</p>
+      <p class="banner-detail">
+        {{ digestWarning.action }}
+        <RouterLink :to="digestWarning.link">Open Digests</RouterLink>
       </p>
     </div>
 

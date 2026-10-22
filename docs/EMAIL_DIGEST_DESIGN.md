@@ -772,6 +772,19 @@ agents.
 6. **Alerts and status.** `alerts.ts` (ElasticEmail, one per kind per run), `GET /api/digest/status`,
    and the Dashboard banner.
    *Accept:* a forced 401 produces exactly one email and the banner; recovery clears both.
+   *Built 2026-10-22 (`alerts.ts`, `status.ts`, `src/routes/digest.ts`, Dashboard banner; tests
+   `digestAlerts`).* Every runner marker kind is emailed once per run to active ADMIN users via
+   ElasticEmail; the dedupe lives in the marker itself (`emailClaim` taken by a conditional UPDATE,
+   then `emailedAt`; a failed send waits 10 min, at most 3 tries). `advanceRun` calls the mailer after
+   the state machine finishes (injectable `alerts` dep; a throw is swallowed). A `resolved` marker +
+   one email follow when a run with a blocking alert (fatal, config_invalid, ambiguous_create,
+   schedule_unconfirmed, retrying, build_failed, sanity_hold) reaches `sent`, only if a problem email
+   went out. In preview mode (`DIGEST_SEND_LIVE` off) the routine 17:00 skip is neither emailed nor
+   bannered. The banner decision is server-side (`digestAttention()`, table-tested); the SPA renders
+   `attention`. Deviations: build_failed emails on the first failure (not the 3rd); "not approved by
+   T" has no email yet (no runner marker) but the banner shows it from T; health/webhook checks wait
+   for `health.ts`/task 8. Jest now blanks `ELASTICEMAIL_API_KEY` in `setup.ts`, so no test can mail
+   real users.
 7. **Digests screen and routes.** Preview at 3 widths, approve, hold, test send, Send now (ConfirmPush),
    Retry now, 14-day history.
    *Accept:* verified in a real browser at phone and desktop widths; audit rows written; a test send

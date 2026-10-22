@@ -9,6 +9,7 @@ import { createApiRouter } from './routes/api';
 import { createAuthRouter } from './routes/auth';
 import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
+import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
 import type { EmailSender } from './lib/email';
@@ -27,6 +28,8 @@ export type CreateAppOptions = {
   clock?: () => Date;
   linkCheck?: boolean;
   isUrlDead?: (url: string) => Promise<boolean>;
+  // Email digest routes — tests inject config/clock/portal.
+  digest?: DigestRouterOptions;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -66,6 +69,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   );
   app.use('/api/users', createUsersRouter({ emailSender: opts.emailSender }));
   app.use('/api/audit', createAuditRouter());
+  app.use('/api/digest', createDigestRouter(opts.digest));
   app.use(
     '/api',
     createApiRouter({
