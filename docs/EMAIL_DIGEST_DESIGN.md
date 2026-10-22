@@ -529,7 +529,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
 | Sanity guard (re-platform) | candidates > 150 | Hold for an editor; at cut-off SKIPPED `sanity_hold_expired` | Email at once |
 | Slot unfillable, no postal address, no premium exclude | Config validation at build | `config_invalid`, **no create** | Email at once |
 | Create: 429, 5xx or timeout before send | RETRYABLE | +1/+5/+15 m, then hourly to 17:00 | Email on the first failure, then on recovery |
-| Create: ambiguous timeout | AMBIGUOUS | Retry create. The worst case is an orphan **draft** (`is_publish 0` cannot send); its name is listed in the alert for deletion. `mcCampaignId` is persisted the moment a create returns. | Email (names the orphan) |
+| Create: ambiguous timeout | AMBIGUOUS | Never re-created blindly: look the draft up by its unique name (`findCampaignByName`) and adopt it, or create only if none exists. Without a lookup: FAILED until a human Retry now. `mcCampaignId` is persisted the moment a create returns. | Email (names the draft) |
 | 401, 400, 9002 | FATAL | **No retry.** The health check polls hourly; on recovery before 17:00, `advanceRun` resumes the same frozen version | Email at once |
 | Schedule fails | RETRYABLE / AMBIGUOUS | Check `status(id)` first; if it is already scheduled or sending, advance. Otherwise re-schedule the **same id**. A second campaign is never created. | Email |
 | Scheduled, but not sent after 3 h | Status poll | FAILED → re-issue schedule on the same id, within the window | Email |
@@ -702,6 +702,35 @@ agents.
 3. **Retry policy and runner state machine** (with FakeSender and fixed placeholder content).
    *Accept:* the both-direction tests for quiet hours, cut-off and one-per-day pass; the stored id is
    reused; the step claim blocks a second runner; `digestRunState()` is checked against a table.
+   *Built 2026-10-22 (`runner.ts`, `retryPolicy.ts`, `runState.ts`, `sender.ts`, TEMPORARY
+   `placeholderContent.ts`; tests `digestRunner` + `digestRetryPolicy`). Resolutions of this document:*
+   - **Governing rule: `schedule()`/`createDraft()` only when we can PROVE they were not already called
+     for that variant.** Proof is a write-ahead marker (`DigestSend.scheduleAttemptedAt` /
+     `createAttemptedAt`, migration `20261022135030_digest_step_markers`) set in the same atomic claim
+     update, before the provider call. A set marker (ambiguous reply, crash, stale takeover, Retry now,
+     Send now) means "ask the provider first": `status()` (accepted → SCHEDULED, DRAFT → schedule again,
+     FAILED → terminal, unknown → no call + `schedule_unconfirmed` alert) or `findCampaignByName`
+     (adopt, or create only if none exists). Every decision is taken from a row re-read after its claim.
+   - **AMBIGUOUS create is never repeated blindly** (stricter than the §8 row): `DigestSender` gains an
+     optional `findCampaignByName(name)`; task 2 should implement it. Without it, the variant goes FAILED
+     with an `ambiguous_create` alert naming the draft; only a human Retry now / Send now creates again
+     (worst case an inert orphan draft: only the saved id is ever scheduled). The create marker is cleared
+     only when the provider provably did not act (FATAL, 429, or no HTTP reply); a 5xx keeps it.
+   - Each step keeps its own retry sequence (`stepAttempts` / `stepFirstFailureAt`): +1, +5, +15, then
+     +75, +135 … min from that step's first failure. Create out of time → SKIPPED (no id, nothing could
+     send). Schedule out of time → no more calls; the 17:00 sweep asks the provider and skips only on DRAFT.
+   - Quiet hours and the cut-off are re-checked on a fresh clock immediately before `schedule()`.
+   - The cut-off sweep skips a variant only when it was provably never scheduled (marker null) or the
+     provider says DRAFT; otherwise SCHEDULED/SENT, or FAILED `not_confirmed_by_cutoff` + alert. A
+     SCHEDULED variant gets one last `status()`.
+   - **A campaign the provider reports FAILED is terminal for the day** (Retry now / Send now / health
+     return `refused` with the reason): re-scheduling waits for open question 3. A known reach > 0 is
+     PARTIALLY_SENT; an unknown reach stays null. The §8 "re-issue schedule after 3 h" is not built.
+   - Alerts are recorded as markers in `DigestRun.alerts` (`{kind: {raisedAt, sentAt: null, …}}`, one
+     per kind per run, atomic SQL); task 6 sends them. Build retries on `BUILD_FAILED` are per tick until
+     task 4 adds the build schedule. `lastError` redaction masks plain and %40 addresses, key/token/
+     Authorization parameters and the configured API key value.
+   - No cron calls `advanceRun` yet; `scheduler.ts` is still log-only.
 4. **Builder.** Window, candidates, `rankDigest`, `articleKey` dedupe (90 days), link check, minimum and
    sanity guards, roll-forward, freeze (DigestItem).
    *Accept:* the re-GUID, roll-forward, too-little-news and sanity tests pass. `EXPLAIN (ANALYZE,

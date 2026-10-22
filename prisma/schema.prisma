@@ -484,8 +484,15 @@ model DigestSend {
   sentConfirmedAt DateTime?
   sentVia         String? // status_poll | webhook
   stepClaimedAt   DateTime? // DB claim; protects against two containers mid-deploy
-  attempts        Int              @default(0)
-  firstFailureAt  DateTime?
+  // Write-ahead markers, set in the claim update BEFORE the provider call. A set
+  // marker means the call may have happened: ask the provider before repeating it.
+  createAttemptedAt   DateTime?
+  scheduleAttemptedAt DateTime?
+  attempts        Int              @default(0) // all failed attempts (display)
+  firstFailureAt  DateTime? // first failure of any step (display)
+  // Retry bookkeeping for the CURRENT step (create or schedule); reset when the step succeeds.
+  stepAttempts       Int       @default(0)
+  stepFirstFailureAt DateTime?
   nextAttemptAt   DateTime?
   lastError       String? // truncated, email-shaped substrings redacted
   lastErrorKind   SenderErrorKind?
