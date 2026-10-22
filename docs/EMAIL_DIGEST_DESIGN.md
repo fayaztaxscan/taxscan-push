@@ -364,7 +364,7 @@ Opt-outs and creative work cannot be re-derived after a restore.
 
 | Module | Responsibility |
 |---|---|
-| `sender.ts` | The **`DigestSender` interface** and the Mailercloud implementation (`mailercloud.ts`). Methods: `health()`, `createDraft(input) → {campaignId}` (always `is_publish: "0"`, so it cannot send), `schedule(id, 'now')`, `status(id) → {state, targeted, reached}`, `report(id) → {opens, clicks}`, `testSend(id, emails)`. Every failure is a typed `SenderError {kind, code, http}`: 429/5xx/timeout → RETRYABLE; 401, 400, 9002 → FATAL; a timeout *after* the request was sent on create/schedule → AMBIGUOUS. Auth goes in the `Authorization: <key>` header, **with no `Bearer ` prefix**. Backoff inside one call: exponential with full jitter on 429/5xx, at most 3 tries, 10 s timeout each. There is no Retry-After header to honour. Uses zero-dependency `fetch`. Tests inject `FakeSender`. |
+| `sender.ts` | The **`DigestSender` interface** and the Mailercloud implementation (`mailercloud.ts`). Methods: `health()`, `createDraft(input) → {campaignId}` (always `is_publish: "0"`, so it cannot send), `schedule(id, 'now')`, `status(id) → {state, targeted, reached}`, `report(id) → {opens, clicks}`, `testSend(id, emails)`. Every failure is a typed `SenderError {kind, code, http}`: 429/5xx/timeout → RETRYABLE; 401, 400, 9002 → FATAL; a timeout *after* the request was sent on create/schedule → AMBIGUOUS. Auth goes in the `Authorization: <key>` header, **with no `Bearer ` prefix**. Backoff inside one call (task 2 as built): only for calls safe to repeat (health, status, report, the name lookup) — exponential with jitter on 429/5xx/network failure, ~1 s doubling, step capped at 30 s, at most 5 retries; createDraft, schedule and testSend are never repeated inside the client. 30 s timeout per request. There is no Retry-After header to honour. Uses zero-dependency `fetch`. Tests inject `FakeSender`. |
 | `builder.ts` | Picks candidates and freezes them (§4.1). |
 | `ads.ts` | `pickAds(slots, audience, items, at)`. For each slot, the eligible ads are those that are ACTIVE, inside their date window, match the audience, allow the slot and are not already used in this email. They are ordered: topic match, then priority, then least recently placed. If none is eligible, the slot's default ad is used; if there is no default either, the build **fails closed** with `config_invalid` and an alert. **A second guard:** `kind = SUBSCRIPTION` is rejected for PREMIUM whatever its `audience` field says. |
 | `renderer.ts` | Substitutes into the template's `compiledHtml` and escapes all text. It adds the visible date, the subject (= the lead headline, ≤ 90 chars), the preheader ("Plus N more: <2nd headline>", ≤ 110 chars), the non-removable footer (postal address and Mailercloud's unsubscribe tag) and the plain-text part. `withUtm(url, {campaign, content})` is the single UTM function: `utm_source=taxscan-digest&utm_medium=email&utm_campaign=digest-YYYYMMDD-free&utm_content=item3\|ad-<id>-slot2`. **Size budget:** rendered bytes + (number of links × 150 B for Mailercloud's tracking rewrite) must stay under `DIGEST_MAX_HTML_KB` (90). It warns at 75 KB. Over budget, the lowest-ranked MAIN items are dropped until the email fits, and the drop is logged. |
@@ -699,6 +699,16 @@ agents.
    *Accept:* tests prove there is no Bearer prefix, that 429→retry→success works, that 401/400/9002 are
    FATAL with no retry, and that a timeout on create or schedule is AMBIGUOUS. The key never appears in
    errors.
+   *Built 2026-10-22 (`mailercloud.ts`, `createMailercloudSender(env)`; tests `digestMailercloud` against a
+   local fake HTTP server + `digestMailercloudRunner`, one `advanceRun` happy path with the real client).
+   Endpoints checked against the published OpenAPI files: `GET /v1/client/plan` (health), `POST
+   /v2/campaign/save` (draft), `POST /v1/campaign/schedule/{id}` (no `scheduled_at`), `GET /v1/campaign/{id}`
+   (status + report from `report_summary`), `POST /v1/campaign/testmail/{id}` (one per address), `POST
+   /v1/campaign/list` with `search` (exact-name `findCampaignByName`; an unreadable or over-long answer
+   throws, never "not found"). Status map: Draft → DRAFT; Scheduled/Rescheduled/Queued/Processing →
+   SCHEDULED; Sending/Paused → SENDING; Finished → SENT; Aborted/Failed → FAILED; anything else throws.
+   Still to confirm in the account (open question 3): `targeted`/`reached` = `queued_total`/`sent`; code
+   9002 / quota wording on campaign calls; that the list search includes drafts. Not wired to a cron yet.
 3. **Retry policy and runner state machine** (with FakeSender and fixed placeholder content).
    *Accept:* the both-direction tests for quiet hours, cut-off and one-per-day pass; the stored id is
    reused; the step claim blocks a second runner; `digestRunState()` is checked against a table.
