@@ -1,0 +1,566 @@
+import type { DigestAudience } from '@prisma/client';
+import { env, type DigestEnv } from '../../lib/env';
+import { isAllowedPushUrl } from '../../lib/urlAllowlist';
+import type { FrozenItem } from './builder';
+import { istDateOf } from './retryPolicy';
+
+/**
+ * Digest renderer v0 (docs/EMAIL_DIGEST_DESIGN.md §4 renderer, §13 task 5).
+ *
+ * One built-in template in code (task 10 replaces it with stored templates).
+ * `renderDigest()` is PURE and deterministic: the same items, audience,
+ * runDate and config give byte-identical output — no clock, no randomness,
+ * no I/O. The runner calls it once, inside the build step, and freezes the
+ * result on DigestSend; nothing re-renders after the freeze.
+ *
+ * Every rule below closes a defect of the hand-made digest (§1 table) and is
+ * enforced here, so a bad digest is REFUSED (RenderError) rather than sent:
+ *
+ *  - subject   = lead MAIN headline, ≤ 90 chars on a word boundary (#4)
+ *  - preheader = "Plus N more: <2nd headline>…", ≤ 110 chars, hidden in the
+ *                HTML and returned for the provider's email_preheader (#7)
+ *  - date      = from runDate in IST, "22 October 2026", never copied (#3)
+ *  - footer    = postal address (empty → refuse), the unsubscribe tag, no
+ *                "all types of emails" wording, Premium/Free reason line (#5, #6)
+ *  - links     = every href passes isAllowedPushUrl() (else refuse) and
+ *                carries the digest UTM (#16)
+ *  - images    = every <img> has non-empty alt (#8); v0 is text-only unless a
+ *                logo URL is passed
+ *  - size      = HTML bytes + tracking-rewrite overhead per link: warn at
+ *                DIGEST_HTML_WARN_KB, refuse above DIGEST_MAX_HTML_KB (#2)
+ *  - layout    = fluid single column, 600 px max, no media queries required,
+ *                MSO fixed wrapper, ≥ 16 px body, ≥ 44 px taps, dark-mode
+ *                colour-scheme meta, no web fonts / JS / external CSS (#18)
+ *  - escaping  = every text value is HTML-escaped
+ *  - ads       = NONE in v0; `adSlot` hooks at fixed insertion points (task 9)
+ */
+
+/** What the build step freezes onto each DigestSend. */
+export type DigestContent = {
+  subject: string;
+  preheader: string;
+  html: string;
+  text: string;
+};
+
+/**
+ * Builds one variant's frozen content. `items` is that audience's frozen list
+ * (MAIN by rank, then ICYMI) when the builder ran; undefined without one.
+ * `cfg` is the runner's digest config (postal address, size limits).
+ */
+export type BuildContent = (input: {
+  runId: string;
+  runDate: Date;
+  audience: DigestAudience;
+  items?: FrozenItem[];
+  cfg?: DigestEnv;
+}) => Promise<DigestContent>;
+
+/* ------------------------------------------------------------------ */
+/* Constants                                                           */
+/* ------------------------------------------------------------------ */
+
+// UNVERIFIED: Mailercloud merge tag — confirm in account (design §12 open question 3).
+// Used as the href of the footer unsubscribe link and printed in the plain-text part.
+// It is the ONLY href exempt from the allowlist check, and only as this exact string.
+export const UNSUBSCRIBE_TAG = '{{unsubscribe_link}}';
+
+export const SUBJECT_MAX = 90;
+export const PREHEADER_MAX = 110;
+/** Summary shown under a headline: about two lines on a phone. */
+export const SUMMARY_MAX = 180;
+/** Allowance per link for the provider's click-tracking rewrite (design §4). */
+export const TRACKING_BYTES_PER_LINK = 150;
+
+export const UTM_SOURCE = 'taxscan-digest';
+export const UTM_MEDIUM = 'email';
+
+export const PREMIUM_REASON = "You're receiving this daily digest as part of your Taxscan Premium subscription.";
+export const FREE_REASON = "You're receiving this because you subscribed to Taxscan updates.";
+
+/**
+ * Ad insertion points (task 9 fills them; v0 renders nothing). `afterItem`
+ * counts MAIN items in rank order; a slot whose item does not exist is not
+ * rendered. `beforeFooter` is always reached.
+ */
+export type AdSlot = { slot: number; position: 'afterItem'; afterItem: number } | { slot: number; position: 'beforeFooter' };
+export const AD_SLOTS: readonly AdSlot[] = [
+  { slot: 1, position: 'afterItem', afterItem: 4 },
+  { slot: 2, position: 'afterItem', afterItem: 9 },
+  { slot: 3, position: 'beforeFooter' },
+];
+/** Returns the slot's complete `<tr>…</tr>` markup, or '' for nothing. */
+export type AdSlotHook = (slot: AdSlot, ctx: { audience: DigestAudience; utmCampaign: string }) => string;
+/** v0: no ads. */
+export const noAds: AdSlotHook = () => '';
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+/**
+ * On every text cell and text element: a long unbroken word (URL-like slug, a
+ * 100-char token) wraps instead of widening the 600 px column. Both properties
+ * for client coverage (word-break:break-word for WebKit/old Outlook.com,
+ * overflow-wrap:anywhere for the rest).
+ */
+export const WRAP = 'word-break:break-word;overflow-wrap:anywhere;';
+const C = {
+  page: '#f2f3f5',
+  card: '#ffffff',
+  rule: '#e3e5e8',
+  text: '#1b1d21', // never pure black (dark-mode inversion)
+  body: '#3c4043',
+  muted: '#5f6368',
+  link: '#0b57d0',
+  brand: '#9b1c1c',
+  brandText: '#ffffff',
+};
+
+/* ------------------------------------------------------------------ */
+/* Errors                                                              */
+/* ------------------------------------------------------------------ */
+
+export type RenderErrorCode =
+  | 'no_postal_address'
+  | 'no_main_items'
+  | 'link_not_allowed'
+  | 'over_size_limit'
+  | 'noreply_address';
+
+/** A refusal to render. The message never contains a full URL or an address. */
+export class RenderError extends Error {
+  constructor(
+    readonly code: RenderErrorCode,
+    message: string,
+  ) {
+    super(`render refused (${code}): ${message}`);
+    this.name = 'RenderError';
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Sender / reply address rule (#9)                                    */
+/* ------------------------------------------------------------------ */
+
+/** True for noreply@, no-reply@, no_reply@, do-not-reply@ … (plus-tags ignored). */
+export function isNoReplyAddress(address: string): boolean {
+  const at = address.lastIndexOf('@');
+  const local = (at >= 0 ? address.slice(0, at) : address).split('+')[0].toLowerCase().replace(/[-_.\s]/g, '');
+  return local === 'noreply' || local === 'donotreply';
+}
+
+/**
+ * Problems with the From / Reply-To config, in plain words, never echoing the
+ * address. Used at boot (scheduler) and before every build (runner). An unset
+ * address is not a problem here (the provider client refuses a missing sender).
+ */
+export function senderAddressProblems(mc: Pick<DigestEnv['mailercloud'], 'senderEmail' | 'replyEmail'>): string[] {
+  const out: string[] = [];
+  if (mc.senderEmail.trim() && isNoReplyAddress(mc.senderEmail.trim())) {
+    out.push('MAILERCLOUD_SENDER_EMAIL is a no-reply address; use a monitored address');
+  }
+  if (mc.replyEmail.trim() && isNoReplyAddress(mc.replyEmail.trim())) {
+    out.push('MAILERCLOUD_REPLY_EMAIL is a no-reply address; use a monitored address');
+  }
+  return out;
+}
+
+/** Throws RenderError('noreply_address') when the From/Reply config is a no-reply address. */
+export function assertReplyAddresses(mc: Pick<DigestEnv['mailercloud'], 'senderEmail' | 'replyEmail'>): void {
+  const p = senderAddressProblems(mc);
+  if (p.length > 0) throw new RenderError('noreply_address', p.join('; '));
+}
+
+/* ------------------------------------------------------------------ */
+/* Small pure helpers                                                  */
+/* ------------------------------------------------------------------ */
+
+/** HTML-escapes text for element content AND double-quoted attributes. */
+export function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
+}
+
+/** Collapses whitespace (incl. newlines/control chars) to single spaces. */
+export function clean(s: string): string {
+  return (
+    s
+      // Zero-width (U+200B–U+200D, U+2060, U+FEFF) and bidi controls (U+202A–U+202E, U+2066–U+2069):
+      // invisible, and bidi overrides can disguise text. Removed, not spaced. The one exception is
+      // a U+200D joining two emoji (a ZWJ sequence such as 👨‍👩‍👧), which is one visible character.
+      .replace(/[\u200b\u200c\u2060\ufeff\u202a-\u202e\u2066-\u2069]/g, '')
+      .replace(/(?<![\p{Extended_Pictographic}\p{Emoji_Modifier}\ufe0f])\u200d|\u200d(?!\p{Extended_Pictographic})/gu, '')
+      // CR/LF/other C0 controls and runs of whitespace → one space (header-injection guard).
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f\s]+/g, ' ')
+      .trim()
+  );
+}
+
+const GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
+/** User-perceived characters (an emoji ZWJ sequence or a flag is one). */
+export function graphemes(s: string): string[] {
+  return Array.from(GRAPHEMES.segment(s), (x) => x.segment);
+}
+
+/**
+ * Trims `s` to at most `max` characters (counting the ellipsis), cutting at the
+ * last word boundary and adding "…". Unchanged when it already fits.
+ */
+export function trimWords(s: string, max: number): string {
+  const t = clean(s);
+  const g = graphemes(t);
+  if (g.length <= max) return t;
+  const kept = g.slice(0, max - 1);
+  // Prefer the last word boundary (a space, or the boundary right after the cut) when it falls
+  // after ~60% of the limit; otherwise cut at a grapheme — never inside one.
+  const boundary = g[max - 1] === ' ' ? max - 1 : kept.lastIndexOf(' ');
+  const cut = (boundary >= Math.floor(max * 0.6) ? kept.slice(0, boundary) : kept).join('');
+  return `${cut.replace(/[\s,;:.\-–—]+$/u, '')}…`;
+}
+
+/** "22 October 2026" for the IST day of `runDate`. */
+export function formatDigestDate(runDate: Date): string {
+  const d = istDateOf(runDate);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/** "2026-10-22" for the IST day of `runDate`. */
+function isoDay(runDate: Date): string {
+  return istDateOf(runDate).toISOString().slice(0, 10);
+}
+
+/** "Taxscan Digest · 22 Oct 2026 · Free" — the human campaign name. */
+export function digestCampaignName(runDate: Date, audience: DigestAudience): string {
+  const d = istDateOf(runDate);
+  const mon = MONTHS[d.getUTCMonth()].slice(0, 3);
+  return `Taxscan Digest · ${d.getUTCDate()} ${mon} ${d.getUTCFullYear()} · ${audience === 'PREMIUM' ? 'Premium' : 'Free'}`;
+}
+
+/** "digest-2026-10-22-free" */
+export function digestUtmCampaign(runDate: Date, audience: DigestAudience): string {
+  return `digest-${isoDay(runDate)}-${audience === 'PREMIUM' ? 'premium' : 'free'}`;
+}
+
+/**
+ * The single digest UTM function. Keeps every non-UTM query parameter and the
+ * fragment; SETS (replaces, never duplicates) utm_source / utm_medium /
+ * utm_campaign — and utm_content when given — so a URL that already carried
+ * another channel's UTM is attributed to the digest, never double-tagged.
+ */
+export function withUtm(url: string, o: { campaign: string; content?: string }): string {
+  const u = new URL(url);
+  u.searchParams.set('utm_source', UTM_SOURCE);
+  u.searchParams.set('utm_medium', UTM_MEDIUM);
+  u.searchParams.set('utm_campaign', o.campaign);
+  if (o.content) u.searchParams.set('utm_content', o.content);
+  return u.toString();
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname || '(no host)';
+  } catch {
+    return '(unparseable)';
+  }
+}
+
+/** Allowlist + scheme check. Even in the allowlist's permissive mode, only http(s). */
+export function isAllowedDigestUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    // An explicit non-default port (e.g. :8443) is refused; WHATWG URL empties a default one.
+    if (u.port !== '') return false;
+  } catch {
+    return false;
+  }
+  return isAllowedPushUrl(url);
+}
+
+/* ------------------------------------------------------------------ */
+/* Render                                                              */
+/* ------------------------------------------------------------------ */
+
+export type RenderInput = {
+  /** One audience's frozen list: MAIN by rank, then ICYMI (order is respected as given). */
+  items: FrozenItem[];
+  audience: DigestAudience;
+  /** The run's IST date (DigestRun.runDate) or any instant on that IST day. */
+  runDate: Date;
+  cfg: Pick<DigestEnv, 'postalAddress' | 'maxHtmlKb' | 'htmlWarnKb'>;
+  /** Optional logo image (must pass the allowlist). v0 default: none, a text wordmark. */
+  logoUrl?: string | null;
+  /** Ad insertion hook (task 9). v0 default: no ads. */
+  adSlot?: AdSlotHook;
+};
+
+export type RenderedDigest = {
+  subject: string;
+  preheader: string;
+  html: string;
+  text: string;
+  /** UTF-8 bytes of `html`. */
+  htmlBytes: number;
+  /** htmlBytes + TRACKING_BYTES_PER_LINK × links: the figure checked against the limits. */
+  budgetBytes: number;
+  linkCount: number;
+  /** True at or above DIGEST_HTML_WARN_KB (still rendered). */
+  sizeWarning: boolean;
+  campaignName: string;
+};
+
+type Prepared = {
+  rank: number;
+  section: 'MAIN' | 'ICYMI';
+  title: string;
+  label: string;
+  summary: string | null;
+  href: string;
+};
+
+function prepare(items: FrozenItem[], utmCampaign: string): Prepared[] {
+  return items.map((it, i) => {
+    if (!isAllowedDigestUrl(it.url)) {
+      throw new RenderError('link_not_allowed', `item ${i + 1} links to ${hostOf(it.url)}, which is not on ALLOWED_PUSH_HOSTS`);
+    }
+    const label = clean(it.authority ?? '') || clean(it.category ?? '');
+    const summary = it.excerpt ? trimWords(it.excerpt, SUMMARY_MAX) : '';
+    return {
+      rank: i + 1,
+      section: it.section,
+      title: clean(it.title),
+      label,
+      summary: summary || null,
+      href: withUtm(it.url, { campaign: utmCampaign, content: `item${i + 1}` }),
+    };
+  });
+}
+
+/** Renders one variant. Pure; throws RenderError when a rule refuses it. */
+export function renderDigest(input: RenderInput): RenderedDigest {
+  const { audience, runDate, cfg } = input;
+  const postal = clean(cfg.postalAddress ?? '');
+  if (!postal) throw new RenderError('no_postal_address', 'DIGEST_POSTAL_ADDRESS is empty; a digest without a postal address is never built');
+
+  // MAIN first (in given order), then ICYMI, whatever order they arrive in.
+  // An item whose headline is blank once cleaned is skipped (the next MAIN item leads).
+  const usable = input.items.filter((i) => clean(i.title ?? '') !== '');
+  const ordered = [...usable.filter((i) => i.section === 'MAIN'), ...usable.filter((i) => i.section !== 'MAIN')];
+  const utmCampaign = digestUtmCampaign(runDate, audience);
+  const items = prepare(ordered, utmCampaign);
+  const main = items.filter((i) => i.section === 'MAIN');
+  const icymi = items.filter((i) => i.section === 'ICYMI');
+  if (main.length === 0) throw new RenderError('no_main_items', 'no MAIN item with a headline to lead the digest');
+
+  const logoUrl = input.logoUrl ?? null;
+  if (logoUrl && !isAllowedDigestUrl(logoUrl)) {
+    throw new RenderError('link_not_allowed', `logo image is on ${hostOf(logoUrl)}, which is not on ALLOWED_PUSH_HOSTS`);
+  }
+
+  const dateText = formatDigestDate(runDate);
+  const subject = trimWords(main[0].title, SUBJECT_MAX);
+  const second = items[1];
+  const preheader = second ? preheaderFor(items.length - 1, second.title) : `Taxscan Daily Digest · ${dateText}`;
+  const campaignName = digestCampaignName(runDate, audience);
+  const homeHref = withUtm('https://www.taxscan.in/', { campaign: utmCampaign, content: 'header' });
+  if (!isAllowedDigestUrl(homeHref)) throw new RenderError('link_not_allowed', 'the header link host is not on ALLOWED_PUSH_HOSTS');
+
+  const hook = input.adSlot ?? noAds;
+  const ad = (slot: AdSlot) => hook(slot, { audience, utmCampaign });
+
+  const html = renderHtml({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad });
+  const text = renderText({ audience, dateText, main, icymi, postal, homeHref });
+
+  const htmlBytes = Buffer.byteLength(html, 'utf8');
+  const linkCount = (html.match(/<a\s[^>]*href=/gi) ?? []).length;
+  const budgetBytes = htmlBytes + linkCount * TRACKING_BYTES_PER_LINK;
+  const limit = cfg.maxHtmlKb * 1024;
+  if (budgetBytes > limit) {
+    throw new RenderError(
+      'over_size_limit',
+      `${budgetBytes} bytes (html ${htmlBytes} + ${linkCount} links × ${TRACKING_BYTES_PER_LINK}) is over DIGEST_MAX_HTML_KB=${cfg.maxHtmlKb}`,
+    );
+  }
+  const sizeWarning = budgetBytes >= cfg.htmlWarnKb * 1024;
+
+  return { subject, preheader, html, text, htmlBytes, budgetBytes, linkCount, sizeWarning, campaignName };
+}
+
+/** "Plus N more: <headline>…", the headline trimmed so the whole line is ≤ PREHEADER_MAX. */
+export function preheaderFor(moreCount: number, secondTitle: string): string {
+  const head = `Plus ${moreCount} more: `;
+  const room = PREHEADER_MAX - graphemes(head).length;
+  const t = clean(secondTitle);
+  // Always end with "…" (there is more inside); trim on a word boundary to fit.
+  const body = graphemes(t).length + 1 <= room ? `${t}…` : trimWords(t, room);
+  return `${head}${body}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* HTML template (built-in, v0)                                        */
+/* ------------------------------------------------------------------ */
+
+type HtmlParts = {
+  audience: DigestAudience;
+  subject: string;
+  preheader: string;
+  dateText: string;
+  main: Prepared[];
+  icymi: Prepared[];
+  postal: string;
+  logoUrl: string | null;
+  homeHref: string;
+  ad: (slot: AdSlot) => string;
+};
+
+/** Zero-width filler after the preheader so clients don't pull body text into the preview. */
+const PREVIEW_FILLER = '&#847;&zwnj;&nbsp;'.repeat(40);
+
+function itemRow(it: Prepared): string {
+  const label = it.label
+    ? `<p style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:${C.brand};" class="ts-label">${esc(it.label)}</p>`
+    : '';
+  const summary = it.summary
+    ? `<p style="${WRAP}margin:0 0 4px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
+    : '';
+  const href = esc(it.href);
+  return (
+    `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+    label +
+    `<h2 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:20px;line-height:26px;font-weight:700;color:${C.text};"><a href="${href}" class="ts-head" style="${WRAP}display:block;padding:9px 0;color:${C.text};text-decoration:none;">${esc(it.title)}</a></h2>` +
+    summary +
+    `<a href="${href}" class="ts-link" style="display:inline-block;min-height:44px;line-height:44px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.link};text-decoration:none;">Read more &rarr;</a>` +
+    `</td></tr>`
+  );
+}
+
+function sectionHeading(text: string, id: string): string {
+  return (
+    `<tr><td class="ts-card ts-pad" data-heading="${id}" style="${WRAP}padding:24px 24px 4px 24px;background-color:${C.card};border-top:4px solid ${C.brand};">` +
+    `<h2 style="${WRAP}margin:0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(text)}</h2>` +
+    `</td></tr>`
+  );
+}
+
+function renderHtml(p: HtmlParts): string {
+  const premium = p.audience === 'PREMIUM';
+  const logo = p.logoUrl
+    ? `<img src="${esc(p.logoUrl)}" width="120" alt="Taxscan" style="display:block;width:120px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:22px;font-weight:700;">`
+    : `<span style="font-family:${FONT};font-size:26px;line-height:32px;font-weight:800;letter-spacing:-0.01em;color:${C.brandText};">Taxscan</span>`;
+  const badge = premium
+    ? ` <span style="display:inline-block;margin-left:8px;padding:2px 10px;border:1px solid ${C.brandText};border-radius:12px;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${C.brandText};vertical-align:middle;">Premium</span>`
+    : '';
+
+  const rows: string[] = [];
+  p.main.forEach((it, i) => {
+    rows.push(itemRow(it));
+    for (const s of AD_SLOTS) if (s.position === 'afterItem' && s.afterItem === i + 1) rows.push(p.ad(s)); // AD SLOT HOOK (task 9)
+  });
+  if (p.icymi.length > 0) {
+    rows.push(sectionHeading('In case you missed it', 'icymi'));
+    for (const it of p.icymi) rows.push(itemRow(it));
+  }
+  for (const s of AD_SLOTS) if (s.position === 'beforeFooter') rows.push(p.ad(s)); // AD SLOT HOOK (task 9)
+
+  const reason = premium ? PREMIUM_REASON : FREE_REASON;
+  const footer =
+    `<tr><td class="ts-pad" data-footer="1" style="${WRAP}padding:24px 24px 32px 24px;font-family:${FONT};font-size:14px;line-height:21px;color:${C.muted};" align="left">` +
+    `<p style="${WRAP}margin:0 0 12px 0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">${esc(reason)} Questions or feedback? Just reply to this email.</p>` +
+    `<p style="margin:0 0 12px 0;"><a href="${UNSUBSCRIBE_TAG}" class="ts-link" style="display:inline-block;min-height:44px;line-height:44px;font-size:16px;font-weight:700;color:${C.link};text-decoration:underline;">Unsubscribe from this digest</a></p>` +
+    `<p style="${WRAP}margin:0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">Taxscan &middot; ${esc(p.postal)}</p>` +
+    `</td></tr>`;
+
+  return (
+    `<!DOCTYPE html>\n` +
+    `<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">\n` +
+    `<head>\n` +
+    `<meta charset="utf-8">\n` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
+    `<meta http-equiv="X-UA-Compatible" content="IE=edge">\n` +
+    `<meta name="x-apple-disable-message-reformatting">\n` +
+    `<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">\n` +
+    `<meta name="color-scheme" content="light dark">\n` +
+    `<meta name="supported-color-schemes" content="light dark">\n` +
+    `<title>${esc(p.subject)}</title>\n` +
+    `<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n` +
+    // Enhancement only: the layout works with this block stripped (Gmail app, Outlook).
+    `<style>\n` +
+    `:root{color-scheme:light dark;supported-color-schemes:light dark}\n` +
+    `@media (prefers-color-scheme:dark){.ts-bg{background-color:#111214!important}.ts-card{background-color:#1c1d20!important;border-color:#2c2e33!important}` +
+    `.ts-head,.ts-text{color:#eceef1!important}.ts-body{color:#c9ccd1!important}.ts-muted{color:#a9adb3!important}.ts-link{color:#8ab4f8!important}.ts-label{color:#f28b82!important}}\n` +
+    `@media only screen and (max-width:620px){.ts-pad{padding-left:16px!important;padding-right:16px!important}}\n` +
+    `</style>\n` +
+    `</head>\n` +
+    `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
+    `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">${esc(p.preheader)}${PREVIEW_FILLER}</div>\n` +
+    `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td align="center" style="padding:16px 8px;">\n` +
+    `<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="600"><![endif]-->\n` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;margin:0 auto;border-collapse:collapse;">\n` +
+    `<tr><td class="ts-pad" style="${WRAP}padding:20px 24px;background-color:${C.brand};" bgcolor="${C.brand}">` +
+    `<a href="${esc(p.homeHref)}" style="display:inline-block;min-height:44px;line-height:44px;text-decoration:none;color:${C.brandText};vertical-align:middle;">${logo}</a>${badge}` +
+    `<p style="${WRAP}margin:4px 0 0 0;font-family:${FONT};font-size:16px;line-height:22px;color:${C.brandText};">Daily Digest &middot; ${esc(p.dateText)}</p>` +
+    `</td></tr>\n` +
+    rows.filter(Boolean).join('\n') +
+    `\n${footer}\n` +
+    `</table>\n` +
+    `<!--[if mso]></td></tr></table><![endif]-->\n` +
+    `</td></tr></table>\n` +
+    `</body>\n` +
+    `</html>\n`
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Plain-text part                                                     */
+/* ------------------------------------------------------------------ */
+
+function renderText(p: {
+  audience: DigestAudience;
+  dateText: string;
+  main: Prepared[];
+  icymi: Prepared[];
+  postal: string;
+  homeHref: string;
+}): string {
+  const premium = p.audience === 'PREMIUM';
+  const block = (it: Prepared, n: number) =>
+    [`${n}. ${it.title}`, it.label ? `   ${it.label}` : null, it.summary ? `   ${it.summary}` : null, `   ${it.href}`]
+      .filter((l): l is string => l !== null)
+      .join('\n');
+  const out: string[] = [`TAXSCAN DAILY DIGEST${premium ? ' (PREMIUM)' : ''}`, p.dateText, ''];
+  p.main.forEach((it, i) => out.push(block(it, i + 1), ''));
+  if (p.icymi.length > 0) {
+    out.push('IN CASE YOU MISSED IT', '');
+    p.icymi.forEach((it, i) => out.push(block(it, i + 1), ''));
+  }
+  out.push(
+    '----',
+    `${premium ? PREMIUM_REASON : FREE_REASON} Questions or feedback? Just reply to this email.`,
+    `Unsubscribe from this digest: ${UNSUBSCRIBE_TAG}`,
+    `Taxscan · ${p.postal}`,
+    p.homeHref,
+    '',
+  );
+  return out.join('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Runner adapter                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The runner's default `buildContent`: renders the frozen items with the
+ * built-in template. Refuses (throws) without items — the build then fails
+ * loud (BUILD_FAILED + alert) rather than freezing an empty digest. Logs a
+ * size warning (bytes only; never an address).
+ */
+export const renderDigestContent: BuildContent = async ({ runDate, audience, items, cfg }) => {
+  const c = cfg ?? env.digest;
+  if (!items) throw new RenderError('no_main_items', 'no frozen items (the builder did not run)');
+  assertReplyAddresses(c.mailercloud);
+  const r = renderDigest({ items, audience, runDate, cfg: c });
+  if (r.sizeWarning) {
+    // eslint-disable-next-line no-console
+    console.warn(`[digest] ${audience} html is ${r.budgetBytes} bytes incl. tracking allowance (warn at ${c.htmlWarnKb} KB, limit ${c.maxHtmlKb} KB)`);
+  }
+  return { subject: r.subject, preheader: r.preheader, html: r.html, text: r.text };
+};

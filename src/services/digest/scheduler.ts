@@ -1,5 +1,6 @@
 import { env, type DigestEnv } from '../../lib/env';
 import { isQuietHours } from '../../lib/quietHours';
+import { senderAddressProblems } from './renderer';
 
 /**
  * Daily email digest scheduler (docs/EMAIL_DIGEST_DESIGN.md §4, §5).
@@ -104,6 +105,9 @@ export function startDigestScheduler(
   } catch (err) {
     check = { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
+  // A no-reply From/Reply-To is refused at boot too (design §1 #9); the address is never logged.
+  const addr = senderAddressProblems(cfg.mailercloud);
+  if (check.ok && addr.length > 0) check = { ok: false, reason: addr.join('; ') };
   if (!check.ok) {
     // eslint-disable-next-line no-console
     console.error(`[digest] config_invalid — not started: ${check.reason}`);

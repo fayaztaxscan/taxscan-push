@@ -13,7 +13,7 @@ import {
 } from './sender';
 import { isPastCutoff, istDateOf, istInstant, nextAttemptAt, runDateKey } from './retryPolicy';
 import { digestRunState, type DigestRunState } from './runState';
-import { placeholderContent, type BuildContent } from './placeholderContent';
+import { renderDigestContent, senderAddressProblems, type BuildContent } from './renderer';
 import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
 
 /**
@@ -52,11 +52,15 @@ import { writeDigestItems, type DigestSelection, type FrozenItem } from './build
  * Every decision is taken from a row re-read AFTER winning its claim, never
  * from a snapshot read earlier in the run.
  *
- * TASK 3: content is the TEMPORARY placeholder; no cron calls this yet.
+ * TASK 3: the state machine; no cron calls this yet.
  * TASK 4: with `selectItems` (the builder, `selectDigest`) the build step
  * selects + ranks the stories and freezes them as DigestItem rows in the same
  * transaction as `builtAt`; too little news skips the run (items still roll
  * forward), > DIGEST_SANITY_MAX_CANDIDATES holds it for an editor.
+ * TASK 5: content comes from the renderer (`renderer.ts`) and is frozen here
+ * once; a render refusal (no address, off-allowlist link, over the size limit,
+ * no-reply sender) fails the build loud (BUILD_FAILED + build_failed alert).
+ * Without `selectItems` there are no items, so the build fails the same way.
  */
 
 /** The builder as the runner sees it (default none = task-3 behaviour, no items). */
@@ -72,13 +76,14 @@ export type AdvanceDeps = {
   clock?: () => Date;
   cfg?: DigestEnv;
   quiet?: { start: string; end: string };
-  /** TEMPORARY default: placeholderContent (task 5 replaces it). */
+  /** Default: the renderer (`renderDigestContent`, task 5). Tests may inject a stub. */
   buildContent?: BuildContent;
   /**
    * The builder (task 4): `(run, now) => selectDigest(run, now)`. Injected, not
    * defaulted, so a caller decides when real stories are frozen; the scheduler
-   * wiring (later task) passes it. Without it the run freezes placeholder
-   * content with no items, exactly as in task 3.
+   * wiring (later task) passes it. Without it there are no items: the
+   * default renderer refuses and the build fails loud (a stub `buildContent`,
+   * as in the state-machine tests, can still freeze without items).
    */
   selectItems?: SelectItems;
   /** A step claim older than this is considered abandoned (crashed container). */
@@ -215,6 +220,7 @@ export function audienceTarget(
 function buildConfigProblems(cfg: DigestEnv): string[] {
   const problems: string[] = [];
   if (!cfg.postalAddress) problems.push('DIGEST_POSTAL_ADDRESS is empty');
+  problems.push(...senderAddressProblems(cfg.mailercloud));
   for (const a of AUDIENCES) {
     const t = audienceTarget(cfg, a);
     if (!t.ok) problems.push(t.reason);
@@ -342,7 +348,7 @@ export async function advanceRun(runId: string, trigger: DigestTrigger, deps: Ad
   }
 
   if (run.build === 'BUILDING' || run.build === 'BUILD_FAILED') {
-    const built = await buildStep(ctx, deps.buildContent ?? placeholderContent, deps.selectItems);
+    const built = await buildStep(ctx, deps.buildContent ?? renderDigestContent, deps.selectItems);
     if (!built) return finish(ctx, 'advanced');
   } else if (run.build === 'SKIPPED') {
     log(ctx, null, `skipped:${run.skipReason ?? 'unknown'}`);
@@ -431,7 +437,7 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
     contents = await Promise.all(
       AUDIENCES.map(async (audience) => ({
         audience,
-        ...(await buildContent({ runId: ctx.run.id, runDate: ctx.run.runDate, audience, items: itemsFor(audience) })),
+        ...(await buildContent({ runId: ctx.run.id, runDate: ctx.run.runDate, audience, items: itemsFor(audience), cfg: ctx.cfg })),
       })),
     );
   } catch (err) {

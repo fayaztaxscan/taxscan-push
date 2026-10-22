@@ -2,7 +2,8 @@ import type { DigestAudience } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import { advanceRun, ensureRun, type DigestTrigger } from '../services/digest/runner';
-import type { BuildContent } from '../services/digest/placeholderContent';
+import type { BuildContent } from '../services/digest/renderer';
+import { placeholderContent } from './digestPlaceholderContent';
 import { FakeSender } from './digestFakeSender';
 
 /**
@@ -43,7 +44,7 @@ async function newRun(c: DigestEnv = cfg(), now = ist(6, 0)) {
 }
 
 function step(runId: string, trigger: DigestTrigger, now: Date, sender: FakeSender, c: DigestEnv = cfg(), buildContent?: BuildContent) {
-  return advanceRun(runId, trigger, { sender, now, cfg: c, quiet: QUIET, buildContent });
+  return advanceRun(runId, trigger, { sender, now, cfg: c, quiet: QUIET, buildContent: buildContent ?? placeholderContent });
 }
 
 function sendOf(runId: string, audience: DigestAudience = 'FREE') {
@@ -783,6 +784,7 @@ describe('QA #6 fresh-clock re-check right before schedule()', () => {
       clock: () => (sender.count('createDraft') > 0 ? ist(17, 0) : ist(16, 59)),
       cfg: cfg(),
       quiet: QUIET,
+      buildContent: placeholderContent,
     });
     expect(sender.count('createDraft')).toBe(2);
     expect(sender.count('schedule')).toBe(0);
@@ -799,6 +801,7 @@ describe('QA #6 fresh-clock re-check right before schedule()', () => {
       clock: () => (sender.count('createDraft') > 0 ? ist(12, 0) : ist(11, 59)),
       cfg: cfg(),
       quiet: { start: '12:00', end: '07:00' },
+      buildContent: placeholderContent,
     });
     expect(sender.count('schedule')).toBe(0);
     expect(r.steps).toContain('FREE:wait:quiet_hours');
