@@ -1,5 +1,5 @@
 import path from 'path';
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
@@ -18,7 +18,8 @@ import { getReadsReport } from '../services/readsReport';
 import { customSurfacesWindow, getSurfacesReport } from '../services/surfacesReport';
 import { lastReportEmailRun, sendScheduledReport } from '../services/reportScheduler';
 import { lastBackupRun } from '../services/backup';
-import { pendingQueue } from '../services/pacer';
+import { isUrlDeadDefault, pendingQueue } from '../services/pacer';
+import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
 import { recordAudit } from '../lib/audit';
@@ -126,6 +127,17 @@ function isDuplicateRequestId(err: unknown): boolean {
   return Array.isArray(target) ? target.includes('clientRequestId') : String(target ?? '').includes('clientRequestId');
 }
 
+/** "fcm.googleapis.com…a1b2c3": enough to recognise a device, useless for sending to it. */
+export function endpointHint(endpoint: string): string {
+  let host = 'unknown';
+  try {
+    host = new URL(endpoint).host || host;
+  } catch {
+    // not a URL (e.g. a test fixture) — host stays 'unknown'
+  }
+  return `${host}…${endpoint.slice(-6)}`;
+}
+
 // Test-on-this-device: the admin's own browser subscribes (via the SPA) and
 // posts its subscription here to receive a one-off preview of the composed
 // notification. No DB row, no portal — it reaches ONLY the device that asked.
@@ -145,9 +157,39 @@ function badRequest(res: Response, err: z.ZodError) {
 }
 
 export function createApiRouter(
-  opts: { sender?: Sender; publicPerMin?: number } = {},
+  opts: {
+    sender?: Sender;
+    publicPerMin?: number;
+    clock?: () => Date;
+    linkCheck?: boolean;
+    isUrlDead?: (url: string) => Promise<boolean>;
+  } = {},
 ): Router {
   const router = Router();
+  const clock = opts.clock ?? (() => new Date());
+
+  // Push now (Queue + Review) — the two editor doors that send at once.
+  // Quiet hours: readers are promised "never at night", so during 23:00–07:00
+  // IST only an explicit Breaking send goes through (owner's decision,
+  // 2026-10-21); otherwise 409 and NOTHING changes — the item stays queued.
+  function quietHoursBlock(req: Request): { resumesAt: Date } | null {
+    if (req.body?.breaking === true) return null;
+    const now = clock();
+    if (!isQuietHours(now, env.send.quietStart, env.send.quietEnd)) return null;
+    return { resumesAt: nextAllowedAt(now, env.send.quietStart, env.send.quietEnd) };
+  }
+  // Link check, as the pacer does: a deleted article is archived (EXPIRED)
+  // instead of pushed to everyone. Fail-open — only a 404/410 counts.
+  async function archiveIfDead(campaign: { id: string; url: string }): Promise<boolean> {
+    if (!(opts.linkCheck ?? env.linkCheck.enabled)) return false;
+    const isDead = opts.isUrlDead ?? ((u: string) => isUrlDeadDefault(u, env.linkCheck.timeoutMs));
+    const dead = await isDead(campaign.url).catch(() => false);
+    if (!dead) return false;
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { status: 'EXPIRED' } });
+    // eslint-disable-next-line no-console
+    console.warn('[push-now] article gone from the site — archived, not sent', campaign);
+    return true;
+  }
 
   // Per-IP rate limiter for the four public endpoints (subscribe /
   // unsubscribe / track / config). The login limiter lives on the auth
@@ -492,6 +534,8 @@ export function createApiRouter(
   router.post('/review/:id/push', requireBearerOrUser(), async (req, res, next) => {
     try {
       const userId = req.user?.id ?? null;
+      const quiet = quietHoursBlock(req);
+      if (quiet) return res.status(409).json({ error: 'quiet_hours', resumesAt: quiet.resumesAt });
       const ok = await claimReviewItem(req.params.id);
       if (!ok) return res.status(404).json({ error: 'review_item_not_found' });
       // Attribute the push to the editor who clicked → shows as Manual, not Automatic.
@@ -500,6 +544,7 @@ export function createApiRouter(
       }
       const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });
       if (!campaign) return res.status(404).json({ error: 'review_item_not_found' });
+      if (await archiveIfDead(campaign)) return res.status(410).json({ error: 'dead_link' });
       // Immediate full-reach send (bypasses the per-subscriber cap/cooldown,
       // like force). Its SENT events count toward the pacer's daily ceiling and
       // reset the spacing clock, exactly as a manual force push does.
@@ -513,7 +558,12 @@ export function createApiRouter(
         action: 'REVIEW_PUSHED',
         resourceType: 'campaign',
         resourceId: campaign.id,
-        metadata: { sent: result.sent, failed: result.failed, expiredPruned: result.expiredPruned },
+        metadata: {
+          sent: result.sent,
+          failed: result.failed,
+          expiredPruned: result.expiredPruned,
+          breaking: req.body?.breaking === true,
+        },
       });
       return res.json({ ok: true, id: campaign.id, ...result });
     } catch (err) {
@@ -549,17 +599,20 @@ export function createApiRouter(
   router.post('/queue/:id/push', requireBearerOrUser(), async (req, res, next) => {
     try {
       const userId = req.user?.id ?? null;
+      const quiet = quietHoursBlock(req);
+      if (quiet) return res.status(409).json({ error: 'quiet_hours', resumesAt: quiet.resumesAt });
       // Atomic claim: flip a still-pending auto-queue DRAFT to SCHEDULED, exactly
       // as the pacer does, so a concurrent pacer tick can't also send it. Attribute
       // it to the editor who clicked (so the Campaigns list shows it as Manual,
       // not Automatic).
       const claim = await prisma.campaign.updateMany({
         where: { id: req.params.id, status: 'DRAFT', sendQueue: { in: ['QUALIFIED', 'FALLBACK'] } },
-        data: { status: 'SCHEDULED', createdByUserId: userId },
+        data: { status: 'SCHEDULED', createdByUserId: userId, claimedAt: new Date() },
       });
       if (claim.count === 0) return res.status(404).json({ error: 'queue_item_not_found' });
       const campaign = await prisma.campaign.findUnique({ where: { id: req.params.id } });
       if (!campaign) return res.status(404).json({ error: 'queue_item_not_found' });
+      if (await archiveIfDead(campaign)) return res.status(410).json({ error: 'dead_link' });
       // Immediate full-reach send (bypasses the per-subscriber cap/cooldown). Its
       // SENT events count toward the pacer's daily ceiling and reset the spacing
       // clock, exactly like a manual force push or a Review "Push now".
@@ -578,6 +631,7 @@ export function createApiRouter(
           failed: result.failed,
           expiredPruned: result.expiredPruned,
           source: 'queue_push',
+          breaking: req.body?.breaking === true,
         },
       });
       return res.json({ ok: true, id: campaign.id, ...result });
@@ -839,10 +893,13 @@ export function createApiRouter(
     }
   });
 
-  router.get('/admin/subscribers', requireBearerOrUser(), async (req, res, next) => {
+  // Lists recent subscribers so an operator can find their own device for the
+  // test segment. The push endpoint is a delivery credential, so only a short
+  // hint (push-service host + last 6 chars) leaves the server — never the URL.
+  router.get('/admin/subscribers', requireBearerOrUser(['ADMIN']), async (req, res, next) => {
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
-      const subscribers = await prisma.subscriber.findMany({
+      const rows = await prisma.subscriber.findMany({
         where: { status: 'ACTIVE' },
         orderBy: { createdAt: 'desc' },
         take: limit,
@@ -855,13 +912,17 @@ export function createApiRouter(
           portal: true,
         },
       });
+      const subscribers = rows.map(({ endpoint, ...rest }) => ({
+        ...rest,
+        endpointHint: endpointHint(endpoint),
+      }));
       return res.json({ subscribers, testSegmentTopic: env.testSegmentTopic });
     } catch (err) {
       return next(err);
     }
   });
 
-  router.post('/admin/subscribers/:id/test-segment', requireBearerOrUser(), async (req, res, next) => {
+  router.post('/admin/subscribers/:id/test-segment', requireBearerOrUser(['ADMIN']), async (req, res, next) => {
     try {
       const sub = await prisma.subscriber.findUnique({ where: { id: req.params.id } });
       if (!sub) return res.status(404).json({ error: 'subscriber_not_found' });

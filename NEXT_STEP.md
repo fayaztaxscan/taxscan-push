@@ -5,7 +5,47 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-09-29) — BOARD CLEAN in code, all open items user-side
+## ▶️ NEXT STEPS / open items (as of 2026-10-21)
+
+`main` = PR #73, suite **438**, admin guide **v1.8**. Full capability + flag detail lives in
+`CLAUDE.md`; this board only tracks what is open.
+
+**Shipped 2026-10-07 → 2026-10-21 (newest first):**
+- **2026-10-21 — Compose can't double-send** (PR #73). One-time `clientRequestId` on `Campaign`
+  (repeat `/api/send` → 409 `duplicate_send`), Compose "Send now" confirms, push requests wait 90 s.
+- **2026-10-21 — project agent roles** (`.claude/agents/`) + the owner's max-2-in-parallel,
+  ≤ half-the-Mac rule (PR #72).
+- **2026-10-15 — soft-prompt funnel tracked step by step; yes/no prompt v2** behind `SOFT_PROMPT_V2`
+  (default OFF) with the approved copy (PRs #70/#71). Read-only comparison query:
+  `scripts/sql/soft-prompt-funnel.sql`.
+- **2026-10-15 — iZooto has stopped.** This platform's ~3,040 active subscribers are now taxscan's
+  whole push audience (docs only).
+- **2026-10-15 — slow first Dashboard load fixed** via `Campaign.lastSentAt` (PR #68).
+- **2026-10-07 — PRs #63–#67:** Node 24 LTS; `railway.json` → Railway service settings; admin usable
+  on phones; Push now confirm; coverage reports keyed by taxscan article id (Sep 903 → truth 685);
+  report images are a summary card.
+
+**OPEN — code / config:**
+- **Turn on `SOFT_PROMPT_V2`** — owner approved 2026-10-21; blocked by Railway's "Builds are
+  temporarily paused" incident (since 07:24 UTC; a variable change redeploys). Owner sets it, then
+  verify `/api/config` → `"promptVariant":"v2"`, record the switch time, compare ≥2 weeks with the
+  funnel SQL (grants/day + shown/day, not rates alone).
+- **Findings from the 2026-10-21 whole-repo review.** Fixed: Compose double-send (PR #73); in PR #74
+  — truncated GA/Search Console responses deleting data, `/api/admin/subscribers` exposing endpoints,
+  campaigns stranded SCHEDULED after a crash (`Campaign.claimedAt` + `recoverStrandedClaims`, never
+  re-sends), delivery events written in batches during the send (also closes a crashed-backfill-clone
+  re-send), report-email banner now catches pre-send failures, Push now runs the dead-link check, and
+  **quiet hours: only Breaking gets through at night** (owner's decision 2026-10-21 — Queue/Review Push
+  now answer 409 and the admin offers "Send now as Breaking" / "Leave for morning"; guide v1.9).
+  All seven M-severity findings are done; the L-severity list remains.
+- **Flaky test:** `eventRetention.test.ts` "lifetime totals… identical before and after a sweep" compares
+  DB-wide totals, so another file writing Events mid-sweep can fail it under parallel workers (passes
+  alone; seen once in three full runs on 2026-10-21). Fix needs a portal-scoped totals helper.
+
+**OPEN — owner-side (carried from 2026-09-29, unchanged unless noted):** items 1–6 below; item 7's
+guide is now **v1.8**.
+
+### Board as of 2026-09-29 (kept for history)
 
 `develop` == `main`, suite **423**, nothing awaiting deploy. Since the 2026-08-06 entries below,
 PRs **#54–#61** shipped and are live; the detail lives in `CLAUDE.md` (current state + flags),
@@ -37,7 +77,7 @@ PRs **#54–#61** shipped and are live; the detail lives in `CLAUDE.md` (current
    and coverage reports.
 6. **Slow-burn:** `ArticleReadStat` grows ~2.2 MB/day and keeps every GA path forever (~4 years of
    headroom; the `Event` rolled-up+live treatment applies). No disk-size alert exists yet.
-7. **Admin guide is at v1.4** — keep it in step with any future user-visible change, in the same PR.
+7. **Admin guide (v1.4 then; v1.8 now)** — keep it in step with any future user-visible change, in the same PR.
 
 -8. **✅ SHIPPED + LIVE 2026-08-06 — SURFACES: JAN-2026 HISTORY + CALENDAR MONTHS + CUSTOM RANGE.
    PR #51 (merge `e489404`), deployed and serving within ~25s of merge; healthz 200 throughout, no

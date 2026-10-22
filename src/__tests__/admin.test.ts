@@ -1,6 +1,8 @@
 import request from 'supertest';
+import bcrypt from 'bcrypt';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { endpointHint } from '../routes/api';
 import type { Sender } from '../services/send';
 import { validKeys } from './helpers';
 
@@ -10,12 +12,21 @@ const app = createApp({ sender: okSender });
 const TEST_PREFIX = 'https://test-admin.example.com/sub/';
 const createdCampaignIds: string[] = [];
 const createdSubscriberEndpoints: string[] = [];
+const createdUserIds: string[] = [];
 
 function uniquePortal(name: string): string {
   return `test-admin-${name}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
 afterAll(async () => {
+  if (createdUserIds.length) {
+    // Logging in writes audit rows; sweep them with the purge carve-out.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL audit_log.allow_purge = 'true'`);
+      await tx.$executeRaw`DELETE FROM "AuditLog" WHERE "userId" = ANY(${createdUserIds}::text[])`;
+    });
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  }
   if (createdCampaignIds.length) {
     await prisma.event.deleteMany({ where: { campaignId: { in: createdCampaignIds } } });
     await prisma.campaign.deleteMany({ where: { id: { in: createdCampaignIds } } });
@@ -162,10 +173,14 @@ describe('admin test-segment helpers', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.subscribers)).toBe(true);
     expect(typeof res.body.testSegmentTopic).toBe('string');
+    // The endpoint is a delivery credential: only a hint leaves the server.
+    for (const s of res.body.subscribers) expect(s.endpoint).toBeUndefined();
+    expect(JSON.stringify(res.body)).not.toContain(subscription.endpoint);
     const mine = res.body.subscribers.find(
-      (s: { endpoint: string }) => s.endpoint === subscription.endpoint,
+      (s: { endpointHint: string }) => s.endpointHint === endpointHint(subscription.endpoint),
     );
     expect(mine).toBeDefined();
+    expect(mine.endpointHint).toBe(`test-admin.example.com…${subscription.endpoint.slice(-6)}`);
     // Default-topics rule: a subscribe with no topics lands as ['all'].
     expect(mine.topics).toEqual(['all']);
   });
@@ -206,6 +221,30 @@ describe('admin test-segment helpers', () => {
       .post('/api/admin/subscribers/does-not-exist/test-segment')
       .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
     expect(res.status).toBe(404);
+  });
+
+  it('a logged-in PUBLISHER gets 403 from both helpers (ADMIN only)', async () => {
+    const email = `admin-subs-pub-${Date.now()}-${Math.floor(Math.random() * 1e9)}@example.com`;
+    const user = await prisma.user.create({
+      data: { email, passwordHash: await bcrypt.hash('AdminSubsPw1Aa', 4), role: 'PUBLISHER', isActive: true },
+    });
+    createdUserIds.push(user.id);
+    const login = await request(app).post('/api/auth/login').send({ email, password: 'AdminSubsPw1Aa' });
+    expect(login.status).toBe(200);
+    const sc = login.headers['set-cookie'];
+    const cookie = (Array.isArray(sc) ? sc : [sc as string]).map((l) => l.split(';')[0]).join('; ');
+
+    const a = await request(app).get('/api/admin/subscribers').set('Cookie', cookie);
+    expect(a.status).toBe(403);
+    const b = await request(app).post('/api/admin/subscribers/x/test-segment').set('Cookie', cookie);
+    expect(b.status).toBe(403);
+  });
+
+  it('endpointHint keeps the push-service host and the last 6 chars only', () => {
+    expect(endpointHint('https://fcm.googleapis.com/fcm/send/abcdefghijklmnop123456')).toBe(
+      'fcm.googleapis.com…123456',
+    );
+    expect(endpointHint('not-a-url-xyz789')).toBe('unknown…xyz789');
   });
 
   it('admin endpoints require the bearer token', async () => {

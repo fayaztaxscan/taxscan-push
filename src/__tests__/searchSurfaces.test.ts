@@ -172,6 +172,16 @@ describe('fetchSurface', () => {
     expect(sink.bodies).toHaveLength(1); // no second request
   });
 
+  it('fails rather than return a page-capped (truncated) result', async () => {
+    // Every page full → the 40-page cap is reached with more rows still to come.
+    const full = Array.from({ length: 25_000 }, (_, i) => row('2026-08-01', `${URL_BASE}/a-${100000 + i}`, 1, 1));
+    const always: FetchLike = async (url) =>
+      String(url).includes('oauth2.googleapis.com')
+        ? new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { status: 200 })
+        : new Response(JSON.stringify({ rows: full }), { status: 200 });
+    await expect(fetchSurface({ ...base, fetchImpl: always })).rejects.toThrow(/40-page cap.*nothing written/);
+  });
+
   it('surfaces an API error rather than returning partial data', async () => {
     const failing: FetchLike = async (url) =>
       String(url).includes('oauth2.googleapis.com')

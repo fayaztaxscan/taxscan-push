@@ -65,6 +65,36 @@ async function recordReportEmailRun(input: {
   }
 }
 
+type PreparedReportEmail = { report: Awaited<ReturnType<typeof buildReport>>; subject: string; html: string; text: string; emails: string[] };
+
+/** Builds the report, its rendered email and the recipient list — everything before the first send. */
+async function prepareReportEmail(args: {
+  portal: string;
+  period: 'weekly' | 'monthly';
+  start: Date;
+  end: Date;
+  recipients?: string[];
+}): Promise<PreparedReportEmail> {
+  const { portal, start, end } = args;
+  const report = await buildReport({ portal, period: args.period, start, end });
+
+  // "How it was read" section — only when read tracking is on, and never a
+  // reason for the coverage email to fail: any error just drops the section.
+  let reads: ReadsEmailSummary | undefined;
+  if (env.gaReads.enabled) {
+    try {
+      reads = (await readsSummaryForWindow({ start, end, portal })) ?? undefined;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[report] reads summary failed — sending without the reads section', e);
+    }
+  }
+  const { subject, html, text } = renderReportEmail(report, reads);
+
+  const emails = args.recipients ?? (await reportRecipientEmails());
+  return { report, subject, html, text, emails };
+}
+
 export async function sendScheduledReport(opts: {
   period: 'weekly' | 'monthly';
   now?: Date;
@@ -83,22 +113,29 @@ export async function sendScheduledReport(opts: {
   const portal = opts.portal ?? env.rss.portal;
 
   const { start, end } = reportWindow(opts.period, now);
-  const report = await buildReport({ portal, period: opts.period, start, end });
-
-  // "How it was read" section — only when read tracking is on, and never a
-  // reason for the coverage email to fail: any error just drops the section.
-  let reads: ReadsEmailSummary | undefined;
-  if (env.gaReads.enabled) {
-    try {
-      reads = (await readsSummaryForWindow({ start, end, portal })) ?? undefined;
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[report] reads summary failed — sending without the reads section', e);
+  // Anything that fails before the first email (building the report, loading
+  // the recipient list) is still recorded as a run, so the Reports banner
+  // shows it — otherwise the cron only logged it and the banner stayed clear
+  // while nobody got the email.
+  let prepared: PreparedReportEmail;
+  try {
+    prepared = await prepareReportEmail({ portal, period: opts.period, start, end, recipients: opts.recipients });
+  } catch (e) {
+    if (opts.record !== false) {
+      await recordReportEmailRun({
+        portal,
+        period: opts.period,
+        ranAt: now,
+        recipients: 0,
+        sent: 0,
+        failed: 0,
+        error: `Not sent — failed before sending: ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
+    throw e;
   }
-  const { subject, html, text } = renderReportEmail(report, reads);
+  const { report, subject, html, text, emails } = prepared;
 
-  const emails = opts.recipients ?? (await reportRecipientEmails());
   let sent = 0;
   let failed = 0;
   // The provider usually fails the same way for every recipient (an expired

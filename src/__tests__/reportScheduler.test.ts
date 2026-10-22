@@ -159,6 +159,39 @@ describe('report email run bookkeeping', () => {
     expect(run).toMatchObject({ period: 'monthly', failed: 0 });
   });
 
+  it('records a run that failed BEFORE sending (recipient list unreadable), then rethrows', async () => {
+    const portal = `test-runrec-${uniq()}`;
+    runPortals.push(portal);
+    const { sender, sent } = recordingSender();
+    const spy = jest.spyOn(prisma.user, 'findMany').mockRejectedValueOnce(new Error('db unavailable'));
+    try {
+      await expect(
+        sendScheduledReport({ period: 'weekly', now: ist(2026, 9, 7, 7), portal, sender }),
+      ).rejects.toThrow('db unavailable');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(sent).toHaveLength(0);
+    const run = await lastReportEmailRun(portal);
+    expect(run).toMatchObject({ period: 'weekly', recipients: 0, sent: 0, failed: 0 });
+    expect(run?.error).toBe('Not sent — failed before sending: db unavailable');
+  });
+
+  it('does NOT record a pre-send failure when record:false (a test email never raises the banner)', async () => {
+    const portal = `test-runrec-${uniq()}`;
+    runPortals.push(portal);
+    const { sender } = recordingSender();
+    const spy = jest.spyOn(prisma.user, 'findMany').mockRejectedValueOnce(new Error('db unavailable'));
+    try {
+      await expect(
+        sendScheduledReport({ period: 'weekly', now: ist(2026, 9, 7, 7), portal, sender, record: false }),
+      ).rejects.toThrow('db unavailable');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await lastReportEmailRun(portal)).toBeNull();
+  });
+
   it('does NOT record when record:false — a personal test must not set the banner', async () => {
     const portal = `test-runrec-${uniq()}`;
     runPortals.push(portal);

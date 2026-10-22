@@ -128,6 +128,11 @@ model Campaign {
   /// instead of pushing the same message to every subscriber twice. Null for
   /// RSS captures, bearer/curl sends and rows from before 2026-10-21.
   clientRequestId   String?   @unique
+  /// When the pacer or a Queue "Push now" claimed this row (DRAFT → SCHEDULED
+  /// with scheduledAt = null) to send it. A row still SCHEDULED long after this
+  /// means the process died mid-send; recoverStrandedClaims() closes it out as
+  /// SENT or FAILED — never re-sends it. Null for every other path.
+  claimedAt         DateTime?
 
   createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events    Event[]

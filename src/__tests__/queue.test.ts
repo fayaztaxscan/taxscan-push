@@ -7,7 +7,20 @@ import type { SendQueue } from '../services/classify';
 import { validKeys } from './helpers';
 
 const okSender: Sender = async () => ({ ok: true, statusCode: 201 });
-const app = createApp({ sender: okSender });
+// Midday IST, link check off: Push now's guards don't depend on when the suite runs.
+const NOON_IST = new Date('2026-07-28T06:30:00.000Z');
+const NIGHT_IST = new Date('2026-07-28T19:00:00.000Z'); // 00:30 IST
+const app = createApp({ sender: okSender, clock: () => NOON_IST, linkCheck: false });
+const nightApp = createApp({ sender: okSender, clock: () => NIGHT_IST, linkCheck: false });
+const deadLinkApp = createApp({ sender: okSender, clock: () => NOON_IST, linkCheck: true, isUrlDead: async () => true });
+const throwingLinkApp = createApp({
+  sender: okSender,
+  clock: () => NOON_IST,
+  linkCheck: true,
+  isUrlDead: async () => {
+    throw new Error('link check exploded');
+  },
+});
 const AUTH = `Bearer ${process.env.ADMIN_TOKEN}`;
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
@@ -124,8 +137,63 @@ describe('send queue API', () => {
 
     const after = await prisma.campaign.findUnique({ where: { id: c.id } });
     expect(after?.status).toBe('SENT');
+    expect(after?.claimedAt).toBeInstanceOf(Date); // lets recoverStrandedClaims see a crash
     const sent = await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } });
     expect(sent).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Push now at night is refused (409) and the item stays queued; Breaking goes through', async () => {
+    const portal = `test-queue-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Judgment]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 6, 18, 9, 0),
+    });
+
+    const held = await request(nightApp).post(`/api/queue/${c.id}/push`).set('Authorization', AUTH).send({});
+    expect(held.status).toBe(409);
+    expect(held.body.error).toBe('quiet_hours');
+    const still = await prisma.campaign.findUnique({ where: { id: c.id } });
+    expect(still).toMatchObject({ status: 'DRAFT', claimedAt: null });
+
+    const res = await request(nightApp)
+      .post(`/api/queue/${c.id}/push`)
+      .set('Authorization', AUTH)
+      .send({ breaking: true });
+    expect(res.status).toBe(200);
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
+  });
+
+  it('Push now archives a deleted article (410 dead_link) instead of sending it', async () => {
+    const portal = `test-queue-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Judgment]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 6, 18, 9, 0),
+    });
+    const res = await request(deadLinkApp).post(`/api/queue/${c.id}/push`).set('Authorization', AUTH).send({});
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe('dead_link');
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('EXPIRED');
+    expect(await prisma.event.count({ where: { campaignId: c.id } })).toBe(0);
+  });
+
+  it('Push now still sends when the link check itself throws (fail open)', async () => {
+    const portal = `test-queue-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Judgment]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 6, 18, 9, 0),
+    });
+    const res = await request(throwingLinkApp).post(`/api/queue/${c.id}/push`).set('Authorization', AUTH).send({});
+    expect(res.status).toBe(200);
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
   });
 
   it('pushing an already-sent / non-pending item returns 404', async () => {

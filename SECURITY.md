@@ -111,7 +111,7 @@ Tests: `security: rate limiting` — bursts to `/api/subscribe` and `/api/auth/l
 - **`requireBearer`** (`src/lib/auth.ts`) — `crypto.timingSafeEqual` after a length pre-check. Empty `Authorization` header, malformed bearer, length mismatch all return 401. Missing `ADMIN_TOKEN` in env also returns 401 (fail-closed). ✓
 - **`/api/auth/login`** — same `timingSafeEqual` for `ADMIN_PASSWORD`. Empty / unconfigured admin password returns `503 admin_unconfigured`. ✓
 - Brute-force backoff — added in this audit via the per-IP login limiter (item 3). After 5 wrong attempts/minute, `429`. Genuine attackers can rotate IPs; the cap makes naive brute-force infeasible.
-- Admin endpoints behind `requireBearer`: `/api/send`, `/api/campaigns`, `/api/metrics`, `/api/admin/subscribers`, `/api/admin/subscribers/:id/test-segment`. Verified by existing tests (`admin.test.ts` "requires the bearer token" cases).
+- Admin endpoints behind `requireBearer`: `/api/send`, `/api/campaigns`, `/api/metrics`, `/api/admin/subscribers`, `/api/admin/subscribers/:id/test-segment` (these two: bearer or an ADMIN session; the list returns an `endpointHint` — push host + last 6 chars — never the endpoint itself). Verified by existing tests (`admin.test.ts` "requires the bearer token" cases).
 
 ## 5. Input & output validation
 

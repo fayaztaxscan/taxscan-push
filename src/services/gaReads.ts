@@ -195,11 +195,16 @@ export async function fetchGaReads(opts: {
     throw new Error(`GA batchRunReports failed (${res.status}): ${JSON.stringify(body.error ?? body)}`);
   }
   const [totals, push] = body.reports;
+  // A truncated report must fail the sync, not be written: the sync replaces
+  // each returned date wholesale, so partial rows would DELETE the missing
+  // paths (and could zero pushViews). Failing leaves the last good rows —
+  // staleness, never loss. On a big backfill, shrink the window instead.
   for (const [label, report] of [['totals', totals], ['push', push]] as const) {
     const returned = report.rows?.length ?? 0;
     if ((report.rowCount ?? 0) > returned) {
-      // eslint-disable-next-line no-console
-      console.warn(`[ga-reads] ${label} report truncated: rowCount=${report.rowCount} returned=${returned}`);
+      throw new Error(
+        `GA ${label} report truncated (rowCount=${report.rowCount} returned=${returned}) — nothing written; use a shorter window`,
+      );
     }
   }
   return mergeGaReports(totals, push);

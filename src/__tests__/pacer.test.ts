@@ -1,6 +1,6 @@
 import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { runPacerTick, isUrlDeadDefault } from '../services/pacer';
+import { runPacerTick, isUrlDeadDefault, recoverStrandedClaims } from '../services/pacer';
 import type { Sender } from '../services/send';
 import type { SendQueue } from '../services/classify';
 import { validKeys } from './helpers';
@@ -400,6 +400,25 @@ describe('runPacerTick — morning backfill (§5a)', () => {
     expect(r.reason).toBe('empty');
   });
 
+  it('does not re-send a URL whose send STARTED today but recorded no deliveries (crashed clone)', async () => {
+    const portal = uniquePortal('bf-crashed');
+    const now = ist(2026, 6, 18, 8, 0);
+    const url = 'https://taxscan.in/sc-crashed';
+    await sentCampaign(portal, { title: 'Supreme Court ruling [Read Judgment]', queue: 'QUALIFIED', authority: 'Supreme Court', url, at: ist(2026, 6, 17, 10, 0) });
+    // This morning's clone was claimed, then the process died before any event landed.
+    const clone = await prisma.campaign.create({
+      data: {
+        portal, title: 'Supreme Court ruling [Read Judgment]', body: '.', url, target: { type: 'all' },
+        status: 'SCHEDULED', sendQueue: 'QUALIFIED', authority: 'Supreme Court',
+        createdAt: ist(2026, 6, 17, 10, 0), claimedAt: ist(2026, 6, 18, 7, 15),
+      },
+    });
+    campaignIds.push(clone.id);
+    const r = await runPacerTick({ ...BACKFILL, now, portal, sender: okSender() });
+    expect(r.backfill).toBe(false);
+    expect(r.reason).toBe('empty');
+  });
+
   it('is inert when the flag is off (existing behaviour)', async () => {
     const portal = uniquePortal('bf-off');
     const now = ist(2026, 6, 18, 8, 0);
@@ -541,6 +560,114 @@ describe('runPacerTick — pre-push link check', () => {
 
     expect(called).toBe(false);
     expect(r.reason).toBe('sent');
+  });
+});
+
+describe('runPacerTick — claim bookkeeping', () => {
+  it('stamps claimedAt when it claims an article', async () => {
+    const portal = uniquePortal('claimstamp');
+    const now = ist(2026, 7, 28, 12, 0);
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 11, 0),
+    });
+    const r = await runPacerTick({ ...BASE, now, portal, sender: okSender(), linkCheck: false });
+    expect(r.reason).toBe('sent');
+    const row = await prisma.campaign.findUnique({ where: { id: c.id } });
+    expect(row?.claimedAt?.toISOString()).toBe(now.toISOString());
+  });
+
+  it('sends anyway when the link check THROWS (fail open — never strands the row)', async () => {
+    const portal = uniquePortal('throwlink');
+    const now = ist(2026, 7, 28, 12, 0);
+    await makeSubscriber(portal);
+    const c = await draft(portal, {
+      title: 'Supreme Court ruling [Read Order]',
+      queue: 'QUALIFIED',
+      authority: 'Supreme Court',
+      createdAt: ist(2026, 7, 28, 11, 0),
+    });
+    const r = await runPacerTick({
+      ...BASE,
+      now,
+      portal,
+      sender: okSender(),
+      linkCheck: true,
+      isUrlDead: async () => {
+        throw new Error('boom');
+      },
+    });
+    expect(r.reason).toBe('sent');
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
+  });
+});
+
+describe('recoverStrandedClaims', () => {
+  const now = ist(2026, 7, 28, 12, 0);
+  const minsAgo = (m: number) => new Date(now.getTime() - m * 60_000);
+
+  async function stranded(portal: string, claimedAt: Date, extra: Record<string, unknown> = {}) {
+    const c = await prisma.campaign.create({
+      data: {
+        portal,
+        title: 'stranded',
+        body: '.',
+        url: 'https://taxscan.in',
+        target: { type: 'all' },
+        status: 'SCHEDULED',
+        sendQueue: 'QUALIFIED',
+        claimedAt,
+        ...extra,
+      },
+    });
+    campaignIds.push(c.id);
+    return c;
+  }
+
+  it('marks a stale claim with deliveries SENT (lastSentAt = last delivery) — not re-sent', async () => {
+    const portal = uniquePortal('strand-sent');
+    const c = await stranded(portal, minsAgo(45));
+    await prisma.event.create({ data: { type: 'SENT', campaignId: c.id, createdAt: minsAgo(44) } });
+    await prisma.event.create({ data: { type: 'SENT', campaignId: c.id, createdAt: minsAgo(43) } });
+
+    expect(await recoverStrandedClaims({ now, portal })).toEqual({ sent: 1, failed: 0 });
+    const row = await prisma.campaign.findUnique({ where: { id: c.id } });
+    expect(row?.status).toBe('SENT');
+    expect(row?.lastSentAt?.toISOString()).toBe(minsAgo(43).toISOString());
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } })).toBe(2);
+  });
+
+  it('counts rolled-up deliveries too (events already folded away)', async () => {
+    const portal = uniquePortal('strand-rolled');
+    const c = await stranded(portal, minsAgo(90), { rolledSent: 2500 });
+    expect(await recoverStrandedClaims({ now, portal })).toEqual({ sent: 1, failed: 0 });
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
+  });
+
+  it('marks a stale claim with no deliveries FAILED', async () => {
+    const portal = uniquePortal('strand-failed');
+    const c = await stranded(portal, minsAgo(31));
+    expect(await recoverStrandedClaims({ now, portal })).toEqual({ sent: 0, failed: 1 });
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('FAILED');
+  });
+
+  it('leaves a claim younger than the stale window alone (may still be sending)', async () => {
+    const portal = uniquePortal('strand-fresh');
+    const c = await stranded(portal, minsAgo(5));
+    expect(await recoverStrandedClaims({ now, portal })).toEqual({ sent: 0, failed: 0 });
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SCHEDULED');
+  });
+
+  it('never touches a future-scheduled campaign or an unclaimed (legacy) row', async () => {
+    const portal = uniquePortal('strand-other');
+    const future = await stranded(portal, minsAgo(120), { scheduledAt: new Date(now.getTime() + 3600_000) });
+    const legacy = await stranded(portal, minsAgo(120), { claimedAt: null });
+    expect(await recoverStrandedClaims({ now, portal })).toEqual({ sent: 0, failed: 0 });
+    expect((await prisma.campaign.findUnique({ where: { id: future.id } }))?.status).toBe('SCHEDULED');
+    expect((await prisma.campaign.findUnique({ where: { id: legacy.id } }))?.status).toBe('SCHEDULED');
   });
 });
 

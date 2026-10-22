@@ -1,6 +1,6 @@
 import type { Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { dispatchCampaign, DisallowedPushUrlError, type Sender } from '../services/send';
+import { dispatchCampaign, executeCampaign, DisallowedPushUrlError, type Sender } from '../services/send';
 import { listCampaigns } from '../services/metrics';
 import type { PushPayload } from '../lib/push';
 import { startOfTodayIST } from '../lib/quietHours';
@@ -293,6 +293,19 @@ describe('dispatchCampaign', () => {
       where: { campaignId: result.campaignId, type: 'SENT' },
     });
     expect(events).toHaveLength(0);
+  });
+
+  it('force WITHOUT breaking is still held at night (readers are promised "never at night")', async () => {
+    const portal = uniquePortal('force-night');
+    await makeSubscriber(portal, 'force-night');
+    const now = ist(2026, 6, 1, 2, 0);
+    const result = await dispatchCampaign(
+      { portal, title: 'forced late', body: '...', url: 'https://taxscan.in', target: { type: 'all' }, force: true },
+      { sender: okSender(), now, quietStart: '23:00', quietEnd: '07:00' },
+    );
+    campaignIds.push(result.campaignId);
+    expect(result.status).toBe('SCHEDULED');
+    expect(result.sent).toBe(0);
   });
 
   it('breaking flag bypasses quiet hours', async () => {
@@ -692,5 +705,87 @@ describe('dispatchCampaign', () => {
     });
     expect(failedForB).toHaveLength(1);
     expect((failedForB[0].meta as { reason: string }).reason).toBe('expired');
+  });
+});
+
+describe('executeCampaign — delivery events land while the send runs', () => {
+  it('writes every outcome across several batches (SENT + FAILED)', async () => {
+    const portal = uniquePortal('batches');
+    const subs = await Promise.all(Array.from({ length: 230 }, (_, i) => makeSubscriber(portal, `b${i}`)));
+    const failing = new Set(subs.slice(0, 7).map((s) => s.id));
+    const c = await prisma.campaign.create({
+      data: { portal, title: 't', body: 'b', url: 'https://taxscan.in/x', target: { type: 'all' }, status: 'SCHEDULED' },
+    });
+    campaignIds.push(c.id);
+    const sender: Sender = async (sub) =>
+      failing.has(sub.id) ? { ok: false, statusCode: 500, expired: false, failed: true, error: 'boom' } : { ok: true, statusCode: 201 };
+
+    const r = await executeCampaign(c, { sender, cap: Infinity, minGapMinutes: 0, concurrency: 10 });
+    expect(r).toMatchObject({ sent: 223, failed: 7 });
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } })).toBe(223);
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'FAILED' } })).toBe(7);
+  });
+
+  it('a failed event write mid-send neither aborts the fan-out nor loses rows', async () => {
+    const portal = uniquePortal('flakydb');
+    await Promise.all(Array.from({ length: 350 }, (_, i) => makeSubscriber(portal, `f${i}`)));
+    const c = await prisma.campaign.create({
+      data: { portal, title: 't', body: 'b', url: 'https://taxscan.in/x', target: { type: 'all' }, status: 'SCHEDULED' },
+    });
+    campaignIds.push(c.id);
+    const real = prisma.event.createMany.bind(prisma.event);
+    let first = true;
+    const spy = jest.spyOn(prisma.event, 'createMany').mockImplementation(((args: Parameters<typeof real>[0]) => {
+      if (first) {
+        first = false;
+        return Promise.reject(new Error('db blip'));
+      }
+      return real(args);
+    }) as unknown as typeof prisma.event.createMany);
+    let calls = 0;
+    const sender: Sender = async () => {
+      calls += 1;
+      return { ok: true, statusCode: 201 };
+    };
+    try {
+      const r = await executeCampaign(c, { sender, cap: Infinity, minGapMinutes: 0, concurrency: 4 });
+      expect(r.sent).toBe(350);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(calls).toBe(350);
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } })).toBe(350);
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
+  });
+
+  it('a send that stalls mid-way has already recorded the deliveries made so far', async () => {
+    const portal = uniquePortal('stall');
+    await Promise.all(Array.from({ length: 150 }, (_, i) => makeSubscriber(portal, `s${i}`)));
+    const c = await prisma.campaign.create({
+      data: { portal, title: 't', body: 'b', url: 'https://taxscan.in/x', target: { type: 'all' }, status: 'SCHEDULED' },
+    });
+    campaignIds.push(c.id);
+    // 120 deliveries succeed, then the push service hangs (as a crash would look).
+    let calls = 0;
+    let release: () => void = () => undefined;
+    const hang = new Promise<void>((resolve) => { release = resolve; });
+    const sender: Sender = async () => {
+      calls += 1;
+      if (calls > 120) await hang;
+      return { ok: true, statusCode: 201 };
+    };
+    const running = executeCampaign(c, { sender, cap: Infinity, minGapMinutes: 0, concurrency: 1 });
+
+    let recorded = 0;
+    for (let i = 0; i < 100 && recorded < 100; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      recorded = await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } });
+    }
+    expect(recorded).toBe(100); // one full batch is durable before the send completes
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SCHEDULED');
+
+    release();
+    await running;
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } })).toBe(150);
   });
 });

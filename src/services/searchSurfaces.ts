@@ -164,11 +164,13 @@ export async function fetchSurface(opts: {
     if (rows.length < ROW_LIMIT) return [...out.values()];
     startRow += rows.length;
   }
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[surfaces] hit the ${MAX_PAGES}-page cap for ${opts.type} — results may be truncated`,
+  // Rows come back by clicks, so a capped fetch is missing the long tail on
+  // EVERY date — and the sync replaces each returned date wholesale, deleting
+  // those rows. Fail instead: last good rows stay, and the operator shrinks
+  // the span (backfill-surfaces already walks month by month).
+  throw new Error(
+    `Search Console ${opts.type} hit the ${MAX_PAGES}-page cap (${MAX_PAGES * ROW_LIMIT} rows) — nothing written; use a shorter span`,
   );
-  return [...out.values()];
 }
 
 /**

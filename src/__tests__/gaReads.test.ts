@@ -123,6 +123,18 @@ describe('syncGaReads', () => {
     await expect(syncGaReads({ creds, portal, fetchImpl: failingFetch })).rejects.toThrow(/batchRunReports failed \(429\)/);
     expect(await prisma.articleReadStat.count({ where: { portal } })).toBe(before);
   });
+
+  it('refuses a truncated report — the stored date keeps its rows instead of losing the tail', async () => {
+    const before = await prisma.articleReadStat.findMany({ where: { portal }, orderBy: { pagePath: 'asc' } });
+    expect(before.length).toBeGreaterThan(0);
+    // GA says 5,000 rows exist but sent one: writing it would delete the rest of the date.
+    const truncated = { ...report([['20260711', '/top-stories/a', 1]]), rowCount: 5000 };
+    await expect(
+      syncGaReads({ creds, portal, fetchImpl: gaFetch(truncated, report([])) }),
+    ).rejects.toThrow(/totals report truncated.*nothing written/);
+    const after = await prisma.articleReadStat.findMany({ where: { portal }, orderBy: { pagePath: 'asc' } });
+    expect(after).toEqual(before);
+  });
 });
 
 describe('startGaReadsSync', () => {

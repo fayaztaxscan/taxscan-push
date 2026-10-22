@@ -5,7 +5,12 @@ import type { Sender } from '../services/send';
 import { validKeys } from './helpers';
 
 const okSender: Sender = async () => ({ ok: true, statusCode: 201 });
-const app = createApp({ sender: okSender });
+// Midday IST, link check off: Push now's guards don't depend on when the suite runs.
+const NOON_IST = new Date('2026-07-28T06:30:00.000Z');
+const NIGHT_IST = new Date('2026-07-28T19:00:00.000Z'); // 00:30 IST
+const app = createApp({ sender: okSender, clock: () => NOON_IST, linkCheck: false });
+const nightApp = createApp({ sender: okSender, clock: () => NIGHT_IST, linkCheck: false });
+const deadLinkApp = createApp({ sender: okSender, clock: () => NOON_IST, linkCheck: true, isUrlDead: async () => true });
 const AUTH = `Bearer ${process.env.ADMIN_TOKEN}`;
 
 const PORTAL = `test-review-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
@@ -97,6 +102,39 @@ describe('review queue API', () => {
     expect(after?.sendQueue).toBe('REVIEW');
     expect(after?.reviewedAt).not.toBeNull();
     expect(after?.status).toBe('DRAFT');
+  });
+
+  it('push at night is refused (409 quiet_hours) and leaves the item in review', async () => {
+    await makeSubscriber();
+    const c = await reviewDraft('GST on RWA Maintenance Charges Explained (night)');
+    const res = await request(nightApp).post(`/api/review/${c.id}/push`).set('Authorization', AUTH).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('quiet_hours');
+    expect(new Date(res.body.resumesAt).toISOString()).toBe('2026-07-29T01:30:00.000Z'); // 07:00 IST
+    const after = await prisma.campaign.findUnique({ where: { id: c.id } });
+    expect(after).toMatchObject({ status: 'DRAFT', reviewedAt: null });
+    expect(await prisma.event.count({ where: { campaignId: c.id } })).toBe(0);
+  });
+
+  it('push at night goes through when sent as Breaking', async () => {
+    await makeSubscriber();
+    const c = await reviewDraft('GST on RWA Maintenance Charges Explained (breaking)');
+    const res = await request(nightApp)
+      .post(`/api/review/${c.id}/push`)
+      .set('Authorization', AUTH)
+      .send({ breaking: true });
+    expect(res.status).toBe(200);
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('SENT');
+  });
+
+  it('push archives a deleted article (410 dead_link) instead of sending it', async () => {
+    await makeSubscriber();
+    const c = await reviewDraft('GST on RWA Maintenance Charges Explained (deleted)');
+    const res = await request(deadLinkApp).post(`/api/review/${c.id}/push`).set('Authorization', AUTH).send({});
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe('dead_link');
+    expect((await prisma.campaign.findUnique({ where: { id: c.id } }))?.status).toBe('EXPIRED');
+    expect(await prisma.event.count({ where: { campaignId: c.id } })).toBe(0);
   });
 
   it('push sends immediately to full reach and marks the campaign SENT', async () => {
