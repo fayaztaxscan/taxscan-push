@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-10-15) — LIVE in production
+## Current state (updated 2026-10-22) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~3,080 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto has STOPPED (confirmed 2026-10-15)**
 — taxscan's iZooto account access is disabled and it no longer sends. Its ~3M base is unreachable
@@ -21,7 +21,9 @@ browsers after endpoint rotation, so it barely grows the base.
   2026-10-15:** `PROMPT_SHOWN` → `PROMPT_ALLOW_CLICKED` | `PROMPT_DECLINED` (meta.how) → `PROMPT_ACCEPTED`
   | `PROMPT_BLOCKED` (browser denied) | `PROMPT_IGNORED` (browser prompt closed/ignored), each with
   `meta {device, landing, variant, trigger}` (strict enum allow-list on public `/api/track`).
-  **Prompt v2** behind `SOFT_PROMPT_V2` (default OFF, served via `/api/config.promptVariant`): yes/no
+  **Prompt v2 — LIVE since 2026-10-22 10:43:51 UTC** (`SOFT_PROMPT_V2`=true, served via
+  `/api/config.promptVariant`; compare v1-before vs v2-after with `scripts/sql/soft-prompt-funnel.sql`
+  over ≥2 weeks, grants/day + shown/day): yes/no
   with no topic chips and the approved copy "Be first to know about new tax rulings — Supreme Court and High Court rulings as they’re published. About 20 a day, never at night." / "Turn on alerts"; it may show on a reader's FIRST page after 60% scroll or 45 s (v1 never asks on
   a first page). Baseline before v2: ~1–1.5% of prompts → granted; the SDK is injected ~6 s after
   navigation on the new CMS.
@@ -87,13 +89,26 @@ browsers after endpoint rotation, so it barely grows the base.
   nothing. Push requests wait 90 s (`PUSH_REQUEST` in `useApi`; Cloudflare cuts at 100 s/524), and a
   write with no reply says "may still be sending — check Campaigns", never "try again". "Recent campaigns"
   (Dashboard) and the Campaigns list union in recently-PUSHED items so they aren't dropped by
-  the capture-time window.
+  the capture-time window. **Night rule (owner, 2026-10-21; PR #74):** during quiet hours (23:00–07:00
+  IST) Queue/Review Push now answer **409 `quiet_hours`** and change nothing; the admin then offers
+  "Send now as Breaking" / "Leave for morning" — Breaking is the only way through at night (Compose
+  `force` without `breaking` was already deferred). Both Push now doors also run the pacer's dead-link
+  check (deleted article → EXPIRED, **410 `dead_link`**; fail-open). Admin guide **v1.9**.
 - **Resilient data fetch** — the shared `useApi` adds a 15s timeout + retry (network/502/503/504,
   GET-only) and routes a 401 to `/login?reason=expired`, so a cold worker / flaky connection no
   longer leaves Refresh stuck or "failed to load". `/api/metrics` (20s) and `/api/reports` (60s)
   are short-TTL cached.
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit
   log, push-URL allowlist (`ALLOWED_PUSH_HOSTS`, incl. academy/shop), rate limits, helmet.
+  `/api/admin/subscribers` + `…/test-segment` need the bearer or an **ADMIN** session and return
+  `endpointHint` (push host + last 6 chars), never the endpoint (PR #74).
+- **Send-path hardening (PR #74, LIVE 2026-10-22):** delivery Events are `createMany`'d in batches of 100
+  **while** the fan-out runs (was ~3,000 sequential inserts after it; a mid-send write failure re-queues
+  instead of aborting). The pacer and Queue Push now stamp **`Campaign.claimedAt`** on claim;
+  `recoverStrandedClaims()` (each pacer tick) closes a claim >30 min old still SCHEDULED as SENT (deliveries
+  recorded, live or rolled) or FAILED — **never re-sent**. Morning backfill also skips URLs claimed today.
+  GA reads / Search Console syncs now **fail instead of writing** a truncated response. The report-email
+  banner also shows runs that failed before sending.
 
 **Live flags (Railway):** `SEND_MODE=live`, `RSS_EDITORIAL_FILTER`/`PACER_ENABLED`=ON,
 `RSS_FEED_NEWS`=master feed, `REPORTS_ENABLED`=ON, `MORNING_BACKFILL_ENABLED`=ON,
@@ -104,7 +119,7 @@ pacer), `FREQ_CAP_PER_DAY`=30 (manual non-force path only), `MIN_GAP_MINUTES`=0,
 `GA_READS_ENABLED`=ON + `GA_SERVICE_ACCOUNT_JSON` + `GA_READS_LOOKBACK_DAYS`=3,
 `SEARCH_CONSOLE_ENABLED`=ON, `DUPLICATE_TITLE_GUARD_ENABLED`=ON +
 **`DUPLICATE_TITLE_WINDOW_HOURS`=720** (raised from 72 on 2026-09-29 — see KNOWN_ISSUES #9),
-`LINK_CHECK_ENABLED`=ON, `SOFT_PROMPT_V2`=OFF (until a funnel baseline exists), `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
+`LINK_CHECK_ENABLED`=ON, **`SOFT_PROMPT_V2`=ON** (since 2026-10-22 10:43:51 UTC), `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
 **`EVENT_RETENTION_ENABLED`=ON** (30d window, nightly 03:30 IST),
 **`BACKUP_ENABLED`=ON** (daily 02:20 IST to Cloudflare R2, `BACKUP_KEEP_DAYS`=14, `R2_*` creds).
 (`METRICS_CACHE_TTL_MS`=20s, `REPORTS_CACHE_TTL_MS`=60s and `METRICS_HEAVY_REFRESH_MS`=5min
@@ -163,8 +178,9 @@ history gets the token rejected**. The payload now states `compare: {current, ba
 modes order columns differently and the client's own inference silently INVERTED every range delta.
 Guide → v1.3. Suite **382**.
 
-**Open next steps: NONE in code — board clean, `develop` == `main`, suite 423.** Everything
-outstanding sits with the user, not the codebase: send the editorial 301-redirect note
+**Open next steps (2026-10-22):** code board clean after PR #74 (suite 462; only L-severity review
+findings + one flaky test remain — see `NEXT_STEP.md`). Compare the soft-prompt v1/v2 funnel from
+~2026-11-05. Still with the user, not the codebase: send the editorial 301-redirect note
 (`docs/NOTE-TO-EDITORIAL-deleted-articles.email.txt`); the SEO conversation about Discover being
 down ~85% since January; the CMS team's Search Console sitemap fetch failures (handed over
 2026-09-29 — everything testable from outside passes, so the live candidates are Cloudflare
