@@ -14,6 +14,7 @@ import {
 import { isPastCutoff, istDateOf, istInstant, nextAttemptAt, runDateKey } from './retryPolicy';
 import { digestRunState, type DigestRunState } from './runState';
 import { placeholderContent, type BuildContent } from './placeholderContent';
+import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
 
 /**
  * The digest state machine and the ONLY door a digest leaves through
@@ -52,7 +53,14 @@ import { placeholderContent, type BuildContent } from './placeholderContent';
  * from a snapshot read earlier in the run.
  *
  * TASK 3: content is the TEMPORARY placeholder; no cron calls this yet.
+ * TASK 4: with `selectItems` (the builder, `selectDigest`) the build step
+ * selects + ranks the stories and freezes them as DigestItem rows in the same
+ * transaction as `builtAt`; too little news skips the run (items still roll
+ * forward), > DIGEST_SANITY_MAX_CANDIDATES holds it for an editor.
  */
+
+/** The builder as the runner sees it (default none = task-3 behaviour, no items). */
+export type SelectItems = (run: { id: string; portal: string; runDate: Date }, now: Date) => Promise<DigestSelection>;
 
 export type DigestTrigger = 'cron' | 'retry' | 'send_now' | 'health';
 
@@ -64,8 +72,15 @@ export type AdvanceDeps = {
   clock?: () => Date;
   cfg?: DigestEnv;
   quiet?: { start: string; end: string };
-  /** TEMPORARY default: placeholderContent (tasks 4–5 replace it). */
+  /** TEMPORARY default: placeholderContent (task 5 replaces it). */
   buildContent?: BuildContent;
+  /**
+   * The builder (task 4): `(run, now) => selectDigest(run, now)`. Injected, not
+   * defaulted, so a caller decides when real stories are frozen; the scheduler
+   * wiring (later task) passes it. Without it the run freezes placeholder
+   * content with no items, exactly as in task 3.
+   */
+  selectItems?: SelectItems;
   /** A step claim older than this is considered abandoned (crashed container). */
   claimStaleMinutes?: number;
 };
@@ -92,7 +107,8 @@ export type DigestAlertKind =
   | 'partial_send'
   | 'provider_failed'
   | 'not_confirmed_by_cutoff'
-  | 'build_failed';
+  | 'build_failed'
+  | 'sanity_hold';
 
 /**
  * `lastError` prefixes that end a FAILED variant for the day: no door resumes
@@ -326,7 +342,7 @@ export async function advanceRun(runId: string, trigger: DigestTrigger, deps: Ad
   }
 
   if (run.build === 'BUILDING' || run.build === 'BUILD_FAILED') {
-    const built = await buildStep(ctx, deps.buildContent ?? placeholderContent);
+    const built = await buildStep(ctx, deps.buildContent ?? placeholderContent, deps.selectItems);
     if (!built) return finish(ctx, 'advanced');
   } else if (run.build === 'SKIPPED') {
     log(ctx, null, `skipped:${run.skipReason ?? 'unknown'}`);
@@ -387,7 +403,7 @@ async function applySendNow(ctx: Ctx): Promise<boolean> {
  * a conditional update, so two runners cannot build twice and a BUILT run is
  * never re-rendered. Returns false when the run did not reach BUILT.
  */
-async function buildStep(ctx: Ctx, buildContent: BuildContent): Promise<boolean> {
+async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: SelectItems): Promise<boolean> {
   const problems = buildConfigProblems(ctx.cfg);
   if (problems.length > 0) {
     await prisma.digestRun.updateMany({
@@ -406,11 +422,16 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent): Promise<boolean>
   }
 
   let contents: { audience: DigestAudience; subject: string; preheader: string; html: string; text: string }[];
+  let selection: DigestSelection | null = null;
   try {
+    // The window is recomputed on every build attempt (§8: a retried build sees `now`).
+    if (selectItems) selection = await selectItems(ctx.run, ctx.now);
+    if (selection?.outcome === 'too_little_news') return await skipTooLittleNews(ctx, selection);
+    const itemsFor = (a: DigestAudience): FrozenItem[] | undefined => selection?.perAudience[a];
     contents = await Promise.all(
       AUDIENCES.map(async (audience) => ({
         audience,
-        ...(await buildContent({ runId: ctx.run.id, runDate: ctx.run.runDate, audience })),
+        ...(await buildContent({ runId: ctx.run.id, runDate: ctx.run.runDate, audience, items: itemsFor(audience) })),
       })),
     );
   } catch (err) {
@@ -426,9 +447,17 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent): Promise<boolean>
   const built = await prisma.$transaction(async (tx) => {
     const claimed = await tx.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
-      data: { build: 'BUILT', builtAt: ctx.now },
+      data: { build: 'BUILT', builtAt: ctx.now, ...(selection ? selectionRunFields(selection) : {}) },
     });
     if (claimed.count !== 1) return false;
+    if (selection) {
+      await writeDigestItems(tx, ctx.run.id, selection.rows);
+      // Sanity hold: an editor must approve even when approval is off (the gate
+      // reads candidateCount; PENDING is set so the screen shows it as waiting).
+      if (selection.outcome === 'sanity_hold') {
+        await tx.digestRun.updateMany({ where: { id: ctx.run.id, approval: 'NOT_REQUIRED' }, data: { approval: 'PENDING' } });
+      }
+    }
     await tx.digestSend.createMany({
       data: contents.map((c) => ({
         runId: ctx.run.id,
@@ -444,8 +473,56 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent): Promise<boolean>
     });
     return true;
   });
+  if (built && selection?.outcome === 'sanity_hold') {
+    await raiseAlert(ctx, 'sanity_hold', { candidates: selection.candidateCount, max: ctx.cfg.sanityMaxCandidates });
+    log(ctx, null, `build:sanity_hold:${selection.candidateCount}`);
+  }
+  if (built && selection) log(ctx, null, `build:items:${selection.rows.length}:reads=${selection.reads.used ? selection.reads.source : 'off'}`);
   log(ctx, null, built ? 'build:frozen' : 'build:claimed_elsewhere');
   return built;
+}
+
+/** Run columns the builder fills at freeze. */
+function selectionRunFields(sel: DigestSelection): Prisma.DigestRunUpdateManyMutationInput {
+  return {
+    windowStart: sel.windowStart,
+    candidateCount: sel.candidateCount,
+    readsUsed: sel.reads.used,
+    readsSource: sel.reads.source,
+    readsNote: sel.reads.note,
+  };
+}
+
+/**
+ * Fewer than DIGEST_MIN_ITEMS MAIN stories: the run is SKIPPED, but its items
+ * are still frozen (with `builtAt`) so tomorrow's build rolls the top ones
+ * forward and starts its window here. Not an error: audit only, no alert.
+ */
+async function skipTooLittleNews(ctx: Ctx, sel: DigestSelection): Promise<boolean> {
+  const skipped = await prisma.$transaction(async (tx) => {
+    const r = await tx.digestRun.updateMany({
+      where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
+      data: { build: 'SKIPPED', skipReason: 'too_little_news', builtAt: ctx.now, ...selectionRunFields(sel) },
+    });
+    if (r.count !== 1) return false;
+    await writeDigestItems(tx, ctx.run.id, sel.rows);
+    return true;
+  });
+  if (skipped) {
+    await recordAudit({
+      action: 'DIGEST_SKIPPED',
+      resourceType: 'DigestRun',
+      resourceId: ctx.run.id,
+      metadata: { reason: 'too_little_news', free: sel.mainCounts.FREE, premium: sel.mainCounts.PREMIUM },
+    });
+  }
+  log(ctx, null, skipped ? 'build:skipped:too_little_news' : 'build:claimed_elsewhere');
+  return false;
+}
+
+/** True while a run over the sanity limit has not been approved by an editor. */
+function sanityHeld(ctx: Ctx): boolean {
+  return ctx.run.candidateCount > ctx.cfg.sanityMaxCandidates && ctx.run.approval !== 'APPROVED';
 }
 
 
@@ -666,6 +743,7 @@ function clockBlocker(ctx: Ctx): string | null {
 function scheduleBlocker(ctx: Ctx, send: DigestSend): string | null {
   if (!ctx.cfg.sendLive) return 'preview_only';
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
+  if (sanityHeld(ctx)) return 'sanity_hold';
   if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'awaiting_approval';
   if (ctx.clock().getTime() < send.sendAfter.getTime()) return 'waiting_send_time';
   const clock = clockBlocker(ctx);
@@ -960,6 +1038,7 @@ async function auditSkipped(ctx: Ctx, send: DigestSend, reason: string): Promise
 /** Why unfinished variants are being skipped at the cut-off. */
 function cutoffReason(ctx: Ctx): string {
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
+  if (sanityHeld(ctx)) return 'sanity_hold_expired';
   if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'not_approved';
   return 'cutoff_passed';
 }

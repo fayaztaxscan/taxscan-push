@@ -148,9 +148,10 @@ model Campaign {
   /// SENT or FAILED — never re-sends it. Null for every other path.
   claimedAt         DateTime?
 
-  createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  events    Event[]
-  feedItems FeedItem[]
+  createdBy   User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  events      Event[]
+  feedItems   FeedItem[]
+  digestItems DigestItem[]
 
   @@index([portal])
   @@index([status])
@@ -458,54 +459,89 @@ model DigestRun {
   healthCheckedAt  DateTime?
   healthError      String?
   alerts           Json           @default("{}") // {kind: sentAt}, so one alert per kind per run
+  // Task 4: whether organic read rate ranked items within a queue+tier, from which
+  // source (ga | cms), and why not when it did not (flag off, stale data, …).
+  readsUsed        Boolean?
+  readsSource      String?
+  readsNote        String?
   createdAt        DateTime       @default(now())
 
   sends DigestSend[]
+  items DigestItem[]
 
   @@unique([portal, runDate])
 }
 
 /// One per (run, audience): each variant is its own provider campaign with its own state.
 model DigestSend {
-  id              String           @id @default(cuid())
-  runId           String
-  audience        DigestAudience
-  state           DigestSendState  @default(PENDING)
-  templateId      String?
-  subject         String
-  preheader       String
-  html            String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
-  text            String?
-  htmlBytes       Int
-  mcCampaignName  String           @unique // TS-DIGEST-2026-10-23-FREE-<runId>
-  mcCampaignId    String?          @unique // persisted the instant create returns
-  sendAfter       DateTime // planned send instant (Send now moves it earlier)
-  scheduledAt     DateTime? // when we called schedule
-  sentConfirmedAt DateTime?
-  sentVia         String? // status_poll | webhook
-  stepClaimedAt   DateTime? // DB claim; protects against two containers mid-deploy
+  id                  String           @id @default(cuid())
+  runId               String
+  audience            DigestAudience
+  state               DigestSendState  @default(PENDING)
+  templateId          String?
+  subject             String
+  preheader           String
+  html                String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
+  text                String?
+  htmlBytes           Int
+  mcCampaignName      String           @unique // TS-DIGEST-2026-10-23-FREE-<runId>
+  mcCampaignId        String?          @unique // persisted the instant create returns
+  sendAfter           DateTime // planned send instant (Send now moves it earlier)
+  scheduledAt         DateTime? // when we called schedule
+  sentConfirmedAt     DateTime?
+  sentVia             String? // status_poll | webhook
+  stepClaimedAt       DateTime? // DB claim; protects against two containers mid-deploy
   // Write-ahead markers, set in the claim update BEFORE the provider call. A set
   // marker means the call may have happened: ask the provider before repeating it.
   createAttemptedAt   DateTime?
   scheduleAttemptedAt DateTime?
-  attempts        Int              @default(0) // all failed attempts (display)
-  firstFailureAt  DateTime? // first failure of any step (display)
+  attempts            Int              @default(0) // all failed attempts (display)
+  firstFailureAt      DateTime? // first failure of any step (display)
   // Retry bookkeeping for the CURRENT step (create or schedule); reset when the step succeeds.
-  stepAttempts       Int       @default(0)
-  stepFirstFailureAt DateTime?
-  nextAttemptAt   DateTime?
-  lastError       String? // truncated, email-shaped substrings redacted
-  lastErrorKind   SenderErrorKind?
-  targeted        Int? // from the provider report
-  reached         Int?
-  opens           Int? // aggregate from the report API, trend only
-  clicks          Int?
-  rolledUnsub     Int              @default(0) // EmailEvent rows folded by the sweeper
-  rolledBounce    Int              @default(0)
-  rolledSpam      Int              @default(0)
+  stepAttempts        Int              @default(0)
+  stepFirstFailureAt  DateTime?
+  nextAttemptAt       DateTime?
+  lastError           String? // truncated, email-shaped substrings redacted
+  lastErrorKind       SenderErrorKind?
+  targeted            Int? // from the provider report
+  reached             Int?
+  opens               Int? // aggregate from the report API, trend only
+  clicks              Int?
+  rolledUnsub         Int              @default(0) // EmailEvent rows folded by the sweeper
+  rolledBounce        Int              @default(0)
+  rolledSpam          Int              @default(0)
 
   run DigestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, audience])
   @@index([state, nextAttemptAt])
+}
+
+/// The frozen story list (task 4). Keyed by articleKey (taxscan's trailing id), NOT by GUID or
+/// Campaign id, so a re-GUID'd or re-captured article still dedupes against earlier digests.
+/// Written once, in the same transaction that freezes the run; never updated afterwards.
+model DigestItem {
+  id         String          @id @default(cuid())
+  runId      String
+  rank       Int // 1-based within the audience's list: MAIN first, then ICYMI
+  section    String // MAIN | ICYMI
+  audience   DigestAudience? // null = both; set when the two variants' lists differ
+  articleKey String
+  campaignId String? // provenance; SetNull if the Campaign row goes
+  title      String
+  url        String
+  authority  String?
+  category   String // reportCategory(), the coverage report's own rule
+  excerpt    String?
+  capturedAt DateTime
+  /// Organic reads per hour since capture used for within-tier ranking; null when the
+  /// item was too fresh to judge, reads were not used, or it is a roll-forward item.
+  readRate   Float?
+
+  run      DigestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, articleKey, audience])
+  @@index([articleKey])
+  @@index([campaignId])
 }

@@ -476,15 +476,16 @@ export function readsPath(url: string): string | null {
  * report the path with or without a trailing slash, so both spellings are
  * queried and folded onto the normalized key.
  */
-async function readsByPath(
+export async function readsByPath(
   paths: string[],
+  portal: string = env.rss.portal,
 ): Promise<Map<string, { reads: number; pushReads: number }>> {
   const out = new Map<string, { reads: number; pushReads: number }>();
   if (paths.length === 0) return out;
   const rows = await prisma.articleReadStat.groupBy({
     by: ['pagePath'],
     where: {
-      portal: env.rss.portal,
+      portal,
       pagePath: { in: [...paths, ...paths.map((p) => `${p}/`)] },
     },
     _sum: { totalViews: true, pushViews: true },
