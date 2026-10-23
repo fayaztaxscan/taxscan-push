@@ -12,6 +12,7 @@
  *    renderer) with fake headlines and an in-memory sender that contacts
  *    nobody — so both variants end up CREATED with a fake draft id, frozen
  *    html, items and reads columns, exactly as the 06:30 build leaves them;
+ *  - adds three "Sample ad:" house ads once (every slot needs one, task 9);
  *  - adds five earlier days of history rows in assorted states.
  *
  * Fake headlines on www.taxscan.in URLs, internal addresses only. Nothing is
@@ -121,6 +122,17 @@ async function main(): Promise<void> {
     MAILERCLOUD_SENDER_EMAIL: process.env.MAILERCLOUD_SENDER_EMAIL || 'digest@localhost.test',
     MAILERCLOUD_REPLY_EMAIL: process.env.MAILERCLOUD_REPLY_EMAIL || 'desk@localhost.test',
   });
+  // Task 9: a slot is never sent empty, so the build needs ads. Three sample house
+  // ads (any slot, both audiences) are added once; existing ads are left alone.
+  if ((await prisma.digestAd.count({ where: { portal, name: { startsWith: 'Sample ad:' } } })) === 0) {
+    await prisma.digestAd.createMany({
+      data: [
+        ['Sample ad: Academy GST course', 'Master GST appeals in six weeks', 'Enrol now', 'https://academy.taxscan.in/'],
+        ['Sample ad: Shopscan e-books', 'Income tax e-books for practitioners', 'Buy now', 'https://shop.taxscan.in/'],
+        ['Sample ad: Taxscan archive', 'Search ten years of rulings', 'Start searching', 'https://www.taxscan.in/'],
+      ].map(([name, headline, ctaText, linkUrl]) => ({ portal, name, kind: 'HOUSE', headline, altText: headline, ctaText, linkUrl, audience: 'ALL', slots: [], status: 'ACTIVE' })),
+    });
+  }
   // Built "at 06:30 IST" today, as the morning build would be, so a seed run
   // late in the day is not swept by the cut-off during the build itself.
   const buildAt = istInstant(today, '06:30');

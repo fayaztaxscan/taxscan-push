@@ -33,6 +33,8 @@ export type AttentionInput = {
     approval: DigestApproval;
     skipReason: string | null;
     candidateCount: number;
+    /** Run alert markers (task 9 reads `config_invalid.source === 'ads'`). Optional for table tests. */
+    alerts?: unknown;
   } | null;
   sends: ReadonlyArray<{
     state: DigestSendState;
@@ -96,6 +98,9 @@ function runAttention(i: AttentionInput): Attention | null {
   const state = digestRunState(run, sends);
 
   if (state === 'failed') {
+    if (run.build === 'BUILD_FAILED' && (run.alerts as Record<string, { source?: string } | undefined> | null)?.config_invalid?.source === 'ads') {
+      return attention('ads_unfillable', "Today's digest is stopped: an ad slot cannot be filled.", `Open Ads and give every slot an active or default ad, then press Retry now in Digests before ${cutoff}.`);
+    }
     if (run.build === 'BUILD_FAILED') {
       return attention('build_failed', "Today's digest could not be built.", `It is retried until ${cutoff}; if it keeps failing, check the app logs and the digest settings.`);
     }

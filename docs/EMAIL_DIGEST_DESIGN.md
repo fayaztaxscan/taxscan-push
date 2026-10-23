@@ -460,6 +460,8 @@ All flags default OFF. The owner sets them on Railway.
 | `DIGEST_TEST_RECIPIENTS` | — | Extra internal addresses allowed for test sends. |
 | `DIGEST_POSTAL_ADDRESS` | — | Required. The build fails closed if it is empty. |
 | `DIGEST_MAX_HTML_KB` / `_HTML_WARN_KB` | `90` / `75` | |
+| `DIGEST_MAX_IMAGE_KB` | `600` | Task 9: distinct ad-image weight per email; above it the build logs a warning. |
+| `DIGEST_ASSET_BASE_URL` | `https://push.taxscan.in` | Task 9: where `/email-assets/<sha>.<ext>` is served from (ad image URLs in the email). |
 | `DIGEST_HTML_RETENTION_DAYS` / `EMAIL_EVENT_RETENTION_DAYS` | `30` / `90` | |
 
 **Daily timeline** (IST, with the default 07:30 send):
@@ -906,6 +908,61 @@ agents.
    SUBSCRIPTION guard, the Ads screen, and slot coverage.
    *Accept:* Premium never receives a SUBSCRIPTION ad (both directions); an unfillable slot fails the
    build closed; an off-allowlist link is rejected.
+   *Built 2026-10-23 (migration `20261023084545_digest_ads`: `DigestAd`, `DigestAdImage`,
+   `DigestAdPlacement`, new tables only; `ads.ts`, `adRules.ts`, `adImages.ts`, `content.ts`,
+   `src/routes/digestAds.ts`, `admin/src/views/Ads.vue`; tests `digestAds`).*
+   - **Deviations from §3.** `DigestAd` gains `portal` (default `taxscan`; the pool is per portal like
+     `DigestRun`, which also isolates test pools) and `createdAt`; `DigestAdImage` gains `size`;
+     `DigestAdPlacement` has FKs to the send (cascade) and the ad (restrict; ads are archived, never
+     deleted) and a unique `(sendId, slot)`.
+   - **`pickAds`** (`ads.ts`) is the single rule. Eligible = ACTIVE, `startsAt ≤ build instant < endsAt`,
+     audience match, slot allowed (empty = any), link passes `isAllowedDigestUrl` (an off-allowlist link
+     saved before an allowlist change is **dropped** here), image row present, not already in this email.
+     Order: topic match against the first 3 MAIN stories' category, then priority (0–100), then least
+     recently placed (never placed first), then id. Nothing eligible → the slot's default (same filters,
+     including the date window: an expired offer never comes back as a default). Slots are filled
+     most-constrained first so an any-slot ad does not starve a single-slot one. **No ad appears twice in
+     one email**, defaults included, so each audience needs ≥ 3 distinct ads (or defaults) to cover a
+     12-story digest.
+   - **SUBSCRIPTION guard, three times:** `pickAds` (`whyIneligible` → `subscription_guard`), the renderer
+     (`RenderError('ad_not_allowed')`), and the runner at freeze (`assertPlacementsAtFreeze` re-reads the
+     ad rows, so an ad edited after the pick, or a custom `buildContent`, is still refused). Saving
+     SUBSCRIPTION + PREMIUM_ONLY is rejected as a contradiction.
+   - **Slots drawn:** slot 1 after story 4, slot 2 after story 9 (only in digests with ≥ 9 stories), slot 3
+     above the footer. Only drawn slots are picked and recorded; the coverage check tests all three.
+   - **Unfillable slot = `config_invalid`, recoverable the same day.** `AdSlotError` from either variant
+     (both are attempted, so one alert names every slot) leaves the run `BUILD_FAILED`: nothing frozen,
+     nothing created, `config_invalid` alert with `source: 'ads'` (its own email copy and an
+     `ads_unfillable` banner pointing at Ads). The next tick or Retry now builds once the Ads screen is
+     fixed; at the cut-off the run is SKIPPED `config_invalid`. (The env-config `config_invalid` stays
+     terminal, as before.)
+   - **Freeze:** placements are written as `DigestAdPlacement` (`utmContent = ad-<id>-slot<N>`) in the
+     same transaction as the sends. Ad links carry `withUtm(…, {content: ad-<id>-slot<N>})` in HTML and
+     text. Ad markup counts toward the 90 KB budget (the 12-story worst case + 3 maximal ads measured
+     under it). Distinct image bytes over `DIGEST_MAX_IMAGE_KB` log a warning (never refuse: 3 × 150 KB
+     cannot exceed 600 KB today). `GET /runs/:id` lists each variant's ads.
+   - **Images:** type from magic bytes (JPEG/PNG only); a Content-Type or `X-Filename` extension that
+     disagrees is refused (`type_mismatch`); width from the PNG IHDR / JPEG SOFn header ≤ 1200 px; ≤ 150 KB;
+     id = sha256, identical uploads dedupe. `express.raw({limit: '200kb'})` on `POST /ad-images` only (over
+     it → 413 with our words). `GET /email-assets/:file` accepts only `^[a-f0-9]{64}\.(jpg|png)$` whose
+     extension matches the stored type (else 404 before any lookup — no traversal), `Cache-Control: public,
+     max-age=31536000, immutable`, CORP cross-origin, nosniff, a sandbox CSP, ETag/304; a 32-entry
+     in-process cache (immutable by id). Not resized.
+   - **Routes** (`/api/digest/ads`, `/ads/coverage`, `/ads/:id`, `/ads/:id/archive` with `confirm`,
+     `/ad-images`): `requireBearerOrUser(['ADMIN'])`, publisher 403. Every create/update/archive writes
+     `DIGEST_AD_SAVED` / `DIGEST_AD_ARCHIVED` with the link **host** only (and the changed field names).
+     A link with `utm_` parameters is rejected (the digest adds its own). Activity renders both actions.
+   - **Ads screen** (`/ads`, ADMIN nav entry): coverage check drawn as each audience's email skeleton with
+     the slots where readers meet them, filled with the ad the next build (next 06:30 IST, ads as they are
+     now) would place or marked empty with the reason; list (`table.stack`), editor with image upload,
+     archive behind ConfirmPush. Verified in headless Chromium at 1280 px and 390 px.
+   - **Backup:** `DigestAd` / `DigestAdImage` (with `DigestTemplate`, `EmailSuppression`) join `backup.ts`
+     in **task 11**, as §13 says; not in this task.
+   - **Admin guide** (owed with the other digest screens): Ads screen walkthrough; the coverage check and
+     what "the build will stop" means; slot positions (slot 2 only on long digests); ≥ 3 distinct ads or
+     defaults per audience; no SUBSCRIPTION ad to Premium (and why "Free only (never Premium)" appears);
+     image rules (JPEG/PNG, ≤ 1200 px, ≤ 150 KB, put the offer in the headline); allowlisted links, no
+     utm_; dates for offers; priority and rotation; topics; archive is final.
 10. **Templates.** Model with the partial unique index, compile at save (MJML if approved), validation
     checklist, scheduled overrides (`resolveTemplate(audience, at)`, the single definition), revert, the
     Templates screen.

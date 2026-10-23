@@ -1,8 +1,9 @@
 import type { DigestAudience } from '@prisma/client';
-import { env, type DigestEnv } from '../../lib/env';
+import type { DigestEnv } from '../../lib/env';
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import type { FrozenItem } from './builder';
 import { istDateOf } from './retryPolicy';
+import { adUtmContent, forbiddenForAudience } from './adRules';
 
 /**
  * Digest renderer v0 (docs/EMAIL_DIGEST_DESIGN.md §4 renderer, §13 task 5).
@@ -32,7 +33,15 @@ import { istDateOf } from './retryPolicy';
  *                MSO fixed wrapper, ≥ 16 px body, ≥ 44 px taps, dark-mode
  *                colour-scheme meta, no web fonts / JS / external CSS (#18)
  *  - escaping  = every text value is HTML-escaped
- *  - ads       = NONE in v0; `adSlot` hooks at fixed insertion points (task 9)
+ *  - ads       = task 9: `ads` (picked by ads.ts) are drawn at fixed slots with
+ *                live-text headline, real CTA button and image alt text; each
+ *                link passes the allowlist and carries utm_content=ad-<id>-slot<N>;
+ *                a SUBSCRIPTION ad in a PREMIUM render is refused (the guard,
+ *                again); when `ads` is given, every slot drawn must have one
+ *                (no empty slot). Ad markup counts toward the size budget.
+ *
+ * The runner's adapter (`renderDigestContent`, which picks the ads) lives in
+ * `content.ts` so this module stays pure and import-cycle free.
  */
 
 /** What the build step freezes onto each DigestSend. */
@@ -41,6 +50,8 @@ export type DigestContent = {
   preheader: string;
   html: string;
   text: string;
+  /** The ads drawn, one per rendered slot (task 9). Absent from stub content. */
+  placements?: AdPlacementRecord[];
 };
 
 /**
@@ -54,7 +65,14 @@ export type BuildContent = (input: {
   audience: DigestAudience;
   items?: FrozenItem[];
   cfg?: DigestEnv;
+  /** The run's portal (the ad pool is per portal). Default: the push portal. */
+  portal?: string;
+  /** The build instant (ad date windows are judged at it). Default: now. */
+  at?: Date;
 }) => Promise<DigestContent>;
+
+/** One ad placement the build records per send (DigestAdPlacement). */
+export type AdPlacementRecord = { adId: string; slot: number; utmContent: string };
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                           */
@@ -89,6 +107,29 @@ export const AD_SLOTS: readonly AdSlot[] = [
   { slot: 2, position: 'afterItem', afterItem: 9 },
   { slot: 3, position: 'beforeFooter' },
 ];
+/** The slots drawn for a digest with `mainCount` MAIN stories (an afterItem slot needs its item). */
+export function slotsForMainCount(mainCount: number): number[] {
+  return AD_SLOTS.filter((s) => s.position === 'beforeFooter' || s.afterItem <= mainCount).map((s) => s.slot);
+}
+
+/** MAIN items the renderer will actually draw (a blank headline is skipped). */
+export function renderableMainCount(items: Pick<FrozenItem, 'section' | 'title'>[]): number {
+  return items.filter((i) => i.section === 'MAIN' && clean(i.title ?? '') !== '').length;
+}
+
+/** An ad ready to draw: what the picker chose, with its image already resolved to a URL. */
+export type RenderAd = {
+  slot: number;
+  adId: string;
+  kind: string;
+  headline: string;
+  body: string | null;
+  ctaText: string;
+  linkUrl: string;
+  altText: string;
+  image: { url: string; width: number; height: number } | null;
+};
+
 /** Returns the slot's complete `<tr>…</tr>` markup, or '' for nothing. */
 export type AdSlotHook = (slot: AdSlot, ctx: { audience: DigestAudience; utmCampaign: string }) => string;
 /** v0: no ads. */
@@ -124,7 +165,9 @@ export type RenderErrorCode =
   | 'no_main_items'
   | 'link_not_allowed'
   | 'over_size_limit'
-  | 'noreply_address';
+  | 'noreply_address'
+  | 'ad_not_allowed'
+  | 'ad_slot_empty';
 
 /** A refusal to render. The message never contains a full URL or an address. */
 export class RenderError extends Error {
@@ -289,8 +332,14 @@ export type RenderInput = {
   cfg: Pick<DigestEnv, 'postalAddress' | 'maxHtmlKb' | 'htmlWarnKb'>;
   /** Optional logo image (must pass the allowlist). v0 default: none, a text wordmark. */
   logoUrl?: string | null;
-  /** Ad insertion hook (task 9). v0 default: no ads. */
+  /** Raw ad insertion hook (tests of the slot positions). Ignored when `ads` is given. */
   adSlot?: AdSlotHook;
+  /**
+   * Task 9: the ads to draw. When given, every slot this digest draws must
+   * have exactly one (else RenderError 'ad_slot_empty'). Undefined = no ads
+   * (renderer unit tests only; the build always passes them).
+   */
+  ads?: RenderAd[];
 };
 
 export type RenderedDigest = {
@@ -306,6 +355,8 @@ export type RenderedDigest = {
   /** True at or above DIGEST_HTML_WARN_KB (still rendered). */
   sizeWarning: boolean;
   campaignName: string;
+  /** Slots drawn (whether or not an ad was given for them). */
+  renderedSlots: number[];
 };
 
 type Prepared = {
@@ -364,11 +415,12 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   const homeHref = withUtm('https://www.taxscan.in/', { campaign: utmCampaign, content: 'header' });
   if (!isAllowedDigestUrl(homeHref)) throw new RenderError('link_not_allowed', 'the header link host is not on ALLOWED_PUSH_HOSTS');
 
-  const hook = input.adSlot ?? noAds;
-  const ad = (slot: AdSlot) => hook(slot, { audience, utmCampaign });
+  const renderedSlots = slotsForMainCount(main.length);
+  const ad = input.ads ? adHookFor(input.ads, audience, utmCampaign, renderedSlots) : (slot: AdSlot) => (input.adSlot ?? noAds)(slot, { audience, utmCampaign });
+  const textAds = input.ads ? textAdsFor(input.ads, utmCampaign) : new Map<number, string>();
 
   const html = renderHtml({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad });
-  const text = renderText({ audience, dateText, main, icymi, postal, homeHref });
+  const text = renderText({ audience, dateText, main, icymi, postal, homeHref, ads: textAds });
 
   const htmlBytes = Buffer.byteLength(html, 'utf8');
   const linkCount = (html.match(/<a\s[^>]*href=/gi) ?? []).length;
@@ -382,7 +434,81 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   }
   const sizeWarning = budgetBytes >= cfg.htmlWarnKb * 1024;
 
-  return { subject, preheader, html, text, htmlBytes, budgetBytes, linkCount, sizeWarning, campaignName };
+  return { subject, preheader, html, text, htmlBytes, budgetBytes, linkCount, sizeWarning, campaignName, renderedSlots };
+}
+
+/** The ad's link with the digest UTM (`utm_content=ad-<id>-slot<N>`). */
+function adHref(a: RenderAd, utmCampaign: string): string {
+  return withUtm(a.linkUrl, { campaign: utmCampaign, content: adUtmContent(a.adId, a.slot) });
+}
+
+/**
+ * Validates the ads against the slots drawn (fail closed) and returns the
+ * slot hook. Every check here repeats one the picker made, on purpose: the
+ * renderer refuses to draw a guard violation whoever produced the list.
+ */
+function adHookFor(ads: RenderAd[], audience: DigestAudience, utmCampaign: string, renderedSlots: number[]): (slot: AdSlot) => string {
+  const bySlot = new Map<number, RenderAd>();
+  const ids = new Set<string>();
+  for (const a of ads) {
+    if (forbiddenForAudience(a.kind, audience)) {
+      throw new RenderError('ad_not_allowed', `slot ${a.slot}: a subscription ad can never go to Premium readers`);
+    }
+    if (!isAllowedDigestUrl(a.linkUrl)) {
+      throw new RenderError('link_not_allowed', `ad in slot ${a.slot} links to ${hostOf(a.linkUrl)}, which is not on ALLOWED_PUSH_HOSTS`);
+    }
+    if (a.image && !/^https:\/\//.test(a.image.url)) throw new RenderError('link_not_allowed', `ad image in slot ${a.slot} is not served over https`);
+    if (bySlot.has(a.slot)) throw new RenderError('ad_not_allowed', `two ads for slot ${a.slot}`);
+    if (ids.has(a.adId)) throw new RenderError('ad_not_allowed', `the same ad is placed twice (slot ${a.slot})`);
+    bySlot.set(a.slot, a);
+    ids.add(a.adId);
+  }
+  const empty = renderedSlots.filter((s) => !bySlot.has(s));
+  if (empty.length > 0) throw new RenderError('ad_slot_empty', `no ad for slot ${empty.join(', ')}`);
+  return (slot: AdSlot) => {
+    const a = bySlot.get(slot.slot);
+    return a ? adRow(a, adHref(a, utmCampaign)) : '';
+  };
+}
+
+function textAdsFor(ads: RenderAd[], utmCampaign: string): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const a of ads) {
+    const lines = [`* ${clean(a.headline)}`, a.body ? `  ${clean(a.body)}` : null, `  ${clean(a.ctaText)}: ${adHref(a, utmCampaign)}`];
+    out.set(a.slot, lines.filter((l): l is string => l !== null).join('\n'));
+  }
+  return out;
+}
+
+/** Width the creative is drawn at inside the 600 px column (24 px padding each side). */
+export const AD_IMAGE_DISPLAY_WIDTH = 552;
+
+/** One house ad: optional image (linked, alt text), live-text headline, body, a real CTA button. */
+function adRow(a: RenderAd, href: string): string {
+  const h = esc(href);
+  let img = '';
+  if (a.image) {
+    const w = Math.min(a.image.width, AD_IMAGE_DISPLAY_WIDTH);
+    const hgt = Math.max(1, Math.round((a.image.height * w) / a.image.width));
+    img =
+      `<a href="${h}" style="display:block;margin:0 0 12px 0;text-decoration:none;">` +
+      `<img src="${esc(a.image.url)}" width="${w}" height="${hgt}" alt="${esc(clean(a.altText))}" style="display:block;width:100%;max-width:${w}px;height:auto;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:16px;color:${C.text};">` +
+      `</a>`;
+  }
+  const body = a.body
+    ? `<p style="${WRAP}margin:0 0 12px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(clean(a.body))}</p>`
+    : '';
+  return (
+    `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+    `<p style="${WRAP}margin:0 0 8px 0;font-family:${FONT};font-size:12px;line-height:16px;letter-spacing:0.06em;text-transform:uppercase;color:${C.muted};" class="ts-muted">From Taxscan</p>` +
+    img +
+    `<h3 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(clean(a.headline))}</h3>` +
+    body +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.brand}" style="border-radius:6px;background-color:${C.brand};">` +
+    `<a href="${h}" style="display:inline-block;padding:12px 22px;min-height:20px;line-height:20px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.brandText};text-decoration:none;border-radius:6px;">${esc(clean(a.ctaText))}</a>` +
+    `</td></tr></table>` +
+    `</td></tr>`
+  );
 }
 
 /** "Plus N more: <headline>…", the headline trimmed so the whole line is ≤ PREHEADER_MAX. */
@@ -520,18 +646,25 @@ function renderText(p: {
   icymi: Prepared[];
   postal: string;
   homeHref: string;
+  ads: Map<number, string>;
 }): string {
   const premium = p.audience === 'PREMIUM';
+  const adAfter = (n: number): string[] => {
+    const out: string[] = [];
+    for (const s of AD_SLOTS) if (s.position === 'afterItem' && s.afterItem === n && p.ads.has(s.slot)) out.push(p.ads.get(s.slot) as string, '');
+    return out;
+  };
   const block = (it: Prepared, n: number) =>
     [`${n}. ${it.title}`, it.label ? `   ${it.label}` : null, it.summary ? `   ${it.summary}` : null, `   ${it.href}`]
       .filter((l): l is string => l !== null)
       .join('\n');
   const out: string[] = [`TAXSCAN DAILY DIGEST${premium ? ' (PREMIUM)' : ''}`, p.dateText, ''];
-  p.main.forEach((it, i) => out.push(block(it, i + 1), ''));
+  p.main.forEach((it, i) => out.push(block(it, i + 1), '', ...adAfter(i + 1)));
   if (p.icymi.length > 0) {
     out.push('IN CASE YOU MISSED IT', '');
     p.icymi.forEach((it, i) => out.push(block(it, i + 1), ''));
   }
+  for (const s of AD_SLOTS) if (s.position === 'beforeFooter' && p.ads.has(s.slot)) out.push(p.ads.get(s.slot) as string, '');
   out.push(
     '----',
     `${premium ? PREMIUM_REASON : FREE_REASON} Questions or feedback? Just reply to this email.`,
@@ -542,25 +675,3 @@ function renderText(p: {
   );
   return out.join('\n');
 }
-
-/* ------------------------------------------------------------------ */
-/* Runner adapter                                                      */
-/* ------------------------------------------------------------------ */
-
-/**
- * The runner's default `buildContent`: renders the frozen items with the
- * built-in template. Refuses (throws) without items — the build then fails
- * loud (BUILD_FAILED + alert) rather than freezing an empty digest. Logs a
- * size warning (bytes only; never an address).
- */
-export const renderDigestContent: BuildContent = async ({ runDate, audience, items, cfg }) => {
-  const c = cfg ?? env.digest;
-  if (!items) throw new RenderError('no_main_items', 'no frozen items (the builder did not run)');
-  assertReplyAddresses(c.mailercloud);
-  const r = renderDigest({ items, audience, runDate, cfg: c });
-  if (r.sizeWarning) {
-    // eslint-disable-next-line no-console
-    console.warn(`[digest] ${audience} html is ${r.budgetBytes} bytes incl. tracking allowance (warn at ${c.htmlWarnKb} KB, limit ${c.maxHtmlKb} KB)`);
-  }
-  return { subject: r.subject, preheader: r.preheader, html: r.html, text: r.text };
-};

@@ -12,6 +12,7 @@ import { createMailercloudSender } from '../services/digest/mailercloud';
 import { redactError, type DigestSender } from '../services/digest/sender';
 import type { BuildContent } from '../services/digest/renderer';
 import { digestActions, digestHistory, digestRunDetail } from '../services/digest/screen';
+import { createDigestAdsRouter } from './digestAds';
 
 /**
  * Email digest routes (docs/EMAIL_DIGEST_DESIGN.md §6), mounted at
@@ -73,6 +74,9 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
 
   const viewerCanTest = (req: Request, cfg: DigestEnv) =>
     Boolean(req.user && cfg.testRecipients.includes(req.user.email.toLowerCase()));
+
+  // Ads (task 9): ADMIN only, works with the digest switched off so ads can be prepared first.
+  router.use(createDigestAdsRouter({ cfg: cfgOf, clock: nowOf, portal: portalOf }));
 
   const notEnabled = (res: Response) =>
     res.status(409).json({ error: 'digest_disabled', message: 'The email digest is switched off (DIGEST_ENABLED).' });

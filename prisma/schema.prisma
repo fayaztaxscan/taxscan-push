@@ -511,7 +511,8 @@ model DigestSend {
   rolledBounce        Int              @default(0)
   rolledSpam          Int              @default(0)
 
-  run DigestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  placements DigestAdPlacement[]
 
   @@unique([runId, audience])
   @@index([state, nextAttemptAt])
@@ -577,4 +578,69 @@ model EmailSuppression {
   source      String // mailercloud_webhook | manual
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
+}
+
+/// House ads for the digest (task 9; docs/EMAIL_DIGEST_DESIGN.md §3, §4 ads.ts, §7, §9). Only
+/// taxscan's own products. Archived, never deleted. `pickAds()` in services/digest/ads.ts is the
+/// single eligibility rule; `kind = SUBSCRIPTION` is NEVER placed in a PREMIUM send whatever
+/// `audience` says (checked at pick, at render and again at freeze). `portal` scopes the pool
+/// (portal-agnostic like DigestRun; also isolates test pools).
+model DigestAd {
+  id              String    @id @default(cuid())
+  portal          String    @default("taxscan")
+  name            String
+  kind            String // HOUSE | SUBSCRIPTION | RENEWAL
+  headline        String // live text, never only inside the image
+  altText         String
+  body            String?
+  ctaText         String
+  linkUrl         String // passes isAllowedPushUrl() at save AND at render; UTM added at render, never stored
+  imageId         String?
+  audience        String // ALL | FREE_ONLY | PREMIUM_ONLY
+  topic           String? // matched against the lead items' report category (ordering only)
+  slots           Int[] // empty = any slot
+  priority        Int       @default(0)
+  isSlotDefault   Boolean   @default(false) // fallback for its slots when nothing else is eligible
+  startsAt        DateTime?
+  endsAt          DateTime?
+  status          String // ACTIVE | PAUSED | ARCHIVED
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  image      DigestAdImage?      @relation(fields: [imageId], references: [id])
+  placements DigestAdPlacement[]
+
+  @@index([portal, status])
+}
+
+/// One scalable creative (≤ 1200 px wide, ≤ 150 KB, JPEG or PNG — validated from the bytes, never
+/// resized). `id` = sha256 of the bytes, so an identical upload is the same row. Served publicly at
+/// /email-assets/<id>.<jpg|png> with an immutable cache.
+model DigestAdImage {
+  id        String   @id // sha256 hex of the bytes
+  mime      String // image/jpeg | image/png (sniffed, not declared)
+  width     Int
+  height    Int
+  size      Int
+  bytes     Bytes
+  createdAt DateTime @default(now())
+
+  ads DigestAd[]
+}
+
+/// One row per ad per send (task 9): rotation (least recently placed) and, later, order matching.
+model DigestAdPlacement {
+  id         String   @id @default(cuid())
+  sendId     String
+  adId       String
+  slot       Int
+  utmContent String // ad-<id>-slot<N>
+  createdAt  DateTime @default(now())
+
+  send DigestSend @relation(fields: [sendId], references: [id], onDelete: Cascade)
+  ad   DigestAd   @relation(fields: [adId], references: [id])
+
+  @@unique([sendId, slot])
+  @@index([adId, createdAt])
 }

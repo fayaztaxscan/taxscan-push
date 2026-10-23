@@ -17,12 +17,14 @@ import {
   isNoReplyAddress,
   trimWords,
   renderDigest,
-  renderDigestContent,
   senderAddressProblems,
   withUtm,
   type RenderInput,
 } from '../services/digest/renderer';
 import { startDigestScheduler } from '../services/digest/scheduler';
+import { renderDigestContent, toRenderAd } from '../services/digest/content';
+import { loadAdPool } from '../services/digest/ads';
+import { deleteTestAds, ensureTestAds } from './digestAdFixtures';
 import { FakeSender } from './digestFakeSender';
 
 /**
@@ -212,11 +214,14 @@ describe('5. no-reply sender / reply address refused', () => {
     expect(senderAddressProblems({ senderEmail: 'noreply@secret.example', replyEmail: '' }).join(' ')).not.toContain('secret.example');
   });
   it('renderDigestContent refuses a no-reply config; accepts a monitored one', async () => {
-    const base = { runId: 'r', runDate: RUN_DATE, audience: 'FREE' as DigestAudience, items: items(5) };
+    const portal = `test-digest-render-noreply-${Date.now()}`;
+    await ensureTestAds(portal);
+    const base = { runId: 'r', runDate: RUN_DATE, audience: 'FREE' as DigestAudience, items: items(5), portal };
     await expect(renderDigestContent({ ...base, cfg: cfg({ MAILERCLOUD_REPLY_EMAIL: 'noreply@news.taxscan.in' }) })).rejects.toMatchObject({
       code: 'noreply_address',
     });
     await expect(renderDigestContent({ ...base, cfg: cfg({ MAILERCLOUD_REPLY_EMAIL: 'digest@news.taxscan.in' }) })).resolves.toHaveProperty('html');
+    await deleteTestAds(portal);
   });
   it('the scheduler refuses to start at boot with a no-reply sender', () => {
     expect(startDigestScheduler(cfg({ MAILERCLOUD_API_KEY: 'k', MAILERCLOUD_SENDER_EMAIL: 'no-reply@news.taxscan.in' }), { start: '23:00', end: '07:00' })).toBe(
@@ -564,6 +569,7 @@ describe('runner integration', () => {
 
   afterAll(async () => {
     await prisma.digestRun.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
+    await deleteTestAds(PORTAL_PREFIX);
     await prisma.$disconnect();
   });
 
@@ -588,6 +594,7 @@ describe('runner integration', () => {
     const its = items(6, 1);
     const per = { FREE: its, PREMIUM: its };
     const run = await ensureRun({ portal: `${PORTAL_PREFIX}${Date.now()}`, now: IST(6, 0), cfg: c });
+    await ensureTestAds(run.portal);
     const sender = new FakeSender();
     let selects = 0;
     const step = (now: Date) =>
@@ -605,8 +612,13 @@ describe('runner integration', () => {
     await step(IST(6, 30));
     const sends = await prisma.digestSend.findMany({ where: { runId: run.id } });
     expect(sends).toHaveLength(2);
+    const pool = await loadAdPool(run.portal);
     for (const s of sends) {
-      const expected = renderDigest({ items: its, audience: s.audience, runDate: run.runDate, cfg: c });
+      // The ads drawn are the recorded placements (6 items → slots 1 and 3).
+      const placed = await prisma.digestAdPlacement.findMany({ where: { sendId: s.id }, orderBy: { slot: 'asc' } });
+      expect(placed.map((p) => p.slot)).toEqual([1, 3]);
+      const ads = placed.map((p) => toRenderAd({ slot: p.slot, ad: pool.find((a) => a.id === p.adId)!, utmContent: p.utmContent, viaDefault: false }, c.assetBaseUrl));
+      const expected = renderDigest({ items: its, audience: s.audience, runDate: run.runDate, cfg: c, ads });
       expect(s).toMatchObject({
         subject: expected.subject,
         preheader: expected.preheader,
@@ -640,6 +652,7 @@ describe('runner integration', () => {
     const c = cfg();
     const its = [...items(5), item({ url: 'https://evil.example.com/x' })];
     const run = await ensureRun({ portal: `${PORTAL_PREFIX}${Date.now()}-bad`, now: IST(6, 0), cfg: c });
+    await ensureTestAds(run.portal);
     const sender = new FakeSender();
     await advanceRun(run.id, 'cron', {
       sender,

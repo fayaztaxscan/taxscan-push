@@ -118,6 +118,11 @@ const TITLE_CATEGORY: { label: string; re: RegExp }[] = [
   },
 ];
 
+/** The title-inferred category rows, in rule order (the Ads screen offers them as ad topics). */
+export function reportCategoryLabels(): string[] {
+  return [...new Set(TITLE_CATEGORY.map((c) => c.label))];
+}
+
 export function categoryFromTitle(title: string): string | null {
   const t = title ?? '';
   for (const { label, re } of TITLE_CATEGORY) if (re.test(t)) return label;

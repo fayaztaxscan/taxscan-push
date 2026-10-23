@@ -82,6 +82,8 @@ export type AlertMarker = {
   error?: string;
   reason?: string;
   problems?: unknown;
+  /** 'ads' when an unfillable ad slot stopped the build (task 9). */
+  source?: string;
   campaignName?: string;
   candidates?: number;
   max?: number;
@@ -156,6 +158,14 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         todo: `Check the Mailercloud API key and the account (plan, quota, sender) in Railway and Mailercloud, then ${retryNow}.`,
       };
     case 'config_invalid':
+      if (m.source === 'ads') {
+        return {
+          short: 'A digest ad slot cannot be filled',
+          what: `Today's digest has an ad slot no ad can fill: ${safeDetail(m.problems, cfg) || 'see Admin → Ads'}.`,
+          did: `Stopped before anything was frozen or created — a slot is never sent empty. The build is tried again until ${cutoff}.`,
+          todo: `In Admin → Ads, give that slot an active ad or a default ad (the coverage check there must show every slot ✓), then ${retryNow}.`,
+        };
+      }
       return {
         short: 'Digest settings are incomplete',
         what: `The digest settings are incomplete: ${safeDetail(m.problems, cfg) || 'see Admin → Digests'}.`,

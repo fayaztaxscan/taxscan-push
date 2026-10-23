@@ -12,6 +12,7 @@ import { gaLastSyncAt, gaReadsSource, type ReadsSource } from '../services/diges
 import { advanceRun, ensureRun } from '../services/digest/runner';
 import { istDateOf } from '../services/digest/retryPolicy';
 import { FakeSender } from './digestFakeSender';
+import { deleteTestAds, ensureTestAds } from './digestAdFixtures';
 
 /**
  * Email digest task 4 (docs/EMAIL_DIGEST_DESIGN.md §4.1): selection, ranking,
@@ -140,6 +141,7 @@ const keyOf = (url: string) => `article:${/-(\d+)$/.exec(url)![1]}`;
 
 afterAll(async () => {
   await prisma.digestRun.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
+  await deleteTestAds(PORTAL_PREFIX);
   await prisma.campaign.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
   await prisma.articleReadStat.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
   await prisma.$disconnect();
@@ -585,7 +587,8 @@ describe('link check', () => {
 /* ------------------------------------------------------------------ */
 
 describe('runner integration', () => {
-  function advance(runId: string, now: Date, c: DigestEnv, sender = new FakeSender(), calls = { n: 0 }) {
+  async function advance(runId: string, now: Date, c: DigestEnv, sender = new FakeSender(), calls = { n: 0 }) {
+    await ensureTestAds((await prisma.digestRun.findUniqueOrThrow({ where: { id: runId } })).portal);
     return advanceRun(runId, 'cron', {
       sender,
       now,

@@ -104,6 +104,10 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
     sanityMaxCandidates: intFrom(src, 'DIGEST_SANITY_MAX_CANDIDATES', 150),
     maxHtmlKb: intFrom(src, 'DIGEST_MAX_HTML_KB', 90),
     htmlWarnKb: intFrom(src, 'DIGEST_HTML_WARN_KB', 75),
+    // Task 9: the per-email weight of distinct ad images; above it the build logs a warning.
+    maxImageKb: intFrom(src, 'DIGEST_MAX_IMAGE_KB', 600),
+    // Task 9: where ad images are served from (public /email-assets route). https only; no trailing slash.
+    assetBaseUrl: (src.DIGEST_ASSET_BASE_URL ?? 'https://push.taxscan.in').trim().replace(/\/+$/, ''),
     htmlRetentionDays: intFrom(src, 'DIGEST_HTML_RETENTION_DAYS', 30),
     emailEventRetentionDays: intFrom(src, 'EMAIL_EVENT_RETENTION_DAYS', 90),
     // Required at build time (later task); the build fails closed when empty.

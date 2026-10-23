@@ -11,6 +11,7 @@ import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
+import { emailAssetsHandler } from './routes/digestAds';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
 import type { EmailSender } from './lib/email';
@@ -145,6 +146,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       if (err) next(err);
     });
   });
+
+  // Digest ad images (task 9): public, immutable, cross-origin; only stored images by sha256 name.
+  app.get('/email-assets/:file', emailAssetsHandler);
 
   app.use(express.static(publicDir));
 

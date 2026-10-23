@@ -13,7 +13,9 @@ import {
 } from './sender';
 import { isPastCutoff, istDateOf, istInstant, nextAttemptAt, runDateKey } from './retryPolicy';
 import { digestRunState, type DigestRunState } from './runState';
-import { renderDigestContent, senderAddressProblems, type BuildContent } from './renderer';
+import { senderAddressProblems, type AdPlacementRecord, type BuildContent } from './renderer';
+import { renderDigestContent } from './content';
+import { AdSlotError, assertPlacementsAllowed } from './ads';
 import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
 import { sendDigestAlerts } from './alerts';
 import { recordRunAlert } from './runAlerts';
@@ -64,6 +66,13 @@ import { checkWebhookLiveness } from './webhookLiveness';
  * once; a render refusal (no address, off-allowlist link, over the size limit,
  * no-reply sender) fails the build loud (BUILD_FAILED + build_failed alert).
  * Without `selectItems` there are no items, so the build fails the same way.
+ * TASK 9: the default content also picks one house ad per drawn slot. A slot
+ * no ad can fill (`AdSlotError`) fails the build CLOSED with `config_invalid`:
+ * nothing is frozen or created, the run stays BUILD_FAILED so a fix on the
+ * Ads screen before the cut-off lets the next attempt build, and the cut-off
+ * skips it as `config_invalid`. At freeze the placements are checked once
+ * more (no SUBSCRIPTION ad in PREMIUM, allowlisted link, no ad twice) against
+ * the ad rows as they are NOW, and recorded as DigestAdPlacement per send.
  */
 
 /** The builder as the runner sees it (default none = task-3 behaviour, no items). */
@@ -474,20 +483,36 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
     return false;
   }
 
-  let contents: { audience: DigestAudience; subject: string; preheader: string; html: string; text: string }[];
+  let contents: { audience: DigestAudience; subject: string; preheader: string; html: string; text: string; placements?: AdPlacementRecord[] }[];
   let selection: DigestSelection | null = null;
   try {
     // The window is recomputed on every build attempt (§8: a retried build sees `now`).
     if (selectItems) selection = await selectItems(ctx.run, ctx.now);
     if (selection?.outcome === 'too_little_news') return await skipTooLittleNews(ctx, selection);
     const itemsFor = (a: DigestAudience): FrozenItem[] | undefined => selection?.perAudience[a];
-    contents = await Promise.all(
+    contents = await allContents(
       AUDIENCES.map(async (audience) => ({
         audience,
-        ...(await buildContent({ runId: ctx.run.id, runDate: ctx.run.runDate, audience, items: itemsFor(audience), cfg: ctx.cfg })),
+        ...(await buildContent({
+          runId: ctx.run.id,
+          runDate: ctx.run.runDate,
+          audience,
+          items: itemsFor(audience),
+          cfg: ctx.cfg,
+          portal: ctx.run.portal,
+          at: ctx.now,
+        })),
       })),
     );
+    for (const c of contents) await assertPlacementsAtFreeze(c.audience, c.placements ?? []);
   } catch (err) {
+    if (err instanceof AdSlotError) {
+      // Fail closed, recoverable the same day: nothing frozen, nothing created.
+      await prisma.digestRun.updateMany({ where: { id: ctx.run.id, build: 'BUILDING' }, data: { build: 'BUILD_FAILED' } });
+      await raiseAlert(ctx, 'config_invalid', { problems: err.problems, source: 'ads' });
+      log(ctx, null, 'build:config_invalid:ads');
+      return false;
+    }
     // Task 4 adds the build retry schedule (§8); until then the next tick retries.
     await prisma.digestRun.updateMany({ where: { id: ctx.run.id, build: 'BUILDING' }, data: { build: 'BUILD_FAILED' } });
     await raiseAlert(ctx, 'build_failed', { error: redactError(err) });
@@ -511,7 +536,8 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
         await tx.digestRun.updateMany({ where: { id: ctx.run.id, approval: 'NOT_REQUIRED' }, data: { approval: 'PENDING' } });
       }
     }
-    await tx.digestSend.createMany({
+    const sends = await tx.digestSend.createManyAndReturn({
+      select: { id: true, audience: true },
       data: contents.map((c) => ({
         runId: ctx.run.id,
         audience: c.audience,
@@ -524,6 +550,11 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
         sendAfter,
       })),
     });
+    const placements = contents.flatMap((c) => {
+      const sendId = sends.find((x) => x.audience === c.audience)?.id;
+      return sendId ? (c.placements ?? []).map((p) => ({ sendId, adId: p.adId, slot: p.slot, utmContent: p.utmContent, createdAt: ctx.now })) : [];
+    });
+    if (placements.length > 0) await tx.digestAdPlacement.createMany({ data: placements });
     return true;
   });
   if (built && selection?.outcome === 'sanity_hold') {
@@ -533,6 +564,37 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
   if (built && selection) log(ctx, null, `build:items:${selection.rows.length}:reads=${selection.reads.used ? selection.reads.source : 'off'}`);
   log(ctx, null, built ? 'build:frozen' : 'build:claimed_elsewhere');
   return built;
+}
+
+/**
+ * Both variants' content. Every variant is attempted, so an ad problem in
+ * BOTH (e.g. no ads at all) is reported in one alert naming every slot; any
+ * other failure is rethrown as is.
+ */
+async function allContents<T>(jobs: Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(jobs);
+  const errors = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map((r) => r.reason as unknown);
+  const other = errors.find((e) => !(e instanceof AdSlotError));
+  if (other !== undefined) throw other;
+  if (errors.length > 0) throw new AdSlotError(errors.flatMap((e) => (e as AdSlotError).problems));
+  return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+}
+
+/**
+ * The guard once more, at freeze, against the ad rows as they are now (an ad
+ * edited to SUBSCRIPTION or to an off-allowlist link after it was picked, or a
+ * custom `buildContent`, still cannot reach readers). Throws AdSlotError.
+ */
+async function assertPlacementsAtFreeze(audience: DigestAudience, placements: AdPlacementRecord[]): Promise<void> {
+  if (placements.length === 0) return;
+  const ads = await prisma.digestAd.findMany({ where: { id: { in: placements.map((p) => p.adId) } }, select: { id: true, kind: true, linkUrl: true } });
+  const byId = new Map(ads.map((a) => [a.id, a]));
+  const missing = placements.filter((p) => !byId.has(p.adId));
+  if (missing.length > 0) throw new AdSlotError(missing.map((p) => `Slot ${p.slot}: the placed ad no longer exists`));
+  assertPlacementsAllowed(
+    audience,
+    placements.map((p) => ({ slot: p.slot, adId: p.adId, kind: byId.get(p.adId)!.kind, linkUrl: byId.get(p.adId)!.linkUrl })),
+  );
 }
 
 /** Run columns the builder fills at freeze. */
@@ -1109,7 +1171,9 @@ function cutoffReason(ctx: Ctx): string {
  */
 async function cutoffSweep(ctx: Ctx): Promise<void> {
   if (ctx.run.build === 'BUILDING' || ctx.run.build === 'BUILD_FAILED') {
-    const reason = ctx.run.build === 'BUILD_FAILED' ? 'build_failed' : 'cutoff_passed';
+    // A build held back by an unfillable ad slot (task 9) is skipped as config_invalid.
+    const adsBlocked = ctx.run.build === 'BUILD_FAILED' && (ctx.run.alerts as Record<string, unknown> | null)?.config_invalid !== undefined;
+    const reason = adsBlocked ? 'config_invalid' : ctx.run.build === 'BUILD_FAILED' ? 'build_failed' : 'cutoff_passed';
     const r = await prisma.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
       data: { build: 'SKIPPED', skipReason: reason },

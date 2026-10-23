@@ -146,6 +146,14 @@ function summarize(item: AuditItem): string {
       return 'Rejected from Review — not sent';
     case 'REVIEW_PUSHED':
       return `Pushed from Review: sent ${m.sent ?? '?'}, failed ${m.failed ?? '?'}`;
+    case 'DIGEST_AD_SAVED': {
+      const changed = Array.isArray(m.changed) ? (m.changed as string[]) : null;
+      return m.created
+        ? `Added digest ad “${m.name ?? '—'}” (links to ${m.linkHost ?? '—'})`
+        : `Edited digest ad “${m.name ?? '—'}”${changed?.length ? `: ${changed.join(', ')}` : ''}`;
+    }
+    case 'DIGEST_AD_ARCHIVED':
+      return `Archived digest ad “${m.name ?? '—'}”`;
     default: {
       // Anything without its own case (a newly added action) still reads as
       // something rather than an empty "{}".

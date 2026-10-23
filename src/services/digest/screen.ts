@@ -237,6 +237,7 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
           reached: true,
           opens: true,
           clicks: true,
+          placements: { orderBy: { slot: 'asc' }, select: { slot: true, adId: true, utmContent: true, ad: { select: { name: true, kind: true } } } },
         },
       },
       items: { orderBy: [{ rank: 'asc' }] },
@@ -313,6 +314,8 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       lastErrorKind: s.lastErrorKind as SenderErrorKind | null,
       targeted: s.targeted,
       reached: s.reached,
+      // Task 9: the house ad drawn in each slot of this frozen email.
+      ads: s.placements.map((p) => ({ slot: p.slot, adId: p.adId, name: p.ad.name, kind: p.ad.kind, utmContent: p.utmContent })),
     })),
     items,
     actions,
