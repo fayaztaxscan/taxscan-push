@@ -829,3 +829,39 @@ describe('QA #7 per-step retry bookkeeping', () => {
     expect(free.firstFailureAt?.toISOString()).toBe(ist(6, 30).toISOString());
   });
 });
+
+describe('QA of 3239f0a: the createSentAt stamp and its fence', () => {
+  it('a claim lost before the stamp (taken over during the lookup): createDraft() is never called, nothing stamped', async () => {
+    const run = await newRun();
+    const sender = new FakeSender({ withLookup: true });
+    const lookup = sender.findCampaignByName!;
+    sender.findCampaignByName = async (name: string) => {
+      const r = await lookup(name);
+      // Another runner takes the FREE step over while our lookup is in flight.
+      await prisma.digestSend.updateMany({ where: { runId: run.id, audience: 'FREE' }, data: { stepClaimedAt: ist(5, 0, 24) } });
+      return r;
+    };
+    await step(run.id, 'cron', ist(6, 30), sender);
+    expect(sender.draftInputs().map((d) => d.audience)).not.toContain('FREE');
+    const free = await sendOf(run.id);
+    expect(free.createSentAt).toBeNull();
+    expect(free.mcCampaignId).toBeNull();
+  });
+
+  it('a failed LOOKUP (even a 429) keeps an earlier create\'s stamp: our lost create is still adopted as ours', async () => {
+    const run = await newRun();
+    const sender = new FakeSender({ withLookup: true }).fail('createDraft', 'AMBIGUOUS', 1, { applied: true });
+    await step(run.id, 'cron', ist(6, 30), sender); // FREE's create went through, reply lost
+    const sentAt = (await sendOf(run.id)).createSentAt;
+    expect(sentAt).toBeInstanceOf(Date);
+    sender.fail('findCampaignByName', 'RETRYABLE', 1, { http: 429 });
+    await step(run.id, 'cron', ist(6, 32), sender); // the lookup is rate-limited
+    expect((await sendOf(run.id)).createSentAt).toEqual(sentAt);
+    await step(run.id, 'cron', ist(6, 50), sender); // the lookup finds our own draft
+    const free = await sendOf(run.id);
+    expect(free.state).toBe('CREATED');
+    expect(free.adoptedDraftAt).toBeNull();
+    expect(free.ownApprovalRequired).toBe(false);
+    expect(sender.count('createDraft')).toBe(2); // FREE once, PREMIUM once
+  });
+});

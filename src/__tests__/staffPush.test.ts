@@ -505,3 +505,55 @@ describe('the staff worker file', () => {
     expect(staffDeviceLabel(undefined)).toBe('Browser on unknown device');
   });
 });
+
+describe('QA of 3239f0a: re-subscribe after a VAPID key change (replacesEndpoint)', () => {
+  const app3 = createApp({ rateLimit: { publicPerMin: 10000, loginPerMin: 10000 } });
+  const subscribe = (cookie: string, body: object) => request(app3).post('/api/staff-push/devices').set('Cookie', cookie).send(body);
+
+  it("never deletes another user's device, whatever endpoint is named", async () => {
+    const me = await makeUser('replacer');
+    const other = await makeUser('victim');
+    const theirs = await makeDevice(other, 'victim');
+    const cookie = await login(app3, me);
+    const res = await subscribe(cookie, { subscription: { endpoint: endpoint('mine'), keys: validKeys() }, replacesEndpoint: theirs.endpoint });
+    expect(res.status).toBe(201);
+    expect(await prisma.staffPushSubscription.count({ where: { id: theirs.id } })).toBe(1);
+    expect(await prisma.staffPushSubscription.count({ where: { userId: me.id } })).toBe(1);
+  });
+
+  it('drops the caller’s own old row (the dead key) and keeps the new one', async () => {
+    const me = await makeUser('rotated');
+    const old = await makeDevice(me, 'old-key');
+    const cookie = await login(app3, me);
+    const ep = endpoint('new-key');
+    const res = await subscribe(cookie, { subscription: { endpoint: ep, keys: validKeys() }, replacesEndpoint: old.endpoint });
+    expect(res.status).toBe(201);
+    expect(await prisma.staffPushSubscription.count({ where: { id: old.id } })).toBe(0);
+    expect((await prisma.staffPushSubscription.findMany({ where: { userId: me.id } })).map((d) => d.endpoint)).toEqual([ep]);
+    const audit = await prisma.auditLog.findMany({ where: { userId: me.id, action: 'STAFF_PUSH_SUBSCRIBED' } });
+    expect(audit[0]?.metadata).toMatchObject({ replacedOldEndpoint: true });
+  });
+
+  it('at the 10-device limit, replacing the dead row turns no other device off', async () => {
+    const me = await makeUser('full');
+    const base = Date.now() - 60 * 60_000;
+    const rows = [];
+    for (let i = 0; i < 10; i += 1) {
+      const k = validKeys();
+      rows.push(
+        await prisma.staffPushSubscription.create({
+          data: { userId: me.id, endpoint: endpoint(`full${i}`), p256dh: k.p256dh, auth: k.auth, label: 'Chrome on Mac', updatedAt: new Date(base + i * 60_000) },
+        }),
+      );
+    }
+    const dead = rows[5]; // not the oldest
+    const cookie = await login(app3, me);
+    const res = await subscribe(cookie, { subscription: { endpoint: endpoint('full-new'), keys: validKeys() }, replacesEndpoint: dead.endpoint });
+    expect(res.status).toBe(201);
+    expect(res.body).not.toHaveProperty('evicted');
+    expect(await prisma.staffPushSubscription.count({ where: { userId: me.id } })).toBe(10);
+    expect(await prisma.staffPushSubscription.count({ where: { id: dead.id } })).toBe(0);
+    expect(await prisma.staffPushSubscription.count({ where: { id: rows[0].id } })).toBe(1); // the oldest live device stays
+    expect(await prisma.auditLog.count({ where: { userId: me.id, action: 'STAFF_PUSH_REMOVED' } })).toBe(0);
+  });
+});

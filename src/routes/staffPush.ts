@@ -131,7 +131,8 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
       const userId = req.user!.id;
       const { subscription, replacesEndpoint } = parsed.data;
       const label = staffDeviceLabel(req.header('user-agent'));
-      const r = await upsertStaffDevice(userId, subscription, label);
+      // Drop the caller's own dead row BEFORE storing the new one, so a user at the device
+      // limit doesn't lose another (live) device to eviction for a row that is going anyway.
       let replaced = false;
       if (replacesEndpoint && replacesEndpoint !== subscription.endpoint) {
         const old = await findOwnDevice(userId, replacesEndpoint);
@@ -140,6 +141,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
           replaced = true;
         }
       }
+      const r = await upsertStaffDevice(userId, subscription, label);
       // A refresh of an unchanged device is not news; a new device (or one taken over
       // from another login on the same browser) is.
       if (r.created || r.movedFromUserId) {
