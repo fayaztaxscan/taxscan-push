@@ -364,7 +364,7 @@ describe('overlap and robustness', () => {
     await tick(d, 6, 30); // built; both lookups failed → PENDING, marker set
     const run = (await runOf(d))!;
     // The 06:31 retry claimed both variants and the process died: FREE's create had reached Mailercloud.
-    await prisma.digestSend.updateMany({ where: { runId: run.id }, data: { stepClaimedAt: ist(6, 31), createAttemptedAt: ist(6, 31) } });
+    await prisma.digestSend.updateMany({ where: { runId: run.id }, data: { stepClaimedAt: ist(6, 31), createAttemptedAt: ist(6, 31), createSentAt: ist(6, 31) } });
     const freeId = 'fake-made-before-the-crash';
     d.sender.campaigns.set(freeId, { id: freeId, name: digestProviderCampaignName(d.portal, run.runDate, 'FREE'), state: 'DRAFT', input: {} as never });
 

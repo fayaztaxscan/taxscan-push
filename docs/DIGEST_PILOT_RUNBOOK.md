@@ -303,7 +303,10 @@ support (design §12). Each one says when it must be done by.
     iPhone, from the Home Screen app first (Safari → Share → Add to
     Home Screen, iOS 16.4+). **Send a test** arrives. Users shows each
     approver with a device count. (`DIGEST_STAFF_PUSH_ENABLED` defaults
-    on; nothing is pushed while `DIGEST_ENABLED` is off.)
+    on — the owner's decision; nothing is pushed while `DIGEST_ENABLED` is
+    off.) After any VAPID key rotation each approver taps **Notify me on
+    this device** once more (the card shows *Off* and says the key
+    changed); see `docs/BACKUPS.md`.
 - **Every day:**
   - [ ] By 06:45: Digests shows both versions built, no banner.
   - [ ] An editor compares it with the hand-made digest: stories,

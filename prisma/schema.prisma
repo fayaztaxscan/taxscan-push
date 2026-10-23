@@ -547,6 +547,11 @@ model DigestSend {
   // marker means the call may have happened: ask the provider before repeating it.
   createAttemptedAt   DateTime?
   scheduleAttemptedAt DateTime?
+  // Written (fenced on the claim) immediately BEFORE the createDraft() HTTP call, i.e. after
+  // the name lookup proved no campaign exists. Set = this database actually called create, so
+  // a draft found later by name is ours (decision A). `createAttemptedAt` only says the step
+  // was claimed: a crash before the call leaves it set but this one null (2026-10-23).
+  createSentAt        DateTime?
   attempts            Int              @default(0) // all failed attempts (display)
   firstFailureAt      DateTime? // first failure of any step (display)
   // Retry bookkeeping for the CURRENT step (create or schedule); reset when the step succeeds.

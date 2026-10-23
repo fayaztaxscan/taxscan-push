@@ -208,6 +208,90 @@ describe('subscribe / unsubscribe routes', () => {
     expect((await prisma.staffPushSubscription.findUnique({ where: { id: ok.id } }))?.lastSuccessAt).toBeInstanceOf(Date);
   });
 
+  it('"Send a test" is limited per user: 5 a minute → 429 with a message the card shows; another user is unaffected', async () => {
+    const rec = recorder();
+    const app2 = createApp({ rateLimit: { publicPerMin: 10000, loginPerMin: 10000 }, staffPush: { transport: rec.transport } });
+    const u = await makeUser('looper');
+    const v = await makeUser('neighbour'); // same IP (supertest): the key is the user, not the address
+    const du = await makeDevice(u, 'looper');
+    const dv = await makeDevice(v, 'neighbour');
+    const cu = await login(app2, u);
+    const cv = await login(app2, v);
+    const test = (cookie: string, ep: string) => request(app2).post('/api/staff-push/devices/test').set('Cookie', cookie).send({ endpoint: ep });
+    for (let i = 0; i < 5; i += 1) expect((await test(cu, du.endpoint)).status).toBe(200);
+    const over = await test(cu, du.endpoint);
+    expect(over.status).toBe(429);
+    expect(over.body).toEqual({ error: 'rate_limited', message: 'Too many tests — try again in a minute.' });
+    expect(rec.sent).toHaveLength(5); // the 6th never reached the push service
+    expect((await test(cv, dv.endpoint)).status).toBe(200);
+    expect(rec.sent).toHaveLength(6);
+  });
+
+  it('"Send a test" is limited per user per hour as well', async () => {
+    const rec = recorder();
+    const app2 = createApp({
+      rateLimit: { publicPerMin: 10000, loginPerMin: 10000 },
+      staffPush: { transport: rec.transport, testLimits: { perMinute: 100, perHour: 3 } },
+    });
+    const u = await makeUser('hourly');
+    const d = await makeDevice(u, 'hourly');
+    const cookie = await login(app2, u);
+    for (let i = 0; i < 3; i += 1) {
+      expect((await request(app2).post('/api/staff-push/devices/test').set('Cookie', cookie).send({ endpoint: d.endpoint })).status).toBe(200);
+    }
+    const over = await request(app2).post('/api/staff-push/devices/test').set('Cookie', cookie).send({ endpoint: d.endpoint });
+    expect(over.status).toBe(429);
+    expect(over.body.message).toBe('Too many tests — at most 3 an hour. Try again later.');
+    expect(rec.sent).toHaveLength(3);
+  });
+
+  it('the 11th device turns the oldest off: audited (no endpoint) and named in the reply', async () => {
+    const u = await makeUser('eleven');
+    const cookie = await login(app, u);
+    const base = Date.now() - 60 * 60_000;
+    const rows = [];
+    for (let i = 0; i < 10; i += 1) {
+      const k = validKeys();
+      rows.push(
+        await prisma.staffPushSubscription.create({
+          data: {
+            userId: u.id,
+            endpoint: endpoint(`eleven${i}`),
+            p256dh: k.p256dh,
+            auth: k.auth,
+            label: i === 0 ? 'Firefox on Windows' : 'Chrome on Mac',
+            updatedAt: new Date(base + i * 60_000),
+          },
+        }),
+      );
+    }
+    const ep = endpoint('eleventh');
+    const res = await request(app).post('/api/staff-push/devices').set('Cookie', cookie).send({ subscription: { endpoint: ep, keys: validKeys() } });
+    expect(res.status).toBe(201);
+    expect(res.body.evicted).toEqual([{ id: rows[0].id, label: 'Firefox on Windows' }]);
+    expect(res.body.deviceLimit).toBe(10);
+    expect(JSON.stringify(res.body)).not.toContain(rows[0].endpoint);
+    expect(await prisma.staffPushSubscription.count({ where: { userId: u.id } })).toBe(10);
+    expect(await prisma.staffPushSubscription.count({ where: { id: rows[0].id } })).toBe(0);
+
+    const audit = await prisma.auditLog.findMany({ where: { userId: u.id, action: 'STAFF_PUSH_REMOVED' } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0].resourceId).toBe(rows[0].id);
+    expect(audit[0].metadata).toMatchObject({ reason: 'device_limit', deviceId: rows[0].id, label: 'Firefox on Windows', pushService: 'staff-push.test', limit: 10 });
+    expect(JSON.stringify(audit[0].metadata)).not.toContain('/send/');
+  });
+
+  it('below the limit nothing is turned off: no flag in the reply, no removal audited', async () => {
+    const u = await makeUser('nine');
+    const cookie = await login(app, u);
+    for (let i = 0; i < 9; i += 1) await makeDevice(u, `nine${i}`);
+    const res = await request(app).post('/api/staff-push/devices').set('Cookie', cookie).send({ subscription: { endpoint: endpoint('tenth'), keys: validKeys() } });
+    expect(res.status).toBe(201);
+    expect(res.body).not.toHaveProperty('evicted');
+    expect(await prisma.staffPushSubscription.count({ where: { userId: u.id } })).toBe(10);
+    expect(await prisma.auditLog.count({ where: { userId: u.id, action: 'STAFF_PUSH_REMOVED' } })).toBe(0);
+  });
+
   it('admins see device counts on Users, remove a user’s devices (audited), and deactivation removes them', async () => {
     const admin = await makeUser('admin', 'ADMIN');
     const pub = await makeUser('listed');

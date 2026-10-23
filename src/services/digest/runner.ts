@@ -97,7 +97,8 @@ import { isDuplicateNameError } from './sender';
  *    whose status cannot be read) needs a person's approval of its own before it
  *    is scheduled, in any mode, and raises `adopted_existing` (the draft may hold
  *    content from before a database restore) — only when this database never tried
- *    to create it (no earlier `createAttemptedAt`; owner, narrowed 2026-10-23);
+ *    to create it (no earlier `createSentAt` — the stamp written just before the
+ *    createDraft() call; owner, narrowed 2026-10-23);
  *  - a lookup that finds two campaigns with the exact name is its own problem
  *    (`duplicate_name: …`, alert `duplicate_name`), retried on the policy so the
  *    variant carries on once a person deletes the extra campaign;
@@ -1080,6 +1081,9 @@ function provablyNotApplied(err: unknown): boolean {
  *    ambiguous_create). Only Retry now / Send now on that FAILED variant
  *    creates again; the worst case is an inert orphan draft, because only the
  *    SAVED id is ever scheduled.
+ *  - Every createDraft() call is preceded by a second stamp, `createSentAt`
+ *    (`issueCreate`). It alone decides whether a draft found by name is our
+ *    own lost create or one this database never made (decision A).
  */
 async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null> {
   const a = send.audience;
@@ -1116,7 +1120,7 @@ async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null
       return null;
     }
     const first = await fresh(send.id);
-    if (ctx.sender.findCampaignByName) return lookupThenCreate(ctx, first, claimAt, target.target, false);
+    if (ctx.sender.findCampaignByName) return lookupThenCreate(ctx, first, claimAt, target.target);
     return issueCreate(ctx, first, claimAt, target.target);
   }
 
@@ -1127,11 +1131,10 @@ async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null
   }
   const s = await fresh(send.id);
 
-  if (ctx.sender.findCampaignByName) return lookupThenCreate(ctx, s, claimAt, target.target, true);
+  if (ctx.sender.findCampaignByName) return lookupThenCreate(ctx, s, claimAt, target.target);
 
   if ((ctx.trigger === 'retry' || ctx.trigger === 'send_now') && s.state === 'FAILED') {
-    if (!(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now }))) return null;
-    log(ctx, a, 'create:human_override');
+    log(ctx, a, 'create:human_override'); // issueCreate re-stamps both markers before the call
     return issueCreate(ctx, s, claimAt, target.target);
   }
 
@@ -1149,34 +1152,35 @@ async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null
 /**
  * Asks the provider for the variant's campaign by its exact name, then adopts
  * it or — only when the provider answers "none" — creates it. A lookup that
- * fails proves nothing: the marker is kept and the retry policy applies (a
- * missed digest rolls forward; a double send cannot be undone). `rearm`: the
- * marker was already set by an earlier attempt, so it is stamped again before
- * the create (the claim update set it on a first attempt).
+ * fails proves nothing: the retry policy applies (a missed digest rolls
+ * forward; a double send cannot be undone).
+ *
+ * Whether a found draft is OURS (owner decision A, narrowed) is read from
+ * `createSentAt` on the row re-read after the claim — set only by an earlier
+ * attempt that actually reached `createDraft()` — never from
+ * `createAttemptedAt`, which a claim writes before the lookup and which a
+ * crash (or a failed lookup) can leave behind without any create having been
+ * issued (2026-10-23, closing the crash window left by bc70aaa).
  */
 async function lookupThenCreate(
   ctx: Ctx,
   s: DigestSend,
   claimAt: Date,
   target: AudienceTarget,
-  rearm: boolean,
 ): Promise<DigestSend | null> {
   let found: { campaignId: string } | null;
   try {
     found = await (ctx.sender.findCampaignByName as NonNullable<DigestSender['findCampaignByName']>)(s.mcCampaignName);
   } catch (err) {
-    // A first attempt (`rearm` false) never reached issueCreate: the marker this claim
-    // wrote proves nothing was created, so it is cleared — otherwise the retry would read
-    // it as "we tried to create this earlier" and adopt a foreign draft as our own
-    // (owner decision A, narrowed). A rearm attempt keeps the earlier create's marker.
-    await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true, clearMarker: !rearm });
+    // Nothing was created by this attempt; `createSentAt` is untouched, so a draft a
+    // later attempt finds is judged by whether an EARLIER attempt really called create.
+    await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true });
     return null;
   }
-  // `rearm` = this database's write-ahead create marker predates this attempt: we tried
-  // to create the variant earlier today, so a draft found now is (most likely) that create.
-  if (found) return adoptExisting(ctx, s, claimAt, found.campaignId, rearm);
+  // `createSentAt` = this database called createDraft() for the variant earlier today (its
+  // write-ahead stamp predates this attempt), so a draft found now is that create.
+  if (found) return adoptExisting(ctx, s, claimAt, found.campaignId, s.createSentAt !== null);
   // The provider confirms no such campaign: a create is safe.
-  if (rearm && !(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now }))) return null;
   return issueCreate(ctx, s, claimAt, target);
 }
 
@@ -1197,7 +1201,7 @@ async function lookupThenCreate(
  *    the cut-off sweep asks before calling it skipped.
  *
  * Owner decision A, narrowed 2026-10-23: `ownCreateMarker` says THIS database
- * had already tried to create the variant (its write-ahead `createAttemptedAt`
+ * had already CALLED create for the variant (its write-ahead `createSentAt`
  * predates this attempt), so a DRAFT (or unreadable status) found now is our own
  * create whose reply was lost (a timeout, a 2xx without an id, a 5xx that went
  * through): adopted and carried on normally, the run's usual approval rules only.
@@ -1256,7 +1260,17 @@ async function adoptExisting(ctx: Ctx, s: DigestSend, claimAt: Date, campaignId:
   return fresh(s.id);
 }
 
+/**
+ * Calls createDraft(). Its write-ahead stamp comes first, in one update fenced
+ * on our claim: `createSentAt` (we are about to call the provider — what
+ * decision A trusts) and `createAttemptedAt` (re-armed for a later attempt;
+ * the same instant the claim wrote on a first one). A lost claim calls nothing.
+ */
 async function issueCreate(ctx: Ctx, s: DigestSend, claimAt: Date, target: AudienceTarget): Promise<DigestSend | null> {
+  if (!(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now, createSentAt: ctx.now }))) {
+    log(ctx, s.audience, 'create:claim_lost');
+    return null;
+  }
   let campaignId: string;
   try {
     ({ campaignId } = await ctx.sender.createDraft({
@@ -1552,7 +1566,7 @@ async function recordFailure(
   claimAt: Date,
   err: unknown,
   step: 'create' | 'schedule',
-  opts: { kind?: SenderErrorKind; keepMarker?: boolean; clearMarker?: boolean } = {},
+  opts: { kind?: SenderErrorKind; keepMarker?: boolean } = {},
 ): Promise<void> {
   const a = s.audience;
   const kind = opts.kind ?? errorKind(err);
@@ -1573,7 +1587,13 @@ async function recordFailure(
 
   if (step === 'create') {
     const notApplied = !opts.keepMarker && opts.kind === undefined && provablyNotApplied(err);
-    if (notApplied || opts.clearMarker) base.createAttemptedAt = null;
+    // Provably not applied: this attempt's create made nothing, and every create is
+    // preceded by a lookup proving none existed (or, without a lookup, nothing is ever
+    // adopted), so neither stamp may make a later-found draft look like ours.
+    if (notApplied) {
+      base.createAttemptedAt = null;
+      base.createSentAt = null;
+    }
     if (kind === 'FATAL') {
       await finishStep(s.id, claimAt, { ...base, state: 'FAILED', nextAttemptAt: null });
       await raiseAlert(ctx, 'fatal', { audience: a, step, error: base.lastError });

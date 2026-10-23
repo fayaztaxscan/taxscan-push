@@ -160,6 +160,9 @@ function summarize(item: AuditItem): string {
     case 'STAFF_PUSH_UNSUBSCRIBED':
       return `Turned off digest notifications on a device (${m.label ?? 'unknown device'})`;
     case 'STAFF_PUSH_REMOVED':
+      if (m.reason === 'device_limit') {
+        return `Oldest notification device turned off at the ${m.limit ?? 10}-device limit (${m.label ?? 'unknown device'})`;
+      }
       return `Removed ${m.email ?? '—'}'s notification devices (${m.removed ?? '?'})`;
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;

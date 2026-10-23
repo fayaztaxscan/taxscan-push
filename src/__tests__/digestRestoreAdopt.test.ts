@@ -315,9 +315,9 @@ describe('no existing campaign → creates normally', () => {
     await step(run.id, 'cron', ist(6, 30), sender);
     const s = await sendOf(run.id);
     expect(s.state).toBe('PENDING');
-    // No create was issued, so the first attempt's marker is cleared (QA of ce3e2a9): the retry
-    // is a first attempt again and can't mistake a foreign draft for our own lost create.
-    expect(s.createAttemptedAt).toBeNull();
+    // No create was issued, so no "create sent" stamp (2026-10-23): a draft the retry finds
+    // can't be mistaken for our own lost create. The claim marker itself may stay.
+    expect(s.createSentAt).toBeNull();
     expect(sender.draftInputs().map((d) => d.audience)).toEqual(['PREMIUM']);
     await step(run.id, 'cron', ist(6, 31), sender);
     expect((await sendOf(run.id)).state).toBe('CREATED');

@@ -690,8 +690,9 @@ describe('QA #4 crash after createDraft before the id was saved', () => {
     await step(run.id, 'cron', ist(6, 30), sender);
     const free = await sendOf(run.id);
     expect(free.createAttemptedAt).toBeNull();
+    expect(free.createSentAt).toBeNull(); // provably not applied: both stamps cleared
     const made = await sender.createDraft({ ...sender.draftInputs()[0], name: free.mcCampaignName });
-    await prisma.digestSend.update({ where: { id: free.id }, data: { stepClaimedAt: ist(6, 31), createAttemptedAt: ist(6, 31) } });
+    await prisma.digestSend.update({ where: { id: free.id }, data: { stepClaimedAt: ist(6, 31), createAttemptedAt: ist(6, 31), createSentAt: ist(6, 31) } });
     return { run, sender, madeId: made.campaignId };
   }
 

@@ -85,16 +85,22 @@ export function pushServiceHost(endpoint: string): string {
 
 export type StaffSubscriptionInput = { endpoint: string; keys: { p256dh: string; auth: string } };
 
+/** A device dropped at the per-user limit: id, label and push-service host — never the endpoint. */
+export type EvictedDevice = { id: string; label: string | null; pushService: string };
+
 /**
  * Stores (or refreshes) a device for `userId`. One row per endpoint: the same
  * browser re-subscribing updates its row, and a browser now used under another
- * login moves to that user. Returns the row and whether it was new.
+ * login moves to that user. Returns the row, whether it was new, and the
+ * devices dropped to stay within MAX_DEVICES_PER_USER (least recently updated
+ * first; normally none, at most one per new device) so the caller can audit
+ * and tell the user.
  */
 export async function upsertStaffDevice(
   userId: string,
   sub: StaffSubscriptionInput,
   label: string,
-): Promise<{ device: StaffPushSubscription; created: boolean; movedFromUserId: string | null }> {
+): Promise<{ device: StaffPushSubscription; created: boolean; movedFromUserId: string | null; evicted: EvictedDevice[] }> {
   const existing = await prisma.staffPushSubscription.findUnique({ where: { endpoint: sub.endpoint }, select: { userId: true } });
   const device = await prisma.staffPushSubscription.upsert({
     where: { endpoint: sub.endpoint },
@@ -107,10 +113,19 @@ export async function upsertStaffDevice(
     where: { userId },
     orderBy: { updatedAt: 'desc' },
     skip: MAX_DEVICES_PER_USER,
-    select: { id: true },
+    select: { id: true, label: true, endpoint: true, updatedAt: true },
   });
-  if (extra.length) await prisma.staffPushSubscription.deleteMany({ where: { id: { in: extra.map((x) => x.id) } } });
-  return { device, created: existing === null, movedFromUserId: existing && existing.userId !== userId ? existing.userId : null };
+  let evicted: EvictedDevice[] = [];
+  if (extra.length) {
+    const r = await prisma.staffPushSubscription.deleteMany({ where: { id: { in: extra.map((x) => x.id) } } });
+    // Oldest first. A concurrent delete may have removed one already; report what we found.
+    if (r.count > 0) {
+      evicted = extra
+        .sort((x, y) => x.updatedAt.getTime() - y.updatedAt.getTime())
+        .map((x) => ({ id: x.id, label: x.label, pushService: pushServiceHost(x.endpoint) }));
+    }
+  }
+  return { device, created: existing === null, movedFromUserId: existing && existing.userId !== userId ? existing.userId : null, evicted };
 }
 
 /** The caller's own device by endpoint, or null (another user's device is never returned). */

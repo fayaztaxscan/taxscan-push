@@ -487,7 +487,7 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | `DIGEST_CUTOFF` | `17:00` | IST. After it nothing is scheduled; unsent variants are skipped and roll forward. Owner ruling. | Default |
 | `DIGEST_MAX_ITEMS` / `_MIN_ITEMS` / `_ROLLFORWARD_ITEMS` | `12` / `5` / `3` | Story cap; fewer MAIN stories than the minimum = `too_little_news` skip; ICYMI stories carried from a skipped/partial day. | Default |
 | `DIGEST_SANITY_MAX_CANDIDATES` | `150` | More candidates than this (normal ~25–35) holds the run for an editor even with approval off (the re-platform guard). | Default |
-| `DIGEST_STAFF_PUSH_ENABLED` | `true` | Task 14. Kill-switch for the staff push notifications (the editor alerts `ready_for_approval` / `not_approved_yet` as a web push to every opted-in staff device). Default **on** because it cannot send anything by itself: nothing is pushed unless `DIGEST_ENABLED` is on AND a staff member tapped "Notify me on this device". `false` stops the pushes; the emails are unaffected. Jest forces it off (`setup.ts`). | Default |
+| `DIGEST_STAFF_PUSH_ENABLED` | `true` | Task 14. Default on is **the owner's decision** (2026-10-23). Kill-switch for the staff push notifications (the editor alerts `ready_for_approval` / `not_approved_yet` as a web push to every opted-in staff device). Default **on** because it cannot send anything by itself: nothing is pushed unless `DIGEST_ENABLED` is on AND a staff member tapped "Notify me on this device". `false` stops the pushes; the emails are unaffected. Jest forces it off (`setup.ts`). | Default |
 | `DIGEST_COMPLAINT_HOLD_PCT` | `0.3` | Task 13 (§8 last row). The previous send's spam-complaint rate (complaints ÷ delivered, %, per version) **above** this holds the next day's run for an editor's approval even with approval off. An unknown rate (no webhook proof, or no delivered count) never holds; it shows on the banner while sending is live. | Default |
 | `DIGEST_MAX_HTML_KB` / `_HTML_WARN_KB` | `90` / `75` | Size budget (html + 150 B per link for Mailercloud's tracking rewrite): warn / refuse. Gmail clips at ~102 KB. | Default |
 | `DIGEST_MAX_IMAGE_KB` | `600` | Distinct ad-image weight per email; above it the build logs a warning (never refuses). | Default |
@@ -614,7 +614,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
 | `DIGEST_SEND_AT` set inside quiet hours | Boot validation | Scheduler not started | Boot log + banner `config_invalid` |
 | Complaint rate > 0.3% on a send | Webhook counts / reached (`digestSendStats`), judged once when the next run opens (06:15) | Hold tomorrow's run for approval even if approval is off; not approved by 17:00 → SKIPPED `complaint_hold_expired`. An UNKNOWN rate (no webhook proof, no delivered count, or a send still unconfirmed at the cut-off) never holds. **Owner decision 2026-10-23: the rule stays as built** — judged once at 06:15, on the most recent earlier run (≤ 7 days) with a send that went out or was unconfirmed at the cut-off, rate = complaints ÷ reached per version, and one version's breach holds both. *Built task 13.* | Email naming the rate + banner; an unknown rate shows on the banner while live, naming an unconfirmed send as the cause |
 | Two campaigns with our exact name (copied by hand) | Name lookup finds 2 | Nothing created or sent; retried on the policy, so it carries on once a person deletes the extra one (*task 13*) | Email + banner ("Two campaigns named … exist; delete the extra one") |
-| Adopted a Mailercloud DRAFT this database never tried to create (a restore, a hand-made campaign) | First create attempt (no earlier `createAttemptedAt`) finds a draft by name, or its status cannot be read | Adopted, never scheduled without a person's approval of that version, in any mode (*owner decision A, task 13; narrowed 2026-10-23*). A draft found on a LATER attempt (our create's reply was lost) is ours: adopted and carried on, no extra approval | Email + banner ("…which this system did not create … — check it before approving"); none for our own lost create |
+| Adopted a Mailercloud DRAFT this database never tried to create (a restore, a hand-made campaign) | A create attempt with no earlier `createSentAt` (this database never called create for it) finds a draft by name, or its status cannot be read | Adopted, never scheduled without a person's approval of that version, in any mode (*owner decision A, task 13; narrowed 2026-10-23*). A draft found on a LATER attempt (our create's reply was lost) is ours: adopted and carried on, no extra approval | Email + banner ("…which this system did not create … — check it before approving"); none for our own lost create |
 
 ---
 
@@ -1313,19 +1313,33 @@ agents.
       **Narrowed by the owner, 23 Oct 2026:** the old rule also caught ordinary lost create replies (a timeout, a 2xx
       with no id, a 5xx that went through), so in auto mode one Mailercloud timeout held that version until someone
       approved it, with misleading "before a restore" wording. Now the extra approval + `adopted_existing` apply only
-      when no create marker of THIS database predates the attempt (`adoptExisting(…, ownCreateMarker)`, set from the
-      `createAttemptedAt` that existed before the claim): a restore (no run for today) or a campaign made by hand
+      when no create of THIS database predates the attempt (`adoptExisting(…, ownCreateMarker)`, set from the
+      `createSentAt` stamp on the row read after the claim — see *Create-sent stamp* below): a restore (no run for today) or a campaign made by hand
       under our name. With our marker, a found DRAFT — or an unreadable status — is our own create: adopted, CREATED
       with `scheduleAttemptedAt`, so the schedule step reads the status again before it would schedule; the run's
       normal approval rules apply. The "ahead" states (SCHEDULED / SENDING / SENT / FAILED) raise `adopted_existing`
       in both cases, as before. Wording: "Mailercloud already had today's campaign, which this system did not create
       (e.g. after a database restore or a hand-made campaign) — check it before approving." Tests: `digestTickQa`
       (both directions, unreadable status in both branches), `digestTick` restart mid-create.
-      *QA of ce3e2a9:* a first attempt whose LOOKUP fails never reached the create, so it now clears the marker its
-      claim wrote (`recordFailure … clearMarker`); before, one Mailercloud blip on that lookup made the retry treat a
-      restore-era or hand-made draft as "ours" and, in auto mode, schedule it with no approval. Residual (judgement
-      call, not fixed): a process that dies between that claim and the lookup's answer leaves the marker set, with the
-      same effect; closing it needs a separate "create sent" stamp written just before `createDraft`.
+      *QA of ce3e2a9:* a first attempt whose LOOKUP fails never reached the create; before, one Mailercloud blip on
+      that lookup made the retry treat a restore-era or hand-made draft as "ours" and, in auto mode, schedule it with no
+      approval. `bc70aaa` cleared the claim's marker on that failure, which left a crash between the claim and the
+      lookup's answer with the same effect.
+      **Create-sent stamp (2026-10-23, owner-approved; migration `20261023170000_digest_create_sent_marker`, add-column
+      only: `DigestSend.createSentAt`, nullable).** `issueCreate` writes `createSentAt` (with `createAttemptedAt`, in
+      one update fenced on the claim; a lost claim calls nothing) immediately BEFORE the `createDraft()` HTTP call —
+      i.e. after the lookup proved no campaign exists. Decision A's "ours" test reads `createSentAt` ("we actually
+      called create"), never `createAttemptedAt` ("we claimed the step"), which keeps its claim/stale role. So a crash
+      or a failed lookup before the call leaves `createSentAt` null and a draft found later is foreign (approval +
+      `adopted_existing`); a crash after the stamp, before the id is saved, is ours and carries on. The `clearMarker`
+      special case is gone: it is now redundant (the crash leaves the same state, and both are handled by the stamp).
+      A provably-not-applied create (FATAL / 429 / `notSent`) clears both stamps. Every path that reads the marker was
+      walked: the rearm (marker set), AMBIGUOUS create without a lookup (unchanged, the stamp is not read there),
+      stale-claim recovery, health resume, restore adopt, Retry now / Send now — behaviour is unchanged except the
+      crash-before-create case. Tests: `digestTickQa` (crash before the call → held + alert; crash after the stamp →
+      ours; the stamp is set when the provider is called), the `bc70aaa` test now asserts `createSentAt` is null after
+      the failed lookup and still proves the foreign draft is held; `digestTick` / `digestRunner` crash fixtures set
+      both stamps, as a real crash after the call would.
     - **Complaint check — sends unconfirmed at the cut-off (owner, 23 Oct 2026):** a FAILED
       `not_confirmed_by_cutoff` send may have gone out, so the check now includes it (and a run whose only sends are
       unconfirmed is still "the most recent run"), always as UNKNOWN (`unconfirmed: true`, no delivered count). It
@@ -1347,16 +1361,24 @@ agents.
     their own device; the email stays). *Built 2026-10-23 (migration `20261023161008_digest_staff_push`: new table
     `StaffPushSubscription` + audit actions `STAFF_PUSH_SUBSCRIBED` / `_UNSUBSCRIBED` / `_REMOVED`; nothing existing
     changes; `src/services/staffPush.ts`, `src/routes/staffPush.ts`, `public/admin/sw-staff.js`, Digests card, Users
-    column; tests `staffPush`).*
+    column; tests `staffPush`).* **`DIGEST_STAFF_PUSH_ENABLED` defaults ON — the owner's decision** (it sends nothing
+    by itself: `DIGEST_ENABLED` must be on and a staff member must have opted in).
     - **Storage:** `StaffPushSubscription` (user, endpoint unique, keys, label from the user agent, createdAt,
       lastSuccessAt, lastFailureAt, failureCount), max 10 per user. Its own table, so no reader count, campaign door
       (pacer, `/api/send`, sweeper, Queue / Review Push now — all read `Subscriber`) or backup can see it; a source-scan
       test pins that only the staff-push files touch it. **Not in the R2 backup** (`backup.ts` exclusion list): a few
-      rows, inert without the VAPID key, and each approver re-subscribes with one tap after a restore.
+      rows, inert without the VAPID key, and each approver re-subscribes with one tap after a restore. *Follow-up
+      2026-10-23:* the 11th device still drops the least recently updated one, but no longer silently — a
+      `STAFF_PUSH_REMOVED` audit row (`reason: 'device_limit'`, device id, label, push-service host, never the endpoint)
+      and `evicted` + `deviceLimit` in the subscribe reply, which the card shows ("Your oldest device (‹label›) was turned
+      off — at most 10 devices per person").
     - **Opt-in:** Digests → *Notifications on this device*. The native prompt is requested only inside the tap. States:
       On for this device / Off / Blocked in browser settings (how-to) / Add to Home Screen first (iOS Safari not
       standalone; a web manifest `admin/public/manifest.webmanifest`, scope `/admin/`, makes the Home Screen app) /
-      Not available. Send a test (own device only), Stop. Cookie session only; a user sees and changes only their own
+      Not available. Send a test (own device only; *2026-10-23:* at most 5 a minute and 20 an hour per signed-in user,
+      keyed on the user id, not the IP → 429 `rate_limited` with a message the card shows), Stop. *After a VAPID key
+      change* the card compares this browser's subscription key with `/status`'s `vapidPublicKey` and shows Off with
+      "The notification key has changed…"; one tap re-subscribes and drops the old row (`replacesEndpoint`). Cookie session only; a user sees and changes only their own
       devices (`/api/staff-push/*`, endpoint POSTed, never in a URL). Admins: Users shows devices + last delivery and
       *Remove devices* (`DELETE /api/users/:id/push-devices`); deactivation deletes the user's devices, and sending also
       filters on `User.isActive`. Audit rows carry device id, label and push-service host, never the endpoint.

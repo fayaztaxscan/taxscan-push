@@ -65,7 +65,29 @@ export async function waitActive(reg: ServiceWorkerRegistration): Promise<void> 
   });
 }
 
+/**
+ * True when `sub` was made for `appKey`. A subscription made for another key (the
+ * VAPID keypair was rotated) can't receive our pushes, though the server still
+ * knows its endpoint — so the card must show Off and the tap must re-subscribe.
+ */
+function keyMatches(sub: PushSubscription, appKey: Uint8Array): boolean {
+  const have = sub.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+  return !!have && have.length === appKey.length && have.every((b, i) => b === appKey[i]);
+}
+
 type Status = { sending: boolean; digestEnabled: boolean; staffPushEnabled: boolean; vapidPublicKey: string; devices: number };
+type SubscribeReply = { evicted?: Array<{ id: string; label: string | null }>; deviceLimit?: number } | null | undefined;
+
+/** "Your oldest device (Chrome on Windows) was turned off — at most 10 devices per person." */
+export function evictedNotice(r: SubscribeReply): string {
+  const gone = r?.evicted ?? [];
+  if (gone.length === 0) return '';
+  const limit = r?.deviceLimit ?? 10;
+  const names = gone.map((d) => d.label || 'unknown device').join(', ');
+  return gone.length === 1
+    ? `Your oldest device (${names}) was turned off — at most ${limit} devices per person.`
+    : `Your oldest devices (${names}) were turned off — at most ${limit} devices per person.`;
+}
 
 export function useStaffPush() {
   const api = useApi();
@@ -105,6 +127,14 @@ export function useStaffPush() {
         state.value = 'off';
         return;
       }
+      // After a VAPID key change this device's subscription is dead though the server still
+      // lists it: show Off, so one tap on "Notify me on this device" makes a new one.
+      const key = status.value?.vapidPublicKey;
+      if (key && !keyMatches(sub, urlBase64ToUint8Array(key))) {
+        state.value = 'off';
+        notice.value = 'The notification key has changed. Tap Notify me on this device to turn notifications on again.';
+        return;
+      }
       // On only if the server still has it (an admin may have removed this device).
       const r = await api.post<{ on: boolean }>('/api/staff-push/devices/check', { endpoint: sub.endpoint });
       state.value = r.on ? 'on' : 'off';
@@ -131,19 +161,22 @@ export function useStaffPush() {
       const key = status.value?.vapidPublicKey || (await api.get<Status>('/api/staff-push/status')).vapidPublicKey;
       const appKey = urlBase64ToUint8Array(key);
       let sub = await reg.pushManager.getSubscription();
-      if (sub) {
-        // A subscription made for another key can't receive our pushes: start again.
-        const have = sub.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
-        if (!have || have.length !== appKey.length || have.some((b, i) => b !== appKey[i])) {
-          await sub.unsubscribe();
-          sub = null;
-        }
+      let replacesEndpoint: string | undefined;
+      if (sub && !keyMatches(sub, appKey)) {
+        // A subscription made for another key can't receive our pushes: start again, and
+        // let the server drop the old row (a push service answers it 403, never 410).
+        replacesEndpoint = sub.endpoint;
+        await sub.unsubscribe();
+        sub = null;
       }
       if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
       const json = sub.toJSON();
-      await api.post('/api/staff-push/devices', { subscription: { endpoint: json.endpoint, keys: json.keys } });
+      const saved = await api.post<SubscribeReply>('/api/staff-push/devices', {
+        subscription: { endpoint: json.endpoint, keys: json.keys },
+        ...(replacesEndpoint && replacesEndpoint !== json.endpoint ? { replacesEndpoint } : {}),
+      });
       state.value = 'on';
-      notice.value = 'Notifications are on for this device.';
+      notice.value = ['Notifications are on for this device.', evictedNotice(saved)].filter(Boolean).join(' ');
       try {
         status.value = await api.get<Status>('/api/staff-push/status');
       } catch {

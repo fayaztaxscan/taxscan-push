@@ -73,6 +73,15 @@ send to. Keep the keypair in a password manager. Never run `npm run gen:vapid`
 for this project: deploying a new keypair orphans every existing subscriber
 instantly and irreversibly.
 
+**After any VAPID key rotation** (deliberate, e.g. after a credential leak),
+every staff device must tap **Notify me on this device** on Digests again: its
+subscription was made for the old key and can no longer receive the digest
+alerts. The Digests card detects this by itself (it compares the browser's
+subscription key with the server's and shows *Off* with "The notification key
+has changed"), and the tap drops the old device row. Readers are a separate,
+much larger matter — the rotation orphans their subscriptions as described
+above.
+
 Verify a copy is the right one:
 
 ```

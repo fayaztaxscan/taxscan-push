@@ -6,6 +6,7 @@
  *   POST /api/staff-push/devices/check   is this endpoint one of my devices?
  *   POST /api/staff-push/devices/remove  stop notifications on this device
  *   POST /api/staff-push/devices/test    one test notification to this device only
+ *                                        (per user: 5 a minute, 20 an hour → 429)
  *
  * Cookie session only (both roles may approve the digest, so both may opt in);
  * a caller only ever sees or changes their OWN devices. Admins remove another
@@ -13,13 +14,15 @@
  * POSTed, never put in a URL, and never logged or audited (device id, label
  * and the push service's host only).
  */
-import { Router, type Request } from 'express';
+import { Router, type Request, type RequestHandler } from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { requireUser } from '../lib/auth';
 import { env, type DigestEnv } from '../lib/env';
 import { recordAudit } from '../lib/audit';
 import {
   findOwnDevice,
+  MAX_DEVICES_PER_USER,
   pushServiceHost,
   pushToStaffDevice,
   staffDeviceLabel,
@@ -56,7 +59,30 @@ export type StaffPushRouterOptions = {
   cfg?: DigestEnv;
   enabled?: boolean;
   transport?: StaffPushTransport;
+  /** "Send a test" limits per signed-in user (tests lower them). */
+  testLimits?: { perMinute?: number; perHour?: number };
 };
+
+/** "Send a test": at most this many per user per minute, and per hour. */
+export const TEST_LIMIT_PER_MINUTE = 5;
+export const TEST_LIMIT_PER_HOUR = 20;
+
+/**
+ * A per-USER limiter (keyed on the session's user id, not the IP: editors may share
+ * an office IP, and one signed-in user must not be able to loop the test push).
+ * Mounted after `requireUser()`, so `req.user` is always set. In-process memory
+ * store, like the project's other limiters.
+ */
+function perUserLimiter(windowMs: number, max: number, message: string): RequestHandler {
+  return rateLimit({
+    windowMs,
+    limit: max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `staff-test:${req.user?.id ?? 'none'}`,
+    message: { error: 'rate_limited', message },
+  });
+}
 
 function publicDevice(d: { id: string; label: string | null; createdAt: Date; lastSuccessAt: Date | null }) {
   return { id: d.id, label: d.label, createdAt: d.createdAt, lastSuccessAt: d.lastSuccessAt };
@@ -70,6 +96,16 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
   const router = Router();
   const cfg = () => opts.cfg ?? env.digest;
   const transport = () => opts.transport ?? staffPushTransport();
+  const testPerMinute = perUserLimiter(
+    60_000,
+    opts.testLimits?.perMinute ?? TEST_LIMIT_PER_MINUTE,
+    'Too many tests — try again in a minute.',
+  );
+  const testPerHour = perUserLimiter(
+    60 * 60_000,
+    opts.testLimits?.perHour ?? TEST_LIMIT_PER_HOUR,
+    `Too many tests — at most ${opts.testLimits?.perHour ?? TEST_LIMIT_PER_HOUR} an hour. Try again later.`,
+  );
 
   router.get('/status', requireUser(), async (req, res, next) => {
     try {
@@ -122,7 +158,22 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
           ipAddress: ip(req),
         });
       }
-      return res.status(r.created ? 201 : 200).json({ device: publicDevice(r.device) });
+      // The per-user device limit dropped the least recently used device(s): say so in the
+      // audit log and to the user, instead of silently (task 14 follow-up, 2026-10-23).
+      for (const e of r.evicted) {
+        await recordAudit({
+          userId,
+          action: 'STAFF_PUSH_REMOVED',
+          resourceType: 'staff_push_device',
+          resourceId: e.id,
+          metadata: { reason: 'device_limit', deviceId: e.id, label: e.label, pushService: e.pushService, limit: MAX_DEVICES_PER_USER },
+          ipAddress: ip(req),
+        });
+      }
+      return res.status(r.created ? 201 : 200).json({
+        device: publicDevice(r.device),
+        ...(r.evicted.length ? { evicted: r.evicted.map((e) => ({ id: e.id, label: e.label })), deviceLimit: MAX_DEVICES_PER_USER } : {}),
+      });
     } catch (err) {
       return next(err);
     }
@@ -162,7 +213,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
 
   // One notification to the caller's own device, so they can see it works (and, on an
   // iPhone, that the Home Screen app is the one subscribed). Never reaches anyone else.
-  router.post('/devices/test', requireUser(), async (req, res, next) => {
+  router.post('/devices/test', requireUser(), testPerMinute, testPerHour, async (req, res, next) => {
     try {
       const parsed = EndpointSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: 'invalid_request' });

@@ -439,7 +439,7 @@ describe('owner decision A, narrowed (owner, 2026-10-23): only a draft this data
     await tick(d, 6, 30);
     const freeName = digestProviderCampaignName(d.portal, run.runDate, 'FREE');
     expect([...d.sender.campaigns.values()].filter((c) => c.name === freeName).map((c) => c.id)).toEqual([foreign]); // no create of ours for FREE
-    expect((await sendOf(d)).createAttemptedAt).toBeNull(); // the failed first lookup clears the marker its claim wrote
+    expect((await sendOf(d)).createSentAt).toBeNull(); // no create was ever called, whatever the claim marker says
     await tick(d, 6, 31);
     await tick(d, 6, 35);
     const free = await sendOf(d);
@@ -448,6 +448,67 @@ describe('owner decision A, narrowed (owner, 2026-10-23): only a draft this data
     expect(free.ownApprovalRequired).toBe(true);
     await tick(d, 7, 30);
     expect(schedulesById(d.sender)[foreign]).toBeUndefined();
+  });
+
+  /** Today's run built, both versions' first lookups failed, a foreign FREE draft in Mailercloud. */
+  async function crashedFreeClaim(d: Day, stamps: { createSentAt: Date | null }) {
+    d.sender.fail('findCampaignByName', 'RETRYABLE', 2);
+    await tick(d, 6, 15);
+    await tick(d, 6, 30); // built; both lookups fail → PENDING, no create called
+    const run = (await runOf(d))!;
+    const draftId = `draft-found-after-the-crash-${d.portal}`; // mcCampaignId is unique across tests
+    d.sender.campaigns.set(draftId, { id: draftId, name: digestProviderCampaignName(d.portal, run.runDate, 'FREE'), state: 'DRAFT', input: {} as never });
+    // 06:31: FREE's step was claimed (createAttemptedAt written) and the process died.
+    await prisma.digestSend.updateMany({
+      where: { runId: run.id, audience: 'FREE' },
+      data: { stepClaimedAt: ist(6, 31), createAttemptedAt: ist(6, 31), createSentAt: stamps.createSentAt },
+    });
+    return draftId;
+  }
+
+  it('crash between the claim and the lookup (claim marker set, no create sent): a draft found later is foreign — held + alert', async () => {
+    const d = newDay(auto());
+    const draftId = await crashedFreeClaim(d, { createSentAt: null });
+    await tick(d, 6, 35); // FREE's claim still live
+    await tick(d, 6, 42); // stale: taken over; the lookup finds the draft
+    const free = await sendOf(d);
+    expect(free.mcCampaignId).toBe(draftId);
+    expect(free.adoptedDraftAt).not.toBeNull();
+    expect(free.ownApprovalRequired).toBe(true);
+    expect(((await runOf(d))!.alerts as Record<string, { draft?: boolean }>).adopted_existing).toMatchObject({ draft: true });
+    await tick(d, 7, 30);
+    expect(schedulesById(d.sender)[draftId]).toBeUndefined(); // waits for a person's Approve
+    expect(heldMails(d).length).toBeGreaterThan(0);
+    expect(d.sender.draftInputs().map((x) => x.audience)).toEqual(['PREMIUM']); // never created a second FREE
+  });
+
+  it('crash after createSentAt, before the id was saved: the draft found later is ours — carries on, no hold, no alert', async () => {
+    const d = newDay(auto());
+    const draftId = await crashedFreeClaim(d, { createSentAt: ist(6, 31) });
+    await tick(d, 6, 42); // stale claim taken over; the lookup finds our own create
+    const free = await sendOf(d);
+    expect(free.mcCampaignId).toBe(draftId);
+    expect(free.adoptedDraftAt).toBeNull();
+    expect(free.ownApprovalRequired).toBe(false);
+    await tick(d, 7, 30);
+    const premium = await sendOf(d, 'PREMIUM');
+    expect(schedulesById(d.sender)).toEqual({ [draftId]: 1, [premium.mcCampaignId!]: 1 });
+    expect(heldMails(d)).toHaveLength(0);
+    expect(((await runOf(d))!.alerts as Record<string, unknown>).adopted_existing).toBeUndefined();
+  });
+
+  it('the createSentAt stamp is written before createDraft() is called, and only then', async () => {
+    const d = newDay(auto());
+    let seen: Date | null | undefined;
+    const real = d.sender.createDraft.bind(d.sender);
+    d.sender.createDraft = async (input) => {
+      if (input.audience === 'FREE') seen = (await sendOf(d)).createSentAt;
+      return real(input);
+    };
+    await tick(d, 6, 15);
+    await tick(d, 6, 30);
+    expect(seen).toBeInstanceOf(Date); // already stamped when the provider was called
+    expect((await sendOf(d)).createSentAt).toEqual(seen);
   });
 });
 
