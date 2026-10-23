@@ -1321,6 +1321,11 @@ agents.
       in both cases, as before. Wording: "Mailercloud already had today's campaign, which this system did not create
       (e.g. after a database restore or a hand-made campaign) — check it before approving." Tests: `digestTickQa`
       (both directions, unreadable status in both branches), `digestTick` restart mid-create.
+      *QA of ce3e2a9:* a first attempt whose LOOKUP fails never reached the create, so it now clears the marker its
+      claim wrote (`recordFailure … clearMarker`); before, one Mailercloud blip on that lookup made the retry treat a
+      restore-era or hand-made draft as "ours" and, in auto mode, schedule it with no approval. Residual (judgement
+      call, not fixed): a process that dies between that claim and the lookup's answer leaves the marker set, with the
+      same effect; closing it needs a separate "create sent" stamp written just before `createDraft`.
     - **Complaint check — sends unconfirmed at the cut-off (owner, 23 Oct 2026):** a FAILED
       `not_confirmed_by_cutoff` send may have gone out, so the check now includes it (and a run whose only sends are
       unconfirmed is still "the most recent run"), always as UNKNOWN (`unconfirmed: true`, no delivered count). It

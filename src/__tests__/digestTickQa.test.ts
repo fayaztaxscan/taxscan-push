@@ -428,6 +428,27 @@ describe('owner decision A, narrowed (owner, 2026-10-23): only a draft this data
     await tick(d, 7, 30);
     expect(schedulesById(d.sender)[foreign]).toBeUndefined();
   });
+
+  it('QA: a first LOOKUP that fails (no create ever issued) does not turn a foreign draft into "ours" on the retry', async () => {
+    const d = newDay(auto());
+    await tick(d, 6, 15);
+    const run = (await runOf(d))!;
+    const foreign = 'made-before-the-restore-lookup-flaked';
+    d.sender.campaigns.set(foreign, { id: foreign, name: digestProviderCampaignName(d.portal, run.runDate, 'FREE'), state: 'DRAFT', input: {} as never });
+    d.sender.fail('findCampaignByName', 'RETRYABLE', 1); // Mailercloud blips on the very first lookup
+    await tick(d, 6, 30);
+    const freeName = digestProviderCampaignName(d.portal, run.runDate, 'FREE');
+    expect([...d.sender.campaigns.values()].filter((c) => c.name === freeName).map((c) => c.id)).toEqual([foreign]); // no create of ours for FREE
+    expect((await sendOf(d)).createAttemptedAt).toBeNull(); // the failed first lookup clears the marker its claim wrote
+    await tick(d, 6, 31);
+    await tick(d, 6, 35);
+    const free = await sendOf(d);
+    expect(free.mcCampaignId).toBe(foreign);
+    expect(free.adoptedDraftAt).not.toBeNull();
+    expect(free.ownApprovalRequired).toBe(true);
+    await tick(d, 7, 30);
+    expect(schedulesById(d.sender)[foreign]).toBeUndefined();
+  });
 });
 
 describe('the banner uses the same "who must approve" rule as the runner (holds.ts)', () => {

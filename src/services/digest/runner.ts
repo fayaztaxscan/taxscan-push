@@ -1165,7 +1165,11 @@ async function lookupThenCreate(
   try {
     found = await (ctx.sender.findCampaignByName as NonNullable<DigestSender['findCampaignByName']>)(s.mcCampaignName);
   } catch (err) {
-    await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true });
+    // A first attempt (`rearm` false) never reached issueCreate: the marker this claim
+    // wrote proves nothing was created, so it is cleared — otherwise the retry would read
+    // it as "we tried to create this earlier" and adopt a foreign draft as our own
+    // (owner decision A, narrowed). A rearm attempt keeps the earlier create's marker.
+    await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true, clearMarker: !rearm });
     return null;
   }
   // `rearm` = this database's write-ahead create marker predates this attempt: we tried
@@ -1548,7 +1552,7 @@ async function recordFailure(
   claimAt: Date,
   err: unknown,
   step: 'create' | 'schedule',
-  opts: { kind?: SenderErrorKind; keepMarker?: boolean } = {},
+  opts: { kind?: SenderErrorKind; keepMarker?: boolean; clearMarker?: boolean } = {},
 ): Promise<void> {
   const a = s.audience;
   const kind = opts.kind ?? errorKind(err);
@@ -1569,7 +1573,7 @@ async function recordFailure(
 
   if (step === 'create') {
     const notApplied = !opts.keepMarker && opts.kind === undefined && provablyNotApplied(err);
-    if (notApplied) base.createAttemptedAt = null;
+    if (notApplied || opts.clearMarker) base.createAttemptedAt = null;
     if (kind === 'FATAL') {
       await finishStep(s.id, claimAt, { ...base, state: 'FAILED', nextAttemptAt: null });
       await raiseAlert(ctx, 'fatal', { audience: a, step, error: base.lastError });
