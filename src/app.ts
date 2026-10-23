@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import express, { type Express } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { corsMiddleware } from './lib/cors';
@@ -13,6 +13,7 @@ import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
 import { emailAssetsHandler } from './routes/digestAds';
 import { env } from './lib/env';
+import { appErrorHandler } from './lib/httpErrors';
 import type { Sender } from './services/send';
 import type { EmailSender } from './lib/email';
 
@@ -152,12 +153,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   app.use(express.static(publicDir));
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    // eslint-disable-next-line no-console
-    console.error('unhandled error:', err);
-    res.status(500).json({ error: 'internal_error' });
-  });
+  // Last: body-parser errors answer their own 4xx (413 over the 64 KB limit,
+  // 400 for bad JSON) and nothing logs a request body (src/lib/httpErrors.ts).
+  app.use(appErrorHandler);
 
   return app;
 }

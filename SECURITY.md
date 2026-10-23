@@ -94,7 +94,14 @@ vulnerabilities" was restored by the bcrypt 6 bump).
 
 **CORS** (`src/lib/cors.ts`) — the gate is correct: when `ALLOWED_ORIGINS` is set, requests with a foreign `Origin` header get no `Access-Control-Allow-Origin` response header and the browser blocks them. When the env var is empty, CORS is open (dev default). Verified by test `security: CORS not open when ALLOWED_ORIGINS is set` in `src/__tests__/security.test.ts`.
 
-**Body size** — `express.json({ limit: '64kb' })` in `src/app.ts`. Oversized JSON returns 413. Already present pre-audit.
+**Body size** — `express.json({ limit: '64kb' })` in `src/app.ts`. **Correction (2026-10-23):** until then an
+oversized JSON body actually returned **500 `internal_error`** on every route, and the catch-all error handler
+logged the whole error object — body-parser's errors carry the raw request body (and on Node ≥ 20 a JSON syntax
+error's message quotes it), so reader data could reach the logs. The last handler is now `appErrorHandler`
+(`src/lib/httpErrors.ts`): body-parser errors answer their own 4xx — **413** `payload_too_large`, **400**
+`invalid_json`, **415** for an unsupported charset/encoding — and log one line (type, status, method, path), never
+the body or the message; any other error is a 500 logged as name, message, type, status and stack only
+(`safeErrorLog`), never the object. Tests: `src/__tests__/httpErrors.test.ts`.
 
 ## 3. Rate limiting
 
