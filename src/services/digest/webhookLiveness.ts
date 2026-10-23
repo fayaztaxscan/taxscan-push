@@ -122,15 +122,41 @@ export type WebhookHealth = {
   alive: boolean | null;
   /** When the last webhook event of any stored type arrived. */
   lastEventAt: string | null;
+  /**
+   * The latest opt-out event (unsubscribe / hard bounce / spam) that arrived
+   * WITHOUT a readable address, so it could not be copied to EmailSuppression
+   * (`NO_ADDRESS` rows, one per IST day per event name). Null = none in 14 days.
+   */
+  lastNoAddressAt: string | null;
+  /** How many such events on that IST day (all event names). 0 when `lastNoAddressAt` is null. */
+  noAddressCount: number;
 };
+
+/** True when an opt-out without an address arrived in the last 24 h — the banner's trigger. */
+export function noAddressRecently(h: Pick<WebhookHealth, 'lastNoAddressAt'>, now: Date): boolean {
+  return h.lastNoAddressAt !== null && now.getTime() - Date.parse(h.lastNoAddressAt) < 24 * 60 * 60 * 1000;
+}
+
+const WEBHOOKS_OFF: WebhookHealth = { enabled: false, alive: null, lastEventAt: null, lastNoAddressAt: null, noAddressCount: 0 };
 
 /** The `/api/digest/status` webhook field, judged on the most recent judgeable send. Never throws. */
 export async function webhookHealth(opts: { portal: string; now?: Date; cfg?: DigestEnv }): Promise<WebhookHealth> {
   const cfg = opts.cfg ?? env.digest;
-  if (!cfg.webhooksEnabled) return { enabled: false, alive: null, lastEventAt: null };
+  if (!cfg.webhooksEnabled) return { ...WEBHOOKS_OFF };
   const now = opts.now ?? new Date();
   try {
     const last = await prisma.emailEvent.findFirst({ orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } });
+    // At most one row per IST day per event name, so this stays a handful of rows.
+    const noAddrRows = await prisma.emailEvent.findMany({
+      where: { type: 'NO_ADDRESS', receivedAt: { gte: new Date(now.getTime() - STATUS_LOOKBACK_MS) } },
+      orderBy: { receivedAt: 'desc' },
+      select: { receivedAt: true, meta: true },
+    });
+    const noAddr = noAddrRows[0] ?? null;
+    const dayOf = (m: unknown) => (m as { day?: string } | null)?.day;
+    const noAddressCount = noAddr
+      ? noAddrRows.filter((r) => dayOf(r.meta) === dayOf(noAddr.meta)).reduce((n, r) => n + Number((r.meta as { count?: number }).count ?? 0), 0)
+      : 0;
     const recent = await prisma.digestSend.findMany({
       where: {
         run: { portal: opts.portal },
@@ -148,10 +174,16 @@ export async function webhookHealth(opts: { portal: string; now?: Date; cfg?: Di
       const latest = judge[0];
       alive = (await heardCampaigns([latest])).has(latest.mcCampaignId as string);
     }
-    return { enabled: true, alive, lastEventAt: last ? last.receivedAt.toISOString() : null };
+    return {
+      enabled: true,
+      alive,
+      lastEventAt: last ? last.receivedAt.toISOString() : null,
+      lastNoAddressAt: noAddr ? noAddr.receivedAt.toISOString() : null,
+      noAddressCount,
+    };
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(`[digest] webhook health read failed: ${redactError(err)}`);
-    return { enabled: true, alive: null, lastEventAt: null };
+    return { enabled: true, alive: null, lastEventAt: null, lastNoAddressAt: null, noAddressCount: 0 };
   }
 }

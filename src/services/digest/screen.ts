@@ -379,8 +379,12 @@ export type HistoryRow = {
     mcCampaignId: string | null;
     delivered: number | null;
     clicks: number | null;
-    /** From `digestSendStats()` (rolled + live). Null while DIGEST_WEBHOOKS_ENABLED is off: never a fake 0. */
+    /**
+     * From `digestSendStats()` (rolled + live). Null ("—") while DIGEST_WEBHOOKS_ENABLED
+     * is off, or when there is no proof the webhook was receiving for this send: never a fake 0.
+     */
     unsubscribes: number | null;
+    bounces: number | null;
     complaints: number | null;
   }[];
 };
@@ -422,6 +426,7 @@ export async function digestHistory(opts: { portal: string; days?: number; now?:
         delivered: s.reached,
         clicks: s.clicks,
         unsubscribes: stats?.get(s.id)?.unsubscribes ?? null,
+        bounces: stats?.get(s.id)?.bounces ?? null,
         complaints: stats?.get(s.id)?.complaints ?? null,
       })),
     };

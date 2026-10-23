@@ -1,5 +1,5 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env, type DigestEnv } from '../../lib/env';
 import { redactError } from './sender';
@@ -14,8 +14,11 @@ import { redactError } from './sender';
  *    dropped, never stored;
  *  - write one `EmailEvent` per event, deduped on a stable `dedupeKey` (unique
  *    index + `skipDuplicates`), so a provider retry or a replay counts once;
- *  - upsert `EmailSuppression` for UNSUBSCRIBE / HARD_BOUNCE / SPAM in the same
- *    transaction as the event row (an opt-out is never lost between the two);
+ *  - insert `EmailSuppression` for UNSUBSCRIBE / HARD_BOUNCE / SPAM in the same
+ *    transaction as the event rows (an opt-out is never lost between the two),
+ *    in chunks of CHUNK_SIZE events, a constant number of statements each;
+ *  - count what was dropped and why; a recognised opt-out with no readable
+ *    address also leaves a daily `NO_ADDRESS` row (no PII) for the status screen;
  *  - link `sendId` when the campaign is one of our digest variants.
  *
  * PII: the address is normalised, hashed (sha256) for `EmailEvent.emailHash`
@@ -38,9 +41,16 @@ const CAMPAIGN_TYPES: ReadonlySet<EmailEventType> = new Set(['CAMPAIGN_SENT', 'C
 const OUR_CAMPAIGN_PREFIX = 'TS-DIGEST-';
 /** A token shorter than this is treated as unset: the route answers 404 to everyone. */
 export const MIN_WEBHOOK_TOKEN_LENGTH = 32;
-/** More events than this in one request is not a Mailercloud delivery: 400. */
-export const MAX_EVENTS_PER_REQUEST = 500;
-const TXN_TIMEOUT_MS = 10_000;
+/**
+ * More events than this in one request is not a Mailercloud delivery: 400.
+ * Set ABOVE what the 256 KB body limit can carry in storable events (the
+ * smallest, `{"event":"spam","email":"a@b.co"}`, is 33 bytes → ~7,900), so
+ * a delivery the body limit accepts is never permanently rejected by count.
+ */
+export const MAX_EVENTS_PER_REQUEST = 10_000;
+/** Events per transaction. Each chunk is a constant 3 statements, not one per event. */
+const CHUNK_SIZE = 1000;
+const TXN_TIMEOUT_MS = 20_000;
 
 /* ------------------------------------------------------------------ */
 /* UNVERIFIED payload assumptions — the ONE place they live            */
@@ -260,11 +270,15 @@ export function eventsOf(body: unknown): Obj[] | null {
 /* Store                                                               */
 /* ------------------------------------------------------------------ */
 
+export type IgnoreReason = 'unknown_type' | 'no_campaign' | 'no_address';
+
 export type WebhookResult = {
   received: number;
   stored: number;
   duplicates: number;
   ignored: number;
+  /** Why events were dropped. `no_address` = a recognised opt-out we could not act on. */
+  ignoredBy: Record<IgnoreReason, number>;
   types: EmailEventType[];
 };
 
@@ -275,7 +289,9 @@ export class MalformedWebhookError extends Error {
   }
 }
 
-function metaOf(e: Extract<NormalisedEvent, { ignored: false }>, cfg: Pick<DigestEnv, 'mailercloud'>): Prisma.InputJsonObject {
+type Kept = Extract<NormalisedEvent, { ignored: false }>;
+
+function metaOf(e: Kept, cfg: Pick<DigestEnv, 'mailercloud'>): Prisma.InputJsonObject {
   const meta: Record<string, string> = { event: e.rawType };
   if (e.at) meta.at = e.at;
   if (e.campaignName?.startsWith(OUR_CAMPAIGN_PREFIX)) meta.campaignName = e.campaignName.slice(0, 120);
@@ -287,7 +303,7 @@ function metaOf(e: Extract<NormalisedEvent, { ignored: false }>, cfg: Pick<Diges
 }
 
 /** Our digest variant for each campaign id / name in the batch. */
-async function linkSends(events: Extract<NormalisedEvent, { ignored: false }>[]): Promise<Map<string, string>> {
+async function linkSends(events: Kept[]): Promise<Map<string, string>> {
   const ids = [...new Set(events.map((e) => e.mcCampaignId).filter((v): v is string => !!v))];
   const names = [...new Set(events.map((e) => e.campaignName).filter((v): v is string => !!v && v.startsWith(OUR_CAMPAIGN_PREFIX)))];
   const map = new Map<string, string>();
@@ -303,54 +319,87 @@ async function linkSends(events: Extract<NormalisedEvent, { ignored: false }>[])
   return map;
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
-}
-
-/** Inserts one event (deduped) and its suppression row together. True when the event was new. */
-async function storeOne(
-  e: Extract<NormalisedEvent, { ignored: false }>,
-  sendId: string | null,
-  meta: Prisma.InputJsonObject,
-  now: Date,
-): Promise<boolean> {
-  const attempt = () =>
-    prisma.$transaction(
-      async (tx) => {
-        const r = await tx.emailEvent.createMany({
-          data: [
-            {
-              type: e.type,
-              mcCampaignId: e.mcCampaignId,
-              sendId,
-              emailHash: e.emailHash,
-              dedupeKey: e.dedupeKey,
-              meta,
-              receivedAt: now,
-            },
-          ],
+/**
+ * Stores one chunk in ONE transaction, a constant number of statements however
+ * many events it holds:
+ *  1. insert the events, skipping existing dedupe keys, returning the new keys;
+ *  2. insert a suppression row for every opt-out address not yet suppressed
+ *     (`ON CONFLICT DO NOTHING` — a concurrent delivery of the same address
+ *     waits for the other and then does nothing, so no unique-violation race);
+ *  3. move `lastSeenAt` only for addresses whose event was NEW in this delivery
+ *     (a replay re-asserts the row but does not move it).
+ * The event row and its suppression commit together: an opt-out is never lost
+ * between the two. Returns the dedupe keys that were new.
+ */
+async function storeChunk(chunk: { e: Kept; sendId: string | null; meta: Prisma.InputJsonObject }[], now: Date): Promise<Set<string>> {
+  return prisma.$transaction(
+    async (tx) => {
+      const created = await tx.emailEvent.createManyAndReturn({
+        data: chunk.map(({ e, sendId, meta }) => ({
+          type: e.type,
+          mcCampaignId: e.mcCampaignId,
+          sendId,
+          emailHash: e.emailHash,
+          dedupeKey: e.dedupeKey,
+          meta,
+          receivedAt: now,
+        })),
+        skipDuplicates: true,
+        select: { dedupeKey: true },
+      });
+      const fresh = new Set(created.map((r) => r.dedupeKey));
+      const firstReason = new Map<string, EmailEventType>();
+      const bump = new Set<string>();
+      for (const { e } of chunk) {
+        if (!SUPPRESSING.has(e.type) || !e.email) continue;
+        if (!firstReason.has(e.email)) firstReason.set(e.email, e.type);
+        if (fresh.has(e.dedupeKey)) bump.add(e.email);
+      }
+      if (firstReason.size > 0) {
+        await tx.emailSuppression.createMany({
+          data: [...firstReason].map(([email, reason]) => ({
+            email,
+            reason,
+            source: 'mailercloud_webhook',
+            firstSeenAt: now,
+            lastSeenAt: now,
+          })),
           skipDuplicates: true,
         });
-        const inserted = r.count === 1;
-        if (SUPPRESSING.has(e.type) && e.email) {
-          // A replay re-asserts the row (an opt-out must exist) but does not move lastSeenAt.
-          await tx.emailSuppression.upsert({
-            where: { email: e.email },
-            create: { email: e.email, reason: e.type, source: 'mailercloud_webhook', firstSeenAt: now, lastSeenAt: now },
-            update: inserted ? { lastSeenAt: now } : {},
-          });
-        }
-        return inserted;
-      },
-      { timeout: TXN_TIMEOUT_MS },
-    );
-  try {
-    return await attempt();
-  } catch (err) {
-    // Two concurrent deliveries of the same address: the loser's suppression insert
-    // collides. Once more, now that the row exists.
-    if (isUniqueViolation(err)) return attempt();
-    throw err;
+      }
+      if (bump.size > 0) {
+        await tx.emailSuppression.updateMany({ where: { email: { in: [...bump] }, lastSeenAt: { lt: now } }, data: { lastSeenAt: now } });
+      }
+      return fresh;
+    },
+    { timeout: TXN_TIMEOUT_MS },
+  );
+}
+
+/** IST calendar date, YYYY-MM-DD (the no-address signal is one row per IST day per event name). */
+function istDay(now: Date): string {
+  return new Date(now.getTime() + (5 * 60 + 30) * 60_000).toISOString().slice(0, 10);
+}
+
+/**
+ * A recognised opt-out (unsubscribe / hard bounce / spam) without a readable
+ * address cannot be acted on — the reader stays mailable in our copy. Make it
+ * visible: one `NO_ADDRESS` row per IST day per provider event name, its
+ * `receivedAt` moved to the latest occurrence and `meta.count` incremented.
+ * No address, no hash. Read by `/api/digest/status` (`webhook.lastNoAddressAt`).
+ */
+async function recordNoAddress(rawTypes: Map<string, number>, now: Date): Promise<void> {
+  const day = istDay(now);
+  for (const [rawType, count] of rawTypes) {
+    const key = createHash('sha256').update(`mailercloud|NO_ADDRESS|${day}|${rawType}`).digest('hex');
+    const meta = JSON.stringify({ event: rawType, day, count });
+    await prisma.$executeRaw`
+      INSERT INTO "EmailEvent" (id, provider, type, "dedupeKey", meta, "receivedAt")
+      VALUES (${randomUUID()}, 'mailercloud', 'NO_ADDRESS', ${key}, ${meta}::jsonb, ${now})
+      ON CONFLICT ("dedupeKey") DO UPDATE
+        SET "receivedAt" = GREATEST("EmailEvent"."receivedAt", EXCLUDED."receivedAt"),
+            meta = jsonb_set("EmailEvent".meta, '{count}',
+                     to_jsonb(COALESCE(("EmailEvent".meta ->> 'count')::int, 0) + ${count}::int))`;
   }
 }
 
@@ -380,29 +429,53 @@ export async function handleMailercloudWebhook(
   if (raw === null) throw new MalformedWebhookError('body is not an object or array');
   if (raw.length > MAX_EVENTS_PER_REQUEST) throw new MalformedWebhookError('too many events');
 
-  const out: WebhookResult = { received: raw.length, stored: 0, duplicates: 0, ignored: 0, types: [] };
-  const kept: Extract<NormalisedEvent, { ignored: false }>[] = [];
+  const out: WebhookResult = {
+    received: raw.length,
+    stored: 0,
+    duplicates: 0,
+    ignored: 0,
+    ignoredBy: { unknown_type: 0, no_campaign: 0, no_address: 0 },
+    types: [],
+  };
+  const kept: Kept[] = [];
+  const noAddress = new Map<string, number>();
   for (const ev of raw) {
     const n = normaliseEvent(ev);
-    if (n.ignored) out.ignored++;
-    else kept.push(n);
+    if (n.ignored) {
+      out.ignored++;
+      out.ignoredBy[n.reason]++;
+      if (n.reason === 'no_address' && n.rawType) noAddress.set(n.rawType, (noAddress.get(n.rawType) ?? 0) + 1);
+    } else {
+      kept.push(n);
+    }
   }
+  if (noAddress.size > 0) await recordNoAddress(noAddress, now);
   if (kept.length === 0) return out;
 
   const sends = await linkSends(kept);
-  for (const e of kept) {
-    const sendId =
+  const rows = kept.map((e) => ({
+    e,
+    sendId:
       (e.mcCampaignId ? sends.get(`id:${e.mcCampaignId}`) : undefined) ??
       (e.campaignName ? sends.get(`name:${e.campaignName}`) : undefined) ??
-      null;
-    const inserted = await storeOne(e, sendId, metaOf(e, cfg), now);
-    if (inserted) {
-      out.stored++;
-      if (!out.types.includes(e.type)) out.types.push(e.type);
-      if (sendId && CAMPAIGN_TYPES.has(e.type)) await bringPollForward(sendId, now);
-    } else {
-      out.duplicates++;
+      null,
+    meta: metaOf(e, cfg),
+  }));
+  const nudge = new Set<string>();
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const fresh = await storeChunk(chunk, now);
+    for (const { e, sendId } of chunk) {
+      // Two events with the same key in one delivery: the first is new, the rest duplicates.
+      if (fresh.delete(e.dedupeKey)) {
+        out.stored++;
+        if (!out.types.includes(e.type)) out.types.push(e.type);
+        if (sendId && CAMPAIGN_TYPES.has(e.type)) nudge.add(sendId);
+      } else {
+        out.duplicates++;
+      }
     }
   }
+  for (const sendId of nudge) await bringPollForward(sendId, now);
   return out;
 }

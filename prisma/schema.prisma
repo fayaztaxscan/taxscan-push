@@ -554,7 +554,7 @@ model DigestItem {
 model EmailEvent {
   id           String   @id @default(cuid())
   provider     String   @default("mailercloud")
-  type         String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | CAMPAIGN_SENT | CAMPAIGN_ERROR
+  type         String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | CAMPAIGN_SENT | CAMPAIGN_ERROR | NO_ADDRESS (daily signal, no PII)
   mcCampaignId String?
   sendId       String? // DigestSend.id when the campaign is one of ours; null for other campaigns
   emailHash    String? // sha256(normalised address); never the address

@@ -99,6 +99,7 @@ type HistoryRow = {
     delivered: number | null;
     clicks: number | null;
     unsubscribes: number | null;
+    bounces: number | null;
     complaints: number | null;
   }[];
 };
@@ -521,6 +522,7 @@ onMounted(load);
               <th class="num">Delivered <span class="th-sub">Free / Premium</span></th>
               <th class="num">Clicks</th>
               <th class="num">Unsubscribes</th>
+              <th class="num">Bounces</th>
               <th class="num">Complaints</th>
               <th>Mailercloud</th>
             </tr>
@@ -540,6 +542,7 @@ onMounted(load);
               <td class="num" data-label="Delivered">{{ pair(row, (v) => v.delivered) }}</td>
               <td class="num" data-label="Clicks">{{ pair(row, (v) => v.clicks) }}</td>
               <td class="num" data-label="Unsubscribes">{{ pair(row, (v) => v.unsubscribes) }}</td>
+              <td class="num" data-label="Bounces">{{ pair(row, (v) => v.bounces) }}</td>
               <td class="num" data-label="Complaints">{{ pair(row, (v) => v.complaints) }}</td>
               <td class="cell-full" data-label="Mailercloud">
                 <template v-for="a in AUDIENCES" :key="a">
@@ -555,15 +558,15 @@ onMounted(load);
               </td>
             </tr>
             <tr v-if="history.length === 0 && !loading">
-              <td colspan="9" class="muted" style="text-align: center; padding: 24px">
+              <td colspan="10" class="muted" style="text-align: center; padding: 24px">
                 No digests in the last 14 days.
               </td>
             </tr>
           </tbody>
         </table>
         <p class="muted legend">
-          Figures read Free / Premium. “—” means not available yet: unsubscribes and complaints arrive with the
-          Mailercloud webhook.
+          Figures read Free / Premium. “—” means no data: unsubscribes, hard bounces and spam complaints come
+          from the Mailercloud webhook, and are shown only for digests sent while it was receiving.
         </p>
       </section>
     </template>

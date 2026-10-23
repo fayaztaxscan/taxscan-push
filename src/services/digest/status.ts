@@ -6,7 +6,7 @@ import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, runDateKey } from './retryPolicy';
 import { validateDigestSchedule } from './scheduler';
 import { BLOCKING_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
-import { webhookHealth, type WebhookHealth } from './webhookLiveness';
+import { noAddressRecently, webhookHealth, type WebhookHealth } from './webhookLiveness';
 
 /**
  * `GET /api/digest/status` payload and the Dashboard banner decision
@@ -42,6 +42,8 @@ export type AttentionInput = {
   }>;
   /** Task 8: the most recent judgeable send got no campaign webhook (`webhookHealth().alive === false`). */
   webhookSilent?: boolean;
+  /** Task 8: opt-out events without a readable address in the last 24 h (count). */
+  webhookNoAddress?: number;
 };
 
 export type Attention = { code: string; headline: string; action: string; link: string };
@@ -63,7 +65,8 @@ function attention(code: string, headline: string, action: string): Attention {
  *  5. waiting for approval past the send time;
  *  6. a variant is retrying after a temporary provider error;
  *  7. (task 8) the Mailercloud webhook looks switched off — shown even with no
- *     run today, because it concerns an earlier send.
+ *     run today, because it concerns an earlier send;
+ *  8. (task 8) opt-out events without a readable address in the last 24 h.
  */
 export function digestAttention(i: AttentionInput): Attention | null {
   if (!i.enabled) return null;
@@ -74,6 +77,13 @@ export function digestAttention(i: AttentionInput): Attention | null {
       'webhook_silent',
       'Mailercloud has stopped calling our webhook.',
       'Switch the webhook back on in Mailercloud. Sends are still checked, but unsubscribes and bounces are not being copied meanwhile.',
+    );
+  }
+  if (i.webhookNoAddress && i.webhookNoAddress > 0) {
+    return attention(
+      'webhook_no_address',
+      `${i.webhookNoAddress} unsubscribe/bounce event(s) from Mailercloud arrived without a readable address.`,
+      'They were not copied to our suppression list (Mailercloud still honours its own). Ask the developer to check the webhook field names.',
     );
   }
   return null;
@@ -224,9 +234,13 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       webhooksEnabled: cfg.webhooksEnabled,
     },
   };
-  if (!cfg.enabled) return { ...base, webhook: { enabled: cfg.webhooksEnabled, alive: null, lastEventAt: null }, today: null, attention: null, history: [] };
+  if (!cfg.enabled) {
+    const webhook = { enabled: cfg.webhooksEnabled, alive: null, lastEventAt: null, lastNoAddressAt: null, noAddressCount: 0 };
+    return { ...base, webhook, today: null, attention: null, history: [] };
+  }
   const webhook = await webhookHealth({ portal, now, cfg });
   const webhookSilent = webhook.alive === false;
+  const webhookNoAddress = noAddressRecently(webhook, now) ? webhook.noAddressCount : 0;
 
   const todayDate = istDateOf(now);
   const runs = await prisma.digestRun.findMany({
@@ -254,7 +268,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
   const history = runs.map((r) => ({ runDate: runDateKey(r.runDate), state: digestRunState(r, r.sends) }));
   const run = runs.find((r) => r.runDate.getTime() === todayDate.getTime()) ?? null;
   if (!run) {
-    return { ...base, webhook, today: null, attention: digestAttention({ enabled: cfg.enabled, now, cfg, run: null, sends: [], webhookSilent }), history };
+    return { ...base, webhook, today: null, attention: digestAttention({ enabled: cfg.enabled, now, cfg, run: null, sends: [], webhookSilent, webhookNoAddress }), history };
   }
 
   const alerts = (run.alerts ?? {}) as AlertMap;
@@ -289,7 +303,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       alerts: alertRows,
       resolvedAt,
     },
-    attention: digestAttention({ enabled: cfg.enabled, now, cfg, run, sends: run.sends, webhookSilent }),
+    attention: digestAttention({ enabled: cfg.enabled, now, cfg, run, sends: run.sends, webhookSilent, webhookNoAddress }),
     history,
   };
 }

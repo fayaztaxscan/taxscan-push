@@ -25,12 +25,20 @@ import { MalformedWebhookError, handleMailercloudWebhook, webhookTokenMatches } 
  */
 export type WebhookRouterOptions = {
   cfg?: DigestEnv;
-  /** Per-IP requests per minute. Generous: a 429 counts as a failed delivery toward Mailercloud's switch-off. */
-  perMin?: number;
+  /**
+   * Per-IP limit on requests with a WRONG/missing token (or the route off).
+   * Only failures count, so a token-guessing flood — even one sharing a
+   * Cloudflare edge IP with Mailercloud (`trust proxy 1`) — cannot 429 a real
+   * delivery: a 429 counts toward Mailercloud switching the webhook off.
+   */
+  invalidPerMin?: number;
+  /** Ceiling for requests with the RIGHT token: far above any real delivery rate; only a leaked token hits it. */
+  validPerMin?: number;
   clock?: () => Date;
 };
 
-const DEFAULT_PER_MIN = 1200;
+const DEFAULT_INVALID_PER_MIN = 120;
+const DEFAULT_VALID_PER_MIN = 20_000;
 const BODY_LIMIT = '256kb';
 
 function notFound(res: Response): void {
@@ -44,20 +52,22 @@ function log(msg: string): void {
 
 export function createWebhooksRouter(opts: WebhookRouterOptions = {}): Router {
   const router = Router();
-  const limiter = makePublicLimiter(opts.perMin ?? DEFAULT_PER_MIN);
+  const invalidLimiter = makePublicLimiter(opts.invalidPerMin ?? DEFAULT_INVALID_PER_MIN);
+  const validLimiter = makePublicLimiter(opts.validPerMin ?? DEFAULT_VALID_PER_MIN);
 
+  // Token first, before the body is read. Only a failed check is counted by the
+  // strict limiter (429 once over it, else the plain 404); the path is never echoed.
   const verify = (req: Request, res: Response, next: NextFunction): void => {
     const cfg = opts.cfg ?? env.digest;
     if (!cfg.webhooksEnabled || !webhookTokenMatches(String(req.params.token ?? ''), cfg)) {
-      notFound(res);
+      void invalidLimiter(req, res, () => notFound(res));
       return;
     }
-    next();
+    void validLimiter(req, res, next);
   };
 
   router.post(
     '/mailercloud/:token',
-    limiter,
     verify,
     // Form posts become objects; everything else arrives as text and is parsed
     // below, whatever Content-Type Mailercloud sends (UNVERIFIED: likely JSON).
@@ -79,11 +89,17 @@ export function createWebhooksRouter(opts: WebhookRouterOptions = {}): Router {
       }
       try {
         const r = await handleMailercloudWebhook(body, { cfg, now: opts.clock?.() });
+        const by = r.ignoredBy;
         log(
-          `received=${r.received} stored=${r.stored} duplicate=${r.duplicates} ignored=${r.ignored}` +
+          `received=${r.received} stored=${r.stored} duplicate=${r.duplicates}` +
+            ` ignored_type=${by.unknown_type} no_campaign=${by.no_campaign} no_address=${by.no_address}` +
             (r.types.length ? ` types=${r.types.join(',')}` : ''),
         );
-        res.status(200).json({ ok: true, stored: r.stored, duplicates: r.duplicates, ignored: r.ignored });
+        if (by.no_address > 0) {
+          // eslint-disable-next-line no-console
+          console.warn(`[digest-webhook] ${by.no_address} opt-out event(s) had no readable address — not suppressed (check the payload field names)`);
+        }
+        res.status(200).json({ ok: true, stored: r.stored, duplicates: r.duplicates, ignored: r.ignored, noAddress: by.no_address });
       } catch (err) {
         if (err instanceof MalformedWebhookError) {
           log(`malformed: ${err.message}`);

@@ -51,8 +51,8 @@ function cfg(over: NodeJS.ProcessEnv = {}): DigestEnv {
   });
 }
 
-function app(c: DigestEnv = cfg(), portal?: string) {
-  return createApp({ webhooks: { cfg: c, perMin: 10_000 }, digest: { cfg: c, ...(portal ? { portal } : {}) } });
+function app(c: DigestEnv = cfg(), portal?: string, limits: { invalidPerMin?: number; validPerMin?: number } = {}) {
+  return createApp({ webhooks: { cfg: c, invalidPerMin: 10_000, ...limits }, digest: { cfg: c, ...(portal ? { portal } : {}) } });
 }
 
 let n = 0;
@@ -94,7 +94,14 @@ async function runWithSend(over: Partial<{ state: 'SCHEDULED' | 'SENT'; sentConf
   return { run, send, mcCampaignId, portal };
 }
 
+// NO_ADDRESS rows carry no campaign or address to scope by; on the local dev DB
+// only this file writes them, so they are cleared before and after.
+beforeAll(async () => {
+  await prisma.emailEvent.deleteMany({ where: { type: 'NO_ADDRESS' } });
+});
+
 afterAll(async () => {
+  await prisma.emailEvent.deleteMany({ where: { type: 'NO_ADDRESS' } });
   await prisma.emailEvent.deleteMany({ where: { mcCampaignId: { startsWith: CAMP } } });
   await prisma.emailSuppression.deleteMany({ where: { email: { startsWith: ADDR_LOCAL } } });
   await prisma.digestRun.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
@@ -323,9 +330,28 @@ describe('our digest campaigns', () => {
     expect(mcCampaignId).toBeTruthy();
   });
 
-  it('history shows rolled + live unsubscribes/complaints only while webhooks are on', async () => {
+  it('history: "—" (null) for a send with no proof the webhook was receiving; 0 once it is proven', async () => {
     const { send, mcCampaignId, portal } = await runWithSend();
-    await prisma.digestSend.update({ where: { id: send.id }, data: { rolledUnsub: 2, rolledSpam: 1 } });
+    const none = await digestHistory({ portal, cfg: cfg() });
+    expect(none[0].variants[0]).toMatchObject({ unsubscribes: null, bounces: null, complaints: null });
+    // A reader event alone is not proof (it could arrive long after the webhook was registered).
+    await request(app()).post(URL_OK).send({ event: 'unsubscribe', email: addr('nv1'), campaign_id: mcCampaignId });
+    expect((await digestHistory({ portal, cfg: cfg() }))[0].variants[0].unsubscribes).toBeNull();
+    // campaign_sent for this campaign proves coverage: real counts, zeros included.
+    await request(app()).post(URL_OK).send({ event: 'campaign_sent', campaign_id: mcCampaignId });
+    expect((await digestHistory({ portal, cfg: cfg() }))[0].variants[0]).toMatchObject({ unsubscribes: 1, bounces: 0, complaints: 0 });
+    expect(send.id).toBeTruthy();
+  });
+
+  it('history: folded counts alone also prove coverage', async () => {
+    const { send, portal } = await runWithSend();
+    await prisma.digestSend.update({ where: { id: send.id }, data: { rolledBounce: 3 } });
+    expect((await digestHistory({ portal, cfg: cfg() }))[0].variants[0]).toMatchObject({ unsubscribes: 0, bounces: 3, complaints: 0 });
+  });
+
+  it('history shows rolled + live unsubscribes/bounces/complaints only while webhooks are on', async () => {
+    const { send, mcCampaignId, portal } = await runWithSend();
+    await prisma.digestSend.update({ where: { id: send.id }, data: { rolledUnsub: 2, rolledSpam: 1, rolledBounce: 1 } });
     await request(app()).post(URL_OK).send([
       { event: 'unsubscribe', email: addr('h1'), campaign_id: mcCampaignId },
       { event: 'unsubscribe', email: addr('h2'), campaign_id: mcCampaignId },
@@ -333,9 +359,9 @@ describe('our digest campaigns', () => {
       { event: 'hard_bounce', email: addr('h3'), campaign_id: mcCampaignId },
     ]);
     const on = await digestHistory({ portal, cfg: cfg() });
-    expect(on[0].variants[0]).toMatchObject({ unsubscribes: 4, complaints: 2 });
+    expect(on[0].variants[0]).toMatchObject({ unsubscribes: 4, bounces: 2, complaints: 2 });
     const off = await digestHistory({ portal, cfg: cfg({ DIGEST_WEBHOOKS_ENABLED: 'false' }) });
-    expect(off[0].variants[0]).toMatchObject({ unsubscribes: null, complaints: null });
+    expect(off[0].variants[0]).toMatchObject({ unsubscribes: null, bounces: null, complaints: null });
   });
 });
 
@@ -407,7 +433,7 @@ describe('liveness: SENT by poll, no campaign webhook within 2 h', () => {
     expect(alive.body.attention?.code).not.toBe('webhook_silent');
 
     const off = await webhookHealth({ portal, cfg: cfg({ DIGEST_WEBHOOKS_ENABLED: 'false' }) });
-    expect(off).toEqual({ enabled: false, alive: null, lastEventAt: null });
+    expect(off).toEqual({ enabled: false, alive: null, lastEventAt: null, lastNoAddressAt: null, noAddressCount: 0 });
   });
 
   it('banner and alert copy', () => {
@@ -417,6 +443,87 @@ describe('liveness: SENT by poll, no campaign webhook within 2 h', () => {
     expect(digestAttention({ ...base, webhookSilent: false })).toBeNull();
     expect(digestAttention({ ...base, enabled: false, webhookSilent: true })).toBeNull();
     expect(alertCopy('webhook_silent', {}, c).short).toMatch(/webhook/i);
+  });
+});
+
+describe('QA follow-ups', () => {
+  it('rate limit: a valid token is never limited by the failed-token budget', async () => {
+    const a = app(cfg(), undefined, { invalidPerMin: 3 });
+    for (let i = 0; i < 8; i++) {
+      const res = await request(a).post(URL_OK).send({ event: 'campaign_opened' });
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('rate limit: wrong tokens get 404, then 429 — never the path', async () => {
+    const a = app(cfg(), undefined, { invalidPerMin: 3 });
+    const wrong = randomBytes(32).toString('hex');
+    const codes: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await request(a).post(`/api/webhooks/mailercloud/${wrong}`).send({ event: 'campaign_opened' });
+      codes.push(res.status);
+      expect(res.text).not.toContain(wrong);
+    }
+    expect(codes.slice(0, 3)).toEqual([404, 404, 404]);
+    expect(codes.slice(3)).toEqual([429, 429, 429]);
+    // ...and Mailercloud on the same IP is still let through.
+    expect((await request(a).post(URL_OK).send({ event: 'campaign_opened' })).status).toBe(200);
+  });
+
+  it('a body-limit-sized batch (~250 KB) is accepted and stored, quickly', async () => {
+    const id = `${CAMP}-big`;
+    const events: object[] = [];
+    let i = 0;
+    while (JSON.stringify(events).length < 250_000) {
+      events.push({ event: 'unsubscribe', email: `${ADDR_LOCAL}.big${i++}@example.invalid`, campaign_id: id, ts_event: 1761200000 });
+    }
+    expect(events.length).toBeGreaterThan(1500);
+    const t0 = Date.now();
+    const res = await request(app()).post(URL_OK).send(events);
+    const ms = Date.now() - t0;
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ stored: events.length, duplicates: 0 });
+    expect(ms).toBeLessThan(10_000);
+    expect(await prisma.emailEvent.count({ where: { mcCampaignId: id } })).toBe(events.length);
+    expect(await prisma.emailSuppression.count({ where: { email: { startsWith: `${ADDR_LOCAL}.big` } } })).toBe(events.length);
+    // The replay is all duplicates.
+    expect((await request(app()).post(URL_OK).send(events)).body).toMatchObject({ stored: 0, duplicates: events.length });
+  });
+
+  it('over the body limit → 413, nothing echoed', async () => {
+    const big = JSON.stringify([{ event: 'unsubscribe', email: ADDRESS, pad: 'x'.repeat(300_000) }]);
+    const res = await request(app()).post(URL_OK).set('Content-Type', 'application/json').send(big);
+    expect(res.status).toBe(413);
+    expect(res.text).not.toContain(ADDR_LOCAL);
+  });
+
+  it('opt-outs without a readable address are counted, logged and surfaced — no PII', async () => {
+    await prisma.emailEvent.deleteMany({ where: { type: 'NO_ADDRESS' } }); // earlier tests made some
+    const before = logs.length;
+    const res = await request(app())
+      .post(URL_OK)
+      .send([
+        { event: 'unsubscribe', campaign_id: camp() },
+        { event: 'hard_bounce', email: 'not-an-address', campaign_id: camp() },
+        { event: 'campaign_opened', email: addr('na') },
+        { event: 'campaign_sent' },
+      ]);
+    expect(res.body).toMatchObject({ stored: 0, ignored: 4, noAddress: 2 });
+    const line = logs.slice(before).join('\n');
+    expect(line).toContain('ignored_type=1 no_campaign=1 no_address=2');
+    expect(line).not.toContain('not-an-address');
+    expect(line.toLowerCase()).not.toContain(ADDR_LOCAL.toLowerCase());
+    await request(app()).post(URL_OK).send({ event: 'unsubscribe', campaign_id: camp() });
+
+    const rows = await prisma.$queryRaw<{ j: string }[]>`SELECT row_to_json(e)::text AS j FROM "EmailEvent" e WHERE type = 'NO_ADDRESS'`;
+    expect(rows.length).toBe(2); // one per IST day per event name
+    for (const r of rows) expect(r.j).not.toContain('not-an-address');
+    const h = await webhookHealth({ portal: `${PORTAL_PREFIX}none`, cfg: cfg() });
+    expect(h.lastNoAddressAt).not.toBeNull();
+    expect(h.noAddressCount).toBe(3);
+    const c = cfg();
+    expect(digestAttention({ enabled: true, now: new Date(), cfg: c, run: null, sends: [], webhookNoAddress: 3 })?.code).toBe('webhook_no_address');
+    expect(digestAttention({ enabled: true, now: new Date(), cfg: c, run: null, sends: [], webhookNoAddress: 0 })).toBeNull();
   });
 });
 

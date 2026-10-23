@@ -350,7 +350,20 @@ stored in a second place.
 | DigestTemplate / Ad / AdImage | Builder, admin screens | Archived, never deleted |
 | DigestAdPlacement | Rotation, per-ad report | Kept (~2k rows/yr) |
 | EmailEvent | Per-send unsubscribe/bounce/spam counts, complaint-rate alert, webhook liveness | **90 days, then folded into `DigestSend.rolled*` and deleted.** Rolled + live: `digestSendStats()` is the single implementation. |
-| EmailSuppression | Future lifecycle sends, suppression count on the Digests screen | **Never deleted automatically** (an opt-out persists) |
+| EmailSuppression | Future lifecycle sends, suppression count on the Digests screen | **Never deleted automatically** (an opt-out persists), except the owner's re-subscribe rule below |
+
+**Re-subscribe (owner decision, 23 Oct 2026: "if someone re-subscribes, put them back on the list
+automatically").** Mailercloud's webhook has no subscribe event, so the trigger is the CMS Feed 1 consent
+event: `marketing_consent = true` with a timestamp **newer than the suppression's `lastSeenAt`**.
+- **UNSUBSCRIBE:** a newer explicit opt-in lifts it automatically. The `EmailSuppression` row is **deleted**
+  (the table means "must not be mailed"; a "lifted" flag would make every future reader of it remember to
+  filter). The trace stays without the address: an `EmailEvent` row of type `RESUBSCRIBE` with
+  `emailHash`, `meta {source: 'cms_feed1', consentAt, liftedReason: 'UNSUBSCRIBE'}`, plus an audit row
+  holding the hash only. A later unsubscribe simply creates the row again.
+- **HARD_BOUNCE and SPAM are NOT lifted automatically** until the owner confirms. A bounce is a
+  deliverability fact, not a preference, and re-mailing a spam complainant risks the sending reputation.
+- An opt-in older than or equal to `lastSeenAt` changes nothing (the opt-out is newer).
+- Implementation lands with the Feed 1 task. Nothing in task 8 lifts a suppression.
 
 **Backup.** Add `DigestTemplate`, `DigestAd`, `DigestAdImage` and `EmailSuppression` to `backup.ts`.
 Opt-outs and creative work cannot be re-derived after a restore.
@@ -542,6 +555,8 @@ All three screens use the existing visual system, `stack` tables on phones and `
 | Two containers during deploy | Step claim (`stepClaimedAt`) | The second container sees the claim and does nothing | — |
 | Webhook deactivated by Mailercloud | Daily webhook status check; or SENT by poll with no `campaign_sent` webhook within 2 h | Polling still verifies sends; suppression copy lags | Email + banner ("re-enable webhook") |
 | Webhook replay or duplicate | `dedupeKey` unique | Ignored, 200 | — |
+| Opt-out webhook without a readable address | `no_address` count per delivery | 200 (a retry would not help); a daily `NO_ADDRESS` row, no PII; not suppressed in our copy (Mailercloud still honours its own list) | Log warning + banner for 24 h |
+| Reader re-subscribes (CMS Feed 1 consent newer than the suppression) | Feed 1 task | UNSUBSCRIBE suppression deleted, `RESUBSCRIBE` event + audit by hash; HARD_BOUNCE/SPAM kept pending the owner | — |
 | ElasticEmail itself down | Alert send fails | Logged; the banner is the backstop | Banner |
 | `DIGEST_SEND_AT` set inside quiet hours | Boot validation | Scheduler not started | Boot log + banner `config_invalid` |
 | Complaint rate > 0.3% on a send | Webhook counts / reached | Hold tomorrow's run for approval even if approval is off | Email |
@@ -797,9 +812,11 @@ agents.
    tables only; `webhook.ts`, `webhookLiveness.ts`, `runAlerts.ts`, `stats.ts`, `src/routes/webhooks.ts`;
    tests `digestWebhook`).*
    - **Route.** `/api/webhooks` is mounted before the global `express.json`, because body-parser's parse
-     error carries the raw body and the catch-all error handler logs it. Rate limit 1,200/min per IP:
-     generous on purpose, since a 429 counts as a failed delivery toward Mailercloud switching the webhook
-     off. The token is checked before the body is read. A wrong, unset or short (<32 chars) token, or
+     error carries the raw body and the catch-all error handler logs it. **Only failed-token requests are
+     rate-limited** (120/min per IP, then 429). With `trust proxy 1` the key may be a Cloudflare edge IP
+     that Mailercloud shares, and a 429 counts as a failed delivery toward Mailercloud switching the
+     webhook off. Valid-token requests have only a 20,000/min ceiling, which only a leaked token would hit.
+     The token is checked before the body is read. A wrong, unset or short (<32 chars) token, or
      `DIGEST_WEBHOOKS_ENABLED` off, gets a JSON 404 that never echoes the path. The comparison hashes both
      sides with SHA-256 and uses `timingSafeEqual`. `MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS` (default empty)
      is also accepted during a rotation. Any Content-Type is accepted. A blank body counts as an empty
@@ -808,11 +825,22 @@ agents.
      per request has counts and types only.
    - **Dedupe key** = sha256(`mailercloud|TYPE|campaign id (or name)|emailHash`). It is built from *what*
      happened, never from timestamps or delivery ids, so a retry with a new delivery time still counts once.
-     Campaign events key on the campaign alone. The unique index plus `createMany({skipDuplicates})` and the
-     suppression upsert run in one transaction (10 s timeout; one retry on a P2002 race). The first
+     Campaign events key on the campaign alone. Events are stored in chunks of 1,000, one transaction per
+     chunk with a constant three statements: `createManyAndReturn({skipDuplicates})` for the events, then
+     `createMany({skipDuplicates})` and `updateMany` for the suppressions (ON CONFLICT DO NOTHING, so
+     there is no unique-violation race). A body-limit-sized delivery (~2,400 realistic events in 256 KB) is
+     stored in under a second locally. `MAX_EVENTS_PER_REQUEST` = 10,000 is above what 256 KB can carry
+     in storable events (~7,900 of the smallest), so a delivery the body limit accepts is never rejected by
+     count; over 256 KB gets 413. The first
      suppression reason is kept; a new event moves `lastSeenAt`, a replay does not. Opened, clicked,
-     soft-bounce and unknown types are acknowledged and not stored, and so are suppression events with no
-     valid address and campaign events with no campaign.
+     soft-bounce and unknown types are acknowledged and not stored, and so are campaign events with no
+     campaign. **Opt-outs with no readable address are made visible:** the log line carries
+     `ignored_type= no_campaign= no_address=` plus a warning, the response has `noAddress`, and one
+     `NO_ADDRESS` `EmailEvent` row per IST day per event name holds `{event, day, count}` (no address, no
+     hash). `/api/digest/status` shows them as `webhook.lastNoAddressAt` / `noAddressCount`, with a
+     `webhook_no_address` banner for 24 h. Task 11's fold should delete `NO_ADDRESS` rows without folding
+     them. An address with a control character counts as no_address, and NUL is stripped from the other
+     stored fields (QA, b958c06).
    - **PII.** `EmailEvent` holds `emailHash` only. `meta` = `{event, at?, campaignName? (only our
      TS-DIGEST- names), error? (campaign_error only, redacted, ≤200 chars)}`; bounce text is never kept.
      The test asserts on the raw `row_to_json` of the row and on every captured log line.
@@ -831,8 +859,16 @@ agents.
      from data, so it clears once a webhook arrives. Mailercloud's read endpoint `GET /v1/webhooks/detail/{id}`
      (`status` Active/1 vs 0) is noted for `health.ts`'s daily check; it is not called yet. **Caveat:** the
      scheduler is not wired, so in production the check runs only on Retry now / Send now until it is.
-   - **Counts.** `digestSendStats()` (rolled + live, one grouped query) fills the Digests history
-     unsubscribes/complaints. These are null while webhooks are off, never a fake 0.
+   - **Counts.** `digestSendStats()` (rolled + live; a constant three queries) fills the Digests history
+     unsubscribes, **bounces** (new column) and complaints. **Null vs 0:** a send has counts only when
+     there is proof the webhook was receiving when it went out: a `campaign_sent`/`campaign_error` event for
+     that campaign (by `sendId` or `mcCampaignId`), or folded `rolled* > 0`. Otherwise "—", and always
+     "—" while `DIGEST_WEBHOOKS_ENABLED` is off. An env flag has no history, and "any event after the send"
+     would wrongly cover sends made before the webhook was registered; a reader event alone is not proof
+     either. **Task 11:** the fold must keep this proof (for example, stamp a column) when it deletes old
+     campaign events.
+   - **Open:** the re-subscribe rule (§3) is implemented with the CMS Feed 1 task; whether HARD_BOUNCE/SPAM
+     may ever be lifted automatically waits for the owner.
    - **UNVERIFIED — confirm on the first live webhook** (Mailercloud documents the campaign event names but
      not the request body; the guesses live only in `PAYLOAD_FIELDS`/`TYPE_MAP` in `webhook.ts`):
      1. the body is JSON, one event per POST: an object, possibly an array, or `{events|data|payload: […]}`;
