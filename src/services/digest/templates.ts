@@ -10,10 +10,15 @@ import {
   RenderError,
   TEMPLATE_PLACEHOLDERS,
   UNSUBSCRIBE_TAG,
+  IMAGE_ATTRS,
+  LINK_ATTRS,
+  decodeAttr,
   esc,
   isAllowedDigestUrl,
   isAllowedTemplateImage,
   renderDigest,
+  scanStartTags,
+  srcsetUrls,
   type RenderAd,
   type RenderedDigest,
 } from './renderer';
@@ -190,7 +195,7 @@ export function worstCaseFixture(cfg: Pick<DigestEnv, 'maxItems' | 'rollforwardI
 /* ------------------------------------------------------------------ */
 
 type El = { name: string; attrs: string };
-type Occurrence = { name: string; inComment: boolean; ancestors: El[] };
+type Occurrence = { name: string; inComment: boolean; ancestors: El[]; inAttr?: boolean; notMso?: boolean };
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const TOKEN = /<!--([\s\S]*?)(?:-->|$)|<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>|\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
@@ -199,8 +204,12 @@ const TOKEN = /<!--([\s\S]*?)(?:-->|$)|<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|
 export function placeholderOccurrences(html: string): Occurrence[] {
   const out: Occurrence[] = [];
   const stack: El[] = [];
+  // Inside `<!--[if !mso]><!--> … <!--<![endif]-->`: real markup for every client EXCEPT Outlook.
+  let notMso = false;
   for (const m of html.matchAll(TOKEN)) {
     if (m[1] !== undefined) {
+      if (/^\[if\s+!\s*mso[^\]]*\]>\s*<!\s*$/i.test(m[1])) notMso = true;
+      else if (/<!\[endif\]\s*$/i.test(m[1])) notMso = false;
       for (const p of m[1].matchAll(PLACEHOLDER_RE)) out.push({ name: p[1], inComment: true, ancestors: [...stack] });
     } else if (m[3] !== undefined) {
       const name = m[3].toLowerCase();
@@ -210,12 +219,12 @@ export function placeholderOccurrences(html: string): Occurrence[] {
         if (at >= 0) stack.length = at;
       } else if (!VOID.has(name) && !/\/\s*$/.test(attrs)) {
         stack.push({ name, attrs });
-        for (const p of attrs.matchAll(PLACEHOLDER_RE)) out.push({ name: p[1], inComment: false, ancestors: [...stack] });
+        for (const p of attrs.matchAll(PLACEHOLDER_RE)) out.push({ name: p[1], inComment: false, inAttr: true, notMso, ancestors: [...stack] });
       } else {
-        for (const p of attrs.matchAll(PLACEHOLDER_RE)) out.push({ name: p[1], inComment: false, ancestors: [...stack, { name, attrs }] });
+        for (const p of attrs.matchAll(PLACEHOLDER_RE)) out.push({ name: p[1], inComment: false, inAttr: true, notMso, ancestors: [...stack, { name, attrs }] });
       }
     } else if (m[5] !== undefined) {
-      out.push({ name: m[5], inComment: false, ancestors: [...stack] });
+      out.push({ name: m[5], inComment: false, notMso, ancestors: [...stack] });
     }
   }
   return out;
@@ -224,29 +233,58 @@ export function placeholderOccurrences(html: string): Occurrence[] {
 const HIDING_STYLE = /(?:^|[;\s"'])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?![.\d]*[1-9])|max-height\s*:\s*0(?![.\d]*[1-9])|(?<!-)height\s*:\s*0(?![.\d]*[1-9])|(?<!-)width\s*:\s*0(?![.\d]*[1-9])|font-size\s*:\s*0(?![.\d]*[1-9])|mso-hide\s*:\s*all)/i;
 const HIDING_CONTAINERS = new Set(['head', 'title', 'style', 'script', 'template', 'noscript', 'textarea', 'select', 'option', 'xml', 'iframe', 'object']);
 
+/** An element's attributes as the browser reads them (quoted or not), by lower-case name. */
+function elAttrs(a: El): Map<string, string> {
+  const tag = scanStartTags(`<${a.name} ${a.attrs}>`)[0];
+  return new Map((tag?.attrs ?? []).map((x) => [x.name, x.value]));
+}
+
+/** A style value as CSS reads it for our pattern: entities decoded, comments removed. */
+const normCss = (css: string) => decodeAttr(css).replace(/\/\*[\s\S]*?\*\//g, '');
+
 /** Why an occurrence would not be seen by a reader, or null. */
 function hiddenBy(o: Occurrence): string | null {
   if (o.inComment) return 'it is inside an HTML comment (including Outlook-only <!--[if mso]> blocks)';
+  if (o.inAttr) return 'it is inside an attribute value, not in the page';
+  if (o.notMso) return 'it is inside a <!--[if !mso]> block, which Outlook does not show';
   for (const a of o.ancestors) {
     if (HIDING_CONTAINERS.has(a.name)) return `it is inside <${a.name}>`;
-    if (/(?:^|\s)hidden(?:\s|=|$)/i.test(a.attrs)) return `it is inside a <${a.name}> with the hidden attribute`;
-    const style = /\bstyle\s*=\s*("([^"]*)"|'([^']*)')/i.exec(a.attrs);
-    const css = style ? (style[2] ?? style[3] ?? '') : '';
-    if (HIDING_STYLE.test(` ${css}`)) return `it is inside a <${a.name}> styled to be invisible`;
+    const at = elAttrs(a);
+    if (at.has('hidden')) return `it is inside a <${a.name}> with the hidden attribute`;
+    if (HIDING_STYLE.test(` ${normCss(at.get('style') ?? '')}`)) return `it is inside a <${a.name}> styled to be invisible`;
   }
   return null;
 }
 
+/** The classes and ids on the footer's ancestors: a <style> rule hiding one of them hides the footer. */
+function footerAncestorNames(occ: Occurrence[]): { classes: Set<string>; ids: Set<string> } {
+  const classes = new Set<string>();
+  const ids = new Set<string>();
+  for (const o of occ.filter((x) => x.name === 'footer')) {
+    for (const a of o.ancestors) {
+      const at = elAttrs(a);
+      for (const c of (at.get('class') ?? '').split(/\s+/)) if (c) classes.add(c.toLowerCase());
+      const id = (at.get('id') ?? '').trim();
+      if (id) ids.add(id.toLowerCase());
+    }
+  }
+  return { classes, ids };
+}
+
 /** <style> rules that hide something the footer could match (an element, *, [attr], or one of the footer's classes). */
-function footerHidingCss(html: string): string[] {
+function footerHidingCss(html: string, ancestors: { classes: Set<string>; ids: Set<string> } = { classes: new Set(), ids: new Set() }): string[] {
   const out: string[] = [];
   for (const block of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
-    for (const rule of block[1].matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const rule of block[1].replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       const selector = rule[1].trim();
       if (!HIDING_STYLE.test(` ${rule[2]}`)) continue;
       const risky = selector.split(',').some((sel) => {
         const s = sel.trim();
         if (/[*[]|data-footer|\bts-(pad|muted|link|card)\b/.test(s)) return true;
+        // A class or id carried by an element the footer sits inside.
+        for (const m of s.matchAll(/([.#])(-?[_a-zA-Z][\w-]*)/g)) {
+          if ((m[1] === '.' ? ancestors.classes : ancestors.ids).has(m[2].toLowerCase())) return true;
+        }
         // An element selector (td, p, a, table, body …) anywhere in the compound selector.
         return s.split(/[\s>+~]+/).some((part) => /^[a-z][a-z0-9]*([.:#]|$)/i.test(part));
       });
@@ -270,7 +308,7 @@ const ACTIVE_CONTENT: [RegExp, string][] = [
   [/<meta\b[^>]*http-equiv\s*=\s*["']?refresh/i, 'a <meta> refresh'],
   [/@import\b/i, 'a CSS @import'],
   [/<svg\b/i, 'an <svg> (it can carry scripts)'],
-  [/\son[a-z]+\s*=/i, 'an event handler attribute (on…=)'],
+  [/[\s/"']on[a-z]+\s*=/i, 'an event handler attribute (on…=)'],
   [/(javascript|vbscript)\s*:/i, 'a javascript: or vbscript: URL'],
   [/data\s*:\s*text\/html/i, 'a data:text/html URL'],
   [/expression\s*\(/i, 'a CSS expression()'],
@@ -308,8 +346,9 @@ export const CHECK_LABELS: Record<TemplateCheckId, string> = {
   premium_no_subscription: 'No subscription offer in the Premium template',
 };
 
-const attrValues = (html: string, attr: string) =>
-  [...html.matchAll(new RegExp(`\\s${attr}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'gi'))].map((m) => (m[2] ?? m[3] ?? '').replace(/&amp;/gi, '&').trim());
+/** Every value of the named attributes, read the way a browser reads them (quoted or not, `/`-separated). */
+const attrValues = (html: string, names: ReadonlySet<string>) =>
+  scanStartTags(html).flatMap((t) => t.attrs.filter((a) => names.has(a.name)).map((a) => a.value.trim()));
 
 function shortUrl(u: string): string {
   try {
@@ -367,6 +406,11 @@ export function validateTemplate(
     }
   }
   for (const x of occ) if (x.name === 'preheader' && x.ancestors.some((a) => a.name === 'head')) ph.push('{{preheader}} must be in <body>, not <head>.');
+  for (const x of occ) {
+    if (x.inAttr && (REQUIRED_PLACEHOLDERS.includes(x.name as never) || x.name === 'logo' || x.name === 'premium_badge')) {
+      ph.push(`{{${x.name}}} must be in the page, not inside an attribute value (it becomes markup).`);
+    }
+  }
   add('placeholders', [...new Set(ph)]);
 
   // 2. Footer: placed, visible, not hidden by CSS
@@ -375,11 +419,13 @@ export function validateTemplate(
     const why = hiddenBy(x);
     if (why) ft.push(`The footer would not be seen: ${why}.`);
   }
-  for (const sel of footerHidingCss(html)) ft.push(`A <style> rule hides elements the footer uses (${sel}); hide only your own classes.`);
+  for (const sel of footerHidingCss(html, footerAncestorNames(occ))) ft.push(`A <style> rule hides elements the footer uses (${sel}); hide only your own classes.`);
 
   // 3. No active content
   const ac = ACTIVE_CONTENT.filter(([re]) => re.test(html)).map(([, what]) => `The template contains ${what}.`);
-  add('no_active_content', ac);
+  // The same, read the way a browser reads attributes (`<img src=x/onerror=…>`).
+  if (scanStartTags(html).some((t) => t.attrs.some((a) => /^on[a-z]/.test(a.name)))) ac.push(`The template contains ${'an event handler attribute (on…=)'}.`);
+  add('no_active_content', [...new Set(ac)]);
 
   // Render the worst case through the real renderer ('check' mode keeps bad template links for us to name).
   const fixture = worstCaseFixture(cfg);
@@ -413,24 +459,22 @@ export function validateTemplate(
   const ln: string[] = [];
   const al: string[] = [];
   if (rendered) {
-    for (const href of attrValues(rendered.html, 'href')) {
+    for (const href of attrValues(rendered.html, LINK_ATTRS)) {
       if (href === UNSUBSCRIBE_TAG) continue;
       if (!isAllowedDigestUrl(href)) ln.push(`Link ${shortUrl(href)} is not allowed (only https/http links to ALLOWED_PUSH_HOSTS).`);
     }
     const images = [
-      ...attrValues(rendered.html, 'src'),
-      ...attrValues(rendered.html, 'background'),
-      ...attrValues(rendered.html, 'srcset').flatMap((v) => v.split(',').map((p) => p.trim().split(/\s+/)[0])),
-      ...[...rendered.html.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)].map((m) => m[1].trim()),
+      ...attrValues(rendered.html, IMAGE_ATTRS),
+      ...attrValues(rendered.html, new Set(['srcset'])).flatMap(srcsetUrls),
+      ...[...rendered.html.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)].map((m) => decodeAttr(m[1].trim())),
     ];
     for (const src of images) {
       if (!isAllowedTemplateImage(src, cfg.assetBaseUrl)) ln.push(`Image ${shortUrl(src)} is not allowed (https on ALLOWED_PUSH_HOSTS or ${new URL(cfg.assetBaseUrl).host} only).`);
     }
-    for (const tag of rendered.html.match(/<img\b[^>]*>/gi) ?? []) {
-      const alt = /\salt\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tag);
-      if (!alt || (alt[2] ?? alt[3] ?? '').trim() === '') {
-        const src = /\ssrc\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tag);
-        al.push(`An image (${shortUrl((src?.[2] ?? src?.[3] ?? '').replace(/&amp;/g, '&'))}) has no alt text.`);
+    for (const tag of scanStartTags(rendered.html).filter((t) => t.name === 'img')) {
+      const alt = tag.attrs.find((a) => a.name === 'alt');
+      if (!alt || alt.value.trim() === '') {
+        al.push(`An image (${shortUrl(tag.attrs.find((a) => a.name === 'src')?.value.trim() ?? '')}) has no alt text.`);
       }
     }
   } else {
@@ -452,7 +496,7 @@ export function validateTemplate(
   // 6. Premium: no subscription offer of the template's own
   if (audience === 'PREMIUM') {
     const sub: string[] = [];
-    for (const href of attrValues(html, 'href')) if (SUBSCRIPTION_PATH.test(href)) sub.push(`Link ${shortUrl(href)} offers a subscription; Premium readers already have one.`);
+    for (const href of attrValues(html, LINK_ATTRS)) if (SUBSCRIPTION_PATH.test(href)) sub.push(`Link ${shortUrl(href)} offers a subscription; Premium readers already have one.`);
     const text = html.replace(/<[^>]*>/g, ' ');
     const t = SUBSCRIPTION_TEXT.exec(text);
     if (t) sub.push(`The text “${t[1]}” offers a subscription; Premium readers already have one.`);
@@ -523,8 +567,10 @@ export async function activateTemplate(id: string, o: { portal: string; cfg: Dig
     return await prisma.$transaction(async (tx) => {
       const current = await tx.digestTemplate.findFirst({ where: { portal: o.portal, audience: t.audience, status: 'ACTIVE' } });
       if (current) await tx.digestTemplate.update({ where: { id: current.id }, data: { status: 'ARCHIVED', archivedAt: o.now } });
+      // Fenced on the html that was just checked: a save landing between the check and here
+      // (another tab) would otherwise activate html the checklist never saw (QA of task 10).
       const r = await tx.digestTemplate.updateMany({
-        where: { id: t.id, status: 'DRAFT' },
+        where: { id: t.id, status: 'DRAFT', compiledHtml: t.compiledHtml },
         data: { status: 'ACTIVE', activatedAt: o.now, replacesId: current?.id ?? null, startsAt: null, endsAt: null },
       });
       if (r.count !== 1) throw new TemplateRefused('changed', 'Someone else changed this template a moment ago. Refresh.');
@@ -559,7 +605,10 @@ export async function scheduleTemplate(
   if (overlap) throw new TemplateRefused('overlap', `It overlaps the scheduled template “${overlap.name}” for this audience.`);
   const validation = await revalidate(t, o);
   if (!validation.ok) throw new TemplateRefused('validation_failed', 'Scheduling is blocked until every check passes.', 409, validation);
-  const r = await prisma.digestTemplate.updateMany({ where: { id: t.id, status: 'DRAFT' }, data: { status: 'SCHEDULED', startsAt: window.startsAt, endsAt: window.endsAt } });
+  const r = await prisma.digestTemplate.updateMany({
+    where: { id: t.id, status: 'DRAFT', compiledHtml: t.compiledHtml },
+    data: { status: 'SCHEDULED', startsAt: window.startsAt, endsAt: window.endsAt },
+  });
   if (r.count !== 1) throw new TemplateRefused('changed', 'Someone else changed this template a moment ago. Refresh.');
   return { template: await prisma.digestTemplate.findUniqueOrThrow({ where: { id: t.id } }), validation };
 }

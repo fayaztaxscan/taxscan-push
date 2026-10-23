@@ -163,7 +163,13 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       next();
     },
-    express.static(path.join(publicDir, 'email'), { immutable: true, maxAge: '365d', index: false, fallthrough: false }),
+    express.static(path.join(publicDir, 'email'), { immutable: true, maxAge: '365d', index: false }),
+    // Nothing else is served from here: a missing file (or a `..` path) is a plain 404. With
+    // `fallthrough: false` send's ENOENT error (status 404, not `expose`) reached the app's
+    // error handler as a 500 with a stack trace in the log (QA of task 10).
+    (_req: express.Request, res: express.Response) => {
+      res.status(404).json({ error: 'not_found' });
+    },
   );
 
   app.use(express.static(publicDir));

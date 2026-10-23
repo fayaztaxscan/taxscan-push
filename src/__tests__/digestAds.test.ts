@@ -1257,3 +1257,76 @@ describe('follow-up 6: image weight counts only the slots actually drawn (QA L7)
     expect(imageWeight(placements, [1, 2, 3])).toBe(300_000);
   });
 });
+
+/* ================================================================== */
+/* QA verification of 36503cb (pending variant + build backoff)        */
+/* ================================================================== */
+
+describe('QA verification of 36503cb: the pending variant', () => {
+  const c = cfg();
+  const its = items(5);
+  async function setup(conf = c) {
+    const portal = newPortal();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: conf });
+    const sender = new FakeSender();
+    const go = (trigger: 'cron' | 'retry' | 'send_now' | 'health', now: Date, extra: { clock?: () => Date } = {}) =>
+      advanceRun(run.id, trigger, { sender, now, cfg: conf, quiet: QUIET, alerts: false, selectItems: async () => selection({ FREE: its, PREMIUM: its }), ...extra });
+    const sends = async () => {
+      const rows = await prisma.digestSend.findMany({ where: { runId: run.id }, include: { placements: true } });
+      return { FREE: rows.find((s) => s.audience === 'FREE')!, PREMIUM: rows.find((s) => s.audience === 'PREMIUM')! };
+    };
+    // Free fills (HOUSE + SUBSCRIPTION), Premium cannot (only one non-subscription ad).
+    await dbAd(portal);
+    await dbAd(portal, { kind: 'SUBSCRIPTION', linkUrl: 'https://www.taxscan.in/subscribe' });
+    return { portal, run, sender, go, sends };
+  }
+
+  it('cron and Retry now racing on the pending render: rendered once, one placement set, one draft per audience', async () => {
+    const t = await setup();
+    await t.go('cron', AT);
+    await dbAd(t.portal, { name: 'fix' });
+    const at = IST(6, 40);
+    await Promise.all([t.go('cron', at), t.go('retry', at), t.go('cron', at), t.go('retry', at)]);
+    const s = await t.sends();
+    expect(s.PREMIUM.state).toBe('CREATED');
+    expect(s.PREMIUM.placements.map((p) => p.slot).sort()).toEqual([1, 3]);
+    expect(t.sender.draftInputs().map((d) => d.audience).sort()).toEqual(['FREE', 'PREMIUM']);
+    expect(t.sender.count('createDraft')).toBe(2);
+  });
+
+  it('past the cut-off a pending variant is never rendered, on any door', async () => {
+    const t = await setup();
+    await t.go('cron', AT);
+    await dbAd(t.portal, { name: 'fix' });
+    for (const trig of ['retry', 'cron', 'health', 'send_now'] as const) await t.go(trig, IST(17, 0));
+    const s = await t.sends();
+    expect(s.PREMIUM).toMatchObject({ state: 'SKIPPED', html: null, mcCampaignId: null });
+    expect(s.PREMIUM.placements).toHaveLength(0);
+    expect(t.sender.draftInputs().map((d) => d.audience)).toEqual(['FREE']);
+  });
+
+  it('a render that straddles the cut-off never schedules (fresh clock), and the sweep skips it', async () => {
+    const t = await setup();
+    await t.go('cron', AT);
+    await dbAd(t.portal, { name: 'fix' });
+    const before = new Date(IST(17, 0).getTime() - 1000);
+    await t.go('retry', before, { clock: () => new Date(IST(17, 0).getTime() + 1000) });
+    expect(t.sender.count('schedule')).toBe(0);
+    await t.go('cron', IST(17, 1));
+    const s = await t.sends();
+    expect(['SKIPPED']).toContain(s.PREMIUM.state);
+    expect(t.sender.count('schedule')).toBe(0);
+  });
+
+  it('approval mode: the run approved while Premium was pending covers the Premium email rendered later (judgement call, pinned)', async () => {
+    const conf = cfg({ DIGEST_APPROVAL_REQUIRED: 'true' });
+    const t = await setup(conf);
+    await t.go('cron', AT);
+    await prisma.digestRun.update({ where: { id: t.run.id }, data: { approval: 'APPROVED', approvedAt: IST(6, 45) } });
+    await dbAd(t.portal, { name: 'added after the approval' });
+    await t.go('cron', IST(7, 30));
+    const s = await t.sends();
+    expect(s.PREMIUM.state).toBe('SCHEDULED');
+    expect(t.sender.count('schedule')).toBe(2);
+  });
+});

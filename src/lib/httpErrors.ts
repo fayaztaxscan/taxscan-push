@@ -33,6 +33,7 @@ const BODY_PARSER_STATUS: Record<string, number> = {
 const CODE_OF: Record<number, string> = {
   400: 'bad_request',
   403: 'forbidden',
+  404: 'not_found',
   413: 'payload_too_large',
   415: 'unsupported_media_type',
 };

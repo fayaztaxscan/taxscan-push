@@ -631,3 +631,77 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
     expect((await request(appFor(newPortal())).get('/email/nope.png')).status).toBe(404);
   });
 });
+
+/* ================================================================== */
+/* QA verification of f23e751 (task 10)                                */
+/* ================================================================== */
+
+describe('QA of task 10: the checklist reads attributes the way a browser does', () => {
+  const B = BUILTIN_TEMPLATE_HTML;
+  const fails = (html: string, id: TemplateCheckId) => !checkOf(html, id).ok;
+  const fixture = (html: string) =>
+    renderDigest({
+      items: [{ rank: 1, section: 'MAIN', articleKey: 'k', campaignId: null, title: 'T', url: 'https://www.taxscan.in/x/1', authority: null, category: 'GST', excerpt: null, capturedAt: NOW, readRate: null }],
+      audience: 'FREE',
+      runDate: NOW,
+      cfg: cfg(),
+      template: { html },
+      assetBaseUrl: cfg().assetBaseUrl,
+    });
+
+  it('an off-allowlist link or image written unquoted or slash-separated is red at the checklist AND refused at send', () => {
+    for (const extra of ['<a href=https://evil.example/x>x</a>', '<a/href="https://evil.example/x">x</a>', '<a title="t"href="https://evil.example/x">x</a>']) {
+      const html = B.replace('</body>', `${extra}</body>`);
+      expect(fails(html, 'links')).toBe(true);
+      expect(() => fixture(html)).toThrow(/evil\.example/);
+    }
+    for (const extra of ['<img alt="x" src=https://evil.example/p.gif>', '<video poster="https://evil.example/p.gif"></video>']) {
+      const html = B.replace('</body>', `${extra}</body>`);
+      expect(fails(html, 'links')).toBe(true);
+      expect(() => fixture(html)).toThrow(/evil\.example/);
+    }
+    // A link in an Outlook-only block is checked too (Outlook renders it).
+    expect(fails(B.replace('</body>', '<!--[if mso]><v:rect href="https://evil.example/x"></v:rect><![endif]--></body>'), 'links')).toBe(true);
+    // Allowed links in any form still pass and get the canonical quoted form with the UTM.
+    const ok = B.replace('</body>', '<a href=https://www.taxscan.in/about>About</a></body>');
+    expect(fails(ok, 'links')).toBe(false);
+    expect(fixture(ok).html).toMatch(/href="https:\/\/www\.taxscan\.in\/about\?utm_source=taxscan-digest&amp;utm_medium=email&amp;utm_campaign=digest-2026-10-22-free&amp;utm_content=template">About/);
+  });
+
+  it('an event handler after a slash is active content', () => {
+    expect(fails(B.replace('</body>', '<img alt="x" src="https://www.taxscan.in/a.png"/onerror="x()"></body>'), 'no_active_content')).toBe(true);
+  });
+
+  it('the footer is red when hidden by an unquoted, commented or entity-encoded style, a class rule on its table, an attribute, or a !mso block', () => {
+    const wrap = (open: string, close = '</table>') => B.replace('{{footer}}\n</table>', `</table>${open}{{footer}}${close}<table>`);
+    expect(fails(wrap('<table style=display:none>'), 'footer')).toBe(true);
+    expect(fails(wrap('<table style="display:/**/none">'), 'footer')).toBe(true);
+    expect(fails(wrap('<table style="display&#58;none">'), 'footer')).toBe(true);
+    expect(fails(B.replace('</style>', '.box{display:none}</style>').replace('{{footer}}\n</table>', '</table><table class="x box">{{footer}}</table><table>'), 'footer')).toBe(true);
+    expect(fails(B.replace('</style>', '#f{display:none}</style>').replace('{{footer}}\n</table>', '</table><table id=f>{{footer}}</table><table>'), 'footer')).toBe(true);
+    expect(fails(wrap('<!--[if !mso]><!--><table>', '</table><!--<![endif]-->'), 'footer')).toBe(true);
+    const inAttr = B.replace('{{footer}}', '').replace('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;', '<table title="{{footer}}" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;');
+    expect(fails(inAttr, 'footer')).toBe(true);
+    expect(fails(inAttr, 'placeholders')).toBe(true);
+    // Hiding a class the footer does NOT sit in stays fine.
+    expect(fails(B.replace('</style>', '.promo{display:none}</style>'), 'footer')).toBe(false);
+  });
+
+  it('activation is fenced on the html it checked: a save landing in between is never activated', async () => {
+    const portal = newPortal();
+    const t = await create(appFor(portal), { name: 'Race', audience: 'FREE', source: marked('RACE') });
+    expect(t.validationOk).toBe(true);
+    const real = prisma.digestTemplate.update.bind(prisma.digestTemplate);
+    const spy = jest.spyOn(prisma.digestTemplate, 'update').mockImplementationOnce((async (args: Parameters<typeof real>[0]) => {
+      const out = await real(args);
+      // Another tab saves a template with no footer right after the activation's check.
+      await prisma.digestTemplate.updateMany({ where: { id: t.id }, data: { source: B.replace('{{footer}}', ''), compiledHtml: B.replace('{{footer}}', '') } });
+      return out;
+    }) as never);
+    const r = await activate(appFor(portal), t.id);
+    spy.mockRestore();
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('changed');
+    expect(await prisma.digestTemplate.count({ where: { portal, status: 'ACTIVE' } })).toBe(0);
+  });
+});

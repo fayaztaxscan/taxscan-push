@@ -783,7 +783,120 @@ export function isAllowedTemplateImage(url: string, assetBaseUrl: string | null)
   return isAllowedDigestUrl(url);
 }
 
-const decodeAttr = (v: string) => v.replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/g, "'");
+/** Decodes an attribute value the way a browser would for the characters that matter to a URL check. */
+export function decodeAttr(v: string): string {
+  return v
+    .replace(/&#x([0-9a-f]+);?/gi, (_m, h: string) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10ffff)))
+    .replace(/&#(\d+);?/g, (_m, d: string) => String.fromCodePoint(Math.min(parseInt(d, 10), 0x10ffff)))
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&colon;/gi, ':')
+    .replace(/&sol;/gi, '/')
+    .replace(/&period;/gi, '.')
+    .replace(/&commat;/gi, '@')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&');
+}
+
+/** One attribute of a start tag, with the offsets (in the whole html) of the full `name=value` text. */
+export type ScannedAttr = { name: string; value: string; raw: string; start: number; end: number };
+export type ScannedTag = { name: string; start: number; end: number; attrs: ScannedAttr[] };
+
+/** Elements whose content is text, never tags (an HTML tokenizer's RAWTEXT/RCDATA states). */
+const RAW_TEXT = new Set(['style', 'script', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes']);
+
+/**
+ * Every start tag in `html` with its attributes, read the way a browser's
+ * tokenizer reads them (QA of task 10): attributes may be unquoted, separated
+ * by `/` or follow a quoted value directly (`<a/href=x>`, `<a href=x>`,
+ * `<img src="a"/onerror=…>`); the content of <style>/<title> is not tags, but
+ * comment content IS scanned (Outlook conditional comments are rendered).
+ * The regex scans this replaces only saw `\shref="…"`, so an unquoted
+ * or slash-separated link skipped both the checklist and the send-time refusal.
+ */
+export function scanStartTags(html: string): ScannedTag[] {
+  const out: ScannedTag[] = [];
+  const n = html.length;
+  let i = 0;
+  const isSpace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+  while (i < n) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) break;
+    if (html.startsWith('<!--', lt)) {
+      // Comment CONTENT is scanned too: Outlook renders `<!--[if mso]> … <![endif]-->`
+      // (VML buttons carry href), so a link in there must be checked like any other.
+      i = lt + 4;
+      continue;
+    }
+    if (html[lt + 1] === '!' || html[lt + 1] === '?' || html[lt + 1] === '/') {
+      // Doctype / bogus comment / end tag: skip to the next '>'.
+      const gt = html.indexOf('>', lt + 1);
+      i = gt < 0 ? n : gt + 1;
+      continue;
+    }
+    if (!/[a-zA-Z]/.test(html[lt + 1] ?? '')) {
+      i = lt + 1;
+      continue;
+    }
+    let j = lt + 1;
+    while (j < n && !isSpace(html[j]) && html[j] !== '/' && html[j] !== '>') j++;
+    const name = html.slice(lt + 1, j).toLowerCase();
+    const attrs: ScannedAttr[] = [];
+    while (j < n && html[j] !== '>') {
+      if (isSpace(html[j]) || html[j] === '/') {
+        j++;
+        continue;
+      }
+      const aStart = j;
+      // The attribute name: up to whitespace, '/', '>' or '=' (an '=' first in the name is part of it).
+      j++;
+      while (j < n && !isSpace(html[j]) && html[j] !== '/' && html[j] !== '>' && html[j] !== '=') j++;
+      const aName = html.slice(aStart, j).toLowerCase();
+      let k = j;
+      while (k < n && isSpace(html[k])) k++;
+      if (html[k] !== '=') {
+        attrs.push({ name: aName, value: '', raw: '', start: aStart, end: j });
+        continue;
+      }
+      k++;
+      while (k < n && isSpace(html[k])) k++;
+      let raw: string;
+      if (html[k] === '"' || html[k] === "'") {
+        const q = html[k];
+        const close = html.indexOf(q, k + 1);
+        const e = close < 0 ? n : close;
+        raw = html.slice(k + 1, e);
+        j = Math.min(n, e + 1);
+      } else {
+        let e = k;
+        while (e < n && !isSpace(html[e]) && html[e] !== '>') e++;
+        raw = html.slice(k, e);
+        j = e;
+      }
+      attrs.push({ name: aName, value: decodeAttr(raw), raw, start: aStart, end: j });
+    }
+    const end = Math.min(n, j + 1);
+    out.push({ name, start: lt, end, attrs });
+    i = end;
+    if (RAW_TEXT.has(name)) {
+      const close = html.toLowerCase().indexOf(`</${name}`, end);
+      i = close < 0 ? n : close;
+    }
+  }
+  return out;
+}
+
+/** Attributes that load or link a URL in an email (the template checks and the send-time refusal read these). */
+export const LINK_ATTRS = new Set(['href']);
+export const IMAGE_ATTRS = new Set(['src', 'background', 'poster', 'lowsrc', 'dynsrc']);
+
+/** The URLs in a `srcset` value. */
+export const srcsetUrls = (v: string): string[] =>
+  v
+    .split(',')
+    .map((p) => p.trim().split(/\s+/)[0])
+    .filter((u) => u !== '');
 
 /**
  * A custom template's OWN links (not the renderer's): every allowlisted
@@ -793,18 +906,33 @@ const decodeAttr = (v: string) => v.replace(/&amp;/gi, '&').replace(/&quot;/gi, 
  * Placeholders and the provider's unsubscribe tag are left alone.
  */
 function templateLinks(html: string, o: { utmCampaign: string; mode: 'send' | 'check'; assetBaseUrl: string | null }): string {
-  return html.replace(/(\s)(href|src)\s*=\s*(["'])([\s\S]*?)\3/gi, (m, sp: string, attr: string, q: string, raw: string) => {
-    const value = decodeAttr(raw.trim());
-    if (value === UNSUBSCRIBE_TAG || /^\{\{\s*[A-Za-z0-9_.]+\s*\}\}$/.test(value)) return m;
-    if (attr.toLowerCase() === 'src') {
-      if (isAllowedTemplateImage(value, o.assetBaseUrl)) return m;
-      if (o.mode === 'check') return m;
-      throw new RenderError('link_not_allowed', `a template image is on ${hostOf(value)}; template images must be https on ALLOWED_PUSH_HOSTS or the digest asset host`);
+  const edits: { start: number; end: number; text: string }[] = [];
+  const isPlaceholder = (v: string) => v === UNSUBSCRIBE_TAG || /^\{\{\s*[A-Za-z0-9_.]+\s*\}\}$/.test(v);
+  const refuseImage = (value: string) => {
+    if (o.mode === 'check') return;
+    throw new RenderError('link_not_allowed', `a template image is on ${hostOf(value)}; template images must be https on ALLOWED_PUSH_HOSTS or the digest asset host`);
+  };
+  for (const tag of scanStartTags(html)) {
+    for (const a of tag.attrs) {
+      const value = a.value.trim();
+      if (IMAGE_ATTRS.has(a.name) || a.name === 'srcset') {
+        const urls = a.name === 'srcset' ? srcsetUrls(value) : [value];
+        for (const u of urls) if (!isPlaceholder(u) && !isAllowedTemplateImage(u, o.assetBaseUrl)) refuseImage(u);
+        continue;
+      }
+      if (!LINK_ATTRS.has(a.name) || isPlaceholder(value)) continue;
+      if (isAllowedDigestUrl(value)) {
+        // Rewritten in the canonical quoted form whatever form it was written in.
+        edits.push({ start: a.start, end: a.end, text: `href="${esc(withUtm(value, { campaign: o.utmCampaign, content: 'template' }))}"` });
+        continue;
+      }
+      if (o.mode === 'check') continue;
+      throw new RenderError('link_not_allowed', `a template link goes to ${hostOf(value)}, which is not on ALLOWED_PUSH_HOSTS`);
     }
-    if (isAllowedDigestUrl(value)) return `${sp}href=${q}${esc(withUtm(value, { campaign: o.utmCampaign, content: 'template' }))}${q}`;
-    if (o.mode === 'check') return m;
-    throw new RenderError('link_not_allowed', `a template link goes to ${hostOf(value)}, which is not on ALLOWED_PUSH_HOSTS`);
-  });
+  }
+  let out = html;
+  for (const e of edits.sort((x, y) => y.start - x.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
