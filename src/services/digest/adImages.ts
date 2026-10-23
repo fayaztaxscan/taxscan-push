@@ -12,6 +12,7 @@ import { prisma } from '../../lib/prisma';
  *             Content-Type or file name that disagrees with the bytes is
  *             refused (a renamed GIF/HTML/SVG never becomes an "image").
  *  - width  ≤ MAX_IMAGE_WIDTH (1200 px; shown at ≤ 552 px in the email)
+ *  - height ≤ 2 × width (MAX_HEIGHT_TO_WIDTH), and ≤ 65,535 px
  *  - size   ≤ MAX_IMAGE_BYTES (150 KB)
  *  - id     = sha256 of the bytes: an identical upload is the same row.
  */
@@ -24,9 +25,15 @@ export const UPLOAD_LIMIT = '200kb';
 export type ImageMime = 'image/jpeg' | 'image/png';
 export const EXT_OF: Record<ImageMime, 'jpg' | 'png'> = { 'image/jpeg': 'jpg', 'image/png': 'png' };
 
-export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide' | 'too_tall';
+export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide' | 'too_tall' | 'too_tall_for_width';
 /** The tallest image accepted: JPEG's own maximum. A PNG header can claim up to 2^32-1, which overflows the Int column (500). */
 export const MAX_IMAGE_HEIGHT = 65_535;
+/**
+ * Height at most this many times the width (owner, 2026-10-23): 1200 wide → at
+ * most 2400 tall. A taller creative fills several phone screens between two
+ * stories. On top of the absolute limits above.
+ */
+export const MAX_HEIGHT_TO_WIDTH = 2;
 
 export class ImageRejected extends Error {
   constructor(
@@ -127,6 +134,12 @@ export function validateImage(buf: Buffer, declared: { contentType?: string; fil
   }
   if (size.height > MAX_IMAGE_HEIGHT) {
     throw new ImageRejected('too_tall', `The image is ${size.height} px tall; the limit is ${MAX_IMAGE_HEIGHT} px. Re-export it at its real size.`);
+  }
+  if (size.height > size.width * MAX_HEIGHT_TO_WIDTH) {
+    throw new ImageRejected(
+      'too_tall_for_width',
+      `The image is ${size.width} × ${size.height} px; it may be at most ${MAX_HEIGHT_TO_WIDTH}× as tall as it is wide (${size.width * MAX_HEIGHT_TO_WIDTH} px for this width). Crop it or use a wider layout.`,
+    );
   }
   return { mime, ...size };
 }

@@ -37,7 +37,9 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
     // eslint-disable-next-line no-console
     console.warn(`[digest] ${audience} html is ${r.budgetBytes} bytes incl. tracking allowance (warn at ${c.htmlWarnKb} KB, limit ${c.maxHtmlKb} KB)`);
   }
-  const weight = imageWeight(placements);
+  // Only the slots this email actually draws (slot 2 is not drawn on a short digest — QA L7).
+  const drawn = placements.filter((p) => r.renderedSlots.includes(p.slot));
+  const weight = imageWeight(placements, r.renderedSlots);
   if (weight > c.maxImageKb * 1024) {
     // eslint-disable-next-line no-console
     console.warn(`[digest] ${audience} ad images weigh ${Math.ceil(weight / 1024)} KB (budget ${c.maxImageKb} KB per email)`);
@@ -47,7 +49,7 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
     preheader: r.preheader,
     html: r.html,
     text: r.text,
-    placements: placements.filter((p) => r.renderedSlots.includes(p.slot)).map((p) => ({ adId: p.ad.id, slot: p.slot, utmContent: p.utmContent })),
+    placements: drawn.map((p) => ({ adId: p.ad.id, slot: p.slot, utmContent: p.utmContent })),
   };
 };
 
@@ -67,10 +69,17 @@ export function toRenderAd(p: Placement, assetBase: string): RenderAd {
   };
 }
 
-/** Bytes of the distinct images in one email (an image used twice downloads once). */
-export function imageWeight(placements: Placement[]): number {
+/**
+ * Bytes of the distinct images in one email (an image used twice downloads
+ * once). With `renderedSlots`, only the ads in slots the email actually draws
+ * count (slot 2 is not drawn on a short digest — QA L7).
+ */
+export function imageWeight(placements: Placement[], renderedSlots?: readonly number[]): number {
   const seen = new Map<string, number>();
-  for (const p of placements) if (p.ad.image) seen.set(p.ad.image.id, p.ad.image.size);
+  for (const p of placements) {
+    if (renderedSlots && !renderedSlots.includes(p.slot)) continue;
+    if (p.ad.image) seen.set(p.ad.image.id, p.ad.image.size);
+  }
   return [...seen.values()].reduce((a, b) => a + b, 0);
 }
 

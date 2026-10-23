@@ -1,7 +1,7 @@
 import type { DigestAudience } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
-import { AD_SLOTS, isAllowedDigestUrl, withUtm } from './renderer';
+import { AD_SLOTS, isAllowedAdUrl, isAllowedDigestUrl, withUtm } from './renderer';
 import type { FrozenItem } from './builder';
 import { istDateOf, istInstant } from './retryPolicy';
 import { adUtmContent, forbiddenForAudience } from './adRules';
@@ -70,6 +70,7 @@ export type Exclusion =
   | 'subscription_guard'
   | 'slot'
   | 'link_not_allowed'
+  | 'link_not_https'
   | 'image_missing';
 
 /** Why `ad` cannot go in `slot` of the `audience` email at `at`, or null when it can. Pure. */
@@ -83,6 +84,8 @@ export function whyIneligible(ad: PoolAd, audience: DigestAudience, slot: number
   if (ad.audience !== 'ALL' && ad.audience !== 'FREE_ONLY' && ad.audience !== 'PREMIUM_ONLY') return 'audience';
   if (ad.slots.length > 0 && !ad.slots.includes(slot)) return 'slot';
   if (!isAllowedDigestUrl(ad.linkUrl)) return 'link_not_allowed';
+  // An http: link saved before the https rule (or written outside the save path) is dropped here.
+  if (!isAllowedAdUrl(ad.linkUrl)) return 'link_not_https';
   if (ad.imageId && !ad.image) return 'image_missing';
   return null;
 }
@@ -225,6 +228,7 @@ export function assertPlacementsAllowed(audience: DigestAudience, placed: { slot
   for (const p of placed) {
     if (forbiddenForAudience(p.kind, audience)) problems.push(`Slot ${p.slot} — ${AUDIENCE_WORD[audience]}: a subscription ad can never go to Premium readers`);
     if (!isAllowedDigestUrl(p.linkUrl)) problems.push(`Slot ${p.slot} — ${AUDIENCE_WORD[audience]}: the ad links to a host that is not on ALLOWED_PUSH_HOSTS`);
+    else if (!isAllowedAdUrl(p.linkUrl)) problems.push(`Slot ${p.slot} — ${AUDIENCE_WORD[audience]}: the ad link is not https`);
     if (p.adId) {
       if (seen.has(p.adId)) problems.push(`Slot ${p.slot} — ${AUDIENCE_WORD[audience]}: the same ad is placed twice`);
       seen.add(p.adId);
@@ -371,6 +375,8 @@ export const AdInputSchema = z
   .superRefine((v, ctx) => {
     if (!isAllowedDigestUrl(v.linkUrl)) {
       ctx.addIssue({ code: 'custom', path: ['linkUrl'], message: 'The link must go to taxscan.in, academy.taxscan.in or shop.taxscan.in (ALLOWED_PUSH_HOSTS)' });
+    } else if (!isAllowedAdUrl(v.linkUrl)) {
+      ctx.addIssue({ code: 'custom', path: ['linkUrl'], message: 'The link must start with https://' });
     } else if ([...new URL(v.linkUrl).searchParams.keys()].some((k) => k.toLowerCase().startsWith('utm_'))) {
       ctx.addIssue({ code: 'custom', path: ['linkUrl'], message: 'Remove the utm_ parameters from the link; the digest adds its own' });
     }
@@ -385,7 +391,7 @@ export type AdInput = z.infer<typeof AdInputSchema>;
 
 /** The UTM an ad link will carry in slot N of today's Free digest (the Ads screen's preview). */
 export function utmPreview(linkUrl: string, adId: string, slot: number, campaign: string): string | null {
-  if (!isAllowedDigestUrl(linkUrl)) return null;
+  if (!isAllowedAdUrl(linkUrl)) return null;
   return withUtm(linkUrl, { campaign, content: adUtmContent(adId, slot) });
 }
 

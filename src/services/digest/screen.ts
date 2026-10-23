@@ -233,6 +233,7 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
           attempts: true,
           lastError: true,
           lastErrorKind: true,
+          contentPendingAt: true,
           targeted: true,
           reached: true,
           opens: true,
@@ -304,6 +305,8 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       preheader: s.preheader,
       htmlBytes: s.htmlBytes,
       hasPreview: s.hasHtml,
+      // Frozen without content: its ad slots could not be filled (no html yet, not "expired").
+      contentPending: s.contentPendingAt !== null,
       mcCampaignId: s.mcCampaignId,
       sendAfter: s.sendAfter,
       scheduledAt: s.scheduledAt,

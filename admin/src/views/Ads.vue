@@ -111,6 +111,8 @@ const buildLabel = computed(() => {
   return new Date(at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 });
 const brokenCount = computed(() => coverage.value?.problems.length ?? 0);
+/** The audiences whose email cannot be filled (each one is held back on its own; the other still goes out). */
+const brokenAudiences = computed(() => AUDIENCES.filter((a) => coverage.value && !coverage.value.audiences[a].ok));
 
 /** Same-origin path for an image the server reports at its public host (works locally too). */
 function localSrc(url: string | null | undefined): string | null {
@@ -358,8 +360,12 @@ onMounted(load);
         <p class="cov-verdict">
           <template v-if="coverage.ok">Every slot is filled for the next build.</template>
           <template v-else>
-            {{ brokenCount === 1 ? 'One slot' : `${brokenCount} slots` }} can’t be filled — the next build will stop
-            and no digest goes out until it is fixed.
+            {{ brokenCount === 1 ? 'One slot' : `${brokenCount} slots` }} can’t be filled —
+            <template v-if="brokenAudiences.length === 1">
+              the {{ AUDIENCE_LABEL[brokenAudiences[0]] }} digest will not go out until it is fixed (the
+              {{ AUDIENCE_LABEL[brokenAudiences[0] === 'FREE' ? 'PREMIUM' : 'FREE'] }} digest still does).
+            </template>
+            <template v-else>the next build will stop and no digest goes out until it is fixed.</template>
           </template>
         </p>
         <p class="muted cov-when">Checked for the build on {{ buildLabel }} IST, with the ads as they are now.</p>
@@ -524,8 +530,11 @@ onMounted(load);
         </div>
 
         <div class="f f-wide checkbox-row">
-          <input id="ad-default" v-model="form.isSlotDefault" type="checkbox" />
-          <label for="ad-default">Default for its slots — used only when no other ad can go there</label>
+          <!-- The input sits INSIDE the label, so the whole pill is the checkbox (app.css .checkbox-row). -->
+          <label for="ad-default">
+            <input id="ad-default" v-model="form.isSlotDefault" type="checkbox" />
+            Default for its slots — used only when no other ad can go there
+          </label>
         </div>
 
         <div class="f f-wide form-actions">
@@ -590,7 +599,8 @@ onMounted(load);
           </tr>
           <tr v-if="ads.length === 0 && !loading">
             <td colspan="8" class="muted" style="text-align: center; padding: 24px">
-              No ads yet. Add at least three, or a default for each slot, before the digest is switched on.
+              No ads yet. Each audience needs at least three different ads (or defaults), one per slot — the same
+              ad never appears twice in one email — before the digest is switched on.
             </td>
           </tr>
         </tbody>
@@ -783,18 +793,11 @@ select[aria-invalid='true'] {
   font-weight: 400;
   font-size: 12px;
 }
-.checkbox-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
 .checkbox-row label {
-  margin: 0;
-  text-transform: none;
-  letter-spacing: 0;
   font-size: 14px;
-  color: var(--text);
   font-weight: 500;
+  min-height: 44px;
+  box-sizing: border-box;
 }
 .image-row {
   display: flex;

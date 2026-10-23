@@ -322,6 +322,20 @@ export function isAllowedDigestUrl(url: string): boolean {
   return isAllowedPushUrl(url);
 }
 
+/**
+ * An ad link (task 9 follow-ups, owner 2026-10-23): the digest URL check AND
+ * https only. Ads are checked at save, at pick and at render with this; article
+ * links keep `isAllowedDigestUrl`, and push's shared allowlist is unchanged.
+ */
+export function isAllowedAdUrl(url: string): boolean {
+  if (!isAllowedDigestUrl(url)) return false;
+  try {
+    return new URL(url).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Render                                                              */
 /* ------------------------------------------------------------------ */
@@ -460,6 +474,7 @@ function adHookFor(ads: RenderAd[], audience: DigestAudience, utmCampaign: strin
     if (!isAllowedDigestUrl(a.linkUrl)) {
       throw new RenderError('link_not_allowed', `ad in slot ${a.slot} links to ${hostOf(a.linkUrl)}, which is not on ALLOWED_PUSH_HOSTS`);
     }
+    if (!isAllowedAdUrl(a.linkUrl)) throw new RenderError('link_not_allowed', `ad in slot ${a.slot} links over plain http; ad links must be https`);
     if (a.image && !/^https:\/\//.test(a.image.url)) throw new RenderError('link_not_allowed', `ad image in slot ${a.slot} is not served over https`);
     if (bySlot.has(a.slot)) throw new RenderError('ad_not_allowed', `two ads for slot ${a.slot}`);
     if (ids.has(a.adId)) throw new RenderError('ad_not_allowed', `the same ad is placed twice (slot ${a.slot})`);

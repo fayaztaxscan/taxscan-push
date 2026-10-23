@@ -442,29 +442,40 @@ enum SenderErrorKind {
 
 /// One per IST calendar day. The unique (portal, runDate) IS the "max one per day" rule.
 model DigestRun {
-  id               String         @id @default(cuid())
-  portal           String         @default("taxscan")
-  runDate          DateTime       @db.Date // IST date
-  windowStart      DateTime // = previous run's builtAt (cap 72 h)
-  builtAt          DateTime? // freeze instant = next run's windowStart
-  build            DigestBuild    @default(BUILDING)
+  id                  String         @id @default(cuid())
+  portal              String         @default("taxscan")
+  runDate             DateTime       @db.Date // IST date
+  windowStart         DateTime // = previous run's builtAt (cap 72 h)
+  builtAt             DateTime? // freeze instant = next run's windowStart
+  build               DigestBuild    @default(BUILDING)
   // too_little_news | cutoff_passed | not_approved | held_by_editor |
   // build_failed | config_invalid | sanity_hold_expired
-  skipReason       String?
-  approval         DigestApproval @default(NOT_REQUIRED)
-  approvedByUserId String?
-  approvedAt       DateTime?
-  candidateCount   Int            @default(0) // for the re-platform sanity guard
-  healthOk         Boolean?
-  healthCheckedAt  DateTime?
-  healthError      String?
-  alerts           Json           @default("{}") // {kind: sentAt}, so one alert per kind per run
+  skipReason          String?
+  approval            DigestApproval @default(NOT_REQUIRED)
+  approvedByUserId    String?
+  approvedAt          DateTime?
+  candidateCount      Int            @default(0) // for the re-platform sanity guard
+  healthOk            Boolean?
+  healthCheckedAt     DateTime?
+  healthError         String?
+  alerts              Json           @default("{}") // {kind: sentAt}, so one alert per kind per run
   // Task 4: whether organic read rate ranked items within a queue+tier, from which
   // source (ga | cms), and why not when it did not (flag off, stale data, …).
-  readsUsed        Boolean?
-  readsSource      String?
-  readsNote        String?
-  createdAt        DateTime       @default(now())
+  readsUsed           Boolean?
+  readsSource         String?
+  readsNote           String?
+  // Build retry bookkeeping (task 9 follow-ups, 2026-10-23): a failed build is retried
+  // on the retry policy (+1, +5, +15, then +75, +135 … min from the first failure),
+  // not every tick. Retry now skips the wait. Cleared when the run builds.
+  buildAttempts       Int            @default(0)
+  buildFirstFailureAt DateTime?
+  buildNextAttemptAt  DateTime?
+  // The CURRENT reason the build is failing (ads_unfillable | build_error) and its
+  // plain-words detail (unfillable slots, or the redacted error). The cut-off and the
+  // banner read these, never the once-per-run alert markers. Null once built.
+  buildFailure        String?
+  buildError          String?
+  createdAt           DateTime       @default(now())
 
   sends DigestSend[]
   items DigestItem[]
@@ -510,6 +521,11 @@ model DigestSend {
   rolledUnsub         Int              @default(0) // EmailEvent rows folded by the sweeper
   rolledBounce        Int              @default(0)
   rolledSpam          Int              @default(0)
+  // Set when this variant was frozen WITHOUT content because its ad slots could not be
+  // filled while the other audience's could (task 9 follow-ups): the run's stories are
+  // frozen, this variant's html is rendered from them once ads are fixed (state FAILED,
+  // lastError "ads_unfillable: …" until then). Null for every normally built variant.
+  contentPendingAt    DateTime?
 
   run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   placements DigestAdPlacement[]

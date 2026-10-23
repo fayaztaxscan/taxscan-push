@@ -1,4 +1,4 @@
-import type { DigestApproval, DigestBuild, DigestSendState, SenderErrorKind } from '@prisma/client';
+import type { DigestApproval, DigestAudience, DigestBuild, DigestSendState, SenderErrorKind } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env, type DigestEnv } from '../../lib/env';
 import { isEmailConfigured } from '../../lib/email';
@@ -33,14 +33,23 @@ export type AttentionInput = {
     approval: DigestApproval;
     skipReason: string | null;
     candidateCount: number;
-    /** Run alert markers (task 9 reads `config_invalid.source === 'ads'`). Optional for table tests. */
-    alerts?: unknown;
+    /**
+     * The CURRENT reason a failed build is failing (`ads_unfillable` | `build_error`)
+     * and its plain-words detail. Read instead of the once-per-run alert markers, so
+     * a later non-ads failure is never reported as "ads" (QA L5). Optional for table tests.
+     */
+    buildFailure?: string | null;
+    buildError?: string | null;
   } | null;
   sends: ReadonlyArray<{
+    /** Optional for table tests; needed to name the audience of a per-variant ad failure. */
+    audience?: DigestAudience;
     state: DigestSendState;
     sendAfter: Date;
     lastError: string | null;
     lastErrorKind: SenderErrorKind | null;
+    /** Set while the variant waits for its ads (frozen without content). */
+    contentPendingAt?: Date | null;
   }>;
   /** Task 8: the most recent judgeable send got no campaign webhook (`webhookHealth().alive === false`). */
   webhookSilent?: boolean;
@@ -97,9 +106,21 @@ function runAttention(i: AttentionInput): Attention | null {
   const cutoff = `${cfg.cutoff} IST`;
   const state = digestRunState(run, sends);
 
+  const fixAds = `Open Ads and give every slot an active or default ad, then press Retry now in Digests before ${cutoff}.`;
   if (state === 'failed') {
-    if (run.build === 'BUILD_FAILED' && (run.alerts as Record<string, { source?: string } | undefined> | null)?.config_invalid?.source === 'ads') {
-      return attention('ads_unfillable', "Today's digest is stopped: an ad slot cannot be filled.", `Open Ads and give every slot an active or default ad, then press Retry now in Digests before ${cutoff}.`);
+    if (run.build === 'BUILD_FAILED' && run.buildFailure === 'ads_unfillable') {
+      return attention('ads_unfillable', `Today's digest is stopped: an ad slot cannot be filled${detailOf(run.buildError)}.`, fixAds);
+    }
+    const waitingForAds = sends.filter((s) => s.state === 'FAILED' && s.contentPendingAt);
+    if (run.build === 'BUILT' && waitingForAds.length > 0) {
+      const names = waitingForAds.map((s) => audienceName(s.audience)).join(' and ');
+      const others = sends.filter((s) => !s.contentPendingAt).map((s) => audienceName(s.audience));
+      return attention(
+        'ads_unfillable',
+        `The ${names} digest is stopped: an ad slot cannot be filled${detailOf(waitingForAds.map((s) => s.lastError?.replace(/^ads_unfillable:\s*/, '')).join('; '))}.` +
+          (others.length ? ` The ${others.join(' and ')} digest is not affected.` : ''),
+        fixAds,
+      );
     }
     if (run.build === 'BUILD_FAILED') {
       return attention('build_failed', "Today's digest could not be built.", `It is retried until ${cutoff}; if it keeps failing, check the app logs and the digest settings.`);
@@ -133,16 +154,35 @@ function runAttention(i: AttentionInput): Attention | null {
     );
   }
 
+  const skippedForAds = (s: AttentionInput['sends'][number]) => s.state === 'SKIPPED' && Boolean(s.contentPendingAt);
   if (state === 'skipped') {
     const reason = run.skipReason;
     if (reason === 'too_little_news') return null;
     if (!cfg.sendLive && (reason === 'cutoff_passed' || reason === 'not_approved')) return null;
+    const ads = reason === 'config_invalid' && (run.buildFailure === 'ads_unfillable' || sends.some(skippedForAds));
     return attention(
       'skipped',
-      `Today's digest was skipped because ${skipWords(reason)}.`,
-      reason === 'config_invalid'
-        ? 'Fix the DIGEST_* variables in Railway; the top stories roll into the next digest.'
-        : 'Open Digests for the details; the top stories roll into the next digest.',
+      ads ? "Today's digest was skipped because an ad slot could not be filled before the cut-off." : `Today's digest was skipped because ${skipWords(reason)}.`,
+      ads
+        ? 'Open Ads and make the coverage check show every slot ✓; the top stories roll into the next digest.'
+        : reason === 'config_invalid'
+          ? 'Fix the DIGEST_* variables in Railway; the top stories roll into the next digest.'
+          : 'Open Digests for the details; the top stories roll into the next digest.',
+    );
+  }
+
+  // One variant went out and the other was skipped (e.g. its ads could not be filled):
+  // say which, rather than "part was not delivered".
+  const skippedSends = sends.filter((s) => s.state === 'SKIPPED');
+  if (state === 'partially_sent' && skippedSends.length > 0 && skippedSends.length < sends.length && sends.every((s) => s.state === 'SENT' || s.state === 'SKIPPED')) {
+    const ads = skippedSends.some(skippedForAds);
+    const names = skippedSends.map((s) => audienceName(s.audience)).join(' and ');
+    const sent = sends.filter((s) => s.state === 'SENT').map((s) => audienceName(s.audience)).join(' and ');
+    if (!cfg.sendLive && !ads) return null;
+    return attention(
+      'variant_skipped',
+      `Only the ${sent} digest went out today; the ${names} digest was skipped because ${ads ? 'an ad slot could not be filled before the cut-off' : skipWords(run.skipReason)}.`,
+      ads ? 'Open Ads and make the coverage check show every slot ✓; its top stories roll into the next digest.' : 'Open Digests for the details; its top stories roll into the next digest.',
     );
   }
 
@@ -161,6 +201,17 @@ function runAttention(i: AttentionInput): Attention | null {
     return attention('retrying', 'Mailercloud is not answering; today’s digest is retrying.', `Retries continue automatically until ${cutoff}. Nothing to do yet.`);
   }
   return null;
+}
+
+function audienceName(a: DigestAudience | undefined): string {
+  return a === 'PREMIUM' ? 'Premium' : a === 'FREE' ? 'Free' : 'one';
+}
+
+/** " (Slot 3 — Premium: …)" from stored plain words, shortened; '' when there is nothing to add. */
+function detailOf(text: string | null | undefined): string {
+  const t = (text ?? '').trim();
+  if (!t) return '';
+  return ` (${t.length > 200 ? `${t.slice(0, 197)}...` : t})`;
 }
 
 export type DigestStatusPayload = {
@@ -190,6 +241,9 @@ export type DigestStatusPayload = {
     readsUsed: boolean | null;
     readsSource: string | null;
     builtAt: Date | null;
+    /** The current build failure cause (ads_unfillable | build_error) and its detail, while BUILD_FAILED. */
+    buildFailure: string | null;
+    buildError: string | null;
     variants: {
       audience: string;
       state: DigestSendState;
@@ -266,6 +320,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
           lastErrorKind: true,
           targeted: true,
           reached: true,
+          contentPendingAt: true,
         },
       },
     },
@@ -304,6 +359,8 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       readsUsed: run.readsUsed,
       readsSource: run.readsSource,
       builtAt: run.builtAt,
+      buildFailure: run.buildFailure,
+      buildError: run.buildError ? safeDetail(run.buildError, cfg) : null,
       variants: run.sends.map((s) => ({ ...s, lastError: s.lastError ? safeDetail(s.lastError, cfg) : null })),
       alerts: alertRows,
       resolvedAt,

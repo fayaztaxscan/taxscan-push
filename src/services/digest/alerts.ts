@@ -159,10 +159,15 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
       };
     case 'config_invalid':
       if (m.source === 'ads') {
+        // One audience blocked (task 9 follow-ups): the other one is built and goes out as normal.
+        const one = m.audience === 'FREE' || m.audience === 'PREMIUM';
+        const other = m.audience === 'FREE' ? 'Premium' : 'Free';
         return {
-          short: 'A digest ad slot cannot be filled',
-          what: `Today's digest has an ad slot no ad can fill: ${safeDetail(m.problems, cfg) || 'see Admin → Ads'}.`,
-          did: `Stopped before anything was frozen or created — a slot is never sent empty. The build is tried again until ${cutoff}.`,
+          short: one ? `${who.replace(/^The /, '')} has an ad slot that cannot be filled` : 'A digest ad slot cannot be filled',
+          what: `${one ? who : "Today's digest"} has an ad slot no ad can fill: ${safeDetail(m.problems, cfg) || 'see Admin → Ads'}.`,
+          did: one
+            ? `The ${other} digest was built and goes out as normal. The ${who.replace(/^The /, '')} was not created — a slot is never sent empty — and is tried again until ${cutoff}, then skipped.`
+            : `Stopped before anything was frozen or created — a slot is never sent empty. The build is tried again until ${cutoff}.`,
           todo: `In Admin → Ads, give that slot an active ad or a default ad (the coverage check there must show every slot ✓), then ${retryNow}.`,
         };
       }
@@ -201,6 +206,14 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         todo: 'Nothing yet. If Admin → Digests still shows it failing by mid-morning, check Mailercloud’s status.',
       };
     case 'skipped':
+      if (m.source === 'ads') {
+        return {
+          short: `${m.audience ? who.replace(/^The /, '') : "Today's digest"} was skipped — an ad slot could not be filled`,
+          what: `${m.audience ? who : "Today's digest"} was skipped because an ad slot could not be filled before the cut-off.`,
+          did: 'Stopped — nothing more is sent today for it. Its top stories roll into the next digest.',
+          todo: 'In Admin → Ads, make the coverage check show every slot ✓ so tomorrow’s digest is not stopped too.',
+        };
+      }
       return {
         short: "Today's digest was skipped",
         what: `Today's digest was skipped because ${skipWords(m.reason)}.`,

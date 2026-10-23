@@ -73,6 +73,20 @@ import { checkWebhookLiveness } from './webhookLiveness';
  * skips it as `config_invalid`. At freeze the placements are checked once
  * more (no SUBSCRIPTION ad in PREMIUM, allowlisted link, no ad twice) against
  * the ad rows as they are NOW, and recorded as DigestAdPlacement per send.
+ * TASK 9 FOLLOW-UPS (owner, 2026-10-23):
+ *  - Per-audience ad failure. When only ONE audience's slots cannot be filled,
+ *    the run still freezes (stories, the other audience's content) and the
+ *    broken variant is written FAILED with `contentPendingAt` set and
+ *    `lastError "ads_unfillable: …"`: no html, so no draft can exist. Every
+ *    later door renders it from the FROZEN stories once ads are fixed
+ *    (`renderPendingStep`, on the retry policy), then it goes through the same
+ *    create → schedule gates as any variant; still pending at the cut-off it
+ *    is SKIPPED `config_invalid`. Both audiences broken → BUILD_FAILED as before.
+ *  - A failed build retries on the retry policy (`buildNextAttemptAt`), not
+ *    every tick; Retry now skips the wait. The cut-off is unchanged.
+ *  - The run records the CURRENT build failure (`buildFailure`, `buildError`),
+ *    which the cut-off reason and the banner read; the once-per-run alert
+ *    markers are history, not current state.
  */
 
 /** The builder as the runner sees it (default none = task-3 behaviour, no items). */
@@ -162,6 +176,7 @@ type Ctx = {
   staleMs: number;
   steps: string[];
   refusals: string[];
+  buildContent: BuildContent;
 };
 
 /* ------------------------------------------------------------------ */
@@ -391,6 +406,7 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
     staleMs: (deps.claimStaleMinutes ?? 10) * MINUTE,
     steps: [],
     refusals: [],
+    buildContent: deps.buildContent ?? renderDigestContent,
   };
 
   if (isPastCutoff(now, run.runDate, cfg.cutoff)) {
@@ -404,7 +420,12 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
   }
 
   if (run.build === 'BUILDING' || run.build === 'BUILD_FAILED') {
-    const built = await buildStep(ctx, deps.buildContent ?? renderDigestContent, deps.selectItems);
+    // A failed build waits for its retry slot on the cron tick (the other doors skip the wait).
+    if (trigger === 'cron' && run.build === 'BUILD_FAILED' && run.buildNextAttemptAt && run.buildNextAttemptAt.getTime() > now.getTime()) {
+      log(ctx, null, 'build:waiting_retry');
+      return finish(ctx, 'advanced');
+    }
+    const built = await buildStep(ctx, ctx.buildContent, deps.selectItems);
     if (!built) return finish(ctx, 'advanced');
   } else if (run.build === 'SKIPPED') {
     log(ctx, null, `skipped:${run.skipReason ?? 'unknown'}`);
@@ -419,9 +440,12 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
   }
 
   if ((trigger === 'retry' || trigger === 'send_now') && ctx.refusals.length > 0) {
-    const after = await prisma.digestSend.findMany({ where: { runId }, select: { state: true, lastError: true } });
+    const after = await prisma.digestSend.findMany({ where: { runId }, select: { state: true, lastError: true, contentPendingAt: true } });
+    // A variant still waiting for its ads is not progress a press can make.
     const actionable = after.some(
-      (s) => s.state === 'PENDING' || s.state === 'CREATED' || s.state === 'SCHEDULED' || (s.state === 'FAILED' && !isTerminal(s)),
+      (s) =>
+        s.contentPendingAt === null &&
+        (s.state === 'PENDING' || s.state === 'CREATED' || s.state === 'SCHEDULED' || (s.state === 'FAILED' && !isTerminal(s))),
     );
     if (!actionable) return finish(ctx, 'refused', ctx.refusals.join('; '));
   }
@@ -460,17 +484,23 @@ async function applySendNow(ctx: Ctx): Promise<boolean> {
 /* ------------------------------------------------------------------ */
 
 /**
- * Freezes both variants' content onto DigestSend rows, once. The run moves
- * BUILDING → BUILT in the same transaction that inserts the rows, guarded by
- * a conditional update, so two runners cannot build twice and a BUILT run is
- * never re-rendered. Returns false when the run did not reach BUILT.
+ * Freezes the run once. The run moves BUILDING → BUILT in the same transaction
+ * that writes the stories and the variant rows, guarded by a conditional
+ * update, so two runners cannot build twice and a BUILT run is never
+ * re-rendered. Returns false when the run did not reach BUILT.
+ *
+ * Ads are judged per audience (task 9 follow-ups): a variant whose slots
+ * cannot be filled is frozen WITHOUT content (FAILED, `contentPendingAt`,
+ * `ads_unfillable: …`) while the other variant is frozen as normal; only when
+ * no audience can be filled does the build fail (BUILD_FAILED, as before).
+ * Any other failure fails the whole build and is retried on the retry policy.
  */
 async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: SelectItems): Promise<boolean> {
   const problems = buildConfigProblems(ctx.cfg);
   if (problems.length > 0) {
     await prisma.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
-      data: { build: 'SKIPPED', skipReason: 'config_invalid' },
+      data: { build: 'SKIPPED', skipReason: 'config_invalid', buildNextAttemptAt: null },
     });
     await raiseAlert(ctx, 'config_invalid', { problems });
     await recordAudit({
@@ -483,49 +513,45 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
     return false;
   }
 
-  let contents: { audience: DigestAudience; subject: string; preheader: string; html: string; text: string; placements?: AdPlacementRecord[] }[];
+  let contents: VariantContent[];
+  let blocked: { audience: DigestAudience; problems: string[] }[];
   let selection: DigestSelection | null = null;
   try {
     // The window is recomputed on every build attempt (§8: a retried build sees `now`).
     if (selectItems) selection = await selectItems(ctx.run, ctx.now);
     if (selection?.outcome === 'too_little_news') return await skipTooLittleNews(ctx, selection);
-    const itemsFor = (a: DigestAudience): FrozenItem[] | undefined => selection?.perAudience[a];
-    contents = await allContents(
-      AUDIENCES.map(async (audience) => ({
-        audience,
-        ...(await buildContent({
-          runId: ctx.run.id,
-          runDate: ctx.run.runDate,
-          audience,
-          items: itemsFor(audience),
-          cfg: ctx.cfg,
-          portal: ctx.run.portal,
-          at: ctx.now,
-        })),
-      })),
-    );
-    for (const c of contents) await assertPlacementsAtFreeze(c.audience, c.placements ?? []);
+    const sel = selection;
+    ({ contents, blocked } = await allContents(ctx, buildContent, (a) => sel?.perAudience[a]));
   } catch (err) {
-    if (err instanceof AdSlotError) {
-      // Fail closed, recoverable the same day: nothing frozen, nothing created.
-      await prisma.digestRun.updateMany({ where: { id: ctx.run.id, build: 'BUILDING' }, data: { build: 'BUILD_FAILED' } });
-      await raiseAlert(ctx, 'config_invalid', { problems: err.problems, source: 'ads' });
-      log(ctx, null, 'build:config_invalid:ads');
-      return false;
-    }
-    // Task 4 adds the build retry schedule (§8); until then the next tick retries.
-    await prisma.digestRun.updateMany({ where: { id: ctx.run.id, build: 'BUILDING' }, data: { build: 'BUILD_FAILED' } });
+    await recordBuildFailure(ctx, 'build_error', redactError(err));
     await raiseAlert(ctx, 'build_failed', { error: redactError(err) });
     log(ctx, null, 'build:failed');
     return false;
   }
 
+  if (contents.length === 0) {
+    // No audience can be filled: fail closed, recoverable the same day. Nothing frozen, nothing created.
+    const all = blocked.flatMap((b) => b.problems);
+    await recordBuildFailure(ctx, 'ads_unfillable', all.join('; '));
+    await raiseAlert(ctx, 'config_invalid', { problems: all, source: 'ads', audiences: blocked.map((b) => b.audience) });
+    log(ctx, null, 'build:config_invalid:ads');
+    return false;
+  }
+
   const sendAfter = istInstant(ctx.run.runDate, ctx.cfg.sendAt);
   const dateKey = runDateKey(ctx.run.runDate);
+  const firstRetry = nextAttemptAt(ctx.now, 1, ctx.cutoffAt) ?? ctx.cutoffAt;
   const built = await prisma.$transaction(async (tx) => {
     const claimed = await tx.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
-      data: { build: 'BUILT', builtAt: ctx.now, ...(selection ? selectionRunFields(selection) : {}) },
+      data: {
+        build: 'BUILT',
+        builtAt: ctx.now,
+        buildFailure: null,
+        buildError: null,
+        buildNextAttemptAt: null,
+        ...(selection ? selectionRunFields(selection) : {}),
+      },
     });
     if (claimed.count !== 1) return false;
     if (selection) {
@@ -536,19 +562,43 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
         await tx.digestRun.updateMany({ where: { id: ctx.run.id, approval: 'NOT_REQUIRED' }, data: { approval: 'PENDING' } });
       }
     }
+    const name = (a: DigestAudience) => `TS-DIGEST-${dateKey}-${a}-${ctx.run.id}`;
     const sends = await tx.digestSend.createManyAndReturn({
       select: { id: true, audience: true },
-      data: contents.map((c) => ({
-        runId: ctx.run.id,
-        audience: c.audience,
-        subject: c.subject,
-        preheader: c.preheader,
-        html: c.html,
-        text: c.text,
-        htmlBytes: Buffer.byteLength(c.html, 'utf8'),
-        mcCampaignName: `TS-DIGEST-${dateKey}-${c.audience}-${ctx.run.id}`,
-        sendAfter,
-      })),
+      data: [
+        ...contents.map((c) => ({
+          runId: ctx.run.id,
+          audience: c.audience,
+          subject: c.subject,
+          preheader: c.preheader,
+          html: c.html,
+          text: c.text,
+          htmlBytes: Buffer.byteLength(c.html, 'utf8'),
+          mcCampaignName: name(c.audience),
+          sendAfter,
+        })),
+        // The broken audience: no content, so nothing can be created for it until
+        // its ads are fixed and it is rendered from the stories frozen above.
+        ...blocked.map((b) => ({
+          runId: ctx.run.id,
+          audience: b.audience,
+          state: 'FAILED' as const,
+          subject: '',
+          preheader: '',
+          html: null,
+          text: null,
+          htmlBytes: 0,
+          mcCampaignName: name(b.audience),
+          sendAfter,
+          contentPendingAt: ctx.now,
+          lastError: adsUnfillableError(b.problems),
+          attempts: 1,
+          firstFailureAt: ctx.now,
+          stepAttempts: 1,
+          stepFirstFailureAt: ctx.now,
+          nextAttemptAt: firstRetry,
+        })),
+      ],
     });
     const placements = contents.flatMap((c) => {
       const sendId = sends.find((x) => x.audience === c.audience)?.id;
@@ -557,6 +607,16 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
     if (placements.length > 0) await tx.digestAdPlacement.createMany({ data: placements });
     return true;
   });
+  if (built && blocked.length > 0) {
+    const problems = blocked.flatMap((b) => b.problems);
+    await raiseAlert(ctx, 'config_invalid', {
+      problems,
+      source: 'ads',
+      audiences: blocked.map((b) => b.audience),
+      ...(blocked.length === 1 ? { audience: blocked[0].audience } : {}),
+    });
+    for (const b of blocked) log(ctx, b.audience, 'build:ads_unfillable:content_pending');
+  }
   if (built && selection?.outcome === 'sanity_hold') {
     await raiseAlert(ctx, 'sanity_hold', { candidates: selection.candidateCount, max: ctx.cfg.sanityMaxCandidates });
     log(ctx, null, `build:sanity_hold:${selection.candidateCount}`);
@@ -566,18 +626,87 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
   return built;
 }
 
+/** The `lastError` of a variant waiting for its ads (plain words: slot and audience, no URL). */
+function adsUnfillableError(problems: string[]): string {
+  const text = `ads_unfillable: ${problems.join('; ')}`;
+  return text.length > 500 ? `${text.slice(0, 497)}...` : text;
+}
+
 /**
- * Both variants' content. Every variant is attempted, so an ad problem in
- * BOTH (e.g. no ads at all) is reported in one alert naming every slot; any
- * other failure is rethrown as is.
+ * Records a failed build attempt and when the cron may try again: the retry
+ * policy from the FIRST failure (+1, +5, +15, then +75, +135 … min). Past the
+ * last slot before the cut-off, the wait runs to the cut-off, where the sweep
+ * skips the run. `buildFailure` is the CURRENT cause (the cut-off reason and the
+ * banner read it), overwritten on every attempt.
  */
-async function allContents<T>(jobs: Promise<T>[]): Promise<T[]> {
-  const settled = await Promise.allSettled(jobs);
-  const errors = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map((r) => r.reason as unknown);
-  const other = errors.find((e) => !(e instanceof AdSlotError));
-  if (other !== undefined) throw other;
-  if (errors.length > 0) throw new AdSlotError(errors.flatMap((e) => (e as AdSlotError).problems));
-  return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+async function recordBuildFailure(ctx: Ctx, cause: 'ads_unfillable' | 'build_error', detail: string): Promise<void> {
+  const cur = await prisma.digestRun.findUniqueOrThrow({
+    where: { id: ctx.run.id },
+    select: { build: true, buildAttempts: true, buildFirstFailureAt: true },
+  });
+  if (cur.build !== 'BUILDING' && cur.build !== 'BUILD_FAILED') return;
+  const attempts = cur.buildAttempts + 1;
+  const first = cur.buildFirstFailureAt ?? ctx.now;
+  const next = nextAttemptAt(first, attempts, ctx.cutoffAt) ?? ctx.cutoffAt;
+  await prisma.digestRun.updateMany({
+    where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
+    data: {
+      build: 'BUILD_FAILED',
+      buildAttempts: attempts,
+      buildFirstFailureAt: first,
+      buildNextAttemptAt: next,
+      buildFailure: cause,
+      buildError: detail.length > 500 ? `${detail.slice(0, 497)}...` : detail,
+    },
+  });
+  log(ctx, null, `build:retry_at:${next.toISOString()}`);
+}
+
+type VariantContent = {
+  audience: DigestAudience;
+  subject: string;
+  preheader: string;
+  html: string;
+  text: string;
+  placements?: AdPlacementRecord[];
+};
+
+/**
+ * Every audience's content, judged one audience at a time. An ad problem
+ * (`AdSlotError` from the picker or from the freeze guard) blocks only its own
+ * audience and names its slots; any other failure is rethrown as is (the whole
+ * build fails, as before).
+ */
+async function allContents(
+  ctx: Ctx,
+  buildContent: BuildContent,
+  itemsFor: (a: DigestAudience) => FrozenItem[] | undefined,
+): Promise<{ contents: VariantContent[]; blocked: { audience: DigestAudience; problems: string[] }[] }> {
+  const settled = await Promise.allSettled(AUDIENCES.map((audience) => variantContent(ctx, buildContent, audience, itemsFor(audience))));
+  const other = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected' && !(r.reason instanceof AdSlotError));
+  if (other) throw other.reason;
+  const contents: VariantContent[] = [];
+  const blocked: { audience: DigestAudience; problems: string[] }[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') contents.push(r.value);
+    else blocked.push({ audience: AUDIENCES[i], problems: (r.reason as AdSlotError).problems });
+  });
+  return { contents, blocked };
+}
+
+/** One audience's content, with the freeze guard applied to its placements. Throws AdSlotError. */
+async function variantContent(ctx: Ctx, buildContent: BuildContent, audience: DigestAudience, items: FrozenItem[] | undefined): Promise<VariantContent> {
+  const c = await buildContent({
+    runId: ctx.run.id,
+    runDate: ctx.run.runDate,
+    audience,
+    items,
+    cfg: ctx.cfg,
+    portal: ctx.run.portal,
+    at: ctx.now,
+  });
+  await assertPlacementsAtFreeze(audience, c.placements ?? []);
+  return { audience, ...c };
 }
 
 /**
@@ -617,7 +746,15 @@ async function skipTooLittleNews(ctx: Ctx, sel: DigestSelection): Promise<boolea
   const skipped = await prisma.$transaction(async (tx) => {
     const r = await tx.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
-      data: { build: 'SKIPPED', skipReason: 'too_little_news', builtAt: ctx.now, ...selectionRunFields(sel) },
+      data: {
+        build: 'SKIPPED',
+        skipReason: 'too_little_news',
+        builtAt: ctx.now,
+        buildFailure: null,
+        buildError: null,
+        buildNextAttemptAt: null,
+        ...selectionRunFields(sel),
+      },
     });
     if (r.count !== 1) return false;
     await writeDigestItems(tx, ctx.run.id, sel.rows);
@@ -650,7 +787,13 @@ async function advanceSend(ctx: Ctx, sendId: string): Promise<void> {
   let s = await fresh(sendId);
   if (s.state === 'SENT' || s.state === 'PARTIALLY_SENT' || s.state === 'SKIPPED') return;
 
-  if (s.state === 'FAILED') {
+  if (s.contentPendingAt !== null) {
+    // Frozen without content (its ad slots could not be filled): render it first.
+    if (s.state !== 'FAILED') return;
+    const next = await renderPendingStep(ctx, s);
+    if (!next) return;
+    s = next;
+  } else if (s.state === 'FAILED') {
     const block = failedBlock(ctx.trigger, s);
     if (block) {
       if (block.startsWith('terminal:')) ctx.refusals.push(`${s.audience}: ${block.slice('terminal:'.length)} (final for today)`);
@@ -671,6 +814,88 @@ async function advanceSend(ctx: Ctx, sendId: string): Promise<void> {
     s = next;
   }
   if (s.state === 'SCHEDULED') await verifyStep(ctx, s);
+}
+
+/**
+ * Step 0, only for a variant frozen without content (`contentPendingAt`): the
+ * other audience's ads filled at the build, this one's did not. Renders it
+ * from the run's FROZEN stories (never re-selected) with the ads as they are
+ * now, applies the freeze guard, and stores html + placements in one
+ * transaction fenced on "still pending" — two runners cannot both store it,
+ * and a variant the cut-off already skipped is never filled in. On success the
+ * variant is PENDING and continues to create → schedule through the usual
+ * gates; still unfillable → stays FAILED and is tried again on the retry
+ * policy (the cron waits; Retry now does not).
+ */
+async function renderPendingStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null> {
+  const a = send.audience;
+  if (retryWaitPending(ctx, send)) {
+    log(ctx, a, 'render:waiting_retry');
+    return null;
+  }
+  const rows = await prisma.digestItem.findMany({
+    where: { runId: ctx.run.id, OR: [{ audience: null }, { audience: a }] },
+    orderBy: { rank: 'asc' },
+  });
+  const items: FrozenItem[] = rows.map((r) => ({
+    rank: r.rank,
+    section: r.section === 'ICYMI' ? 'ICYMI' : 'MAIN',
+    articleKey: r.articleKey,
+    campaignId: r.campaignId,
+    title: r.title,
+    url: r.url,
+    authority: r.authority,
+    category: r.category,
+    excerpt: r.excerpt,
+    capturedAt: r.capturedAt,
+    readRate: r.readRate,
+  }));
+  let c: VariantContent;
+  try {
+    c = await variantContent(ctx, ctx.buildContent, a, rows.length > 0 ? items : undefined);
+  } catch (err) {
+    const problems = err instanceof AdSlotError ? err.problems : null;
+    const attempts = send.stepAttempts + 1;
+    const first = send.stepFirstFailureAt ?? ctx.now;
+    await prisma.digestSend.updateMany({
+      where: { id: send.id, state: 'FAILED', contentPendingAt: { not: null } },
+      data: {
+        lastError: problems ? adsUnfillableError(problems) : `render_failed: ${redactError(err)}`,
+        attempts: send.attempts + 1,
+        stepAttempts: attempts,
+        stepFirstFailureAt: first,
+        nextAttemptAt: nextAttemptAt(first, attempts, ctx.cutoffAt) ?? ctx.cutoffAt,
+      },
+    });
+    if (problems) ctx.refusals.push(`the ${a === 'FREE' ? 'Free' : 'Premium'} digest still has an ad slot no ad can fill (${problems.join('; ')})`);
+    log(ctx, a, problems ? 'render:ads_unfillable' : 'render:failed');
+    return null;
+  }
+  const stored = await prisma.$transaction(async (tx) => {
+    const r = await tx.digestSend.updateMany({
+      where: { id: send.id, state: 'FAILED', contentPendingAt: { not: null }, html: null, mcCampaignId: null },
+      data: {
+        state: 'PENDING',
+        subject: c.subject,
+        preheader: c.preheader,
+        html: c.html,
+        text: c.text,
+        htmlBytes: Buffer.byteLength(c.html, 'utf8'),
+        contentPendingAt: null,
+        lastError: null,
+        lastErrorKind: null,
+        stepAttempts: 0,
+        stepFirstFailureAt: null,
+        nextAttemptAt: null,
+      },
+    });
+    if (r.count !== 1) return false;
+    const placements = (c.placements ?? []).map((p) => ({ sendId: send.id, adId: p.adId, slot: p.slot, utmContent: p.utmContent, createdAt: ctx.now }));
+    if (placements.length > 0) await tx.digestAdPlacement.createMany({ data: placements });
+    return true;
+  });
+  log(ctx, a, stored ? 'render:frozen' : 'render:claimed_elsewhere');
+  return stored ? fresh(send.id) : null;
 }
 
 /**
@@ -1171,15 +1396,17 @@ function cutoffReason(ctx: Ctx): string {
  */
 async function cutoffSweep(ctx: Ctx): Promise<void> {
   if (ctx.run.build === 'BUILDING' || ctx.run.build === 'BUILD_FAILED') {
-    // A build held back by an unfillable ad slot (task 9) is skipped as config_invalid.
-    const adsBlocked = ctx.run.build === 'BUILD_FAILED' && (ctx.run.alerts as Record<string, unknown> | null)?.config_invalid !== undefined;
+    // The CURRENT cause decides (QA L5): a build held back by an unfillable ad
+    // slot is skipped as config_invalid — but not one that failed for another
+    // reason after the ads were fixed, whatever alert markers the day raised.
+    const adsBlocked = ctx.run.build === 'BUILD_FAILED' && ctx.run.buildFailure === 'ads_unfillable';
     const reason = adsBlocked ? 'config_invalid' : ctx.run.build === 'BUILD_FAILED' ? 'build_failed' : 'cutoff_passed';
     const r = await prisma.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
-      data: { build: 'SKIPPED', skipReason: reason },
+      data: { build: 'SKIPPED', skipReason: reason, buildNextAttemptAt: null },
     });
     if (r.count === 1) {
-      await raiseAlert(ctx, 'skipped', { reason });
+      await raiseAlert(ctx, 'skipped', { reason, ...(adsBlocked ? { source: 'ads' } : {}) });
       await recordAudit({ action: 'DIGEST_SKIPPED', resourceType: 'DigestRun', resourceId: ctx.run.id, metadata: { reason } });
       log(ctx, null, `cutoff:skipped:${reason}`);
     }
@@ -1203,13 +1430,15 @@ async function cutoffSweep(ctx: Ctx): Promise<void> {
     const claimAt = await claimStep(s.id, { state: { in: ['PENDING', 'CREATED', 'FAILED'] }, scheduleAttemptedAt: null }, ctx);
     if (!claimAt) continue;
     await finishStep(s.id, claimAt, { state: 'SKIPPED', nextAttemptAt: null });
-    await markSkipped(ctx, s, reason);
+    // A variant still waiting for its ads ends the way an unfillable run does.
+    if (s.contentPendingAt !== null) await markSkipped(ctx, s, 'config_invalid', { source: 'ads', audience: s.audience });
+    else await markSkipped(ctx, s, reason);
   }
 }
 
-async function markSkipped(ctx: Ctx, s: DigestSend, reason: string): Promise<void> {
+async function markSkipped(ctx: Ctx, s: DigestSend, reason: string, extra: Record<string, unknown> = {}): Promise<void> {
   await setRunSkipReason(ctx, reason);
-  await raiseAlert(ctx, 'skipped', { reason });
+  await raiseAlert(ctx, 'skipped', { reason, ...extra });
   await auditSkipped(ctx, s, reason);
   log(ctx, s.audience, `cutoff:skipped:${reason}`);
 }

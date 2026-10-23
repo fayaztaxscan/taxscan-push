@@ -784,8 +784,8 @@ agents.
      return `refused` with the reason): re-scheduling waits for open question 3. A known reach > 0 is
      PARTIALLY_SENT; an unknown reach stays null. The §8 "re-issue schedule after 3 h" is not built.
    - Alerts are recorded as markers in `DigestRun.alerts` (`{kind: {raisedAt, sentAt: null, …}}`, one
-     per kind per run, atomic SQL); task 6 sends them. Build retries on `BUILD_FAILED` are per tick until
-     task 4 adds the build schedule. `lastError` redaction masks plain and %40 addresses, key/token/
+     per kind per run, atomic SQL); task 6 sends them. Build retries on `BUILD_FAILED` were per tick until
+     the task 9 follow-ups (2026-10-23) put them on the retry policy. `lastError` redaction masks plain and %40 addresses, key/token/
      Authorization parameters and the configured API key value.
    - No cron calls `advanceRun` yet; `scheduler.ts` is still log-only.
 4. **Builder.** Window, candidates, `rankDigest`, `articleKey` dedupe (90 days), link check, minimum and
@@ -932,7 +932,8 @@ agents.
      SUBSCRIPTION + PREMIUM_ONLY is rejected as a contradiction.
    - **Slots drawn:** slot 1 after story 4, slot 2 after story 9 (only in digests with ≥ 9 stories), slot 3
      above the footer. Only drawn slots are picked and recorded; the coverage check tests all three.
-   - **Unfillable slot = `config_invalid`, recoverable the same day.** `AdSlotError` from either variant
+   - **Unfillable slot = `config_invalid`, recoverable the same day** (superseded for the one-audience case
+     by the follow-ups below). `AdSlotError` from either variant
      (both are attempted, so one alert names every slot) leaves the run `BUILD_FAILED`: nothing frozen,
      nothing created, `config_invalid` alert with `source: 'ads'` (its own email copy and an
      `ads_unfillable` banner pointing at Ads). The next tick or Retry now builds once the Ads screen is
@@ -960,6 +961,40 @@ agents.
      archive behind ConfirmPush. Verified in headless Chromium at 1280 px and 390 px.
    - **Backup:** `DigestAd` / `DigestAdImage` (with `DigestTemplate`, `EmailSuppression`) join `backup.ts`
      in **task 11**, as §13 says; not in this task.
+   - **Follow-ups (owner approved 2026-10-23; migration `20261023094458_digest_build_retry_and_pending_variant`,
+     new columns on the digest tables only):**
+     - **Per-audience ad failure.** An unfillable slot now fails only its own audience. The run still
+       freezes (stories + the complete audience's content, which goes out as normal); the broken variant
+       is written `FAILED` with `contentPendingAt` set, `lastError "ads_unfillable: Slot 3 — Premium: …"`, no
+       html and therefore no draft. Every door (cron on the retry policy, Retry now at once) renders it
+       from the FROZEN DigestItem rows with the ads as they are then, applies the freeze guard, and stores
+       html + placements in one transaction fenced on "still pending"; it then goes through the normal
+       create → schedule gates (one per audience per day and the write-ahead markers are untouched). Still
+       pending at the cut-off → `SKIPPED`, run `skipReason config_invalid` (as an unfillable run ends).
+       Both audiences broken → `BUILD_FAILED` exactly as before. A freeze-guard refusal (`AdSlotError` at
+       freeze) is per audience too. Chosen over "SKIPPED `ads_unfillable`" because the variant row model
+       carries it safely: the frozen stories are already the content, and no provider call is possible
+       without html. Note: in approval mode the run's approval covers a variant rendered later (same
+       stories; only the ads differ).
+     - Retry now while the variant is still unfillable and nothing else can progress is **refused** with
+       the audience and slot. The alert (`config_invalid`, `source: 'ads'`, `audience`, `audiences`) and
+       the banner (`ads_unfillable`) name the audience and slot; a Free-sent + Premium-skipped day shows
+       `variant_skipped` ("Only the Free digest went out today; the Premium digest was skipped because an
+       ad slot could not be filled before the cut-off"). `digestRunState()` needed no new combination:
+       SENT + waiting-for-ads FAILED is `failed`, SENT + SKIPPED is `partially_sent`; the banner words them.
+       The preview of a pending variant answers 409 "Not built yet" (not 410 "expired").
+     - **Build retries with backoff.** A failed build (ads or any other error) records `buildAttempts`,
+       `buildFirstFailureAt`, `buildNextAttemptAt` and retries on `retryPolicy.ts` (+1, +5, +15, then +75,
+       +135 … min from the first failure; past the last slot the wait runs to the cut-off). The cron waits;
+       Retry now does not. The cut-off is unchanged.
+     - **Current cause (QA L5).** `DigestRun.buildFailure` (`ads_unfillable` | `build_error`) + `buildError`
+       hold the CURRENT reason; the cut-off reason and the banner read them, never the once-per-run alert
+       markers. Ads fixed then a DB blip → `build_failed`, not `config_invalid`.
+     - Ad links are **https only** (`isAllowedAdUrl`): rejected at save, dropped at pick (`link_not_https`),
+       refused at render. Articles and push's shared allowlist are unchanged.
+     - Ad images: height ≤ **2 × width** (`too_tall_for_width`), on top of the existing limits.
+     - `imageWeight` counts only drawn slots (QA L7). Ads screen copy: each audience needs three different
+       ads (or defaults); the "Default for its slots" checkbox now sits inside its pill (QA L9).
    - **Admin guide** (owed with the other digest screens): Ads screen walkthrough; the coverage check and
      what "the build will stop" means; slot positions (slot 2 only on long digests); ≥ 3 distinct ads or
      defaults per audience; no SUBSCRIPTION ad to Premium (and why "Free only (never Premium)" appears);

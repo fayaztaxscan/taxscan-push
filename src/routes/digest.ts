@@ -134,13 +134,16 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       if (!audience) return res.status(400).json({ error: 'bad_audience' });
       const send = await prisma.digestSend.findUnique({
         where: { runId_audience: { runId: req.params.id, audience } },
-        select: { html: true },
+        select: { html: true, contentPendingAt: true },
       });
       res.setHeader('Content-Security-Policy', PREVIEW_CSP);
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Referrer-Policy', 'no-referrer');
       if (!send) return res.status(404).type('text/plain').send('No digest for this audience.');
+      if (!send.html && send.contentPendingAt) {
+        return res.status(409).type('text/plain').send('Not built yet: an ad slot could not be filled. Fix it on the Ads screen, then press Retry now.');
+      }
       if (!send.html) return res.status(410).type('text/plain').send('The stored copy of this digest has expired.');
       return res.status(200).type('text/html; charset=utf-8').send(send.html);
     } catch (err) {

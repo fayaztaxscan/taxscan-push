@@ -438,13 +438,15 @@ describe('ACCEPT: an unfillable slot fails the build closed', () => {
     expect(await prisma.digestRun.findUniqueOrThrow({ where: { id: b.run.id } })).toMatchObject({ build: 'SKIPPED', skipReason: 'config_invalid' });
   });
 
-  it('only a SUBSCRIPTION ad for a slot: FREE would fill, PREMIUM cannot → the whole build fails closed', async () => {
+  it('only a SUBSCRIPTION ad for a slot: FREE fills, PREMIUM cannot → only PREMIUM is held back (follow-up 2026-10-23)', async () => {
     const portal = newPortal();
     await dbAd(portal, { kind: 'SUBSCRIPTION', slots: [3] });
     await dbAd(portal, { slots: [1] });
     const { run } = await buildRun(portal, items(5));
-    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } });
-    expect(r.build).toBe('BUILD_FAILED');
+    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id }, include: { sends: true } });
+    expect(r.build).toBe('BUILT');
+    expect(r.sends.find((s) => s.audience === 'FREE')).toMatchObject({ contentPendingAt: null });
+    expect(r.sends.find((s) => s.audience === 'PREMIUM')).toMatchObject({ state: 'FAILED', html: null });
     expect(JSON.stringify(r.alerts)).toContain('Slot 3 — Premium');
   });
 });
@@ -488,7 +490,7 @@ describe('placements are recorded per send and drawn with UTM', () => {
     expect(placed.map((p) => p.slot).sort()).toEqual([1, 3]);
   });
 
-  it('freeze guard: a buildContent that hands PREMIUM a SUBSCRIPTION placement is refused (config_invalid, nothing frozen)', async () => {
+  it('freeze guard: a buildContent that hands PREMIUM a SUBSCRIPTION placement is refused (PREMIUM held back, never frozen with it)', async () => {
     const portal = newPortal();
     const sub = await dbAd(portal, { kind: 'SUBSCRIPTION' });
     const rogue: BuildContent = async ({ audience }) => ({
@@ -499,9 +501,12 @@ describe('placements are recorded per send and drawn with UTM', () => {
       placements: [{ adId: sub.id, slot: 1, utmContent: `ad-${sub.id}-slot1` }].filter(() => audience === 'PREMIUM'),
     });
     const { run } = await buildRun(portal, items(5), cfg(), { buildContent: rogue });
-    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id }, include: { sends: true } });
-    expect(r.build).toBe('BUILD_FAILED');
-    expect(r.sends).toHaveLength(0);
+    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id }, include: { sends: { include: { placements: true } } } });
+    const premium = r.sends.find((s) => s.audience === 'PREMIUM')!;
+    expect(premium).toMatchObject({ state: 'FAILED', html: null });
+    expect(premium.contentPendingAt).not.toBeNull();
+    expect(premium.placements).toHaveLength(0);
+    expect(premium.lastError).toMatch(/^ads_unfillable: .*never go to Premium/);
     expect(JSON.stringify(r.alerts)).toMatch(/never go to Premium/);
   });
 
@@ -863,7 +868,7 @@ describe('QA verification of cd5a0e4', () => {
 
   it('image: a header claiming an absurd height is refused (was a DB Int overflow → 500)', async () => {
     expect(() => validateImage(png(100, 0xffffffff))).toThrow(expect.objectContaining({ code: 'too_tall' }));
-    expect(validateImage(png(100, 65_535)).height).toBe(65_535);
+    expect(() => validateImage(png(100, 65_535))).toThrow(expect.objectContaining({ code: 'too_tall_for_width' }));
     const r = await request(appFor(newPortal())).post('/api/digest/ad-images').set('Cookie', adminCookie).set('Content-Type', 'image/png').send(png(100, 0x80000000));
     expect(r.status).toBe(400);
     expect(r.body.error).toBe('too_tall');
@@ -888,4 +893,367 @@ describe('QA verification of cd5a0e4', () => {
     expect(Date.now() - t0).toBeLessThan(5000);
   });
 
+});
+
+/* ================================================================== */
+/* Task 9 follow-ups (owner approved 2026-10-23)                       */
+/* ================================================================== */
+
+describe('follow-up 1: an unfillable ad slot fails only its own audience', () => {
+  const c = cfg();
+  const its = items(5);
+  async function setup() {
+    const portal = newPortal();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: c });
+    const sender = new FakeSender();
+    const go = (trigger: 'cron' | 'retry', now: Date) =>
+      advanceRun(run.id, trigger, { sender, now, cfg: c, quiet: QUIET, alerts: false, selectItems: async () => selection({ FREE: its, PREMIUM: its }) });
+    const sends = async () => {
+      const rows = await prisma.digestSend.findMany({ where: { runId: run.id }, include: { placements: { include: { ad: true } } } });
+      return { FREE: rows.find((s) => s.audience === 'FREE')!, PREMIUM: rows.find((s) => s.audience === 'PREMIUM')! };
+    };
+    const markSent = async (a: DigestAudience) => {
+      const id = (await sends())[a].mcCampaignId!;
+      sender.campaigns.get(id)!.state = 'SENT';
+    };
+    return { portal, run, sender, go, sends, markSent };
+  }
+
+  it('Free is built and sent while Premium is blocked; alert and banner name Premium and the slot', async () => {
+    const t = await setup();
+    await dbAd(t.portal, { kind: 'SUBSCRIPTION', name: 'Subscribe', linkUrl: 'https://www.taxscan.in/subscribe' });
+    await dbAd(t.portal, { name: 'House 1' });
+    await t.go('cron', AT);
+
+    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: t.run.id }, include: { items: true } });
+    expect(r.build).toBe('BUILT');
+    expect(r.items.length).toBeGreaterThan(0);
+    const s = await t.sends();
+    expect(s.FREE.state).toBe('CREATED');
+    expect(s.FREE.html).toContain('High Court ruling 1');
+    expect(s.PREMIUM).toMatchObject({ state: 'FAILED', html: null, mcCampaignId: null, createAttemptedAt: null });
+    expect(s.PREMIUM.contentPendingAt).not.toBeNull();
+    expect(s.PREMIUM.lastError).toMatch(/^ads_unfillable: Slot 3 — Premium/);
+    expect(t.sender.draftInputs().map((d) => d.audience)).toEqual(['FREE']);
+
+    const marker = (r.alerts as Record<string, Record<string, unknown>>).config_invalid;
+    expect(marker).toMatchObject({ source: 'ads', audience: 'PREMIUM', audiences: ['PREMIUM'] });
+    const copy = alertCopy('config_invalid', marker as never, c);
+    expect(copy.what).toMatch(/The Premium digest has an ad slot no ad can fill: Slot 3 — Premium/);
+    expect(copy.did).toMatch(/The Free digest was built and goes out as normal/);
+
+    await t.go('cron', IST(7, 30));
+    expect(t.sender.count('schedule')).toBe(1);
+    expect((await t.sends()).FREE.state).toBe('SCHEDULED');
+    expect((await t.sends()).PREMIUM.state).toBe('FAILED');
+
+    const status = await digestStatus({ portal: t.portal, cfg: c, now: IST(7, 31) });
+    expect(status.today?.state).toBe('failed');
+    expect(status.attention?.code).toBe('ads_unfillable');
+    expect(status.attention?.headline).toMatch(/The Premium digest is stopped: an ad slot cannot be filled \(Slot 3 — Premium.*\)\. The Free digest is not affected\./);
+
+    const prev = await request(appFor(t.portal)).get(`/api/digest/runs/${t.run.id}/preview/premium`).set('Authorization', AUTH);
+    expect(prev.status).toBe(409);
+    expect(prev.text).toMatch(/Not built yet: an ad slot could not be filled/);
+    expect(prev.headers['content-security-policy']).toMatch(/sandbox/);
+    const detail = await request(appFor(t.portal)).get(`/api/digest/runs/${t.run.id}`).set('Authorization', AUTH);
+    const pv = (detail.body.variants as { audience: string; contentPending: boolean; hasPreview: boolean }[]).find((v) => v.audience === 'PREMIUM')!;
+    expect(pv).toMatchObject({ contentPending: true, hasPreview: false });
+    expect(detail.body.actions.retry.show).toBe(true);
+  });
+
+  it('the reverse: Premium is built and sent while Free is blocked', async () => {
+    const t = await setup();
+    await dbAd(t.portal, { audience: 'PREMIUM_ONLY' });
+    await dbAd(t.portal, { audience: 'PREMIUM_ONLY' });
+    await t.go('cron', AT);
+    const s = await t.sends();
+    expect(s.PREMIUM.state).toBe('CREATED');
+    expect(s.PREMIUM.placements.map((p) => p.slot).sort()).toEqual([1, 3]);
+    expect(s.FREE).toMatchObject({ state: 'FAILED', html: null });
+    expect(s.FREE.lastError).toMatch(/^ads_unfillable: Slot 1 — Free: no eligible ad and no default; Slot 3 — Free/);
+    await t.go('cron', IST(7, 30));
+    expect(t.sender.draftInputs().map((d) => d.audience)).toEqual(['PREMIUM']);
+    expect(t.sender.count('schedule')).toBe(1);
+    const status = await digestStatus({ portal: t.portal, cfg: c, now: IST(7, 31) });
+    expect(status.attention?.headline).toMatch(/^The Free digest is stopped.*The Premium digest is not affected\.$/);
+  });
+
+  it('both blocked → as before: BUILD_FAILED, nothing frozen, the current cause recorded with a retry time', async () => {
+    const t = await setup();
+    await t.go('cron', AT);
+    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: t.run.id }, include: { sends: true, items: true } });
+    expect(r).toMatchObject({ build: 'BUILD_FAILED', buildFailure: 'ads_unfillable', buildAttempts: 1 });
+    expect(r.buildNextAttemptAt).toEqual(new Date(AT.getTime() + 60_000));
+    expect(r.buildError).toMatch(/Slot 1 — Free: no eligible ad and no default.*Slot 1 — Premium/);
+    expect(r.sends).toHaveLength(0);
+    expect(r.items).toHaveLength(0);
+    const status = await digestStatus({ portal: t.portal, cfg: c, now: IST(6, 31) });
+    expect(status.attention?.code).toBe('ads_unfillable');
+    expect(status.attention?.headline).toMatch(/Slot 1 — Free/);
+  });
+
+  it('recovery: ads fixed → the blocked variant is rendered from the FROZEN stories on its retry slot, then created and sent', async () => {
+    const t = await setup();
+    await dbAd(t.portal);
+    await dbAd(t.portal, { kind: 'SUBSCRIPTION', linkUrl: 'https://www.taxscan.in/subscribe' });
+    await t.go('cron', AT);
+    const frozenItems = await prisma.digestItem.count({ where: { runId: t.run.id } });
+    await dbAd(t.portal, { name: 'House 2' });
+
+    // The cron waits for the variant's retry slot (+1 min)…
+    const early = await t.go('cron', new Date(AT.getTime() + 30_000));
+    expect(early.steps).toContain('PREMIUM:render:waiting_retry');
+    expect((await t.sends()).PREMIUM.state).toBe('FAILED');
+
+    // …and then renders it: same frozen stories (no re-selection), ads as they are now.
+    await t.go('cron', IST(6, 31));
+    const s = await t.sends();
+    expect(s.PREMIUM).toMatchObject({ state: 'CREATED', contentPendingAt: null, lastError: null, subject: s.FREE.subject });
+    expect(s.PREMIUM.html).toContain('High Court ruling 5');
+    expect(s.PREMIUM.placements.map((p) => p.slot).sort()).toEqual([1, 3]);
+    expect(s.PREMIUM.placements.some((p) => p.ad.kind === 'SUBSCRIPTION')).toBe(false);
+    expect(await prisma.digestItem.count({ where: { runId: t.run.id } })).toBe(frozenItems);
+    expect(t.sender.draftInputs().map((d) => d.audience).sort()).toEqual(['FREE', 'PREMIUM']);
+
+    await t.go('cron', IST(7, 30));
+    expect(t.sender.count('schedule')).toBe(2);
+    await t.markSent('FREE');
+    await t.markSent('PREMIUM');
+    const done = await t.go('cron', IST(7, 41));
+    expect(done.state).toBe('sent');
+    // A second pass never creates or schedules again (one per audience per day).
+    await t.go('retry', IST(8, 0));
+    expect(t.sender.count('createDraft')).toBe(2);
+    expect(t.sender.count('schedule')).toBe(2);
+  });
+
+  it('recovery through Retry now skips the wait', async () => {
+    const t = await setup();
+    await dbAd(t.portal);
+    await dbAd(t.portal, { kind: 'SUBSCRIPTION', linkUrl: 'https://www.taxscan.in/subscribe' });
+    await t.go('cron', AT);
+    await dbAd(t.portal);
+    await t.go('retry', new Date(AT.getTime() + 10_000));
+    expect((await t.sends()).PREMIUM.state).toBe('CREATED');
+  });
+
+  it('still blocked after Free went out: Retry now is refused naming Premium and the slot; at the cut-off Premium is SKIPPED config_invalid', async () => {
+    const t = await setup();
+    await dbAd(t.portal);
+    await dbAd(t.portal, { kind: 'SUBSCRIPTION', linkUrl: 'https://www.taxscan.in/subscribe' });
+    await t.go('cron', AT);
+    await t.go('cron', IST(7, 30));
+    await t.markSent('FREE');
+    await t.go('cron', IST(7, 41));
+    expect((await t.sends()).FREE.state).toBe('SENT');
+
+    const r = await t.go('retry', IST(8, 0));
+    expect(r.outcome).toBe('refused');
+    expect(r.reason).toMatch(/Premium digest still has an ad slot no ad can fill \(Slot 3 — Premium/);
+    const pending = (await t.sends()).PREMIUM;
+    // Attempts: the build, the 07:30 and 07:41 ticks, this press → the 4th slot, +75 min from the first.
+    expect(pending.stepAttempts).toBe(4);
+    expect(pending.nextAttemptAt).toEqual(new Date(AT.getTime() + 75 * 60_000));
+
+    await t.go('cron', IST(17, 0));
+    const s = await t.sends();
+    expect(s.FREE.state).toBe('SENT');
+    expect(s.PREMIUM.state).toBe('SKIPPED');
+    const run = await prisma.digestRun.findUniqueOrThrow({ where: { id: t.run.id } });
+    expect(run.skipReason).toBe('config_invalid');
+    const skipped = (run.alerts as Record<string, Record<string, unknown>>).skipped;
+    expect(skipped).toMatchObject({ reason: 'config_invalid', source: 'ads', audience: 'PREMIUM' });
+    expect(alertCopy('skipped', skipped as never, c).what).toBe('The Premium digest was skipped because an ad slot could not be filled before the cut-off.');
+    expect(t.sender.count('createDraft')).toBe(1);
+
+    const status = await digestStatus({ portal: t.portal, cfg: c, now: IST(17, 1) });
+    expect(status.today?.state).toBe('partially_sent');
+    expect(status.attention?.code).toBe('variant_skipped');
+    expect(status.attention?.headline).toBe('Only the Free digest went out today; the Premium digest was skipped because an ad slot could not be filled before the cut-off.');
+  });
+});
+
+describe('follow-up 4: a failed build retries on the retry policy, not every tick', () => {
+  it('+1, +5, +15, then +75, +135 min from the first failure; the cron waits in between, Retry now does not', async () => {
+    const portal = newPortal();
+    for (let i = 0; i < 3; i++) await dbAd(portal);
+    const c = cfg();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: c });
+    let calls = 0;
+    const selectItems = async (): Promise<DigestSelection> => {
+      calls++;
+      throw new Error('connection reset by peer');
+    };
+    const go = (trigger: 'cron' | 'retry', now: Date) => advanceRun(run.id, trigger, { sender: new FakeSender(), now, cfg: c, quiet: QUIET, alerts: false, selectItems });
+    const min = (m: number) => new Date(AT.getTime() + m * 60_000);
+    const state = () => prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } });
+
+    const expectNext = [
+      [0, 1],
+      [1, 5],
+      [5, 15],
+      [15, 75],
+      [75, 135],
+    ];
+    for (const [at, next] of expectNext) {
+      // One tick just before the due time does nothing.
+      if (at > 0) {
+        const r = await go('cron', new Date(min(at).getTime() - 1000));
+        expect(r.steps).toEqual(['build:waiting_retry']);
+      }
+      const before = calls;
+      await go('cron', min(at));
+      expect(calls).toBe(before + 1);
+      const s = await state();
+      expect(s).toMatchObject({ build: 'BUILD_FAILED', buildFailure: 'build_error' });
+      expect(s.buildNextAttemptAt).toEqual(min(next));
+      expect(s.buildFirstFailureAt).toEqual(AT);
+    }
+    expect(calls).toBe(5);
+    expect((await state()).buildError).toMatch(/connection reset/);
+
+    // Retry now is not held back by the wait; the schedule stays anchored on the first failure.
+    await go('retry', min(100));
+    expect(calls).toBe(6);
+    expect((await state()).buildNextAttemptAt).toEqual(min(195));
+  });
+
+  it('near the cut-off the wait runs to the cut-off (unchanged), where the run is skipped build_failed', async () => {
+    const portal = newPortal();
+    const c = cfg();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: c });
+    let calls = 0;
+    const go = (now: Date) =>
+      advanceRun(run.id, 'cron', { sender: new FakeSender(), now, cfg: c, quiet: QUIET, alerts: false, selectItems: async () => { calls++; throw new Error('db blip'); } });
+    await go(IST(16, 50));
+    await go(IST(16, 51));
+    await go(IST(16, 55)); // the next slot (+15 = 17:05) is past the cut-off
+    expect((await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } })).buildNextAttemptAt).toEqual(IST(17, 0));
+    await go(IST(16, 59, 22));
+    expect(calls).toBe(3);
+    await go(IST(17, 0));
+    expect(calls).toBe(3);
+    expect(await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({ build: 'SKIPPED', skipReason: 'build_failed' });
+  });
+
+  it('a successful build clears the failure bookkeeping', async () => {
+    const portal = newPortal();
+    for (let i = 0; i < 3; i++) await dbAd(portal);
+    const c = cfg();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: c });
+    let fail = true;
+    const selectItems = async () => {
+      if (fail) throw new Error('blip');
+      return selection({ FREE: items(5), PREMIUM: items(5) });
+    };
+    await advanceRun(run.id, 'cron', { sender: new FakeSender(), now: AT, cfg: c, quiet: QUIET, alerts: false, selectItems });
+    fail = false;
+    await advanceRun(run.id, 'cron', { sender: new FakeSender(), now: IST(6, 31), cfg: c, quiet: QUIET, alerts: false, selectItems });
+    expect(await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
+      build: 'BUILT',
+      buildFailure: null,
+      buildError: null,
+      buildNextAttemptAt: null,
+    });
+  });
+});
+
+describe('follow-up 5: the cut-off reason and the banner follow the CURRENT build failure (QA L5)', () => {
+  it('ads fixed, then a non-ads failure: banner says build_failed and the cut-off skips build_failed, not config_invalid', async () => {
+    const portal = newPortal();
+    const c = cfg();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: c });
+    let broken = false;
+    const selectItems = async () => {
+      if (broken) throw new Error('db blip');
+      return selection({ FREE: items(5), PREMIUM: items(5) });
+    };
+    const go = (trigger: 'cron' | 'retry', now: Date) => advanceRun(run.id, trigger, { sender: new FakeSender(), now, cfg: c, quiet: QUIET, alerts: false, selectItems });
+    await go('cron', AT); // no ads at all → ads_unfillable
+    let r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(r.buildFailure).toBe('ads_unfillable');
+    expect((await digestStatus({ portal, cfg: c, now: IST(6, 31) })).attention?.code).toBe('ads_unfillable');
+
+    for (let i = 0; i < 3; i++) await dbAd(portal); // fixed on the Ads screen…
+    broken = true; // …but the next attempt fails for another reason
+    await go('retry', IST(6, 40));
+    r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(r.buildFailure).toBe('build_error');
+    expect((r.alerts as Record<string, { source?: string }>).config_invalid?.source).toBe('ads'); // history stays
+    const st = await digestStatus({ portal, cfg: c, now: IST(6, 41) });
+    expect(st.attention?.code).toBe('build_failed');
+    expect(st.today?.buildFailure).toBe('build_error');
+
+    await go('cron', IST(17, 0));
+    r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(r).toMatchObject({ build: 'SKIPPED', skipReason: 'build_failed' });
+    expect((r.alerts as Record<string, { reason?: string; source?: string }>).skipped).toMatchObject({ reason: 'build_failed' });
+    expect((r.alerts as Record<string, { source?: string }>).skipped.source).toBeUndefined();
+  });
+
+  it('the reverse: still ads at the cut-off → config_invalid with the ads banner wording', async () => {
+    const portal = newPortal();
+    const c = cfg();
+    const run = await ensureRun({ portal, now: IST(6, 0), cfg: c });
+    const selectItems = async () => selection({ FREE: items(5), PREMIUM: items(5) });
+    await advanceRun(run.id, 'cron', { sender: new FakeSender(), now: AT, cfg: c, quiet: QUIET, alerts: false, selectItems });
+    await advanceRun(run.id, 'cron', { sender: new FakeSender(), now: IST(17, 0), cfg: c, quiet: QUIET, alerts: false, selectItems });
+    const r = await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(r).toMatchObject({ build: 'SKIPPED', skipReason: 'config_invalid' });
+    expect((r.alerts as Record<string, { source?: string }>).skipped.source).toBe('ads');
+    const st = await digestStatus({ portal, cfg: c, now: IST(17, 1) });
+    expect(st.attention?.headline).toBe("Today's digest was skipped because an ad slot could not be filled before the cut-off.");
+    expect(st.attention?.action).toMatch(/Open Ads/);
+  });
+});
+
+describe('follow-up 2: ad links are https only (ads only; the push allowlist is unchanged)', () => {
+  const base = { name: 'n', kind: 'HOUSE', headline: 'h', altText: 'a', ctaText: 'c', audience: 'ALL' };
+  it('rejected at save', () => {
+    const r = AdInputSchema.safeParse({ ...base, linkUrl: 'http://academy.taxscan.in/course' });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).toMatch(/must start with https/);
+    expect(AdInputSchema.safeParse({ ...base, linkUrl: 'https://academy.taxscan.in/course' }).success).toBe(true);
+  });
+  it('dropped at pick (an http ad saved earlier) — the next ad fills the slot; alone, fail closed', () => {
+    const old = ad({ linkUrl: 'http://shop.taxscan.in/p/1', priority: 100 });
+    const ok = ad();
+    expect(whyIneligible(old, 'FREE', 1, AT)).toBe('link_not_https');
+    expect(pick([old, ok], 'FREE', [1])[0].ad.id).toBe(ok.id);
+    expect(() => pick([old], 'FREE', [1])).toThrow(AdSlotError);
+    expect(() => assertPlacementsAllowed('FREE', [{ slot: 1, kind: 'HOUSE', linkUrl: 'http://shop.taxscan.in/p/1' }])).toThrow(/not https/);
+  });
+  it('refused at render', () => {
+    const httpAd: RenderAd = { slot: 1, adId: 'x', kind: 'HOUSE', headline: 'h', body: null, ctaText: 'Go', linkUrl: 'http://academy.taxscan.in/c', altText: 'a', image: null };
+    const ok3: RenderAd = { ...httpAd, slot: 3, adId: 'y', linkUrl: 'https://academy.taxscan.in/c' };
+    expect(() => renderDigest({ items: items(5), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads: [httpAd, ok3] })).toThrow(/https/);
+    expect(renderDigest({ items: items(5), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads: [{ ...httpAd, linkUrl: 'https://academy.taxscan.in/c' }, ok3] }).html).toContain('academy.taxscan.in');
+  });
+  it('article links over http still render (the rule is for ads only)', () => {
+    const r = renderDigest({ items: items(5, { url: 'http://www.taxscan.in/top-stories/x/9001' }), audience: 'FREE', runDate: RUN_DATE, cfg: cfg() });
+    expect(r.html).toContain('http://www.taxscan.in/top-stories/x/9001?');
+  });
+});
+
+describe('follow-up 3: ad image height at most 2× its width', () => {
+  it('1200 × 2400 is accepted; 1200 × 2401 and 600 × 1201 are refused with too_tall_for_width', async () => {
+    expect(validateImage(png(1200, 2400))).toMatchObject({ width: 1200, height: 2400 });
+    expect(validateImage(jpeg(600, 1200)).height).toBe(1200);
+    expect(() => validateImage(png(1200, 2401))).toThrow(expect.objectContaining({ code: 'too_tall_for_width' }));
+    expect(() => validateImage(jpeg(600, 1201))).toThrow(/at most 2× as tall as it is wide \(1200 px for this width\)/);
+    const r = await request(appFor(newPortal())).post('/api/digest/ad-images').set('Cookie', adminCookie).set('Content-Type', 'image/png').send(png(500, 1001));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('too_tall_for_width');
+  });
+});
+
+describe('follow-up 6: image weight counts only the slots actually drawn (QA L7)', () => {
+  it('slot 2 is not drawn on a short digest, so its image is not counted', () => {
+    const img = (id: string, size: number) => ({ id, mime: 'image/jpeg', width: 1200, height: 600, size });
+    const placements = [1, 2, 3].map((slot) => ({ slot, ad: ad({ image: img(`w${slot}`, 100_000), imageId: `w${slot}` }), utmContent: 'x', viaDefault: false }));
+    expect(imageWeight(placements)).toBe(300_000);
+    expect(imageWeight(placements, [1, 3])).toBe(200_000);
+    expect(imageWeight(placements, [1, 2, 3])).toBe(300_000);
+  });
 });

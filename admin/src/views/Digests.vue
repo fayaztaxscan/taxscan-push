@@ -43,6 +43,8 @@ type Variant = {
   preheader: string;
   htmlBytes: number;
   hasPreview: boolean;
+  /** Frozen without content: its ad slots could not be filled yet. */
+  contentPending?: boolean;
   mcCampaignId: string | null;
   sendAfter: string;
   scheduledAt: string | null;
@@ -448,6 +450,9 @@ onMounted(load);
               class="frame"
               :style="{ width: `${width.px}px`, height: `${PREVIEW_HEIGHT}px`, transform: `scale(${scale})` }"
             />
+            <p v-else-if="variant?.contentPending" class="muted frame-empty">
+              Not built yet: an ad slot could not be filled. Fix it on the Ads screen, then press Retry now.
+            </p>
             <p v-else class="muted frame-empty">The stored copy of this digest has expired.</p>
           </div>
 
