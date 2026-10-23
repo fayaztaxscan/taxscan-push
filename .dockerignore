@@ -1,0 +1,15 @@
+# Never send local secrets or build output into the image build.
+.env
+.env.*
+ga-service-account.json
+*service-account*.json
+node_modules
+admin/node_modules
+dist
+admin/dist
+admin/test-results
+admin/playwright-report
+.git
+.claude
+*.log
+.DS_Store
