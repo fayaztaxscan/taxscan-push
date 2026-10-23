@@ -87,9 +87,9 @@ meanwhile):
 - [ ] Dashboard shows today's backup as fine *before* the deploy.
   The new migrations add tables; a fresh backup is the way back.
 - [ ] Migrations run by themselves at start (`prisma migrate deploy`).
-  In the deploy log, check all ten digest migrations are applied.
+  In the deploy log, check all twelve digest migrations are applied.
   They are `20261022124755_email_digest` up to
-  `20261023150000_digest_scheduler_health`. They add new tables and
+  `20261023170000_digest_create_sent_marker`. They add new tables and
   columns only. Adding the audit values takes a very short lock.
 - [ ] The deploy log shows
   `[digest] disabled (set DIGEST_ENABLED=true to start)`.
