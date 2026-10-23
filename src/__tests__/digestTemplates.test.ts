@@ -630,6 +630,15 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
     expect(res.headers['cache-control']).toMatch(/max-age=31536000.*immutable/);
     expect((await request(appFor(newPortal())).get('/email/nope.png')).status).toBe(404);
   });
+  it('the push notification icon is served the same way from /brand', async () => {
+    const res = await request(appFor(newPortal())).get('/brand/taxscan-icon-192.png');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(res.headers['cache-control']).toMatch(/max-age=31536000.*immutable/);
+    expect((await request(appFor(newPortal())).get('/brand/nope.png')).status).toBe(404);
+    expect((await request(appFor(newPortal())).get('/brand/..%2Fsw.js')).status).toBe(404);
+  });
 });
 
 /* ================================================================== */

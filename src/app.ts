@@ -154,23 +154,26 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // Digest ad images (task 9): public, immutable, cross-origin; only stored images by sha256 name.
   app.get('/email-assets/:file', emailAssetsHandler);
 
-  // Fixed email assets committed in public/email/ (the digest logo): readable cross-origin by
-  // mail clients and their image proxies, cached for a year. Never overwrite a file here —
-  // a changed asset gets a new file name, or readers keep the old one.
-  app.use(
-    '/email',
-    (_req, res, next) => {
-      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-      next();
-    },
-    express.static(path.join(publicDir, 'email'), { immutable: true, maxAge: '365d', index: false }),
-    // Nothing else is served from here: a missing file (or a `..` path) is a plain 404. With
-    // `fallthrough: false` send's ENOENT error (status 404, not `expose`) reached the app's
-    // error handler as a 500 with a stack trace in the log (QA of task 10).
-    (_req: express.Request, res: express.Response) => {
-      res.status(404).json({ error: 'not_found' });
-    },
-  );
+  // Fixed assets committed in public/email/ (the digest logo) and public/brand/ (the push
+  // notification icon): readable cross-origin by mail clients, image proxies and the browser's
+  // notification UI, cached for a year. Never overwrite a file here — a changed asset gets a
+  // new file name, or readers keep the old one.
+  for (const dir of ['email', 'brand']) {
+    app.use(
+      `/${dir}`,
+      (_req, res, next) => {
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        next();
+      },
+      express.static(path.join(publicDir, dir), { immutable: true, maxAge: '365d', index: false }),
+      // Nothing else is served from here: a missing file (or a `..` path) is a plain 404. With
+      // `fallthrough: false` send's ENOENT error (status 404, not `expose`) reached the app's
+      // error handler as a 500 with a stack trace in the log (QA of task 10).
+      (_req: express.Request, res: express.Response) => {
+        res.status(404).json({ error: 'not_found' });
+      },
+    );
+  }
 
   app.use(express.static(publicDir));
 
