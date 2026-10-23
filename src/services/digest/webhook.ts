@@ -319,6 +319,11 @@ async function linkSends(events: Kept[]): Promise<Map<string, string>> {
   return map;
 }
 
+/** A total order for lock acquisition (any consistent order will do). */
+function byKey(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /**
  * Stores one chunk in ONE transaction, a constant number of statements however
  * many events it holds:
@@ -334,8 +339,11 @@ async function linkSends(events: Kept[]): Promise<Map<string, string>> {
 async function storeChunk(chunk: { e: Kept; sendId: string | null; meta: Prisma.InputJsonObject }[], now: Date): Promise<Set<string>> {
   return prisma.$transaction(
     async (tx) => {
+      // Rows are inserted in key order: two concurrent deliveries that share keys
+      // then take their row locks in the same order and wait instead of deadlocking
+      // (measured: two reversed 1,000-address batches deadlocked 10 rounds in 10).
       const created = await tx.emailEvent.createManyAndReturn({
-        data: chunk.map(({ e, sendId, meta }) => ({
+        data: [...chunk].sort((a, b) => byKey(a.e.dedupeKey, b.e.dedupeKey)).map(({ e, sendId, meta }) => ({
           type: e.type,
           mcCampaignId: e.mcCampaignId,
           sendId,
@@ -357,7 +365,7 @@ async function storeChunk(chunk: { e: Kept; sendId: string | null; meta: Prisma.
       }
       if (firstReason.size > 0) {
         await tx.emailSuppression.createMany({
-          data: [...firstReason].map(([email, reason]) => ({
+          data: [...firstReason].sort(([a], [b]) => byKey(a, b)).map(([email, reason]) => ({
             email,
             reason,
             source: 'mailercloud_webhook',
@@ -387,6 +395,9 @@ function istDay(now: Date): string {
  * visible: one `NO_ADDRESS` row per IST day per provider event name, its
  * `receivedAt` moved to the latest occurrence and `meta.count` incremented.
  * No address, no hash. Read by `/api/digest/status` (`webhook.lastNoAddressAt`).
+ * `receivedAt` is a `timestamp` (no zone) column: the instant is bound as an ISO
+ * string and converted AT TIME ZONE 'UTC', because a raw JS Date bind is read
+ * in the session's TimeZone (Asia/Kolkata locally → +05:30, as in eventRetention).
  */
 async function recordNoAddress(rawTypes: Map<string, number>, now: Date): Promise<void> {
   const day = istDay(now);
@@ -395,7 +406,7 @@ async function recordNoAddress(rawTypes: Map<string, number>, now: Date): Promis
     const meta = JSON.stringify({ event: rawType, day, count });
     await prisma.$executeRaw`
       INSERT INTO "EmailEvent" (id, provider, type, "dedupeKey", meta, "receivedAt")
-      VALUES (${randomUUID()}, 'mailercloud', 'NO_ADDRESS', ${key}, ${meta}::jsonb, ${now})
+      VALUES (${randomUUID()}, 'mailercloud', 'NO_ADDRESS', ${key}, ${meta}::jsonb, (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC'))
       ON CONFLICT ("dedupeKey") DO UPDATE
         SET "receivedAt" = GREATEST("EmailEvent"."receivedAt", EXCLUDED."receivedAt"),
             meta = jsonb_set("EmailEvent".meta, '{count}',
@@ -449,8 +460,10 @@ export async function handleMailercloudWebhook(
       kept.push(n);
     }
   }
-  if (noAddress.size > 0) await recordNoAddress(noAddress, now);
-  if (kept.length === 0) return out;
+  if (kept.length === 0) {
+    if (noAddress.size > 0) await recordNoAddress(noAddress, now);
+    return out;
+  }
 
   const sends = await linkSends(kept);
   const rows = kept.map((e) => ({
@@ -461,10 +474,12 @@ export async function handleMailercloudWebhook(
       null,
     meta: metaOf(e, cfg),
   }));
-  const nudge = new Set<string>();
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
     const chunk = rows.slice(i, i + CHUNK_SIZE);
     const fresh = await storeChunk(chunk, now);
+    // Nudge right after the chunk commits: if a LATER chunk fails, the retry
+    // sees these campaign events as duplicates and would never nudge again.
+    const nudge = new Set<string>();
     for (const { e, sendId } of chunk) {
       // Two events with the same key in one delivery: the first is new, the rest duplicates.
       if (fresh.delete(e.dedupeKey)) {
@@ -475,7 +490,10 @@ export async function handleMailercloudWebhook(
         out.duplicates++;
       }
     }
+    for (const sendId of nudge) await bringPollForward(sendId, now);
   }
-  for (const sendId of nudge) await bringPollForward(sendId, now);
+  // Counted only once the delivery is stored: a store failure → 500 → Mailercloud
+  // retries the whole body, and counting first would add the same events per retry.
+  if (noAddress.size > 0) await recordNoAddress(noAddress, now);
   return out;
 }

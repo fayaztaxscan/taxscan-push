@@ -5,10 +5,10 @@ import { prisma } from '../lib/prisma';
 import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import { advanceRun } from '../services/digest/runner';
 import { alertCopy } from '../services/digest/alerts';
-import { digestAttention } from '../services/digest/status';
+import { digestAttention, digestStatus } from '../services/digest/status';
 import { digestHistory } from '../services/digest/screen';
 import { checkWebhookLiveness, webhookHealth, WEBHOOK_SILENT_AFTER_MS } from '../services/digest/webhookLiveness';
-import { normaliseEvent, webhookTokenMatches } from '../services/digest/webhook';
+import { handleMailercloudWebhook, normaliseEvent, webhookTokenMatches } from '../services/digest/webhook';
 import { istDateOf } from '../services/digest/retryPolicy';
 import { FakeSender } from './digestFakeSender';
 
@@ -524,6 +524,137 @@ describe('QA follow-ups', () => {
     const c = cfg();
     expect(digestAttention({ enabled: true, now: new Date(), cfg: c, run: null, sends: [], webhookNoAddress: 3 })?.code).toBe('webhook_no_address');
     expect(digestAttention({ enabled: true, now: new Date(), cfg: c, run: null, sends: [], webhookNoAddress: 0 })).toBeNull();
+  });
+});
+
+describe('QA verification of e43217f', () => {
+  it('NO_ADDRESS receivedAt is the real instant, not shifted by the DB session time zone', async () => {
+    // The local dev DB runs with TimeZone=Asia/Kolkata: a raw-SQL Date bind used
+    // to land +05:30 in the future (the Event-retention ::timestamp bug again).
+    const now = new Date(Date.now() - 60_000);
+    await handleMailercloudWebhook({ event: 'abuse', campaign_id: camp() }, { cfg: cfg(), now }); // event name used only here
+    const row = await prisma.emailEvent.findFirstOrThrow({ where: { type: 'NO_ADDRESS', meta: { path: ['event'], equals: 'abuse' } } });
+    expect(row.receivedAt.toISOString()).toBe(now.toISOString());
+    const h = await webhookHealth({ portal: `${PORTAL_PREFIX}none`, cfg: cfg(), now: new Date() });
+    expect(Date.parse(h.lastNoAddressAt!)).toBeLessThanOrEqual(Date.now()); // never in the future
+  });
+
+  it('lastSeenAt: a batch mixing a replayed and a new event for one address moves it; an all-replay batch does not', async () => {
+    const a = addr('mix');
+    const c1 = camp();
+    const c2 = camp();
+    const t0 = new Date(Date.now() - 10 * 60_000);
+    const t1 = new Date(Date.now() - 5 * 60_000);
+    const t2 = new Date(Date.now() - 60_000);
+    await handleMailercloudWebhook({ event: 'unsubscribe', email: a, campaign_id: c1 }, { cfg: cfg(), now: t0 });
+    const r = await handleMailercloudWebhook(
+      [
+        { event: 'unsubscribe', email: a, campaign_id: c1 }, // replay
+        { event: 'hard_bounce', email: a, campaign_id: c2 }, // new
+        { event: 'hard_bounce', email: a, campaign_id: c2 }, // same key twice in one batch
+      ],
+      { cfg: cfg(), now: t1 },
+    );
+    expect(r).toMatchObject({ stored: 1, duplicates: 2 });
+    let s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(s.reason).toBe('UNSUBSCRIBE');
+    expect(s.firstSeenAt.getTime()).toBe(t0.getTime());
+    expect(s.lastSeenAt.getTime()).toBe(t1.getTime());
+    await handleMailercloudWebhook(
+      [
+        { event: 'unsubscribe', email: a, campaign_id: c1 },
+        { event: 'hard_bounce', email: a, campaign_id: c2 },
+      ],
+      { cfg: cfg(), now: t2 },
+    );
+    s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(s.lastSeenAt.getTime()).toBe(t1.getTime());
+  });
+
+  it('rate limit: the valid-token ceiling 429s a valid flood, and does not spend the failed-token budget', async () => {
+    const a = app(cfg(), undefined, { invalidPerMin: 2, validPerMin: 2 });
+    const ok = [];
+    for (let i = 0; i < 3; i++) ok.push((await request(a).post(URL_OK).send({ event: 'campaign_opened' })).status);
+    expect(ok).toEqual([200, 200, 429]);
+    const wrong = randomBytes(32).toString('hex');
+    expect((await request(a).post(`/api/webhooks/mailercloud/${wrong}`).send({})).status).toBe(404);
+  });
+
+  it('a mid-batch store failure: 500 path, retry counts each event once, NO_ADDRESS once, poll nudge not lost', async () => {
+    const later = new Date(Date.now() + 50 * 60_000);
+    const { send, mcCampaignId } = await runWithSend({ state: 'SCHEDULED', sentConfirmedAt: null, nextAttemptAt: later });
+    const id = `${CAMP}-chunkfail`;
+    const events: object[] = [{ event: 'campaign_sent', campaign_id: mcCampaignId }, { event: 'campaign_unsubscribed', campaign_id: id }];
+    for (let i = 0; i < 1200; i++) events.push({ event: 'unsubscribe', email: `${ADDR_LOCAL}.cf${i}@example.invalid`, campaign_id: id });
+    const realTx = prisma.$transaction.bind(prisma);
+    let calls = 0;
+    const spy = jest.spyOn(prisma, '$transaction').mockImplementation(((...args: Parameters<typeof prisma.$transaction>) => {
+      calls++;
+      if (calls === 2) return Promise.reject(new Error('simulated chunk-2 failure'));
+      return (realTx as (...a: unknown[]) => unknown)(...args);
+    }) as typeof prisma.$transaction);
+    try {
+      await expect(handleMailercloudWebhook(events, { cfg: cfg() })).rejects.toThrow('simulated');
+    } finally {
+      spy.mockRestore();
+    }
+    // Chunk 1 committed; chunk 2 did not.
+    expect(await prisma.emailEvent.count({ where: { mcCampaignId: id } })).toBe(999);
+    const noAddr = () =>
+      prisma.emailEvent.findFirst({ where: { type: 'NO_ADDRESS', meta: { path: ['event'], equals: 'campaign_unsubscribed' } } }); // used only here
+    expect(await noAddr()).toBeNull(); // counted only once the delivery is stored
+    const s = await prisma.digestSend.findUniqueOrThrow({ where: { id: send.id } });
+    expect(s.nextAttemptAt!.getTime()).toBeLessThan(later.getTime()); // nudged though chunk 2 failed
+    expect(s.state).toBe('SCHEDULED');
+
+    const retry = await handleMailercloudWebhook(events, { cfg: cfg() });
+    expect(retry).toMatchObject({ stored: 201, duplicates: 1000 });
+    expect(await prisma.emailEvent.count({ where: { mcCampaignId: id } })).toBe(1200);
+    expect(await prisma.emailSuppression.count({ where: { email: { startsWith: `${ADDR_LOCAL}.cf` } } })).toBe(1200);
+    expect(((await noAddr())!.meta as { count: number }).count).toBe(1);
+  });
+});
+
+describe('QA verification of e43217f: proof by campaign id, banner window, per-day count', () => {
+  it('history: a campaign_sent stored with our mcCampaignId but no sendId link still proves coverage', async () => {
+    const { mcCampaignId, portal } = await runWithSend();
+    await prisma.emailEvent.create({
+      data: { type: 'CAMPAIGN_SENT', mcCampaignId, sendId: null, dedupeKey: sha(`unlinked-${mcCampaignId}`), meta: { event: 'campaign_sent' } },
+    });
+    expect((await digestHistory({ portal, cfg: cfg() }))[0].variants[0]).toMatchObject({ unsubscribes: 0, bounces: 0, complaints: 0 });
+  });
+
+  it('status: webhook_no_address banner counts the latest IST day only, and clears after 24 h', async () => {
+    await prisma.emailEvent.deleteMany({ where: { type: 'NO_ADDRESS' } });
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 26 * 3_600_000); // a different IST day
+    const five = Array.from({ length: 5 }, () => ({ event: 'unsubscribed', campaign_id: camp() }));
+    await handleMailercloudWebhook(five, { cfg: cfg(), now: yesterday });
+    await handleMailercloudWebhook([{ event: 'abuse' }, { event: 'abuse' }], { cfg: cfg(), now });
+    const portal = `${PORTAL_PREFIX}${RUN}-nobanner`;
+    const h = await webhookHealth({ portal, cfg: cfg(), now });
+    expect(h).toMatchObject({ lastNoAddressAt: now.toISOString(), noAddressCount: 2 });
+    const on = await digestStatus({ portal, cfg: cfg(), now });
+    expect(on.attention?.code).toBe('webhook_no_address');
+    expect(on.attention?.headline).toMatch(/^2 /);
+    const later = await digestStatus({ portal, cfg: cfg(), now: new Date(now.getTime() + 25 * 3_600_000) });
+    expect(later.attention).toBeNull();
+    expect(later.webhook.lastNoAddressAt).toBe(now.toISOString()); // still reported, just no banner
+    const off = await digestStatus({ portal, cfg: cfg({ DIGEST_WEBHOOKS_ENABLED: 'false' }), now });
+    expect(off.attention).toBeNull();
+  });
+});
+
+describe('QA verification of e43217f: concurrent batches', () => {
+  it('two concurrent deliveries sharing addresses in opposite order both store (no deadlock → no 500)', async () => {
+    for (let round = 0; round < 3; round++) {
+      const addrs = Array.from({ length: 500 }, (_, i) => `${ADDR_LOCAL}.dl${round}.${i}@example.invalid`);
+      const a = addrs.map((email) => ({ event: 'unsubscribe', email, campaign_id: `${CAMP}-dlA${round}` }));
+      const b = [...addrs].reverse().map((email) => ({ event: 'hard_bounce', email, campaign_id: `${CAMP}-dlB${round}` }));
+      const rs = await Promise.allSettled([handleMailercloudWebhook(a, { cfg: cfg() }), handleMailercloudWebhook(b, { cfg: cfg() })]);
+      expect(rs.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(await prisma.emailSuppression.count({ where: { email: { startsWith: `${ADDR_LOCAL}.dl${round}.` } } })).toBe(500);
+    }
   });
 });
 
