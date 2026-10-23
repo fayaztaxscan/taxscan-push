@@ -22,6 +22,18 @@ subscriber must opt in again from zero.
 ledger. Restore without it and the poller treats every article currently in the
 feeds as new, re-pushing stories subscribers already received.
 
+**Email digest (added 2026-10-23, backup format v2).** The export also carries:
+
+| Table | Why |
+|---|---|
+| **`EmailSuppression`** | Who must not be mailed. An opt-out cannot be re-derived; restoring without it would re-mail people who unsubscribed, bounced or complained. Holds addresses. |
+| `DigestTemplate`, `DigestAd`, `DigestAdImage` | Creative work. Image bytes are included as `{"$base64": …}` (each ≤ 150 KB, so a few MB for a few dozen ads), so a restored system can still draw every ad. |
+| `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` | The run ledger. `DigestRun`'s unique (portal, runDate) IS the one-digest-a-day rule: without it a same-day restore could send a second digest. `DigestSend` keeps the Mailercloud campaign id (a draft is resumed, never re-created) and the frozen html (≤ 30 days). `DigestItem` is the 90-day dedupe: without it yesterday's stories come back. Placements drive ad rotation and the per-ad report. |
+| `EmailEvent` | The live half of the digest counts and the webhook proof (hashes only, ≤ 90 days). |
+
+Restore order is the export order (foreign keys): `DigestAdImage` → `DigestAd`, and
+`DigestRun` → `DigestSend` → `DigestItem` / `DigestAdPlacement`.
+
 ## ⚠️ The VAPID keypair is half of every restore
 
 `VAPID_PRIVATE_KEY` is 43 characters and lives in Railway's variables and in
@@ -144,8 +156,10 @@ npm run restore:backup -- --file backup.ndjson.gz --only Subscriber --yes
 It prints the target database and refuses to write without `--yes`, because the
 realistic way to cause harm is running it against the wrong database while
 panicking. Every row is upserted on its natural key (`Subscriber.endpoint`,
-`User.email`, `FeedItem.guid`), so re-running is safe and a partial restore can
-simply be repeated.
+`User.email`, `FeedItem.guid`, `EmailSuppression.email`, `EmailEvent.dedupeKey`;
+the id elsewhere), so re-running is safe and a partial restore can simply be
+repeated. A row that fails is reported by table, Prisma error name and code only
+(never its values, which can hold an address).
 
 The format is one JSON object per line behind a header line. It restores with
 this script, with `psql`, or by hand — a backup you can only read with the
@@ -205,6 +219,24 @@ as designed.
 
 The scratch database and the downloaded file were destroyed afterwards — both
 held real subscriber endpoints.
+
+**Drill 3 — digest tables, full rebuild into an empty database (2026-10-23,
+local only, no R2).** After format v2:
+
+1. Seeded the LOCAL dev database (`taxscan_push_dev`) with rehearsal rows on top of
+   the sample digest data: 4 `EmailSuppression` (UNSUBSCRIBE, HARD_BOUNCE, SPAM,
+   MANUAL; `@rehearsal.example.invalid`), 1 template, 1 ad on an existing image, 1
+   placement, `EmailEvent` rows with and without `meta` (a null Json column).
+2. `npm run backup:now -- --out <scratch>/local-backup.ndjson.gz` → 80 rows, 9,526 bytes.
+3. `createdb taxscan_push_restore_test` (empty) → `prisma migrate deploy` → all migrations.
+4. `restore:backup --yes` → 0 skipped: EmailSuppression 4 · DigestTemplate 1 ·
+   DigestAdImage 2 · DigestAd 1 · DigestRun 6 · DigestSend 12 · DigestItem 39 ·
+   DigestAdPlacement 1 · EmailEvent 4 (plus Subscriber 2, User 2, Campaign 2, EventRollup 4).
+5. Compared every restored table with the source: same count AND the same md5 over
+   `row_to_json` of every row in id order — **identical for all 13 tables**, including
+   image bytes, Json columns and timestamps. A second `restore --yes` changed nothing
+   (idempotent).
+6. Dropped the scratch database, deleted the file and the rehearsal rows.
 
 **Not yet rehearsed:** an actual push send from a rebuilt deployment, because
 that would deliver real notifications to real people.

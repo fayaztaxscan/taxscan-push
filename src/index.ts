@@ -18,6 +18,7 @@ import { startReadsReportCron } from './services/readsReport';
 import { startSearchSurfacesSync } from './services/searchSurfaces';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
 import { startEventRetentionSweeper } from './sweepers/eventRetention';
+import { startDigestRetentionSweeper } from './sweepers/digestRetention';
 import { startBackupCron } from './services/backup';
 import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
@@ -62,6 +63,7 @@ app.listen(env.port, () => {
   startSearchSurfacesSync();
   startAuditRetentionSweeper();
   startEventRetentionSweeper();
+  startDigestRetentionSweeper();
   startBackupCron();
   startMetricsWarmer();
   startDigestScheduler();

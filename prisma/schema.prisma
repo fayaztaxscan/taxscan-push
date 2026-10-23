@@ -537,6 +537,12 @@ model DigestSend {
   // and why (RenderError text, redacted). Null when no fallback happened.
   templateFallbackFromId String?
   templateFallbackReason String?
+  // Task 11 (retention): stamped by the nightly fold when it deletes this send's
+  // campaign_sent / campaign_error events, so the "the webhook was receiving" proof that
+  // digestSendStats() needs outlives the events themselves (else old sends turn to "—").
+  webhookProofAt      DateTime?
+  // Task 11: when the frozen html/text were nulled (DIGEST_HTML_RETENTION_DAYS). Null = still stored.
+  htmlPurgedAt        DateTime?
 
   run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   placements DigestAdPlacement[]

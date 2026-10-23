@@ -447,7 +447,7 @@ onMounted(load);
             <template v-if="variant?.contentPending">
               Not built yet: an ad slot could not be filled. Fix it on the Ads screen, then press Retry now.
             </template>
-            <template v-else>The stored copy of this digest has expired.</template>
+            <template v-else>No longer stored: a digest email is kept for 30 days. Its stories, ads and counts are kept.</template>
           </EmailPreviewFrame>
 
           <div class="test-row">

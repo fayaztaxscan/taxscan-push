@@ -22,6 +22,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
+    "digest-retention": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/digest-retention-run.ts",
     "digest:seed-sample": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/seed-digest-sample.ts",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "event-retention": "ts-node-dev --transpile-only --no-notify --respawn=false scripts/event-retention-run.ts",

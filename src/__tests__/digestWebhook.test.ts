@@ -343,15 +343,17 @@ describe('our digest campaigns', () => {
     expect(send.id).toBeTruthy();
   });
 
-  it('history: folded counts alone also prove coverage', async () => {
+  it('history: the fold\'s webhookProofAt stamp proves coverage; folded counts alone do not (task 11)', async () => {
     const { send, portal } = await runWithSend();
     await prisma.digestSend.update({ where: { id: send.id }, data: { rolledBounce: 3 } });
+    expect((await digestHistory({ portal, cfg: cfg() }))[0].variants[0]).toMatchObject({ unsubscribes: null, bounces: null, complaints: null });
+    await prisma.digestSend.update({ where: { id: send.id }, data: { webhookProofAt: new Date() } });
     expect((await digestHistory({ portal, cfg: cfg() }))[0].variants[0]).toMatchObject({ unsubscribes: 0, bounces: 3, complaints: 0 });
   });
 
   it('history shows rolled + live unsubscribes/bounces/complaints only while webhooks are on', async () => {
     const { send, mcCampaignId, portal } = await runWithSend();
-    await prisma.digestSend.update({ where: { id: send.id }, data: { rolledUnsub: 2, rolledSpam: 1, rolledBounce: 1 } });
+    await prisma.digestSend.update({ where: { id: send.id }, data: { rolledUnsub: 2, rolledSpam: 1, rolledBounce: 1, webhookProofAt: new Date() } });
     await request(app()).post(URL_OK).send([
       { event: 'unsubscribe', email: addr('h1'), campaign_id: mcCampaignId },
       { event: 'unsubscribe', email: addr('h2'), campaign_id: mcCampaignId },

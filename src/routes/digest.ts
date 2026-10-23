@@ -152,7 +152,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       if (!send.html && send.contentPendingAt) {
         return res.status(409).type('text/plain').send('Not built yet: an ad slot could not be filled. Fix it on the Ads screen, then press Retry now.');
       }
-      if (!send.html) return res.status(410).type('text/plain').send('The stored copy of this digest has expired.');
+      if (!send.html) return res.status(410).type('text/plain').send('No longer stored: a digest email is kept for 30 days. Its stories, ads and counts are kept.');
       return res.status(200).type('text/html; charset=utf-8').send(send.html);
     } catch (err) {
       return next(err);
@@ -393,7 +393,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       if (!send.mcCampaignId) {
         return res.status(409).json({ error: 'no_draft', message: 'The Mailercloud draft has not been created yet.' });
       }
-      if (!send.html) return res.status(409).json({ error: 'expired', message: 'The stored copy of this digest has expired.' });
+      if (!send.html) return res.status(409).json({ error: 'expired', message: 'No longer stored: a digest email is kept for 30 days. Its stories, ads and counts are kept.' });
       const last = lastTestAt.get(user.id) ?? 0;
       if (Date.now() - last < testGapMs) {
         return res.status(429).json({ error: 'too_soon', message: 'A test was just sent. Wait a few seconds before sending another.' });

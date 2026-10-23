@@ -31,8 +31,10 @@ import { safeErrorLog } from '../lib/httpErrors';
 
 /**
  * The tables that go in, and the reasoning for each. Order matters on restore:
- * nothing here has a foreign key onto anything else here, but Campaign is
- * referenced by Event (which is NOT exported), so campaigns come first anyway.
+ * the push tables have no foreign key onto each other (Campaign is referenced
+ * by Event, which is NOT exported, so campaigns come first anyway); the digest
+ * tables do, see the end of the list. DigestItem.campaignId points at Campaign,
+ * which is restored earlier.
  *
  * DELIBERATELY EXCLUDED:
  * - `Event` (1.2 GB, 86% of the database) — delivery history. Losing it costs
@@ -47,6 +49,9 @@ import { safeErrorLog } from '../lib/httpErrors';
  * - `AuditLog` — append-only compliance record with its own retention sweeper
  *   and an immutability trigger. Re-inserting it elsewhere would misrepresent
  *   when those rows were written.
+ *
+ * Restore order = this list's order: DigestAdImage before DigestAd, DigestRun →
+ * DigestSend → DigestItem / DigestAdPlacement (FKs onto send and ad).
  */
 export const BACKUP_TABLES = [
   // The entire reason this exists. endpoint + p256dh + auth is exactly what
@@ -65,6 +70,33 @@ export const BACKUP_TABLES = [
   // Lifetime counts of Event rows the retention sweeper has deleted. A few
   // rows, and they cannot be re-derived once the rows are gone.
   'EventRollup',
+
+  // ---- Email digest (design §3 "Backup", task 11). Order = restore order (FKs). ----
+  // Who must NOT be mailed. An opt-out cannot be re-derived after a disaster, and
+  // re-mailing someone who unsubscribed is the one failure this table exists to
+  // prevent. Holds addresses: this file is personal data (as Subscriber already is).
+  'EmailSuppression',
+  // Creative work: templates and house ads cannot be re-derived either.
+  'DigestTemplate',
+  // Ad creatives WITH their bytes (base64 in the NDJSON). Each is ≤ 150 KB by
+  // validation, so ~200 KB base64; a pool of a few dozen adds a few MB, which is
+  // the price of a restore that can still draw every ad. Must precede DigestAd.
+  'DigestAdImage',
+  'DigestAd',
+  // The run ledger. Without DigestRun a restored system no longer knows a digest
+  // went out today — unique (portal, runDate) IS the one-per-day rule — so it
+  // could send a second one. DigestSend carries the provider campaign id (a
+  // restored CREATED draft is resumed, never re-created) and the frozen html
+  // (≤ 30 days × 2 × ~50 KB, gzips ~10×). DigestItem is the 90-day articleKey
+  // dedupe and the roll-forward source: without it yesterday's stories come back.
+  'DigestRun',
+  'DigestSend',
+  'DigestItem',
+  // Ad rotation (least recently placed) and the per-ad report. Small.
+  'DigestAdPlacement',
+  // The live half of every digest statistic (rolled + live) and the webhook
+  // proof. Hashes only, no addresses; ≤ 90 days by the retention fold.
+  'EmailEvent',
 ] as const;
 
 export type BackupTable = (typeof BACKUP_TABLES)[number];
@@ -113,7 +145,36 @@ function delegateFor(table: BackupTable) {
       return prisma.feedItem;
     case 'EventRollup':
       return prisma.eventRollup;
+    case 'EmailSuppression':
+      return prisma.emailSuppression;
+    case 'DigestTemplate':
+      return prisma.digestTemplate;
+    case 'DigestAdImage':
+      return prisma.digestAdImage;
+    case 'DigestAd':
+      return prisma.digestAd;
+    case 'DigestRun':
+      return prisma.digestRun;
+    case 'DigestSend':
+      return prisma.digestSend;
+    case 'DigestItem':
+      return prisma.digestItem;
+    case 'DigestAdPlacement':
+      return prisma.digestAdPlacement;
+    case 'EmailEvent':
+      return prisma.emailEvent;
   }
+}
+
+/**
+ * JSON for one row. Binary columns (DigestAdImage.bytes) become `{"$base64": "…"}`;
+ * `JSON.stringify` of a Uint8Array would otherwise write one key per byte. The
+ * restore script turns them back into bytes.
+ */
+export function rowJson(table: BackupTable, row: Record<string, unknown>): string {
+  return JSON.stringify({ _table: table, ...row }, (_k, v: unknown) =>
+    v instanceof Uint8Array ? { $base64: Buffer.from(v).toString('base64') } : v,
+  );
 }
 
 export function r2ConfigFromEnv(): R2Config {
@@ -143,7 +204,8 @@ export async function buildBackup(opts?: { now?: Date }): Promise<{ body: Buffer
   lines.push(
     JSON.stringify({
       _format: 'taxscan-push-backup',
-      version: 1,
+      // v2 (2026-10-23): the email-digest tables; binary columns as {"$base64": …}.
+      version: 2,
       generatedAt: now.toISOString(),
       tables: BACKUP_TABLES,
       // Say so in the file itself: someone restoring years from now should not
@@ -169,7 +231,7 @@ export async function buildBackup(opts?: { now?: Date }): Promise<{ body: Buffer
         orderBy: { id: 'asc' },
       });
       if (batch.length === 0) break;
-      for (const row of batch) lines.push(JSON.stringify({ _table: table, ...row }));
+      for (const row of batch) lines.push(rowJson(table, row as Record<string, unknown>));
       count += batch.length;
       cursor = batch[batch.length - 1].id;
       if (batch.length < 1000) break;

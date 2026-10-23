@@ -375,7 +375,8 @@ event: `marketing_consent = true` with a timestamp **newer than the suppression'
 - Implementation of the lift lands with the Feed 1 task. Nothing in task 8 lifts a suppression.
 
 **Backup.** Add `DigestTemplate`, `DigestAd`, `DigestAdImage` and `EmailSuppression` to `backup.ts`.
-Opt-outs and creative work cannot be re-derived after a restore.
+Opt-outs and creative work cannot be re-derived after a restore. *(Built in task 11, which also added the run
+ledger — `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` — and `EmailEvent`; see the task 11 note.)*
 
 **Query cost.** The builder reads `Campaign` by `portal` + `createdAt` range once a day. There is no
 `createdAt` index today. Before deciding whether to add `@@index([portal, createdAt])`, run
@@ -463,6 +464,8 @@ All flags default OFF. The owner sets them on Railway.
 | `DIGEST_MAX_IMAGE_KB` | `600` | Task 9: distinct ad-image weight per email; above it the build logs a warning. |
 | `DIGEST_ASSET_BASE_URL` | `https://push.taxscan.in` | Task 9: where `/email-assets/<sha>.<ext>` is served from (ad image URLs in the email). |
 | `DIGEST_HTML_RETENTION_DAYS` / `EMAIL_EVENT_RETENTION_DAYS` | `30` / `90` | |
+| `DIGEST_RETENTION_ENABLED` | `false` | Task 11: the nightly fold + html nulling (`docs/DIGEST_RETENTION.md`). Independent of `DIGEST_ENABLED`. Dry run: `npm run digest-retention`. |
+| `DIGEST_RETENTION_CRON` / `_BATCH` / `_MAX_BATCHES` | `45 3 * * *` / `1000` / `50` | |
 
 **Daily timeline** (IST, with the default 07:30 send):
 
@@ -895,8 +898,8 @@ agents.
      that campaign (by `sendId` or `mcCampaignId`), or folded `rolled* > 0`. Otherwise "—", and always
      "—" while `DIGEST_WEBHOOKS_ENABLED` is off. An env flag has no history, and "any event after the send"
      would wrongly cover sends made before the webhook was registered; a reader event alone is not proof
-     either. **Task 11:** the fold must keep this proof (for example, stamp a column) when it deletes old
-     campaign events.
+     either. **Task 11 (built):** the fold stamps `DigestSend.webhookProofAt` before it deletes old
+     campaign events, and that stamp is the proof from then on; folded counts alone no longer are.
    - **Re-subscribe (decided 23 Oct 2026, built with the CMS Feed 1 task):** an explicit opt-in dated after
      the suppression's `lastSeenAt` lifts UNSUBSCRIBE, HARD_BOUNCE and SPAM alike; stale consent state lifts
      nothing; MANUAL is never lifted automatically (§3). **For that task:** a provider replay of an old
@@ -1127,6 +1130,31 @@ agents.
     nulled after 30 days, and the new tables added to `backup.ts`.
     *Accept:* counts are identical before and after the fold, and a backup and restore rehearsal
     includes EmailSuppression.
+    *Built 2026-10-23 (migration `…_digest_retention`: `DigestSend.webhookProofAt`, `htmlPurgedAt`, new nullable
+    columns only; `src/sweepers/digestRetention.ts`, `scripts/digest-retention-run.ts` (`npm run digest-retention`),
+    `backup.ts` + `scripts/restore-backup.ts` (format v2); tests `digestRetention`; docs `docs/DIGEST_RETENTION.md`,
+    `docs/BACKUPS.md` drill 3).*
+    - **Fold** (flag `DIGEST_RETENTION_ENABLED`, default off; 03:45 IST): `EmailEvent` older than 90 days, oldest
+      first, batches of 1,000, each one `$transaction` with `{timeout: 60_000}`. UNSUBSCRIBE / HARD_BOUNCE / SPAM with
+      a `sendId` → `rolledUnsub/Bounce/Spam` += n; CAMPAIGN_SENT / CAMPAIGN_ERROR → `webhookProofAt` stamped on the
+      sends they prove (by `sendId` or `mcCampaignId`, the stats rule) first; NO_ADDRESS, account-wide events
+      (`sendId` null) and any other type are deleted unfolded. `EmailSuppression` is never touched.
+    - **Stats** (`digestSendStats`, still the single implementation): covered = a live proof event OR
+      `webhookProofAt`. *Changed:* folded counts > 0 are no longer proof, so the fold cannot turn a "—" into a
+      number; a missing map entry still means unknown, never 0. Parity before/after is `toEqual`.
+    - **html**: `html`/`text` nulled when the run's IST date is older than 30 days (`htmlPurgedAt` stamped). Preview
+      410 and the screen say "No longer stored: a digest email is kept for 30 days. Its stories, ads and counts are
+      kept." `DigestItem` and placements are kept.
+    - **Backup v2**: `EmailSuppression`, `DigestTemplate`, `DigestAdImage` (bytes as `{"$base64"}`, ≤ 150 KB each —
+      included: a few MB for a few dozen creatives, and a restore can still draw every ad), `DigestAd`, `DigestRun`,
+      `DigestSend`, `DigestItem`, `DigestAdPlacement`, `EmailEvent`, in FK order. The run ledger is included because
+      unique (portal, runDate) is the one-per-day rule (a same-day restore without it could send a second digest),
+      `DigestSend` holds the campaign id, and `DigestItem` is the 90-day dedupe. Restore upserts on natural keys
+      (suppression email, event dedupeKey) else id; Json nulls as `DbNull`; failures logged without values.
+    - **Rehearsal** (local, no R2): dev → `backup:now --out` → empty `taxscan_push_restore_test` → `migrate deploy`
+      → `restore --yes`: all 13 tables identical by count and per-row md5, second restore idempotent; scratch DB
+      dropped.
+    - Not built: a run row for the sweeper (like the push event sweeper, a failed night is log-only).
 12. **Documentation and pilot runbook.** Guide section, flag table, the Mailercloud checks in §12.14 as
     a checklist, and the stage 1–4 runbook. Updating `CLAUDE.md`/`NEXT_STEP.md` is the owner's call.
     *Accept:* the owner signs off on the runbook before stage 2.

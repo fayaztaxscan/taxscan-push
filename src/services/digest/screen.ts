@@ -159,7 +159,7 @@ export function digestActions(i: ActionsInput): DigestActions {
         : !s.mcCampaignId
           ? off('The Mailercloud draft has not been created yet.')
           : !s.hasHtml
-            ? off('The stored copy of this digest has expired.')
+            ? off('No longer stored: a digest email is kept for 30 days. Its stories, ads and counts are kept.')
             : on();
   }
   return { approve, hold, sendNow, retry, testSend };

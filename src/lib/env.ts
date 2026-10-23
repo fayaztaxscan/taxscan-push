@@ -341,6 +341,19 @@ export const env = {
     // the next night continues from where it stopped.
     maxBatches: nonNegIntEnv('EVENT_RETENTION_MAX_BATCHES', 400),
   },
+  // Digest retention (src/sweepers/digestRetention.ts, design task 11). Folds EmailEvent
+  // rows older than EMAIL_EVENT_RETENTION_DAYS (90) into DigestSend.rolled* and deletes
+  // them; nulls DigestSend.html/text older than DIGEST_HTML_RETENTION_DAYS (30).
+  // EmailSuppression is never touched. Default OFF: it deletes rows — dry-run first
+  // with `npm run digest-retention`. 03:45 IST: after the audit sweep (03:00) and the
+  // event/feed retention (03:30), clear of the reconciler (:00/:20/:40) and the backup (02:20).
+  digestRetention: {
+    enabled: process.env.DIGEST_RETENTION_ENABLED === 'true',
+    cron: process.env.DIGEST_RETENTION_CRON ?? '45 3 * * *',
+    batchSize: intEnv('DIGEST_RETENTION_BATCH', 1000),
+    // Batches per nightly run; 0 = until clear. ~50 events/day, so 50 × 1,000 is ample.
+    maxBatches: nonNegIntEnv('DIGEST_RETENTION_MAX_BATCHES', 50),
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.

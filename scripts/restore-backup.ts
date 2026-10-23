@@ -21,11 +21,29 @@
 import { createReadStream, existsSync } from 'node:fs';
 import { createGunzip } from 'node:zlib';
 import { createInterface } from 'node:readline';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
 
 type Row = Record<string, unknown> & { _table?: string };
 
-const RESTORABLE = ['Subscriber', 'User', 'ReportRecipient', 'Campaign', 'FeedItem', 'EventRollup'] as const;
+// The same list, in the same (foreign-key) order, as BACKUP_TABLES in src/services/backup.ts.
+const RESTORABLE = [
+  'Subscriber',
+  'User',
+  'ReportRecipient',
+  'Campaign',
+  'FeedItem',
+  'EventRollup',
+  'EmailSuppression',
+  'DigestTemplate',
+  'DigestAdImage',
+  'DigestAd',
+  'DigestRun',
+  'DigestSend',
+  'DigestItem',
+  'DigestAdPlacement',
+  'EmailEvent',
+] as const;
 type Restorable = (typeof RESTORABLE)[number];
 
 function arg(name: string): string | undefined {
@@ -34,13 +52,27 @@ function arg(name: string): string | undefined {
 }
 const has = (name: string) => process.argv.includes(`--${name}`);
 
-/** Dates arrive as ISO strings in JSON and must go back as Date objects. */
-function revive(row: Row): Record<string, unknown> {
+/** Json columns per model (from Prisma's own schema), so a null there goes back as SQL NULL. */
+const JSON_FIELDS = new Map<string, Set<string>>(
+  Prisma.dmmf.datamodel.models.map((m) => [m.name, new Set(m.fields.filter((f) => f.type === 'Json').map((f) => f.name))]),
+);
+
+/**
+ * Dates arrive as ISO strings in JSON and must go back as Date objects; binary
+ * columns arrive as {"$base64": "…"} (backup format v2) and go back as bytes; a
+ * null Json column must be passed as Prisma.DbNull (a bare null is refused).
+ */
+function revive(table: string, row: Row): Record<string, unknown> {
+  const json = JSON_FIELDS.get(table) ?? new Set<string>();
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (k === '_table') continue;
-    out[k] =
-      typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v) ? new Date(v) : v;
+    if (v === null && json.has(k)) out[k] = Prisma.DbNull;
+    else if (v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { $base64?: unknown }).$base64 === 'string' && Object.keys(v).length === 1) {
+      out[k] = Buffer.from((v as { $base64: string }).$base64, 'base64');
+    } else {
+      out[k] = typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v) && !json.has(k) ? new Date(v) : v;
+    }
   }
   return out;
 }
@@ -71,6 +103,36 @@ async function upsert(table: Restorable, data: Record<string, unknown>): Promise
       return;
     case 'EventRollup':
       await prisma.eventRollup.upsert({ where: { type: data.type as never }, create: data as never, update: data as never });
+      return;
+    // Email digest (backup format v2). Natural keys where one exists, else the id.
+    case 'EmailSuppression':
+      // Keyed on the address: an opt-out restored onto a row that already exists keeps it.
+      await prisma.emailSuppression.upsert({ where: { email: data.email as string }, create: data as never, update: data as never });
+      return;
+    case 'DigestTemplate':
+      await prisma.digestTemplate.upsert({ where: { id }, create: data as never, update: data as never });
+      return;
+    case 'DigestAdImage':
+      // Immutable by construction (id = sha256 of the bytes): an existing row is already right.
+      await prisma.digestAdImage.upsert({ where: { id }, create: data as never, update: {} });
+      return;
+    case 'DigestAd':
+      await prisma.digestAd.upsert({ where: { id }, create: data as never, update: data as never });
+      return;
+    case 'DigestRun':
+      await prisma.digestRun.upsert({ where: { id }, create: data as never, update: data as never });
+      return;
+    case 'DigestSend':
+      await prisma.digestSend.upsert({ where: { id }, create: data as never, update: data as never });
+      return;
+    case 'DigestItem':
+      await prisma.digestItem.upsert({ where: { id }, create: data as never, update: data as never });
+      return;
+    case 'DigestAdPlacement':
+      await prisma.digestAdPlacement.upsert({ where: { id }, create: data as never, update: data as never });
+      return;
+    case 'EmailEvent':
+      await prisma.emailEvent.upsert({ where: { dedupeKey: data.dedupeKey as string }, create: data as never, update: data as never });
       return;
   }
 }
@@ -127,9 +189,11 @@ async function main(): Promise<void> {
     counts[table] = (counts[table] ?? 0) + 1;
     if (apply) {
       try {
-        await upsert(table, revive(row));
+        await upsert(table, revive(table, row));
       } catch (e) {
-        console.error(`  line ${lineNo} (${table}): ${e instanceof Error ? e.message : String(e)}`);
+        // Never the message: Prisma quotes the row's values (addresses, endpoints) in it.
+        const pe = e as { name?: string; code?: string; meta?: { target?: unknown } };
+        console.error(`  line ${lineNo} (${table}): ${pe.name ?? 'error'}${pe.code ? ` ${pe.code}` : ''}${pe.meta?.target ? ` target=${JSON.stringify(pe.meta.target)}` : ''}`);
         skipped += 1;
       }
     }

@@ -10,13 +10,17 @@ import { prisma } from '../../lib/prisma';
  * NULL vs 0 — a send is COVERED (its counts are real, possibly 0) only when
  * there is proof our webhook was receiving when it went out: a `campaign_sent`
  * or `campaign_error` event for that campaign (linked by `sendId`, or carrying
- * its `mcCampaignId`), or folded counts (`rolled* > 0`). A send from before the
- * webhook was registered, or while Mailercloud had it switched off, gets no
- * entry in the map → the screen shows "—", never a fake 0. (An env flag has no
- * history, and "any event after the send" would wrongly cover sends made
- * before the webhook was registered.) Task 11's fold must keep that proof
- * when it deletes old campaign events (e.g. stamp a column), or old sends
- * would turn back to "—".
+ * its `mcCampaignId`), or — once the nightly fold (task 11,
+ * `src/sweepers/digestRetention.ts`) has deleted those events — the
+ * `webhookProofAt` it stamped on the send in the same transaction. A send from
+ * before the webhook was registered, or while Mailercloud had it switched off,
+ * gets no entry in the map → the screen shows "—", never a fake 0. (An env flag
+ * has no history, and "any event after the send" would wrongly cover sends made
+ * before the webhook was registered.)
+ *
+ * Folded counts alone are NOT proof (changed in task 11): a reader event is not
+ * proof while it is live, so it must not become proof by being folded — the
+ * before/after-fold parity test pins that the map is identical either way.
  *
  * A constant 3 queries for any number of sends.
  */
@@ -30,7 +34,7 @@ export async function digestSendStats(sendIds: string[]): Promise<Map<string, Di
   if (sendIds.length === 0) return out;
   const sends = await prisma.digestSend.findMany({
     where: { id: { in: sendIds } },
-    select: { id: true, mcCampaignId: true, rolledUnsub: true, rolledBounce: true, rolledSpam: true },
+    select: { id: true, mcCampaignId: true, rolledUnsub: true, rolledBounce: true, rolledSpam: true, webhookProofAt: true },
   });
   const mcIds = sends.map((s) => s.mcCampaignId).filter((v): v is string => !!v);
   const [proof, live] = await Promise.all([
@@ -47,8 +51,7 @@ export async function digestSendStats(sendIds: string[]): Promise<Map<string, Di
   const coveredSend = new Set(proof.map((p) => p.sendId).filter(Boolean));
   const coveredCampaign = new Set(proof.map((p) => p.mcCampaignId).filter(Boolean));
   for (const s of sends) {
-    const folded = s.rolledUnsub + s.rolledBounce + s.rolledSpam > 0;
-    if (!folded && !coveredSend.has(s.id) && !(s.mcCampaignId && coveredCampaign.has(s.mcCampaignId))) continue;
+    if (s.webhookProofAt === null && !coveredSend.has(s.id) && !(s.mcCampaignId && coveredCampaign.has(s.mcCampaignId))) continue;
     out.set(s.id, { unsubscribes: s.rolledUnsub, bounces: s.rolledBounce, complaints: s.rolledSpam });
   }
   for (const g of live) {
