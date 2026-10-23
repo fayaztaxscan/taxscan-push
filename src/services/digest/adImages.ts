@@ -24,7 +24,9 @@ export const UPLOAD_LIMIT = '200kb';
 export type ImageMime = 'image/jpeg' | 'image/png';
 export const EXT_OF: Record<ImageMime, 'jpg' | 'png'> = { 'image/jpeg': 'jpg', 'image/png': 'png' };
 
-export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide';
+export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide' | 'too_tall';
+/** The tallest image accepted: JPEG's own maximum. A PNG header can claim up to 2^32-1, which overflows the Int column (500). */
+export const MAX_IMAGE_HEIGHT = 65_535;
 
 export class ImageRejected extends Error {
   constructor(
@@ -122,6 +124,9 @@ export function validateImage(buf: Buffer, declared: { contentType?: string; fil
   if (!size || size.width <= 0 || size.height <= 0) throw new ImageRejected('unreadable', 'The image header could not be read; re-export the file.');
   if (size.width > MAX_IMAGE_WIDTH) {
     throw new ImageRejected('too_wide', `The image is ${size.width} px wide; the limit is ${MAX_IMAGE_WIDTH} px. It shows at up to 552 px, so 1200 px is plenty.`);
+  }
+  if (size.height > MAX_IMAGE_HEIGHT) {
+    throw new ImageRejected('too_tall', `The image is ${size.height} px tall; the limit is ${MAX_IMAGE_HEIGHT} px. Re-export it at its real size.`);
   }
   return { mime, ...size };
 }

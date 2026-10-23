@@ -804,3 +804,88 @@ describe('routes: save, archive, audit, coverage', () => {
     expect(c.body.checkedFor).toBe(IST(6, 30, 23).toISOString());
   });
 });
+
+/* ================================================================== */
+/* QA verification of cd5a0e4 (adversarial)                            */
+/* ================================================================== */
+
+describe('QA verification of cd5a0e4', () => {
+  it('a pool that CAN fill every slot is never refused because of rank order (greedy stranding)', () => {
+    // slot 1 {A,B}, slot 2 {A,C}, slot 3 {B,C}; the only full assignments are 1=A,2=C,3=B and 1=B,2=A,3=C.
+    // Ranked C > B > A, greedy took 1=B, 2=C and stranded slot 3.
+    const pool = [ad({ id: 'qa-A', slots: [1, 2], priority: 1 }), ad({ id: 'qa-B', slots: [1, 3], priority: 2 }), ad({ id: 'qa-C', slots: [2, 3], priority: 3 })];
+    const placed = pick(pool);
+    expect(placed).toHaveLength(3);
+    expect(new Set(placed.map((p) => p.ad.id)).size).toBe(3);
+    for (const p of placed) expect(p.ad.slots).toContain(p.slot);
+    // Coverage agrees with the build, whatever order the ads rank in.
+    for (const prio of [[1, 2, 3], [3, 2, 1], [2, 3, 1]]) {
+      const reordered = pool.map((a, i) => ({ ...a, priority: prio[i] }));
+      expect(coverageOf(reordered, AT).ok).toBe(true);
+      expect(() => pick(reordered)).not.toThrow();
+    }
+  });
+
+  it('when greedy succeeds the search keeps its pick (rank order still decides)', () => {
+    const pool = [ad({ id: 'qa-p1', priority: 9 }), ad({ id: 'qa-p2', priority: 5 }), ad({ id: 'qa-p3', priority: 1 }), ad({ id: 'qa-p4', priority: 0 })];
+    expect(idsBySlot(pick(pool))).toEqual({ 1: 'qa-p1', 2: 'qa-p2', 3: 'qa-p3' });
+  });
+
+  it('a truly unfillable pool still fails closed, naming the slot', () => {
+    const pool = [ad({ id: 'qa-only1', slots: [1] }), ad({ id: 'qa-only1b', slots: [1] }), ad({ id: 'qa-any' })];
+    expect(() => pick(pool)).toThrow(AdSlotError);
+  });
+
+  it('a slot default that has not started yet is not used (the date window applies to defaults too)', () => {
+    const pool = [ad({ id: 'qa-d1', isSlotDefault: true, startsAt: new Date(AT.getTime() + 60_000) }), ad({ id: 'qa-r1' }), ad({ id: 'qa-r2' })];
+    expect(() => pick(pool)).toThrow(AdSlotError);
+    const started = pool.map((a) => (a.id === 'qa-d1' ? { ...a, startsAt: new Date(AT.getTime() - 60_000) } : a));
+    expect(pick(started).map((p) => p.ad.id).sort()).toEqual(['qa-d1', 'qa-r1', 'qa-r2']);
+  });
+
+  it('the SUBSCRIPTION guard is case-insensitive on kind (a row written outside the save path)', () => {
+    for (const kind of ['subscription', ' Subscription ']) {
+      expect(whyIneligible(ad({ kind }), 'PREMIUM', 1, AT)).toBe('subscription_guard');
+      expect(whyIneligible(ad({ kind }), 'FREE', 1, AT)).toBeNull();
+    }
+  });
+
+  it('a link with userinfo is rejected at save and dropped at pick, though its host is ours', () => {
+    const base = validBody();
+    for (const linkUrl of ['https://evil.com@www.taxscan.in/', 'https://user:pw@academy.taxscan.in/x']) {
+      expect(AdInputSchema.safeParse({ ...base, linkUrl }).success).toBe(false);
+      expect(whyIneligible(ad({ linkUrl }), 'FREE', 1, AT)).toBe('link_not_allowed');
+    }
+    expect(AdInputSchema.safeParse({ ...base, linkUrl: 'https://evil.com\\@www.taxscan.in/' }).success).toBe(false);
+    expect(AdInputSchema.safeParse({ ...base, linkUrl: 'https://www.taxscan.in./' }).success).toBe(false);
+    expect(AdInputSchema.safeParse({ ...base, linkUrl: 'https://WWW.TAXSCAN.IN/x' }).success).toBe(true);
+  });
+
+  it('image: a header claiming an absurd height is refused (was a DB Int overflow → 500)', async () => {
+    expect(() => validateImage(png(100, 0xffffffff))).toThrow(expect.objectContaining({ code: 'too_tall' }));
+    expect(validateImage(png(100, 65_535)).height).toBe(65_535);
+    const r = await request(appFor(newPortal())).post('/api/digest/ad-images').set('Cookie', adminCookie).set('Content-Type', 'image/png').send(png(100, 0x80000000));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('too_tall');
+  });
+
+  it('image: random bytes behind a JPEG magic number never crash or hang the header walk', () => {
+    let seed = 12345;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const t0 = Date.now();
+    for (let k = 0; k < 5000; k++) {
+      const b = Buffer.alloc(3 + Math.floor(rnd() * 400));
+      for (let i = 0; i < b.length; i++) b[i] = rnd() < 0.3 ? 0xff : Math.floor(rnd() * 256);
+      b[0] = 0xff;
+      b[1] = 0xd8;
+      b[2] = 0xff;
+      try {
+        validateImage(b);
+      } catch (e) {
+        expect((e as Error).name).toBe('ImageRejected');
+      }
+    }
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+
+});

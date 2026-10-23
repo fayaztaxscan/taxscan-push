@@ -774,3 +774,36 @@ describe('logs', () => {
     expect(all).not.toContain(OLD_TOKEN);
   });
 });
+
+describe('QA verification of 2b9bc83: lastSeenAt edges', () => {
+  it('a NEW event followed by a replay of the same address in one batch still moves lastSeenAt', async () => {
+    const a = addr('newthenreplay');
+    const c1 = camp();
+    const c2 = camp();
+    const t0 = new Date(Date.now() - 10 * 60_000);
+    const t1 = new Date(Date.now() - 5 * 60_000);
+    await handleMailercloudWebhook({ event: 'unsubscribe', email: a, campaign_id: c1 }, { cfg: cfg(), now: t0 });
+    const r = await handleMailercloudWebhook(
+      [
+        { event: 'hard_bounce', email: a, campaign_id: c2 }, // new, FIRST
+        { event: 'unsubscribe', email: a, campaign_id: c1 }, // replay, LAST
+      ],
+      { cfg: cfg(), now: t1 },
+    );
+    expect(r).toMatchObject({ stored: 1, duplicates: 1 });
+    const s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(s.reason).toBe('HARD_BOUNCE');
+    expect(s.lastSeenAt.getTime()).toBe(t1.getTime());
+  });
+
+  it('a new event processed with an EARLIER clock never moves lastSeenAt backwards', async () => {
+    const a = addr('noback');
+    const t1 = new Date(Date.now() - 60_000);
+    const t0 = new Date(Date.now() - 10 * 60_000);
+    await handleMailercloudWebhook({ event: 'unsubscribe', email: a, campaign_id: camp() }, { cfg: cfg(), now: t1 });
+    await handleMailercloudWebhook({ event: 'spam', email: a, campaign_id: camp() }, { cfg: cfg(), now: t0 });
+    const s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(s.reason).toBe('SPAM');
+    expect(s.lastSeenAt.getTime()).toBe(t1.getTime());
+  });
+});

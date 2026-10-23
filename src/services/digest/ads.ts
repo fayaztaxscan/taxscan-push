@@ -147,14 +147,46 @@ export function assignAds(input: { slots: readonly number[]; audience: DigestAud
   });
   const fillOrder = [...perSlot].sort((a, b) => a.regular.length + a.fallback.length - (b.regular.length + b.fallback.length) || a.slot - b.slot);
 
-  const used = new Set<string>();
+  // Depth-first over the slots in fill order, each slot trying its regular ads
+  // then its defaults in rank order. The first branch explored IS the greedy
+  // pick, so when greedy fills every slot the result is unchanged; when greedy
+  // would strand a slot although a complete assignment exists (e.g. slot 1
+  // {A,B}, slot 2 {A,C}, slot 3 {B,C} with C > B > A), the search finds it, so
+  // the build never fails closed on a pool that can fill every slot, and the
+  // coverage check's verdict does not depend on topic/priority/rotation order.
+  // Only when no complete assignment exists does it fall back to greedy, whose
+  // partial result names the stranded slots. ≤ 3 slots: the search is tiny.
+  const choice = (s: (typeof perSlot)[number], ad: PoolAd): Placement => ({
+    slot: s.slot,
+    ad,
+    utmContent: adUtmContent(ad.id, s.slot),
+    viaDefault: !s.regular.includes(ad),
+  });
+  const search = (k: number, used: Set<string>, acc: Placement[]): Placement[] | null => {
+    if (k === fillOrder.length) return acc;
+    const s = fillOrder[k];
+    for (const ad of [...s.regular, ...s.fallback]) {
+      if (used.has(ad.id)) continue;
+      used.add(ad.id);
+      const done = search(k + 1, used, [...acc, choice(s, ad)]);
+      used.delete(ad.id);
+      if (done) return done;
+    }
+    return null;
+  };
   const placed = new Map<number, Placement>();
-  for (const s of fillOrder) {
-    const regular = s.regular.find((a) => !used.has(a.id));
-    const ad = regular ?? s.fallback.find((a) => !used.has(a.id));
-    if (!ad) continue;
-    used.add(ad.id);
-    placed.set(s.slot, { slot: s.slot, ad, utmContent: adUtmContent(ad.id, s.slot), viaDefault: !regular });
+  const complete = search(0, new Set<string>(), []);
+  if (complete) {
+    for (const p of complete) placed.set(p.slot, p);
+  } else {
+    const used = new Set<string>();
+    for (const s of fillOrder) {
+      const regular = s.regular.find((a) => !used.has(a.id));
+      const ad = regular ?? s.fallback.find((a) => !used.has(a.id));
+      if (!ad) continue;
+      used.add(ad.id);
+      placed.set(s.slot, choice(s, ad));
+    }
   }
   return perSlot
     .map((s) => ({ slot: s.slot, eligible: s.regular.length, defaults: s.fallback.length, placement: placed.get(s.slot) ?? null }))

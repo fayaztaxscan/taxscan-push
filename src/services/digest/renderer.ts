@@ -313,6 +313,9 @@ export function isAllowedDigestUrl(url: string): boolean {
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
     // An explicit non-default port (e.g. :8443) is refused; WHATWG URL empties a default one.
     if (u.port !== '') return false;
+    // Userinfo ("https://evil.com@www.taxscan.in/") is refused: the host is ours, but the
+    // link reads as another site's to a reader and to spam filters.
+    if (u.username !== '' || u.password !== '') return false;
   } catch {
     return false;
   }

@@ -921,7 +921,9 @@ agents.
      Order: topic match against the first 3 MAIN stories' category, then priority (0–100), then least
      recently placed (never placed first), then id. Nothing eligible → the slot's default (same filters,
      including the date window: an expired offer never comes back as a default). Slots are filled
-     most-constrained first so an any-slot ad does not starve a single-slot one. **No ad appears twice in
+     most-constrained first so an any-slot ad does not starve a single-slot one; if that greedy pick
+     would strand a slot, a small search tries the other choices, so a pool that can fill every slot
+     is never refused because of rank order (QA, 23 Oct 2026). **No ad appears twice in
      one email**, defaults included, so each audience needs ≥ 3 distinct ads (or defaults) to cover a
      12-story digest.
    - **SUBSCRIPTION guard, three times:** `pickAds` (`whyIneligible` → `subscription_guard`), the renderer
