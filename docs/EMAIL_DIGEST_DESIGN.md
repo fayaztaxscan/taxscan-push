@@ -1,6 +1,6 @@
 # Automatic daily email digest: design (phase 1)
 
-Status (23 Oct 2026): **tasks 1–13 built on `develop`** (the "Built" notes in §13), **not enabled**. Task 13 wired the
+Status (23 Oct 2026): **tasks 1–14 built on `develop`** (the "Built" notes in §13), **not enabled**. Task 13 wired the
 1-minute scheduler tick (`scheduler.ts`) and `health.ts`, so the digest now runs by itself once `DIGEST_ENABLED` is on.
 Every behaviour sits behind flags that default OFF. Rollout: `docs/DIGEST_PILOT_RUNBOOK.md`.
 Written 2026-10-22 for owner review.
@@ -487,6 +487,7 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | `DIGEST_CUTOFF` | `17:00` | IST. After it nothing is scheduled; unsent variants are skipped and roll forward. Owner ruling. | Default |
 | `DIGEST_MAX_ITEMS` / `_MIN_ITEMS` / `_ROLLFORWARD_ITEMS` | `12` / `5` / `3` | Story cap; fewer MAIN stories than the minimum = `too_little_news` skip; ICYMI stories carried from a skipped/partial day. | Default |
 | `DIGEST_SANITY_MAX_CANDIDATES` | `150` | More candidates than this (normal ~25–35) holds the run for an editor even with approval off (the re-platform guard). | Default |
+| `DIGEST_STAFF_PUSH_ENABLED` | `true` | Task 14. Kill-switch for the staff push notifications (the editor alerts `ready_for_approval` / `not_approved_yet` as a web push to every opted-in staff device). Default **on** because it cannot send anything by itself: nothing is pushed unless `DIGEST_ENABLED` is on AND a staff member tapped "Notify me on this device". `false` stops the pushes; the emails are unaffected. Jest forces it off (`setup.ts`). | Default |
 | `DIGEST_COMPLAINT_HOLD_PCT` | `0.3` | Task 13 (§8 last row). The previous send's spam-complaint rate (complaints ÷ delivered, %, per version) **above** this holds the next day's run for an editor's approval even with approval off. An unknown rate (no webhook proof, or no delivered count) never holds; it shows on the banner while sending is live. | Default |
 | `DIGEST_MAX_HTML_KB` / `_HTML_WARN_KB` | `90` / `75` | Size budget (html + 150 B per link for Mailercloud's tracking rewrite): warn / refuse. Gmail clips at ~102 KB. | Default |
 | `DIGEST_MAX_IMAGE_KB` | `600` | Distinct ad-image weight per email; above it the build logs a warning (never refuses). | Default |
@@ -1321,3 +1322,39 @@ agents.
       source scan now also reads `${…}` expressions inside template literals and flags `{ cause: err }`-style fields,
       raw `err.message` / `e.message` and `String(err)` (no new hits in `src/`); E2E_MOCK_SENDER's in-memory sender is
       shared by the routes and the tick.
+14. **Staff push notifications for digest approval** (owner decision 2026-10-23: every approver may also get a push on
+    their own device; the email stays). *Built 2026-10-23 (migration `20261023161008_digest_staff_push`: new table
+    `StaffPushSubscription` + audit actions `STAFF_PUSH_SUBSCRIBED` / `_UNSUBSCRIBED` / `_REMOVED`; nothing existing
+    changes; `src/services/staffPush.ts`, `src/routes/staffPush.ts`, `public/admin/sw-staff.js`, Digests card, Users
+    column; tests `staffPush`).*
+    - **Storage:** `StaffPushSubscription` (user, endpoint unique, keys, label from the user agent, createdAt,
+      lastSuccessAt, lastFailureAt, failureCount), max 10 per user. Its own table, so no reader count, campaign door
+      (pacer, `/api/send`, sweeper, Queue / Review Push now — all read `Subscriber`) or backup can see it; a source-scan
+      test pins that only the staff-push files touch it. **Not in the R2 backup** (`backup.ts` exclusion list): a few
+      rows, inert without the VAPID key, and each approver re-subscribes with one tap after a restore.
+    - **Opt-in:** Digests → *Notifications on this device*. The native prompt is requested only inside the tap. States:
+      On for this device / Off / Blocked in browser settings (how-to) / Add to Home Screen first (iOS Safari not
+      standalone; a web manifest `admin/public/manifest.webmanifest`, scope `/admin/`, makes the Home Screen app) /
+      Not available. Send a test (own device only), Stop. Cookie session only; a user sees and changes only their own
+      devices (`/api/staff-push/*`, endpoint POSTed, never in a URL). Admins: Users shows devices + last delivery and
+      *Remove devices* (`DELETE /api/users/:id/push-devices`); deactivation deletes the user's devices, and sending also
+      filters on `User.isActive`. Audit rows carry device id, label and push-service host, never the endpoint.
+    - **Worker:** a separate `/admin/sw-staff.js`, scope `/admin/` (served no-cache, helmet's same-origin CORP), so
+      `public/sw.js` — the readers' worker that the CMS copies to www.taxscan.in — is **unchanged**. It shows the
+      notification (tag per run date + `renotify`, so 08:30 replaces 06:30), opens the payload's `/admin/…` path on its
+      own origin (any other URL → `/admin/digests`), focusing and navigating an open admin tab first, and re-subscribes
+      on `pushsubscriptionchange`. No click tracking. "Test on this device" now looks up `/sw.js` by scope `/`
+      (`getRegistration('/')`) and waits for that registration, since the staff worker controls `/admin/` pages.
+    - **Sending:** `sendDigestAlerts` = the email pass, then `pushDigestAlerts`: for `ready_for_approval` and
+      `not_approved_yet`, its own claim on the same marker (`pushClaim` / `pushClaimedAt` / `pushAttempts` /
+      `pushedAt` / `pushSkipped` / `pushRetryAfter`, the email's rules: one winner across processes, a stamped push is
+      never repeated after a restart, ≤ 3 attempts, 10 min apart when no device took it). Independent of the email:
+      a push failure never blocks an email, and an unconfigured ElasticEmail does not stop the push. Only while
+      `DIGEST_ENABLED` and `DIGEST_STAFF_PUSH_ENABLED`; a marker older than 3 h is skipped (`stale`) so switching on
+      late never announces a morning build. Same VAPID keypair and `web-push` (`deliverPush`, no DB side effect; TTL
+      4 h, urgency high, 10 s timeout); 404/410 deletes the device; other failures count. Logs carry device ids and
+      HTTP status only. E2E_MOCK_SENDER fakes this transport too.
+    - **Copy:** 06:30 "Today's digest is ready — tap to review" (preview mode: "Today's digest is ready to review",
+      "nothing goes to readers"); 08:30 "Digest still waiting for approval". Icon `/brand/taxscan-icon-192.png`.
+    - Not verifiable headless: real delivery through a push service (the browser check stubs `PushManager` and
+      checks the subscription is made with the server's VAPID key, the row, the states at 1280 and 390 px).

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { DISPATCH_TIMEOUT_MS, apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import ConfirmPush from '../components/ConfirmPush.vue';
 import EmailPreviewFrame from '../components/EmailPreviewFrame.vue';
+import StaffPushCard from '../components/StaffPushCard.vue';
 import {
   AUDIENCES,
   AUDIENCE_LABEL,
@@ -325,6 +326,9 @@ onMounted(load);
     </div>
     <div v-if="error" class="banner err" role="alert">{{ error }}</div>
     <div v-if="notice" class="banner ok" role="status">{{ notice }}</div>
+
+    <!-- Task 14: this device's approval notifications (shown whether or not the digest is on). -->
+    <StaffPushCard />
 
     <!-- Off: a calm explainer, nothing to press. -->
     <div v-if="status && !status.enabled" class="card">

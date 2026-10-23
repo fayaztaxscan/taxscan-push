@@ -7,6 +7,10 @@ dotenv.config();
 // advanceRun calls by default) would then mail the dev DB's real users. Tests
 // that exercise email inject an in-memory EmailSender instead.
 process.env.ELASTICEMAIL_API_KEY = '';
+// Same for staff push (digest task 14): the default transport is real web-push, and
+// sendDigestAlerts runs in many digest tests. Tests that exercise it inject
+// `staffPush: { enabled: true, transport }` with a recording fake.
+process.env.DIGEST_STAFF_PUSH_ENABLED = 'false';
 
 if (!process.env.ADMIN_TOKEN) {
   process.env.ADMIN_TOKEN = 'test-admin-token';

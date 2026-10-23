@@ -382,6 +382,13 @@ export const env = {
   },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
+  // Digest task 14: staff push notifications for digest approval. A KILL-SWITCH,
+  // default ON: nothing is ever sent unless DIGEST_ENABLED is on too (the push rides
+  // on the digest's own editor alerts) AND a staff member tapped "Notify me on this
+  // device". Set DIGEST_STAFF_PUSH_ENABLED=false to stop the pushes (email unaffected).
+  staffPush: {
+    enabled: process.env.DIGEST_STAFF_PUSH_ENABLED !== 'false',
+  },
   // Absolute origin the admin SPA is reachable at — used to build invite
   // links (`<appBaseUrl>/admin/accept-invite?token=…`). Falls back to the
   // request origin at call time when unset (dev / preview).

@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.1 &nbsp;·&nbsp; Updated 23 October 2026
+    &nbsp;·&nbsp; Version 2.2 &nbsp;·&nbsp; Updated 23 October 2026
   </div>
 </div>
 
@@ -584,9 +584,10 @@ a day</strong> and is never sent again on a later day.</p>
   <tbody>
     <tr><td><strong>06:30</strong></td><td>The digest is built: up to 12 stories are picked and ranked, the ads are chosen, and both emails are
         <strong>frozen</strong>. Nothing changes them after this. A draft is created in Mailercloud (a draft cannot send by itself).
-        Admins and publishers get a <em>ready for approval</em> email with a link to Digests.</td></tr>
+        Admins and publishers get a <em>ready for approval</em> email with a link to Digests — and a notification on
+        any device where they turned it on (below).</td></tr>
     <tr><td><strong>07:30</strong></td><td>It is sent — once it has been <strong>approved</strong>, while approval is required.
-        Still not approved at <strong>08:30</strong>: one reminder email.</td></tr>
+        Still not approved at <strong>08:30</strong>: one reminder email (and notification).</td></tr>
     <tr><td><strong>17:00</strong></td><td>The cut-off. Anything not sent by now is <strong>skipped</strong> for the day, and its top 2–3 stories go into
         tomorrow's digest under <em>In case you missed it</em>.</td></tr>
     <tr><td><strong>11 pm – 7 am</strong></td><td>Never. Like push, the digest is never sent at night, whatever button is pressed.</td></tr>
@@ -625,9 +626,27 @@ a day</strong> and is never sent again on a later day.</p>
   If one version was held back (for example its ad slot couldn't be filled) and is built after you approved the day,
   your earlier approval does <strong>not</strong> cover it. Its preview appears and <strong>Approve</strong> is offered
   again for that version alone. Not approved by 17:00, it is skipped.</div>
-<div class="box info"><span class="box-t">"No longer stored"</span>
-  A digest email is kept for <strong>30 days</strong>. After that the preview says <em>No longer stored</em>; the
-  stories, ads and counts for that day are kept.</div>
+<p>A digest email is kept for <strong>30 days</strong>; after that its preview says <em>No longer stored</em> (the
+stories, ads and counts are kept).</p>
+
+<h3>Get notified on your phone</h3>
+<p>Besides the emails, anyone who can approve can get a <strong>notification</strong> on their own phone or computer:
+<em>"Today's digest is ready — tap to review"</em> when it is built, and <em>"Digest still waiting for approval"</em> at
+08:30 if nobody has approved it. Tapping it opens Digests. The emails still come.</p>
+<ol>
+  <li>Open <strong>Digests</strong> on the device. At the top, <em>Notifications on this device</em> says <strong>Off</strong>.</li>
+  <li>Tap <strong>Notify me on this device</strong>, then <strong>Allow</strong> when the browser asks. It now says
+      <strong>On for this device</strong>; <strong>Send a test</strong> shows what it looks like. Do this once on
+      <strong>each</strong> device. <strong>Stop notifications on this device</strong> turns it off.</li>
+</ol>
+<div class="box warn"><span class="box-t">iPhone and iPad: add it to the Home Screen first</span>
+  Apple allows notifications only from the Home Screen (iOS 16.4 or later). In <strong>Safari</strong>, open
+  push.taxscan.in/admin, tap <strong>Share → Add to Home Screen</strong>, open <strong>Taxscan Push</strong> from the Home
+  Screen, sign in, and tap <em>Notify me on this device</em> there. In Safari itself the screen shows this instruction
+  instead of the button.</div>
+<p class="muted"><em>Blocked in browser settings</em>: site settings (icon left of the address) → Notifications → Allow,
+then reload. On <strong>Users</strong>, admins see who has notifications on and can <strong>Remove devices</strong> (a lost
+phone); deactivating a user removes theirs.</p>
 
 <h3>If the Digests screen (or the Dashboard) shows an amber notice</h3>
 <p>The digest uses the same amber notice as the rest of the platform. It stays until the cause is gone and can't be
@@ -671,9 +690,9 @@ dismissed. The common ones:</p>
       permanent bounce is lifted only by a new, explicit opt-in. An address an admin blocked by hand is never lifted
       automatically.</li>
 </ul>
-<div class="box info"><span class="box-t">Activity</span>
-  Every approval, hold, Send now, Retry now and test send is recorded in <strong>Activity</strong>, and so is every ad and
-  template change (saved, activated, scheduled, archived, reverted) — with who did it and when.</div>
+<p><strong>Activity</strong> records every approval, hold, Send now, Retry now and test send, every ad and template
+change (saved, activated, scheduled, archived, reverted) and every notification device turned on, off or removed — with
+who did it and when.</p>
 </section>
 
 <!-- 10 -->
@@ -918,7 +937,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.1 · Updated 23 October 2026
+  Taxscan Push · Admin User Guide · Version 2.2 · Updated 23 October 2026
 </p>
 </section>
 

@@ -76,6 +76,10 @@ enum AuditAction {
   DIGEST_TEMPLATE_REVERTED
   DIGEST_AD_SAVED
   DIGEST_AD_ARCHIVED
+  // Staff push devices (digest task 14): an approver's own device, never a reader
+  STAFF_PUSH_SUBSCRIBED
+  STAFF_PUSH_UNSUBSCRIBED
+  STAFF_PUSH_REMOVED
 }
 
 model Subscriber {
@@ -191,6 +195,34 @@ model User {
   auditLogs   AuditLog[]
   campaigns   Campaign[]
   invitesSent UserInvite[]  @relation("InvitesSent")
+  pushDevices StaffPushSubscription[]
+}
+
+// A staff member's own browser or phone, opted in from the admin ("Notify me on
+// this device", digest task 14) to get the digest's approval notifications.
+// NOT a reader: its own table, so it is never counted in subscriber metrics,
+// never selected by the pacer / Compose / sweeper / Push now (they all read
+// `Subscriber`), and never in the R2 backup (a device re-subscribes with one
+// tap; see src/services/backup.ts). One row per push endpoint — re-subscribing
+// the same browser updates it, even under another login. A deactivated user's
+// rows are deleted; sending also filters on User.isActive. Never log `endpoint`.
+model StaffPushSubscription {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  // Short device label from the user agent ("Chrome on Android"), shown to admins.
+  label         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  // Consecutive failed deliveries (reset on success). 404/410 deletes the row instead.
+  failureCount  Int       @default(0)
+
+  @@index([userId])
 }
 
 // A pending invitation to join the admin. The real `User` row is created

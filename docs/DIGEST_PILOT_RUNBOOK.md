@@ -46,6 +46,10 @@ Built (task 13), so stage 1 can start once section 1 is done:
   review"), and a **"still waiting for approval" email** at 08:30 if
   nobody has approved by then. Both go to admins and publishers, once a
   day each, with a link to Digests.
+- [x] **The same two as notifications** (task 14) on every phone or
+  computer where an approver tapped **Notify me on this device** on
+  Digests. Once a day each; tapping opens Digests. Kill-switch:
+  `DIGEST_STAFF_PUSH_ENABLED=false` (the emails carry on).
 - [x] **Retry now works while sending is off.** In stage 1 it re-makes a
   failed version's draft (and nothing more: it never sends). Send now
   stays greyed out until `DIGEST_SEND_LIVE` is on.
@@ -293,6 +297,13 @@ support (design §12). Each one says when it must be done by.
 - **Who receives it:** nobody. Drafts are made in Mailercloud but
   never sent. Only test sends reach staff.
 - **How long:** 7 days in a row.
+- **Before day 1:**
+  - [ ] Each approver opens Digests on their phone (and computer, if
+    wanted) and taps **Notify me on this device**, then **Allow**; on an
+    iPhone, from the Home Screen app first (Safari → Share → Add to
+    Home Screen, iOS 16.4+). **Send a test** arrives. Users shows each
+    approver with a device count. (`DIGEST_STAFF_PUSH_ENABLED` defaults
+    on; nothing is pushed while `DIGEST_ENABLED` is off.)
 - **Every day:**
   - [ ] By 06:45: Digests shows both versions built, no banner.
   - [ ] An editor compares it with the hand-made digest: stories,
@@ -312,7 +323,9 @@ support (design §12). Each one says when it must be done by.
     slot on Ads, press **Retry now**: that version is built and its
     draft made the same day (nothing is sent).
   - [ ] The "ready to review" email arrives at about 06:30 each day, to
-    admins and publishers.
+    admins and publishers, and the "Today's digest is ready to review"
+    notification on every device turned on (one per device, once).
+    Tapping it opens Digests.
 - **Go / no-go:**
   - 7 of 7 days built before 07:00 with no unexplained banner.
   - Size under **75 KB** for both versions every day. Never over
@@ -355,13 +368,19 @@ support (design §12). Each one says when it must be done by.
     test with Retry now (expect the "Resolved — digest sent" email once
     it sends), and an empty ad slot fixed the same day.
   - [ ] Leave one day unapproved until 08:30: the "still waiting for
-    approval" email arrives once. Approve it then; it goes out.
+    approval" email arrives once, and the "Digest still waiting for
+    approval" notification replaces the 06:30 one on each device.
+    Approve it then; it goes out.
   - [ ] 2.2 again, after a real send (the lookup finds the sent
     campaign).
-  - [ ] Night rule: between the 06:30 build and 07:00, Send now is
-    greyed out with "quiet hours". (After 17:00 it is not shown at
-    all: the day is past its cut-off.) Only look; don't try to get
-    round it.
+  - [ ] Night rule: on a day that is **already approved**, between the
+    06:30 build and 07:00, Send now is greyed out with "It is quiet
+    hours (23:00–07:00 IST); nothing is sent at night." On a day not
+    yet approved, the reason shown first is "Approve it first." — the
+    approval gate is checked before the night rule — so approve early
+    that morning to see the quiet-hours reason. (After 17:00 Send now
+    is not shown at all: the day is past its cut-off.) Only look; don't
+    try to get round it.
 - **Go / no-go:**
   - **Zero** double sends.
   - 2.2 (sent), 2.3, 2.4, 2.6 and 2.7 ticked.

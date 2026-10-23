@@ -127,7 +127,12 @@ once in the platform's history.) Even then nothing is lost: `/api/subscribe`
 upserts on endpoint, so a returning endpoint with no row simply creates a fresh
 `ACTIVE` one — the same outcome. Excluding them drops ~72% of the rows and stops
 us storing thousands of dead push endpoints, which are personal data with no
-remaining purpose. The header line in each file records the exclusion. Free at this size: R2 gives 10 GB and charges nothing for
+remaining purpose. The header line in each file records the exclusion.
+
+**Staff notification devices (`StaffPushSubscription`, digest task 14) are not
+backed up either**: a handful of rows, useless without the VAPID key, and each
+approver re-subscribes with one tap (Digests → *Notify me on this device*).
+After a restore, ask the approvers to do that once. Free at this size: R2 gives 10 GB and charges nothing for
 egress, so this layer cannot be switched off by a failed payment.
 
 The uploader (`src/lib/r2.ts`) signs SigV4 by hand with `node:crypto` — no new

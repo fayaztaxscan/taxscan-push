@@ -11,6 +11,7 @@ import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
+import { createStaffPushRouter, type StaffPushRouterOptions } from './routes/staffPush';
 import { emailAssetsHandler } from './routes/digestAds';
 import { env } from './lib/env';
 import { appErrorHandler } from './lib/httpErrors';
@@ -36,6 +37,8 @@ export type CreateAppOptions = {
   digest?: DigestRouterOptions;
   // Provider webhooks (Mailercloud) — tests inject config, clock, rate limit.
   webhooks?: WebhookRouterOptions;
+  // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
+  staffPush?: StaffPushRouterOptions;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -90,6 +93,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/users', createUsersRouter({ emailSender: opts.emailSender }));
   app.use('/api/audit', createAuditRouter());
   app.use('/api/digest', createDigestRouter(opts.digest));
+  app.use('/api/staff-push', createStaffPushRouter(opts.staffPush));
   app.use(
     '/api',
     createApiRouter({
@@ -100,6 +104,21 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       isUrlDead: opts.isUrlDead,
     }),
   );
+
+  // The staff notification worker (digest task 14), scope /admin/: approvers'
+  // devices only, never readers. Served ahead of the SPA's static mount so its
+  // headers are ours: no-cache (a service worker must revalidate, like /sw.js)
+  // and helmet's same-origin CORP left in place — only push.taxscan.in's own
+  // admin pages register it, nothing loads it cross-origin. Deliberately NOT
+  // public/sw.js, which www.taxscan.in's readers run.
+  const staffSwPath = path.resolve(__dirname, '..', 'public', 'admin', 'sw-staff.js');
+  app.get('/admin/sw-staff.js', (_req, res, next) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(staffSwPath, (err) => {
+      if (err) next(err);
+    });
+  });
 
   // Admin SPA at /admin/* — mounted AFTER /api so it can never shadow API
   // routes. Only mounts when the built bundle exists, so tests (and dev

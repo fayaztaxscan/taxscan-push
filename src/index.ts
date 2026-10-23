@@ -24,6 +24,7 @@ import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
 import { createMockDigestSender } from './services/digest/mockSender';
 import { mockSendersEnabled } from './lib/mockSenderGuard';
+import { setStaffPushTransport } from './services/staffPush';
 import { safeErrorLog } from './lib/httpErrors';
 import type { Sender } from './services/send';
 
@@ -40,6 +41,8 @@ try {
   process.exit(1);
 }
 const mockSender: Sender | undefined = useMocks ? async () => ({ ok: true, statusCode: 201 }) : undefined;
+// Staff devices (digest task 14) are faked by the same switch: nothing leaves the machine.
+if (useMocks) setStaffPushTransport(async () => ({ ok: true, statusCode: 201 }));
 
 // The same switch gives the digest routes AND the digest scheduler tick one
 // shared in-memory Mailercloud stand-in (no network, nobody mailed), so the

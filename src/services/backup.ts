@@ -46,6 +46,10 @@ import { safeErrorLog } from '../lib/httpErrors';
  *   logs; they rebuild themselves.
  * - `UserSession` / `UserInvite` — short-lived by design. Restoring sessions
  *   would resurrect logins that should have died with the incident.
+ * - `StaffPushSubscription` (digest task 14) — staff members' own notification
+ *   devices. A few rows, and worthless without the VAPID private key; after a
+ *   restore each approver taps "Notify me on this device" once. Keeping push
+ *   endpoints out of the R2 copy is also one less credential-like value off-site.
  * - `AuditLog` — append-only compliance record with its own retention sweeper
  *   and an immutability trigger. Re-inserting it elsewhere would misrepresent
  *   when those rows were written.

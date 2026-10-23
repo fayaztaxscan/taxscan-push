@@ -53,6 +53,9 @@ const ACTIONS = [
   'DIGEST_TEMPLATE_REVERTED',
   'DIGEST_AD_SAVED',
   'DIGEST_AD_ARCHIVED',
+  'STAFF_PUSH_SUBSCRIBED',
+  'STAFF_PUSH_UNSUBSCRIBED',
+  'STAFF_PUSH_REMOVED',
 ] as const;
 
 const api = useApi();
@@ -152,6 +155,12 @@ function summarize(item: AuditItem): string {
         ? `Added digest ad “${m.name ?? '—'}” (links to ${m.linkHost ?? '—'})`
         : `Edited digest ad “${m.name ?? '—'}”${changed?.length ? `: ${changed.join(', ')}` : ''}`;
     }
+    case 'STAFF_PUSH_SUBSCRIBED':
+      return `Turned on digest notifications on a device (${m.label ?? 'unknown device'})`;
+    case 'STAFF_PUSH_UNSUBSCRIBED':
+      return `Turned off digest notifications on a device (${m.label ?? 'unknown device'})`;
+    case 'STAFF_PUSH_REMOVED':
+      return `Removed ${m.email ?? '—'}'s notification devices (${m.removed ?? '?'})`;
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;
     case 'DIGEST_TEMPLATE_SAVED': {

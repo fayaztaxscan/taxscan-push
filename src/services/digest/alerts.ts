@@ -5,6 +5,9 @@ import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../l
 import { redactError } from './sender';
 import { runDateKey } from './retryPolicy';
 import { digestRunState } from './runState';
+import { pushToActiveStaff, type StaffPushTransport } from '../staffPush';
+import type { StaffPushSubscription } from '@prisma/client';
+import { DEFAULT_NOTIFICATION_ICON } from '../send';
 
 /**
  * Digest alert emails (docs/EMAIL_DIGEST_DESIGN.md §4 `alerts.ts`, §8, task 6).
@@ -95,8 +98,12 @@ export const HEALTH_PROBLEM_KINDS: ReadonlySet<string> = new Set(['health_failed
 
 /** The Digests screen, absolute, for links in editor emails. */
 export function digestsScreenUrl(cfg: Pick<DigestEnv, 'assetBaseUrl'> = env.digest): string {
-  const base = (env.appBaseUrl || cfg.assetBaseUrl || 'https://push.taxscan.in').replace(/\/+$/, '');
-  return `${base}/admin/digests`;
+  return `${appBase(cfg)}/admin/digests`;
+}
+
+/** The admin's absolute origin (APP_BASE_URL, else the asset base, else production). */
+function appBase(cfg: Pick<DigestEnv, 'assetBaseUrl'>): string {
+  return (env.appBaseUrl || cfg.assetBaseUrl || 'https://push.taxscan.in').replace(/\/+$/, '');
 }
 
 /** Skip reasons that are routine while DIGEST_SEND_LIVE is off (drafts only, nothing is meant to send). */
@@ -466,6 +473,18 @@ export type AlertDeps = {
   recipients?: (kind?: string) => Promise<string[]>;
   now?: Date;
   cfg?: DigestEnv;
+  /**
+   * Task 14: the staff push pass after the emails. `false` skips it; otherwise
+   * these override the kill-switch (`DIGEST_STAFF_PUSH_ENABLED`), the transport
+   * (web-push) and the device list (active users' devices).
+   */
+  staffPush?: false | StaffPushDeps;
+};
+
+export type StaffPushDeps = {
+  enabled?: boolean;
+  transport?: StaffPushTransport;
+  devices?: () => Promise<StaffPushSubscription[]>;
 };
 
 export type AlertOutcome = {
@@ -475,6 +494,8 @@ export type AlertOutcome = {
   /** Kinds this call tried and could not deliver to anyone. */
   failed: string[];
   notConfigured?: boolean;
+  /** Task 14: kinds pushed to staff devices by THIS call. */
+  pushed?: string[];
 };
 
 let warnedNotConfigured = false;
@@ -588,11 +609,28 @@ function orderKinds(kinds: string[]): string[] {
 }
 
 /**
- * Emails every alert marker on the run that has not been emailed yet (one per
- * kind per run), then the recovery note if the run has since been sent. Safe
- * to call after every `advanceRun` and from concurrent ticks. Never throws.
+ * The alert pass: emails every alert marker on the run that has not been
+ * emailed yet (one per kind per run), then the recovery note if the run has
+ * since been sent; then (task 14) pushes the editor kinds to staff devices.
+ * The two channels have separate once-per-run claims on the same marker, so
+ * neither waits for, nor is blocked by, the other — a push failure never stops
+ * an email, and an unconfigured email does not stop the push. Safe to call
+ * after every `advanceRun` and from concurrent ticks. Never throws.
  */
 export async function sendDigestAlerts(runId: string, deps: AlertDeps = {}): Promise<AlertOutcome> {
+  const out = await emailDigestAlerts(runId, deps);
+  if (deps.staffPush !== false) {
+    try {
+      const pushed = await pushDigestAlerts(runId, { ...(deps.staffPush ?? {}), cfg: deps.cfg, now: deps.now });
+      if (pushed.length) out.pushed = pushed;
+    } catch {
+      // pushDigestAlerts never throws; belt and braces — the email outcome stands.
+    }
+  }
+  return out;
+}
+
+async function emailDigestAlerts(runId: string, deps: AlertDeps): Promise<AlertOutcome> {
   const out: AlertOutcome = { runId, emailed: [], failed: [] };
   try {
     const configured = (deps.isConfigured ?? isEmailConfigured)();
@@ -686,4 +724,166 @@ export async function sendDigestAlerts(runId: string, deps: AlertDeps = {}): Pro
     warn(`run=${runId} alert pass failed: ${safeDetail(err instanceof Error ? err.message : err)}`);
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Staff push notifications (task 14)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A push older than this is not sent (`pushSkipped: 'stale'`): switching the
+ * kill-switch on at noon must not announce the 06:30 build.
+ */
+const PUSH_STALE_MIN = 180;
+
+/** Title + body of the staff notification for an editor kind; null for any other kind. */
+export function staffPushCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.digest): { title: string; body: string } | null {
+  const cutoff = `${cfg.cutoff} IST`;
+  if (kind === 'ready_for_approval') {
+    if (m.preview === true) {
+      return { title: "Today's digest is ready to review", body: 'Preview only: sending is off, so nothing goes to readers. Tap to compare it.' };
+    }
+    const why =
+      m.reason === 'complaint_hold'
+        ? 'Held after a high spam-complaint rate. '
+        : m.reason === 'sanity_hold'
+          ? 'Unusually many stories: check the list. '
+          : '';
+    return { title: "Today's digest is ready — tap to review", body: `${why}Approve it before ${cutoff}, or it is skipped.` };
+  }
+  if (kind === 'not_approved_yet') {
+    return {
+      title: 'Digest still waiting for approval',
+      body: `It was due at ${cfg.sendAt} IST. Not approved by ${cutoff}, it is skipped.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The web-push payload for one editor kind. `tag` is per run date, so the 08:30
+ * reminder replaces the 06:30 notification on the device (`renotify` makes it
+ * sound again). `url` is the Digests screen; the staff worker opens or focuses it.
+ */
+export function buildStaffPushPayload(
+  kind: string,
+  m: AlertMarker,
+  runDate: Date,
+  cfg: DigestEnv = env.digest,
+): { title: string; body: string; url: string; icon: string; badge: string; tag: string; renotify: true; kind: string } | null {
+  const copy = staffPushCopy(kind, m, cfg);
+  if (!copy) return null;
+  // The brand icon (absolute, production host, as on reader pushes). The URL is the same
+  // link as the editor email's; the staff worker opens its PATH on its own origin.
+  const icon = DEFAULT_NOTIFICATION_ICON;
+  return { ...copy, url: digestsScreenUrl(cfg), icon, badge: icon, tag: `taxscan-digest-${runDateKey(runDate)}`, renotify: true, kind };
+}
+
+/** The push twin of `claimKind`: its own fields on the same marker, the same rules. */
+async function claimPush(runId: string, kind: string, token: string, now: Date): Promise<number | null> {
+  const nowIso = now.toISOString();
+  const staleIso = new Date(now.getTime() - CLAIM_STALE_MIN * MINUTE).toISOString();
+  const patch = JSON.stringify({ pushClaim: token, pushClaimedAt: nowIso });
+  const rows = await prisma.$queryRaw<{ attempts: number }[]>`
+    UPDATE "DigestRun"
+       SET alerts = jsonb_set(
+             alerts, ARRAY[${kind}::text],
+             (alerts -> ${kind}::text) || ${patch}::jsonb || jsonb_build_object(
+               'pushAttempts', COALESCE((alerts -> ${kind}::text ->> 'pushAttempts')::int, 0) + 1))
+     WHERE id = ${runId}
+       AND jsonb_typeof(alerts -> ${kind}::text) = 'object'
+       AND (alerts -> ${kind}::text ->> 'pushedAt') IS NULL
+       AND (alerts -> ${kind}::text ->> 'pushSkipped') IS NULL
+       AND ((alerts -> ${kind}::text ->> 'pushClaimedAt') IS NULL
+            OR (alerts -> ${kind}::text ->> 'pushClaimedAt')::timestamptz < ${staleIso}::timestamptz)
+       AND COALESCE((alerts -> ${kind}::text ->> 'pushAttempts')::int, 0) < ${MAX_ATTEMPTS}
+       AND ((alerts -> ${kind}::text ->> 'pushRetryAfter') IS NULL
+            OR (alerts -> ${kind}::text ->> 'pushRetryAfter')::timestamptz <= ${nowIso}::timestamptz)
+     RETURNING (alerts -> ${kind}::text ->> 'pushAttempts')::int AS attempts`;
+  return rows.length === 1 ? Number(rows[0].attempts) : null;
+}
+
+async function finishPush(runId: string, kind: string, token: string, patch: Record<string, unknown>): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE "DigestRun"
+       SET alerts = jsonb_set(
+             alerts, ARRAY[${kind}::text],
+             ((alerts -> ${kind}::text) - 'pushClaim' - 'pushClaimedAt') || ${JSON.stringify(patch)}::jsonb)
+     WHERE id = ${runId} AND (alerts -> ${kind}::text ->> 'pushClaim') = ${token}`;
+}
+
+/**
+ * Pushes each editor kind (`ready_for_approval`, `not_approved_yet`) on the run
+ * to every active staff device, once per run — a claim on the marker
+ * (`pushClaim` / `pushedAt` / `pushAttempts`, the email's rules: two processes
+ * cannot both send, a restart does not repeat a stamped push, at most
+ * MAX_ATTEMPTS tries, RETRY_AFTER_MIN between failed ones). Only while the
+ * digest is on (`cfg.enabled`) and the kill-switch is on. Delivered to at least
+ * one device → stamped, never re-sent. No device → `pushSkipped: 'no_devices'`.
+ * Logs counts and device ids only. Never throws. Returns the kinds pushed.
+ */
+export async function pushDigestAlerts(
+  runId: string,
+  deps: StaffPushDeps & { cfg?: DigestEnv; now?: Date } = {},
+): Promise<string[]> {
+  const pushed: string[] = [];
+  try {
+    const cfg = deps.cfg ?? env.digest;
+    if (!cfg.enabled || !(deps.enabled ?? env.staffPush.enabled)) return pushed;
+    const now = deps.now ?? new Date();
+    const run = await prisma.digestRun.findUnique({ where: { id: runId }, select: { runDate: true, alerts: true } });
+    if (!run) return pushed;
+    const alerts = (run.alerts ?? {}) as AlertMap;
+    for (const kind of Object.keys(alerts).filter((k) => EDITOR_KINDS.has(k)).sort()) {
+      const m = alerts[kind];
+      if (!m || typeof m !== 'object' || m.pushedAt || m.pushSkipped) continue;
+      const token = randomUUID();
+      const attempt = await claimPush(runId, kind, token, now);
+      if (attempt === null) continue;
+
+      const raised = m.raisedAt ? Date.parse(m.raisedAt) : NaN;
+      if (Number.isFinite(raised) && now.getTime() - raised > PUSH_STALE_MIN * MINUTE) {
+        await finishPush(runId, kind, token, { pushSkipped: 'stale' });
+        continue;
+      }
+      const payload = buildStaffPushPayload(kind, m, run.runDate, cfg);
+      if (!payload) {
+        await finishPush(runId, kind, token, { pushSkipped: 'no_copy' });
+        continue;
+      }
+      const r = await pushToActiveStaff(payload, {
+        ...(deps.transport ? { transport: deps.transport } : {}),
+        ...(deps.devices ? { devices: deps.devices } : {}),
+      });
+      const failures = r.results.filter((x) => x.outcome === 'failed').map((x) => `${x.deviceId}:${x.statusCode ?? 'error'}`);
+      if (r.devices === 0) {
+        await finishPush(runId, kind, token, { pushSkipped: 'no_devices' });
+      } else if (r.delivered > 0) {
+        await finishPush(runId, kind, token, {
+          pushedAt: new Date().toISOString(),
+          pushedTo: r.delivered,
+          ...(r.failed ? { pushFailedTo: r.failed } : {}),
+          ...(r.pruned ? { pushPruned: r.pruned } : {}),
+        });
+        pushed.push(kind);
+      } else if (r.failed === 0) {
+        // Every device answered 404/410 and was pruned: nobody left to tell.
+        await finishPush(runId, kind, token, { pushSkipped: 'no_devices', pushPruned: r.pruned });
+      } else {
+        await finishPush(runId, kind, token, {
+          pushRetryAfter: new Date(now.getTime() + RETRY_AFTER_MIN * MINUTE).toISOString(),
+          pushError: failures.slice(0, 5).join(', '),
+          ...(r.pruned ? { pushPruned: r.pruned } : {}),
+        });
+      }
+      // eslint-disable-next-line no-console
+      console.log(
+        `[digest-push] run=${runId} ${kind} attempt=${attempt}/${MAX_ATTEMPTS} devices=${r.devices} delivered=${r.delivered} pruned=${r.pruned} failed=${r.failed}` +
+          (failures.length ? ` failures=${failures.slice(0, 5).join(',')}` : ''),
+      );
+    }
+  } catch (err) {
+    warn(`run=${runId} staff push pass failed: ${safeDetail(err instanceof Error ? err.message : err)}`);
+  }
+  return pushed;
 }

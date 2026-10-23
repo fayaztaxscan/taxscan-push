@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { apiErrorMessage, useApi } from './useApi';
+import { waitActive } from './useStaffPush';
 
 /** VAPID public key (URL-safe base64) → Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
@@ -40,7 +41,9 @@ export function useTestDevice() {
     if (!supported) return;
     permission.value = Notification.permission;
     try {
-      const reg = await navigator.serviceWorker.getRegistration();
+      // The /sw.js registration (scope /) — not the staff worker at /admin/, which
+      // controls this page once "Notify me on this device" is on (task 14).
+      const reg = await navigator.serviceWorker.getRegistration('/');
       const sub = reg ? await reg.pushManager.getSubscription() : null;
       subscription = sub ? sub.toJSON() : null;
       ready.value = hasKeys(subscription) && permission.value === 'granted';
@@ -54,7 +57,8 @@ export function useTestDevice() {
     busy.value = true;
     try {
       const reg = await navigator.serviceWorker.register('/sw.js');
-      await navigator.serviceWorker.ready;
+      // Wait for THIS registration (serviceWorker.ready would resolve with the staff worker).
+      await waitActive(reg);
       const perm = await Notification.requestPermission();
       permission.value = perm;
       if (perm !== 'granted') {
