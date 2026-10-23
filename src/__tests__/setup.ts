@@ -2,6 +2,16 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Jest must never send real email. The local .env can carry a live ElasticEmail
+// key, and the default senders (invites, report emails, digest alerts — which
+// advanceRun calls by default) would then mail the dev DB's real users. Tests
+// that exercise email inject an in-memory EmailSender instead.
+process.env.ELASTICEMAIL_API_KEY = '';
+// Same for staff push (digest task 14): the default transport is real web-push, and
+// sendDigestAlerts runs in many digest tests. Tests that exercise it inject
+// `staffPush: { enabled: true, transport }` with a recording fake.
+process.env.DIGEST_STAFF_PUSH_ENABLED = 'false';
+
 if (!process.env.ADMIN_TOKEN) {
   process.env.ADMIN_TOKEN = 'test-admin-token';
 }

@@ -118,6 +118,23 @@ describe('recordAudit', () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it('logs a failed write without the Prisma message, which would quote metadata such as an address (QA 2026-10-23)', async () => {
+    const sentinel = `audit-leak-${Date.now()}@example.invalid`;
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await recordAudit({
+        action: 'NOT_A_REAL_ACTION' as unknown as 'LOGIN_SUCCESS',
+        metadata: { email: sentinel },
+      });
+      expect(warn).toHaveBeenCalled();
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).toContain('[audit] failed to record NOT_A_REAL_ACTION');
+      expect(logged).not.toContain(sentinel);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('GET /api/audit', () => {

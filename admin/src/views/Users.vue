@@ -13,6 +13,8 @@ type UserRow = {
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string | null;
+  /** Task 14: devices with digest notifications on, and the last one delivered. */
+  pushDevices?: { count: number; lastSuccessAt: string | null };
 };
 
 const api = useApi();
@@ -263,7 +265,8 @@ async function revokeInvite(inv: InviteRow): Promise<void> {
 type ConfirmAction =
   | { kind: 'deactivate'; user: UserRow }
   | { kind: 'activate'; user: UserRow }
-  | { kind: 'role'; user: UserRow; newRole: 'ADMIN' | 'PUBLISHER' };
+  | { kind: 'role'; user: UserRow; newRole: 'ADMIN' | 'PUBLISHER' }
+  | { kind: 'devices'; user: UserRow };
 
 const confirm = ref<ConfirmAction | null>(null);
 const confirmSubmitting = ref(false);
@@ -277,6 +280,10 @@ function askActivate(u: UserRow): void {
   confirm.value = { kind: 'activate', user: u };
   confirmError.value = null;
 }
+function askRemoveDevices(u: UserRow): void {
+  confirm.value = { kind: 'devices', user: u };
+  confirmError.value = null;
+}
 function askChangeRole(u: UserRow): void {
   confirm.value = { kind: 'role', user: u, newRole: u.role === 'ADMIN' ? 'PUBLISHER' : 'ADMIN' };
   confirmError.value = null;
@@ -286,15 +293,19 @@ const confirmTitle = computed(() => {
   if (!confirm.value) return '';
   if (confirm.value.kind === 'deactivate') return `Deactivate ${confirm.value.user.email}?`;
   if (confirm.value.kind === 'activate') return `Reactivate ${confirm.value.user.email}?`;
+  if (confirm.value.kind === 'devices') return `Remove ${confirm.value.user.email}'s notification devices?`;
   return `Change ${confirm.value.user.email} to ${confirm.value.newRole}?`;
 });
 const confirmDescription = computed(() => {
   if (!confirm.value) return '';
   if (confirm.value.kind === 'deactivate') {
-    return 'Their active sessions will be revoked immediately. They will not be able to sign in until reactivated.';
+    return 'Their active sessions will be revoked immediately. Their notification devices are removed. They will not be able to sign in until reactivated.';
   }
   if (confirm.value.kind === 'activate') {
     return 'They will be able to sign in again.';
+  }
+  if (confirm.value.kind === 'devices') {
+    return 'Their phones and computers stop getting digest notifications. They still get the emails, and can turn notifications on again from the Digests screen.';
   }
   return confirm.value.newRole === 'ADMIN'
     ? 'They will gain full admin permissions.'
@@ -306,6 +317,12 @@ async function submitConfirm(): Promise<void> {
   confirmError.value = null;
   confirmSubmitting.value = true;
   try {
+    if (confirm.value.kind === 'devices') {
+      await api.del(`/api/users/${confirm.value.user.id}/push-devices`);
+      confirm.value = null;
+      load();
+      return;
+    }
     const body: Record<string, unknown> = {};
     if (confirm.value.kind === 'deactivate') body.isActive = false;
     if (confirm.value.kind === 'activate') body.isActive = true;
@@ -360,6 +377,7 @@ onMounted(() => {
             <th>Role</th>
             <th>Status</th>
             <th>Last login</th>
+            <th>Notifications</th>
             <th>Created</th>
             <th></th>
           </tr>
@@ -386,11 +404,23 @@ onMounted(() => {
               >
             </td>
             <td class="muted cell-wide" data-label="Last login">{{ fmtDate(u.lastLoginAt) }}</td>
+            <td class="cell-wide" data-label="Notifications">
+              <template v-if="u.pushDevices?.count">
+                {{ u.pushDevices.count }} {{ u.pushDevices.count === 1 ? 'device' : 'devices' }}
+                <span class="muted" style="font-size: 11px">
+                  · {{ u.pushDevices.lastSuccessAt ? `last ${fmtDate(u.pushDevices.lastSuccessAt)}` : 'none sent yet' }}</span
+                >
+              </template>
+              <span v-else class="muted">Off</span>
+            </td>
             <td class="muted" data-label="Created">{{ fmtDate(u.createdAt) }}</td>
             <td class="row-actions cell-actions">
               <button class="btn btn-mini" @click="openReset(u)">Reset password</button>
               <button class="btn btn-mini" @click="askChangeRole(u)">
                 Make {{ u.role === 'ADMIN' ? 'PUBLISHER' : 'ADMIN' }}
+              </button>
+              <button v-if="u.pushDevices?.count" class="btn btn-mini" @click="askRemoveDevices(u)">
+                Remove devices
               </button>
               <button
                 v-if="u.isActive"
@@ -403,7 +433,7 @@ onMounted(() => {
             </td>
           </tr>
           <tr v-if="items.length === 0 && !loading">
-            <td colspan="6" class="muted" style="text-align: center; padding: 24px">
+            <td colspan="7" class="muted" style="text-align: center; padding: 24px">
               No users to show.
             </td>
           </tr>
@@ -672,7 +702,7 @@ onMounted(() => {
       </div>
     </Teleport>
 
-    <!-- Confirm (deactivate / activate / change role) modal -->
+    <!-- Confirm (deactivate / activate / change role / remove notification devices) modal -->
     <Teleport to="body">
       <div v-if="confirm" class="modal-overlay" @click.self="cancelConfirm">
         <div class="modal-card" role="dialog" aria-labelledby="confirm-title">
@@ -699,6 +729,8 @@ onMounted(() => {
                   ? 'Deactivate'
                   : confirm?.kind === 'activate'
                   ? 'Reactivate'
+                  : confirm?.kind === 'devices'
+                  ? 'Remove devices'
                   : 'Change role'
               }}
             </button>

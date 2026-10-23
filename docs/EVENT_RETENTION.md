@@ -101,3 +101,9 @@ alone 305 MB) are a separate, lower-priority tidy-up once the table is small.
 `EventRollup` is included in the off-platform export — once the rows are gone,
 those lifetime counts cannot be re-derived. `Campaign.rolled*` travels with the
 `Campaign` rows already exported.
+
+## The email digest
+
+The digest's `EmailEvent` table follows the same rule with its own sweeper
+(`src/sweepers/digestRetention.ts`, flag `DIGEST_RETENTION_ENABLED`, 03:45 IST):
+see [`DIGEST_RETENTION.md`](DIGEST_RETENTION.md).

@@ -62,6 +62,24 @@ enum AuditAction {
   REVIEW_APPROVED
   REVIEW_REJECTED
   REVIEW_PUSHED
+  // Email digest (docs/EMAIL_DIGEST_DESIGN.md §6)
+  DIGEST_APPROVED
+  DIGEST_HELD
+  DIGEST_SEND_NOW
+  DIGEST_RETRY
+  DIGEST_TEST_SENT
+  DIGEST_SCHEDULED
+  DIGEST_SKIPPED
+  DIGEST_TEMPLATE_SAVED
+  DIGEST_TEMPLATE_ACTIVATED
+  DIGEST_TEMPLATE_ARCHIVED
+  DIGEST_TEMPLATE_REVERTED
+  DIGEST_AD_SAVED
+  DIGEST_AD_ARCHIVED
+  // Staff push devices (digest task 14): an approver's own device, never a reader
+  STAFF_PUSH_SUBSCRIBED
+  STAFF_PUSH_UNSUBSCRIBED
+  STAFF_PUSH_REMOVED
 }
 
 model Subscriber {
@@ -134,9 +152,10 @@ model Campaign {
   /// SENT or FAILED — never re-sends it. Null for every other path.
   claimedAt         DateTime?
 
-  createdBy User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  events    Event[]
-  feedItems FeedItem[]
+  createdBy   User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  events      Event[]
+  feedItems   FeedItem[]
+  digestItems DigestItem[]
 
   @@index([portal])
   @@index([status])
@@ -176,6 +195,34 @@ model User {
   auditLogs   AuditLog[]
   campaigns   Campaign[]
   invitesSent UserInvite[]  @relation("InvitesSent")
+  pushDevices StaffPushSubscription[]
+}
+
+// A staff member's own browser or phone, opted in from the admin ("Notify me on
+// this device", digest task 14) to get the digest's approval notifications.
+// NOT a reader: its own table, so it is never counted in subscriber metrics,
+// never selected by the pacer / Compose / sweeper / Push now (they all read
+// `Subscriber`), and never in the R2 backup (a device re-subscribes with one
+// tap; see src/services/backup.ts). One row per push endpoint — re-subscribing
+// the same browser updates it, even under another login. A deactivated user's
+// rows are deleted; sending also filters on User.isActive. Never log `endpoint`.
+model StaffPushSubscription {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  // Short device label from the user agent ("Chrome on Android"), shown to admins.
+  label         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  // Consecutive failed deliveries (reset on success). 404/410 deletes the row instead.
+  failureCount  Int       @default(0)
+
+  @@index([userId])
 }
 
 // A pending invitation to join the admin. The real `User` row is created
@@ -382,4 +429,333 @@ model EventRollup {
   type      EventType @unique
   count     Int       @default(0)
   updatedAt DateTime  @default(now()) @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Automatic daily email digest (docs/EMAIL_DIGEST_DESIGN.md §3). Task 1 adds
+// only the run + per-audience send rows; items, templates, ads, webhook events
+// and suppressions arrive with the tasks that read them. Never touches Event.
+// ---------------------------------------------------------------------------
+
+enum DigestAudience {
+  FREE
+  PREMIUM
+}
+
+enum DigestBuild {
+  BUILDING
+  BUILT
+  BUILD_FAILED
+  SKIPPED
+}
+
+enum DigestApproval {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  HELD
+}
+
+enum DigestSendState {
+  PENDING
+  CREATED
+  SCHEDULED
+  SENT
+  PARTIALLY_SENT
+  FAILED
+  SKIPPED
+}
+
+enum SenderErrorKind {
+  RETRYABLE
+  FATAL
+  AMBIGUOUS
+}
+
+/// One per IST calendar day. The unique (portal, runDate) IS the "max one per day" rule.
+model DigestRun {
+  id                  String         @id @default(cuid())
+  portal              String         @default("taxscan")
+  runDate             DateTime       @db.Date // IST date
+  windowStart         DateTime // = previous run's builtAt (cap 72 h)
+  builtAt             DateTime? // freeze instant = next run's windowStart
+  build               DigestBuild    @default(BUILDING)
+  // too_little_news | cutoff_passed | not_approved | held_by_editor |
+  // build_failed | config_invalid | sanity_hold_expired
+  skipReason          String?
+  approval            DigestApproval @default(NOT_REQUIRED)
+  approvedByUserId    String?
+  approvedAt          DateTime?
+  candidateCount      Int            @default(0) // for the re-platform sanity guard
+  healthOk            Boolean?
+  healthCheckedAt     DateTime?
+  healthError         String?
+  alerts              Json           @default("{}") // {kind: sentAt}, so one alert per kind per run
+  // Task 4: whether organic read rate ranked items within a queue+tier, from which
+  // source (ga | cms), and why not when it did not (flag off, stale data, …).
+  readsUsed           Boolean?
+  readsSource         String?
+  readsNote           String?
+  // Build retry bookkeeping (task 9 follow-ups, 2026-10-23): a failed build is retried
+  // on the retry policy (+1, +5, +15, then +75, +135 … min from the first failure),
+  // not every tick. Retry now skips the wait. Cleared when the run builds.
+  buildAttempts       Int            @default(0)
+  buildFirstFailureAt DateTime?
+  buildNextAttemptAt  DateTime?
+  // The CURRENT reason the build is failing (ads_unfillable | build_error) and its
+  // plain-words detail (unfillable slots, or the redacted error). The cut-off and the
+  // banner read these, never the once-per-run alert markers. Null once built.
+  buildFailure        String?
+  buildError          String?
+  // Task 13 (scheduler + health): the complaint-rate check of the previous send, taken once
+  // when this run is created ({checkedAt, thresholdPct, held, previousRunDate, sends: [{audience,
+  // complaints, delivered, ratePct}]}; a null count/rate = UNKNOWN, never 0). held = true makes
+  // this run need an editor's approval even when DIGEST_APPROVAL_REQUIRED is off.
+  complaintCheck      Json?
+  // Task 13: the once-a-day Mailercloud webhook status read (GET /v1/webhooks/detail/{id},
+  // only with MAILERCLOUD_WEBHOOK_ID). webhookActive null = not read (or unreadable) today.
+  webhookCheckedAt    DateTime?
+  webhookActive       Boolean?
+  createdAt           DateTime       @default(now())
+
+  sends DigestSend[]
+  items DigestItem[]
+
+  @@unique([portal, runDate])
+}
+
+/// One per (run, audience): each variant is its own provider campaign with its own state.
+model DigestSend {
+  id                  String           @id @default(cuid())
+  runId               String
+  audience            DigestAudience
+  state               DigestSendState  @default(PENDING)
+  templateId          String?
+  subject             String
+  preheader           String
+  html                String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
+  text                String?
+  htmlBytes           Int
+  mcCampaignName      String           @unique // TS-DIGEST-2026-10-23-FREE (rows before 2026-10-23: …-FREE-<runId>)
+  mcCampaignId        String?          @unique // persisted the instant create returns
+  sendAfter           DateTime // planned send instant (Send now moves it earlier)
+  scheduledAt         DateTime? // when we called schedule
+  sentConfirmedAt     DateTime?
+  sentVia             String? // status_poll | webhook
+  stepClaimedAt       DateTime? // DB claim; protects against two containers mid-deploy
+  // Write-ahead markers, set in the claim update BEFORE the provider call. A set
+  // marker means the call may have happened: ask the provider before repeating it.
+  createAttemptedAt   DateTime?
+  scheduleAttemptedAt DateTime?
+  // Written (fenced on the claim) immediately BEFORE the createDraft() HTTP call, i.e. after
+  // the name lookup proved no campaign exists. Set = this database actually called create, so
+  // a draft found later by name is ours (decision A). `createAttemptedAt` only says the step
+  // was claimed: a crash before the call leaves it set but this one null (2026-10-23).
+  createSentAt        DateTime?
+  attempts            Int              @default(0) // all failed attempts (display)
+  firstFailureAt      DateTime? // first failure of any step (display)
+  // Retry bookkeeping for the CURRENT step (create or schedule); reset when the step succeeds.
+  stepAttempts        Int              @default(0)
+  stepFirstFailureAt  DateTime?
+  nextAttemptAt       DateTime?
+  lastError           String? // truncated, email-shaped substrings redacted
+  lastErrorKind       SenderErrorKind?
+  targeted            Int? // from the provider report
+  reached             Int?
+  opens               Int? // aggregate from the report API, trend only
+  clicks              Int?
+  rolledUnsub         Int              @default(0) // EmailEvent rows folded by the sweeper
+  rolledBounce        Int              @default(0)
+  rolledSpam          Int              @default(0)
+  // Set when this variant was frozen WITHOUT content because its ad slots could not be
+  // filled while the other audience's could (task 9 follow-ups): the run's stories are
+  // frozen, this variant's html is rendered from them once ads are fixed (state FAILED,
+  // lastError "ads_unfillable: …" until then). Null for every normally built variant.
+  contentPendingAt    DateTime?
+  // Owner, 2026-10-23: a variant rendered AFTER the build (the contentPendingAt path) is
+  // never covered by the run's approval — in approval mode it needs its own (approvedAt).
+  // False for every variant frozen at the build (the run approval covers those).
+  ownApprovalRequired Boolean          @default(false)
+  approvedAt          DateTime?
+  approvedByUserId    String?
+  // Owner, 2026-10-23: the custom template failed at send time, so this variant was
+  // rendered with the built-in template (templateId null). The template it fell back from
+  // and why (RenderError text, redacted). Null when no fallback happened.
+  templateFallbackFromId String?
+  templateFallbackReason String?
+  // Task 11 (retention): stamped by the nightly fold when it deletes this send's
+  // campaign_sent / campaign_error events, so the "the webhook was receiving" proof that
+  // digestSendStats() needs outlives the events themselves (else old sends turn to "—").
+  webhookProofAt      DateTime?
+  // Task 11: when the frozen html/text were nulled (DIGEST_HTML_RETENTION_DAYS). Null = still stored.
+  htmlPurgedAt        DateTime?
+  // Task 13, owner decision A (2026-10-23): set when this variant ADOPTED a campaign that
+  // Mailercloud already had as a DRAFT (or whose status could not be read) — e.g. after a
+  // database restore. Its content cannot be confirmed to match our frozen html, so it is
+  // never scheduled without a person's approval (ownApprovalRequired), in any mode.
+  adoptedDraftAt      DateTime?
+
+  run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  placements DigestAdPlacement[]
+
+  @@unique([runId, audience])
+  @@index([state, nextAttemptAt])
+}
+
+/// The frozen story list (task 4). Keyed by articleKey (taxscan's trailing id), NOT by GUID or
+/// Campaign id, so a re-GUID'd or re-captured article still dedupes against earlier digests.
+/// Written once, in the same transaction that freezes the run; never updated afterwards.
+model DigestItem {
+  id         String          @id @default(cuid())
+  runId      String
+  rank       Int // 1-based within the audience's list: MAIN first, then ICYMI
+  section    String // MAIN | ICYMI
+  audience   DigestAudience? // null = both; set when the two variants' lists differ
+  articleKey String
+  campaignId String? // provenance; SetNull if the Campaign row goes
+  title      String
+  url        String
+  authority  String?
+  category   String // reportCategory(), the coverage report's own rule
+  excerpt    String?
+  capturedAt DateTime
+  /// Organic reads per hour since capture used for within-tier ranking; null when the
+  /// item was too fresh to judge, reads were not used, or it is a roll-forward item.
+  readRate   Float?
+
+  run      DigestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, articleKey, audience])
+  @@index([articleKey])
+  @@index([campaignId])
+}
+
+/// Mailercloud webhook events (task 8). NO email address is ever stored here: `emailHash` is
+/// sha256 of the normalised (trimmed, lowercased) address, kept only for dedupe and per-reader
+/// joins later. `dedupeKey` is unique, so a provider retry or a replayed payload inserts once.
+/// Kept 90 days, then folded into DigestSend.rolled* (task 11); `digestSendStats()` is the single
+/// rolled + live implementation.
+model EmailEvent {
+  id           String   @id @default(cuid())
+  provider     String   @default("mailercloud")
+  type         String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | CAMPAIGN_SENT | CAMPAIGN_ERROR | NO_ADDRESS (daily signal, no PII)
+  mcCampaignId String?
+  sendId       String? // DigestSend.id when the campaign is one of ours; null for other campaigns
+  emailHash    String? // sha256(normalised address); never the address
+  dedupeKey    String   @unique
+  meta         Json? // provider event name, event time, redacted error text — never an address
+  receivedAt   DateTime @default(now())
+
+  @@index([sendId])
+  @@index([receivedAt])
+  @@index([mcCampaignId])
+}
+
+/// Our copy of who must not be mailed (task 8). Mailercloud enforces its own list for campaigns;
+/// this copy is what future lifecycle sends check and what restores opt-outs after a disaster.
+/// Never deleted automatically. `email` is NEVER logged and is shown as a count only.
+model EmailSuppression {
+  id          String   @id @default(cuid())
+  email       String   @unique // normalised: trimmed, lowercase
+  reason      String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL — escalates SPAM > HARD_BOUNCE > UNSUBSCRIBE, never down; MANUAL is never rewritten
+  source      String // mailercloud_webhook | manual
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+}
+
+/// House ads for the digest (task 9; docs/EMAIL_DIGEST_DESIGN.md §3, §4 ads.ts, §7, §9). Only
+/// taxscan's own products. Archived, never deleted. `pickAds()` in services/digest/ads.ts is the
+/// single eligibility rule; `kind = SUBSCRIPTION` is NEVER placed in a PREMIUM send whatever
+/// `audience` says (checked at pick, at render and again at freeze). `portal` scopes the pool
+/// (portal-agnostic like DigestRun; also isolates test pools).
+/// Task 10: the email layouts (docs/EMAIL_DIGEST_DESIGN.md §3, §13 task 10). DRAFT → ACTIVE →
+/// ARCHIVED, plus SCHEDULED = a dated override that wins inside [startsAt, endsAt). The DATABASE
+/// enforces "one ACTIVE per audience": a partial unique index in raw SQL in the migration
+/// (`one_active_template_per_audience` ON (portal, audience) WHERE status = 'ACTIVE'), plus CHECK
+/// constraints on status/format and the override window. Prisma does not model either: never
+/// accept a generated migration that drops them. No template row = the built-in template.
+model DigestTemplate {
+  id              String         @id @default(cuid())
+  portal          String         @default("taxscan")
+  name            String
+  audience        DigestAudience
+  status          String         @default("DRAFT") // DRAFT | ACTIVE | SCHEDULED | ARCHIVED
+  format          String         @default("HTML") // HTML | MJML (MJML compiles at save time only)
+  source          String
+  compiledHtml    String? // compiled at SAVE time; the send path never compiles. Null when it failed
+  compileError    String? // the compiler's readable message; blocks activation
+  validation      Json           @default("{}") // the last checklist result (validateTemplate)
+  validatedAt     DateTime?
+  startsAt        DateTime? // SCHEDULED overrides only (e.g. Budget week); inclusive
+  endsAt          DateTime? // exclusive
+  replacesId      String? // the ACTIVE template this one displaced; Revert restores it
+  activatedAt     DateTime?
+  archivedAt      DateTime?
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([portal, audience, status])
+}
+
+model DigestAd {
+  id              String    @id @default(cuid())
+  portal          String    @default("taxscan")
+  name            String
+  kind            String // HOUSE | SUBSCRIPTION | RENEWAL
+  headline        String // live text, never only inside the image
+  altText         String
+  body            String?
+  ctaText         String
+  linkUrl         String // passes isAllowedPushUrl() at save AND at render; UTM added at render, never stored
+  imageId         String?
+  audience        String // ALL | FREE_ONLY | PREMIUM_ONLY
+  topic           String? // matched against the lead items' report category (ordering only)
+  slots           Int[] // empty = any slot
+  priority        Int       @default(0)
+  isSlotDefault   Boolean   @default(false) // fallback for its slots when nothing else is eligible
+  startsAt        DateTime?
+  endsAt          DateTime?
+  status          String // ACTIVE | PAUSED | ARCHIVED
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  image      DigestAdImage?      @relation(fields: [imageId], references: [id])
+  placements DigestAdPlacement[]
+
+  @@index([portal, status])
+}
+
+/// One scalable creative (≤ 1200 px wide, ≤ 150 KB, JPEG or PNG — validated from the bytes, never
+/// resized). `id` = sha256 of the bytes, so an identical upload is the same row. Served publicly at
+/// /email-assets/<id>.<jpg|png> with an immutable cache.
+model DigestAdImage {
+  id        String   @id // sha256 hex of the bytes
+  mime      String // image/jpeg | image/png (sniffed, not declared)
+  width     Int
+  height    Int
+  size      Int
+  bytes     Bytes
+  createdAt DateTime @default(now())
+
+  ads DigestAd[]
+}
+
+/// One row per ad per send (task 9): rotation (least recently placed) and, later, order matching.
+model DigestAdPlacement {
+  id         String   @id @default(cuid())
+  sendId     String
+  adId       String
+  slot       Int
+  utmContent String // ad-<id>-slot<N>
+  createdAt  DateTime @default(now())
+
+  send DigestSend @relation(fields: [sendId], references: [id], onDelete: Cascade)
+  ad   DigestAd   @relation(fields: [adId], references: [id])
+
+  @@unique([sendId, slot])
+  @@index([adId, createdAt])
 }

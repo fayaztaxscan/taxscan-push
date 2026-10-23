@@ -41,6 +41,12 @@
 
   .page-break { break-before: page; }
   section { break-inside: avoid-page; }
+  /* Print: a heading never ends a page, and a table row never splits across two. */
+  h3 { break-after: avoid; page-break-after: avoid; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  /* The quick-reference tables: one page, so a little tighter than the rest. */
+  table.compact { font-size: 10.5px; line-height: 1.4; margin: 6px 0 10px; }
+  table.compact th, table.compact td { padding: 5px 8px; }
 
   /* Callouts */
   /* Never let a callout split across a page: a heading stranded at the foot of
@@ -99,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 1.9 &nbsp;·&nbsp; Updated 21 October 2026
+    &nbsp;·&nbsp; Version 2.3 &nbsp;·&nbsp; Updated 23 October 2026
   </div>
 </div>
 
@@ -116,8 +122,10 @@
   <li><span class="n">6</span> The Review queue — your main task</li>
   <li><span class="n">7</span> Sending a notification yourself (Compose)</li>
   <li><span class="n">8</span> The other screens — Campaigns, Reports, Reads &amp; Surfaces</li>
-  <li><span class="n">9</span> Quick reference card</li>
-  <li><span class="n">10</span> Frequently asked questions</li>
+  <li><span class="n">9</span> The email digest — the Digests screen</li>
+  <li><span class="n">10</span> Digest ads and templates (Admins)</li>
+  <li><span class="n">11</span> Quick reference card</li>
+  <li><span class="n">12</span> Frequently asked questions</li>
 </ol>
 </section>
 
@@ -152,8 +160,8 @@ you want to. This guide shows you how.</p>
 <table>
   <thead><tr><th style="width:25%">Role</th><th>What they can do</th></tr></thead>
   <tbody>
-    <tr><td><strong>Administrator</strong></td><td>Everything below, <em>plus</em> add/remove team members and change roles (the <strong>Users</strong> screen).</td></tr>
-    <tr><td><strong>Publisher</strong></td><td>Use the Dashboard, Review queue, Compose/send, Campaigns and Activity. Cannot manage other users.</td></tr>
+    <tr><td><strong>Administrator</strong></td><td>Everything below, <em>plus</em> add/remove team members and change roles (the <strong>Users</strong> screen), and manage the email digest's <strong>Ads</strong> and <strong>Templates</strong>.</td></tr>
+    <tr><td><strong>Publisher</strong></td><td>Use the Dashboard, Review queue, Compose/send, Campaigns, Reports, <strong>Digests</strong> (approve, hold, send) and Activity. Cannot manage other users, ads or templates.</td></tr>
   </tbody>
 </table>
 <div class="box tip"><span class="box-t">Tip — changing your password</span>
@@ -290,10 +298,8 @@ posts</strong> (see below). For each one you have three choices:</p>
 </table>
 <div class="box tip"><span class="box-t">Goal: leave the queue empty</span>
   Clearing it daily keeps the channel fresh and means no good article sits unsent. There's no penalty for rejecting —
-  when in doubt, reject; you're curating quality.</div>
-<div class="box info"><span class="box-t">Good to know</span>
-  Tribunal orders (ITAT, CESTAT, NCLAT, NCLT) do <strong>not</strong> appear here — they're held automatically and
-  need no action from you.</div>
+  when in doubt, reject; you're curating quality. Tribunal orders (ITAT, CESTAT, NCLAT, NCLT) do <strong>not</strong>
+  appear here — they're held automatically and need no action from you.</div>
 
 <h3>Job postings</h3>
 <p>Job and recruitment posts from the <strong>Job Scan</strong> section (CA / CMA / MBA vacancies, hiring,
@@ -404,6 +410,7 @@ notification will look before sending it to anyone.</p>
     <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one, then confirm, to send it immediately instead of waiting its turn. At night (11 pm – 7 am) it only goes as Breaking. If the article has been deleted from the site, it is archived instead of sent.</td></tr>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
     <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
+    <tr><td><strong>Digests</strong></td><td>The daily email digest: preview, approve, hold or send it, and its last 14 days. See section 9. <span class="muted">Ads and Templates (Admins only) are in section 10.</span></td></tr>
     <tr><td><strong>Activity</strong></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
     <tr><td><strong>Users</strong> <span class="muted">(Admins only)</span></td><td>Add teammates by email invite or with a temporary password, change their role, or deactivate them. New members get a link to set their own password.</td></tr>
     <tr><td><strong>Change password</strong></td><td>Update your own password at any time.</td></tr>
@@ -564,17 +571,231 @@ nothing on screen to say why. The notice exists so that can't happen again.</p>
 
 <!-- 9 -->
 <section class="page-break">
-<h2>9 &nbsp;Quick reference card</h2>
+<h2>9 &nbsp;The email digest — the Digests screen</h2>
+<p><strong>Not switched on yet — it starts with the pilot.</strong></p>
+<p>Besides push notifications, the platform can send Taxscan's <strong>daily email digest</strong> by itself: one
+email each morning with the best new stories, built from the same articles the push side has already approved. It
+replaces the digest that is put together by hand in Mailercloud today. Mailercloud still does the actual sending.</p>
+<p>There are <strong>two versions</strong> every day: <strong>Free</strong> (newsletter readers and free sign-ups) and
+<strong>Premium</strong> (paid members, who never see the subscription ad). Each version goes out <strong>at most once
+a day</strong> and is never sent again on a later day.</p>
+<table>
+  <thead><tr><th style="width:22%">When (IST)</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td><strong>06:30</strong></td><td>The digest is built: up to 12 stories are picked and ranked, the ads are chosen, and both emails are
+        <strong>frozen</strong>. Nothing changes them after this. A draft is created in Mailercloud (a draft cannot send by itself).
+        Admins and publishers get a <em>ready for approval</em> email with a link to Digests — and a notification on
+        any device where they turned it on (below).</td></tr>
+    <tr><td><strong>07:30</strong></td><td>It is sent — once it has been <strong>approved</strong>, while approval is required.
+        Still not approved at <strong>08:30</strong>: one reminder email (and notification).</td></tr>
+    <tr><td><strong>17:00</strong></td><td>The cut-off. Anything not sent by now is <strong>skipped</strong> for the day, and its top 2–3 stories go into
+        tomorrow's digest under <em>In case you missed it</em>.</td></tr>
+    <tr><td><strong>11 pm – 7 am</strong></td><td>Never. Like push, the digest is never sent at night, whatever button is pressed.</td></tr>
+  </tbody>
+</table>
+
+<h3>What you see and what you can press</h3>
+<ul>
+  <li><strong>Today</strong> — the state of each version (built, waiting for approval, sent, failed, skipped) and, under
+      <em>What happened</em>, a timeline of every step.</li>
+  <li><strong>Preview</strong> — the frozen email exactly as readers get it, at <strong>Phone</strong>, <strong>Tablet</strong>
+      and <strong>Desktop</strong> width, with the inbox line (subject and preview text) above it and its size.</li>
+  <li><strong>Stories</strong> — the stories in order, with the court or authority and why they ranked.</li>
+  <li><strong>Last 14 days</strong> — each day's result, delivered, clicks, unsubscribes, bounces and complaints, with a link
+      to the campaign in Mailercloud. An email is kept 30 days, then its preview says <em>No longer stored</em>
+      (stories, ads and counts stay).</li>
+</ul>
+<table>
+  <thead><tr><th style="width:22%">Button</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Approve</strong></td><td>Lets today's digest go out at 07:30. Press it after reading the preview.</td></tr>
+    <tr><td><strong>Hold</strong></td><td>Stops it going out. Approve it later to release it; still held at 17:00, it is skipped.</td></tr>
+    <tr><td><strong>Send now</strong></td><td>Sends both versions straight away instead of at 07:30. It asks <em>"Send today's digest to everyone now?"</em> first. Never at night, and — while approval is required — not before it is approved.</td></tr>
+    <tr><td><strong>Retry now</strong></td><td>Appears only when something failed, before 17:00. Tries again at once with the <strong>same frozen email</strong>; it never creates a second campaign. While sending is still switched off (the pilot's first week) it only re-makes the draft.</td></tr>
+    <tr><td><strong>Test send to me</strong></td><td>Sends that version to your own inbox only. It works only if your address is on the test list (<code>DIGEST_TEST_RECIPIENTS</code>); ask an admin.</td></tr>
+  </tbody>
+</table>
+<div class="box info"><span class="box-t">Who can do what</span>
+  <strong>Publishers</strong> can approve, hold, Send now, Retry now and test send — like Push now. <strong>Ads</strong> and
+  <strong>Templates</strong> are for <strong>Administrators</strong> only, and appear in their menu only.</div>
+<div class="box tip"><span class="box-t">Failures retry by themselves</span>
+  If Mailercloud doesn't answer, or the build fails, the system tries again <strong>1, 5 and 15 minutes</strong> later,
+  then <strong>every hour</strong> until 17:00; <em>Retry now</em> just skips the wait. Errors a retry can't fix (a
+  rejected API key, an exhausted plan) alert admins by email straight away.</div>
+<div class="box warn"><span class="box-t">A version built later needs its own Approve</span>
+  If one version was held back (for example its ad slot couldn't be filled) and is built after you approved the day,
+  your earlier approval does <strong>not</strong> cover it. Its preview appears and <strong>Approve</strong> is offered
+  again for that version alone. Not approved by 17:00, it is skipped.</div>
+
+<h3>Get notified on your phone</h3>
+<p>Besides the emails, anyone who can approve can get a <strong>notification</strong> on their own phone or computer:
+<em>"Today's digest is ready — tap to review"</em> when it is built, and <em>"Digest still waiting for approval"</em> at
+08:30 if nobody has approved it. Tapping it opens Digests. The emails still come.</p>
+<ol>
+  <li>Open <strong>Digests</strong> on the device. At the top, <em>Notifications on this device</em> says <strong>Off</strong>.</li>
+  <li>Tap <strong>Notify me on this device</strong>, then <strong>Allow</strong> when the browser asks. It now says
+      <strong>On for this device</strong>; <strong>Send a test</strong> shows what it looks like. Do this once on
+      <strong>each</strong> device. <strong>Stop notifications on this device</strong> turns it off.</li>
+</ol>
+<div class="box warn"><span class="box-t">iPhone and iPad: add it to the Home Screen first</span>
+  Apple allows notifications only from the Home Screen (iOS 16.4 or later). In <strong>Safari</strong>, open
+  push.taxscan.in/admin, tap <strong>Share → Add to Home Screen</strong>, open <strong>Taxscan Push</strong> from the Home
+  Screen, sign in, and tap <em>Notify me on this device</em> there. In Safari itself the screen shows this instruction
+  instead of the button.</div>
+<p class="muted"><em>Blocked</em>: site settings → Notifications → Allow, then reload. On <strong>Users</strong>, admins
+can <strong>Remove devices</strong> (a lost phone); deactivating a user removes theirs. <em>The notification key has
+changed</em> (after a security key change): tap <strong>Notify me on this device</strong> again on each device. At most
+10 devices per person: an 11th turns the oldest off, and the card says which.</p>
+
+<h3>If the Digests screen (or the Dashboard) shows an amber notice</h3>
+<p>The digest uses the same amber notice as the rest of the platform. It stays until the cause is gone and can't be
+dismissed. The common ones:</p>
+<table>
+  <thead><tr><th style="width:38%">The notice says</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td>Today's digest is waiting for approval</td><td>Read the preview, then <strong>Approve</strong> or <strong>Hold</strong> before 17:00, or it is skipped.</td></tr>
+    <tr><td>Mailercloud is not answering; today's digest is retrying</td><td>Nothing yet — it retries by itself until 17:00.</td></tr>
+    <tr><td>…stopped: an ad slot cannot be filled</td><td>An admin opens <strong>Ads</strong>, fixes the slot named in the notice, then presses <strong>Retry now</strong> before 17:00. Only that version waits; the other still goes out.</td></tr>
+    <tr><td>Mailercloud rejected today's digest</td><td>Whoever runs the platform checks the Mailercloud key and plan, then <strong>Retry now</strong>.</td></tr>
+    <tr><td>Mailercloud did not confirm today's digest</td><td>Look in Mailercloud for today's <code>TS-DIGEST-</code> draft, then <strong>Retry now</strong>. Nothing is ever sent twice.</td></tr>
+    <tr><td>Two campaigns named TS-DIGEST-… exist in Mailercloud</td><td>Someone copied the campaign. An admin deletes the extra one in Mailercloud; the digest carries on by itself.</td></tr>
+    <tr><td>Mailercloud already had today's … campaign, which this system did not create</td><td>After a database restore, or a campaign made by hand. An admin opens it in Mailercloud: delete it (a fresh one is made) or, if it is right, <strong>Approve</strong> that version. It never goes out without an Approve.</td></tr>
+    <tr><td>Mailercloud rejected the health check / is unreachable</td><td>Checked at 06:15 and 07:15 (hourly while rejected). Whoever runs the platform checks the key and plan; the digest picks itself up when it passes.</td></tr>
+    <tr><td>Today's digest is held: … spam-complaint rate</td><td>Yesterday's readers marked it as spam unusually often (over 0.3%). Find out why, then <strong>Approve</strong> or <strong>Hold</strong>; it never goes out by itself that day.</td></tr>
+    <tr><td>Today's digest settings are incomplete</td><td>A setting on the server is missing (lists, postal address, sender). Pass it to whoever runs the platform.</td></tr>
+    <tr><td>Part of today's digest was not delivered</td><td>Not re-sent (people who got it would get it twice). Its top stories go into tomorrow's digest.</td></tr>
+    <tr><td>Today's … digest used the built-in template</td><td>Today's email went out on the standard layout instead. An admin fixes the template on <strong>Templates</strong> (or reverts it).</td></tr>
+    <tr><td>Only the Free (or Premium) digest went out today</td><td>The other version was skipped; the notice says why. Its top stories roll into the next digest.</td></tr>
+    <tr><td>Mailercloud has stopped calling our webhook / reports it switched off</td><td>An admin switches the webhook back on in Mailercloud (see below). Sends are still checked meanwhile.</td></tr>
+    <tr><td>The spam-complaint rate of the last … digest is unknown</td><td>Mailercloud has not confirmed that send through the webhook (or it was never confirmed sent by 17:00), so the automatic hold can't protect today's digest. An admin checks the webhook and that campaign.</td></tr>
+    <tr><td>…event(s) from Mailercloud arrived without a readable address</td><td>Mailercloud still honours them on its side. Tell whoever runs the platform: the webhook format needs a look.</td></tr>
+  </tbody>
+</table>
+<div class="box warn"><span class="box-t">Don't touch TS-DIGEST- campaigns in Mailercloud</span>
+  Every campaign this system creates is named <code>TS-DIGEST-</code> with the date and version, e.g.
+  <code>TS-DIGEST-2026-10-23-FREE</code>. Don't send, copy, rename or edit them in Mailercloud by hand — the system
+  can't see what is done there, and a copied campaign is the one way a reader could get two digests.</div>
+
+<h3>Unsubscribes, bounces and complaints (the history columns)</h3>
+<ul>
+  <li>They come from Mailercloud's <strong>webhook</strong>: Mailercloud calls us when someone unsubscribes, an address
+      bounces permanently or someone marks the email as spam. We keep our own copy of who must not be mailed.</li>
+  <li><strong>—</strong> means <em>no data</em>, not zero. A day shows numbers only once Mailercloud has confirmed (through
+      the webhook) that it sent that campaign; before that, and whenever the webhook is off, you see —.</li>
+  <li>Admins: register the webhook for <strong>five events only</strong> — unsubscribe, hard bounce, spam, campaign sent and
+      campaign error. <strong>Never</strong> opens or clicks: those would be hundreds of thousands of calls a day. (Opens and
+      clicks are not read into this screen yet, so the Clicks column shows —: use the campaign report in Mailercloud.)</li>
+  <li>Someone who unsubscribes is only mailed again if they opt in again <em>after</em> unsubscribing. A spam complaint or a
+      permanent bounce is lifted only by a new, explicit opt-in. An address an admin blocked by hand is never lifted
+      automatically.</li>
+  <li><strong>Activity</strong> records every approval, hold, Send now, Retry now, test send, ad and template change and
+      notification device turned on, off or removed — with who and when.</li>
+</ul>
+</section>
+
+<!-- 10 -->
+<section class="page-break">
+<h2>10 &nbsp;Digest ads and templates <span class="muted" style="font-size:13px">(Admins)</span></h2>
+<p>Every digest carries <strong>house ads</strong> — Taxscan's own products (Academy, Shopscan), never outside
+advertisers — and is drawn from a <strong>template</strong>. Both are managed here, and both can be prepared while the
+digest is still switched off.</p>
+
+<h3>The Ads screen</h3>
+<p>The top of the screen is the <strong>coverage check</strong>: both emails drawn as the reader meets them, with the ad
+the next 06:30 build would put in each slot. A green line means every slot is filled. A slot marked empty means that
+version <strong>will not go out</strong> until it is fixed — a slot is never sent empty.</p>
+<table>
+  <thead><tr><th style="width:14%">Slot</th><th style="width:28%">Where it sits</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1</strong></td><td>After story 4</td><td>Always shown.</td></tr>
+    <tr><td><strong>2</strong></td><td>After story 9</td><td>Only in digests with <strong>9 or more stories</strong>.</td></tr>
+    <tr><td><strong>3</strong></td><td>Above the footer</td><td>Always shown.</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><strong>Three different ads per version.</strong> The same ad never appears twice in one email, so each of Free and
+      Premium needs at least three ads (or slot defaults) that can reach it.</li>
+  <li><strong>Premium never gets the subscription ad.</strong> A <em>Subscription</em> ad set to "Free and Premium" is listed as
+      <em>Free only (never Premium)</em>, and Premium's slot is filled from the other ads.</li>
+  <li><strong>Image:</strong> JPEG or PNG, up to <strong>1200 px wide</strong>, up to <strong>150 KB</strong>, no taller than twice
+      its width. One picture per ad, not resized. <strong>Put the offer in the headline</strong> — many readers' email apps hide
+      images.</li>
+  <li><strong>Link:</strong> must start with <code>https://</code>, must be one of our own sites, and must not carry its own
+      <code>utm_</code> tags (the digest adds its own, so sales can be traced back to the email).</li>
+  <li><strong>Starts / Ends:</strong> give every offer an end date, so it stops on time by itself.</li>
+  <li><strong>Priority (0–100):</strong> higher goes first; ads with equal priority take turns. <strong>Topic:</strong> an ad goes
+      first when the day's top stories are on its topic. <strong>Default for its slots:</strong> used only when no other ad fits.</li>
+  <li><strong>Archiving is final.</strong> An archived ad can't be edited or brought back (copy its details into a new ad).
+      Digests already sent keep it.</li>
+</ul>
+<div class="box tip"><span class="box-t">An unfillable slot holds back only that version</span>
+  If, say, Premium's slot 3 can't be filled, the Free digest still goes out as normal and Premium waits. Fix the slot here
+  (an active ad or a default for it), then press <strong>Retry now</strong> on Digests before 17:00. The Premium version is
+  then built from the morning's frozen stories — and, in approval mode, needs its own Approve.</div>
+
+<h3>The Templates screen</h3>
+<p><strong>In use now</strong> shows what each version's next digest is built with. Until an admin activates a template,
+both use the <strong>built-in template</strong>: close to today's hand-made digest — a dark header bar with the white
+Taxscan logo, Arial throughout, dark headlines, blue links and square yellow buttons. <em>New template</em> starts from a
+copy of it. Templates are <strong>plain email HTML</strong> with placeholders the digest fills:</p>
+<table>
+  <thead><tr><th style="width:34%">Placeholder</th><th>What goes there</th></tr></thead>
+  <tbody>
+    <tr><td><code>{{preheader}}</code> <span class="pill">required</span></td><td>The hidden inbox preview text. Put it first inside the body.</td></tr>
+    <tr><td><code>{{stories}}</code> <span class="pill">required</span></td><td>The stories, with ad slots 1 and 2 inside them.</td></tr>
+    <tr><td><code>{{icymi}}</code> <span class="pill">required</span></td><td>The <em>In case you missed it</em> stories, when there are any.</td></tr>
+    <tr><td><code>{{ad_slot_3}}</code> <span class="pill">required</span></td><td>The ad above the footer.</td></tr>
+    <tr><td><code>{{footer}}</code> <span class="pill">required</span></td><td>Why the reader gets this email, the unsubscribe link and the postal address. Always the system's own text; it can be placed, never changed or removed.</td></tr>
+    <tr><td>Optional</td><td><code>{{subject}}</code>, <code>{{date}}</code>, <code>{{home_url}}</code>, <code>{{logo}}</code>, <code>{{premium_badge}}</code>, <code>{{audience}}</code>.</td></tr>
+  </tbody>
+</table>
+<p>Each required placeholder must appear <strong>exactly once</strong>. The four row placeholders (stories, ICYMI, slot 3,
+footer) must sit directly inside a table.</p>
+
+<h3>The checklist — every rule and its fix</h3>
+<p>Saving a draft checks it against the <strong>biggest possible digest</strong> (12 stories, the last 3 as <em>In case
+you missed it</em>, and 3 ads). <strong>Activate</strong> stays greyed out while any check fails.</p>
+<table>
+  <thead><tr><th style="width:36%">Check</th><th>If it fails</th></tr></thead>
+  <tbody>
+    <tr><td>Compiles</td><td>The HTML couldn't be read. Fix the markup the message points to.</td></tr>
+    <tr><td>Required placeholders, each exactly once</td><td>Add the missing one, remove the duplicate or the unknown one, and keep row placeholders inside a table.</td></tr>
+    <tr><td>Footer visible and not removable</td><td>Put <code>{{footer}}</code> in the visible body — not in a comment, an Outlook-only block, a hidden element, or under a style that hides it.</td></tr>
+    <tr><td>No scripts, forms, iframes or external styles</td><td>Remove them. Email apps block them anyway, and they are a security risk.</td></tr>
+    <tr><td>Every link and image passes the URL check</td><td>Links only to our own sites; images on https from our own sites.</td></tr>
+    <tr><td>Every image has alt text</td><td>Add a short <code>alt="…"</code> description to each image.</td></tr>
+    <tr><td>Worst-case email under the size budget</td><td>The limit is <strong>90 KB</strong>, with a warning from 75 KB, because Gmail cuts emails off at about 102 KB. Remove repeated styling or extra images.</td></tr>
+    <tr><td>No subscription offer in the Premium template</td><td>Remove subscribe, pricing, plans or membership links and "Subscribe now" wording from a Premium template.</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><strong>Draft → Activate</strong> makes it the template for that version from the next build; the one it replaces is
+      archived and remembered. <strong>Schedule</strong> uses it for a few days only (say, Budget week), then the active one
+      returns by itself.</li>
+  <li><strong>Revert</strong> (top of the screen) brings back the template it replaced, after checking it again; with nothing to go
+      back to, the built-in template. Only drafts can be edited — <strong>Copy</strong> a template to change it.
+      <strong>Archive</strong> is final.</li>
+  <li><strong>If a template fails on the morning itself</strong>, that version is built with the built-in template instead, and
+      admins get an email and an amber notice naming the template. Fix it before the next morning.</li>
+  <li>The <strong>logo image</strong> is a fixed file. Email apps keep images for a year, so a new logo is always added as a
+      <strong>new file</strong>, never by replacing the old one. Ask whoever runs the platform.</li>
+</ul>
+</section>
+
+<!-- 11 -->
+<section class="page-break">
+<h2>11 &nbsp;Quick reference card</h2>
 
 <h3>Daily checklist</h3>
 <ul>
   <li>☐ Dashboard — all dots green? (note anything amber/red)</li>
   <li>☐ Review queue — cleared? (Approve / Push now / Reject)</li>
   <li>☐ Anything urgent to send by hand?</li>
+  <li>☐ Digests — today's email approved (before 07:30) or deliberately held?</li>
 </ul>
 
 <h3>Target numbers at a glance</h3>
-<table>
+<table class="compact">
   <thead><tr><th>Metric</th><th><span class="dot g"></span>Good</th><th><span class="dot a"></span>Warning</th><th><span class="dot r"></span>Below target</th></tr></thead>
   <tbody>
     <tr><td>Click-through rate (CTR)</td><td>≥ 6%</td><td>4–6%</td><td>&lt; 4%</td></tr>
@@ -585,7 +806,7 @@ nothing on screen to say why. The notice exists so that can't happen again.</p>
 </table>
 
 <h3>If you see this → do this</h3>
-<table>
+<table class="compact">
   <thead><tr><th style="width:40%">Situation</th><th>What to do</th></tr></thead>
   <tbody>
     <tr><td>An article didn't send the instant it published</td><td>Normal — it's waiting its ~45-min turn. If urgent, <strong>Push now</strong> / <strong>Force send</strong>.</td></tr>
@@ -603,14 +824,15 @@ nothing on screen to say why. The notice exists so that can't happen again.</p>
       <td>Check it on <strong>complete</strong> months (the striped last column is unfinished). If the
           <em>All Google Discover clicks</em> total is falling too, it's real — raise it with whoever owns
           the site's search performance and bring the Surfaces tab as evidence.</td></tr>
+    <tr><td>An amber notice on <strong>Digests</strong></td><td>Section 9 lists each one. Waiting for approval: <strong>Approve</strong> or <strong>Hold</strong> before 17:00. An ad slot can't be filled: <strong>Ads</strong>, then <strong>Retry now</strong>.</td></tr>
     <tr><td>High Reads but low Clicked</td><td>The article works; the push headline undersold it. Sharpen the wording next time.</td></tr>
   </tbody>
 </table>
 </section>
 
-<!-- 10 -->
+<!-- 12 -->
 <section class="page-break">
-<h2>10 &nbsp;Frequently asked questions</h2>
+<h2>12 &nbsp;Frequently asked questions</h2>
 
 <h3>Why didn't my article go out immediately?</h3>
 <p>To protect readers, the system sends about one notification every 45 minutes. Your article is in the queue and
@@ -629,7 +851,8 @@ write it and tick <strong>Force send</strong>. Or, for an item already in the Re
 their subscription expired (counted in the delivery rate). This is normal — no system reaches 100%.</p>
 
 <h3>Can I use it on my phone?</h3>
-<p>Yes. On a phone each list shows one item per card, with its numbers and buttons underneath — nothing is hidden
+<p>Yes. On a phone, a tablet or any window narrower than about <strong>1200 pixels</strong>, the menu folds into the
+<strong>☰</strong> button at the top right. On a phone each list shows one item per card, with its numbers and buttons underneath — nothing is hidden
 off the side of the screen. <strong>Campaigns</strong> has a <em>Sort by</em> picker instead of clickable column
 headings, <strong>Activity</strong> keeps its filters behind a <em>Filters</em> button, and the wide report tables
 scroll sideways with the court or category name pinned on the left. <strong>Push now</strong> and Compose's
@@ -695,6 +918,15 @@ page. Nothing is wrong and no action is needed.</p>
 <p><strong>Breaking</strong> only lets a send happen during overnight quiet hours. <strong>Force send</strong> makes it
 reach everyone immediately, ignoring the normal spacing/frequency limits. They're independent — you can use either or both.</p>
 
+<h3>Can the digest go out twice, or late?</h3>
+<p>No. Each version goes out at most once a day, and a day that missed its digest is never sent the next day — its best
+stories go into the next digest instead. <em>Retry now</em> and <em>Send now</em> always reuse the same campaign. The one
+thing the system can't see is a campaign copied or re-sent by hand inside Mailercloud, which is why those are left alone.</p>
+
+<h3>I changed an ad (or a template) — why is today's email the same?</h3>
+<p>Because the email is frozen at the 06:30 build. Changes show from the next build. The exception is a version still
+waiting for its ads: it is built when you press <em>Retry now</em>, with the ads as they are then.</p>
+
 <h3>How often should I check in?</h3>
 <p>Once a day is plenty: a quick Dashboard glance and clearing the Review queue. The system handles the rest.</p>
 
@@ -703,7 +935,7 @@ reach everyone immediately, ignoring the normal spacing/frequency limits. They'r
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 1.9 · Updated 21 October 2026
+  Taxscan Push · Admin User Guide · Version 2.3 · Updated 23 October 2026
 </p>
 </section>
 

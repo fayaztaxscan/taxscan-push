@@ -43,6 +43,51 @@ function isWebPushError(err: unknown): err is WebPushError {
   return typeof err === 'object' && err !== null && 'statusCode' in err && 'endpoint' in err;
 }
 
+/** "fcm.googleapis.com…a1b2c3": enough to recognise a device, useless for sending to it. */
+export function endpointHint(endpoint: string): string {
+  let host = 'unknown';
+  try {
+    host = new URL(endpoint).host || host;
+  } catch {
+    // not a URL (e.g. a test fixture) — host stays 'unknown'
+  }
+  return `${host}…${endpoint.slice(-6)}`;
+}
+
+/** Delivery options a caller may set (web-push `RequestOptions` subset). */
+export type DeliverOptions = { TTL?: number; urgency?: 'very-low' | 'low' | 'normal' | 'high'; timeout?: number };
+
+/**
+ * One web-push delivery with the platform's VAPID keypair, and NOTHING else:
+ * no database write, so the caller decides what a 404/410 means for its own
+ * table (readers: `sendToSubscriber` marks the Subscriber EXPIRED; staff
+ * devices: `staffPush.ts` deletes the StaffPushSubscription). Never throws.
+ */
+export async function deliverPush(
+  sub: { endpoint: string; p256dh: string; auth: string },
+  payload: PushPayload,
+  options: DeliverOptions = {},
+): Promise<SendOutcome> {
+  try {
+    configure();
+    const result: SendResult = await webpush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      JSON.stringify(payload),
+      options,
+    );
+    return { ok: true, statusCode: result.statusCode };
+  } catch (err: unknown) {
+    if (isWebPushError(err)) {
+      const expired = err.statusCode === 404 || err.statusCode === 410;
+      return expired
+        ? { ok: false, expired: true, statusCode: err.statusCode, error: err.body || err.message }
+        : { ok: false, expired: false, failed: true, statusCode: err.statusCode, error: err.body || err.message };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, expired: false, failed: true, error: message };
+  }
+}
+
 export async function sendToSubscriber(
   subscriber: Subscriber,
   payload: PushPayload,

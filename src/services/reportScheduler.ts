@@ -5,6 +5,8 @@ import { env } from '../lib/env';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../lib/email';
 import { buildReport, renderReportEmail, reportWindow } from './reports';
 import { readsSummaryForWindow, type ReadsEmailSummary } from './readsReport';
+import { safeErrorLog } from '../lib/httpErrors';
+import { redactText } from '../lib/redact';
 
 /**
  * Weekly/monthly coverage-report emails (SEND_PACING_PLAN.md / reports).
@@ -61,7 +63,7 @@ async function recordReportEmailRun(input: {
     });
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[report] could not record the run', e);
+    console.error('[report] could not record the run', safeErrorLog(e, { stack: true }));
   }
 }
 
@@ -86,7 +88,7 @@ async function prepareReportEmail(args: {
       reads = (await readsSummaryForWindow({ start, end, portal })) ?? undefined;
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[report] reads summary failed — sending without the reads section', e);
+      console.error('[report] reads summary failed — sending without the reads section', safeErrorLog(e, { stack: true }));
     }
   }
   const { subject, html, text } = renderReportEmail(report, reads);
@@ -148,7 +150,7 @@ export async function sendScheduledReport(opts: {
       failed += 1;
       if (firstError === null) firstError = r.error;
       // eslint-disable-next-line no-console
-      console.error('[report] email failed', { to, error: r.error });
+      console.error('[report] email failed', { recipientNo: sent + failed, of: emails.length, error: redactText(String(r.error ?? '')) });
     }
   }
   // eslint-disable-next-line no-console
@@ -193,7 +195,7 @@ export function startReportScheduler(): void {
     () => {
       void sendScheduledReport({ period: 'weekly' }).catch((e) =>
         // eslint-disable-next-line no-console
-        console.error('[report] weekly run failed', e),
+        console.error('[report] weekly run failed', safeErrorLog(e, { stack: true })),
       );
     },
     { timezone: env.rss.tz },
@@ -203,7 +205,7 @@ export function startReportScheduler(): void {
     () => {
       void sendScheduledReport({ period: 'monthly' }).catch((e) =>
         // eslint-disable-next-line no-console
-        console.error('[report] monthly run failed', e),
+        console.error('[report] monthly run failed', safeErrorLog(e, { stack: true })),
       );
     },
     { timezone: env.rss.tz },

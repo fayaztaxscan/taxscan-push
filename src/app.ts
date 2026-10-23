@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import express, { type Express } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { corsMiddleware } from './lib/cors';
@@ -9,7 +9,13 @@ import { createApiRouter } from './routes/api';
 import { createAuthRouter } from './routes/auth';
 import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
+import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
+import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
+import { createStaffPushRouter, type StaffPushRouterOptions } from './routes/staffPush';
+import { emailAssetsHandler } from './routes/digestAds';
 import { env } from './lib/env';
+import { appErrorHandler } from './lib/httpErrors';
+import { requireBearerOrUser } from './lib/auth';
 import type { Sender } from './services/send';
 import type { EmailSender } from './lib/email';
 
@@ -27,6 +33,12 @@ export type CreateAppOptions = {
   clock?: () => Date;
   linkCheck?: boolean;
   isUrlDead?: (url: string) => Promise<boolean>;
+  // Email digest routes — tests inject config/clock/portal.
+  digest?: DigestRouterOptions;
+  // Provider webhooks (Mailercloud) — tests inject config, clock, rate limit.
+  webhooks?: WebhookRouterOptions;
+  // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
+  staffPush?: StaffPushRouterOptions;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -51,6 +63,20 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   app.use(corsMiddleware);
+  // Provider webhooks parse their own bodies and must come BEFORE the global
+  // JSON parser: its parse errors carry the raw body, which the catch-all
+  // error handler below would log (reader addresses). No session/cookie use.
+  app.use('/api/webhooks', createWebhooksRouter(opts.webhooks));
+  // Digest templates (task 10, ADMIN only) carry a whole email layout: their own,
+  // larger JSON limit, ahead of the global one (which then skips a parsed body).
+  // Authenticated FIRST (2026-10-23): an anonymous caller gets 401 before a byte of
+  // a 600 KB body is parsed. The cookie parser runs here too (it skips itself later).
+  app.use(
+    '/api/digest/templates',
+    cookieParser(env.sessionCookieSecret),
+    requireBearerOrUser(['ADMIN']),
+    express.json({ limit: '600kb' }),
+  );
   app.use(express.json({ limit: '64kb' }));
   // Signs cookies with SESSION_COOKIE_SECRET. Phase 2's auth router uses the
   // signed-cookie path; the helper reads from req.signedCookies and ignores
@@ -66,6 +92,8 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   );
   app.use('/api/users', createUsersRouter({ emailSender: opts.emailSender }));
   app.use('/api/audit', createAuditRouter());
+  app.use('/api/digest', createDigestRouter(opts.digest));
+  app.use('/api/staff-push', createStaffPushRouter(opts.staffPush));
   app.use(
     '/api',
     createApiRouter({
@@ -76,6 +104,21 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       isUrlDead: opts.isUrlDead,
     }),
   );
+
+  // The staff notification worker (digest task 14), scope /admin/: approvers'
+  // devices only, never readers. Served ahead of the SPA's static mount so its
+  // headers are ours: no-cache (a service worker must revalidate, like /sw.js)
+  // and helmet's same-origin CORP left in place — only push.taxscan.in's own
+  // admin pages register it, nothing loads it cross-origin. Deliberately NOT
+  // public/sw.js, which www.taxscan.in's readers run.
+  const staffSwPath = path.resolve(__dirname, '..', 'public', 'admin', 'sw-staff.js');
+  app.get('/admin/sw-staff.js', (_req, res, next) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(staffSwPath, (err) => {
+      if (err) next(err);
+    });
+  });
 
   // Admin SPA at /admin/* — mounted AFTER /api so it can never shadow API
   // routes. Only mounts when the built bundle exists, so tests (and dev
@@ -135,14 +178,35 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     });
   });
 
+  // Digest ad images (task 9): public, immutable, cross-origin; only stored images by sha256 name.
+  app.get('/email-assets/:file', emailAssetsHandler);
+
+  // Fixed assets committed in public/email/ (the digest logo) and public/brand/ (the push
+  // notification icon): readable cross-origin by mail clients, image proxies and the browser's
+  // notification UI, cached for a year. Never overwrite a file here — a changed asset gets a
+  // new file name, or readers keep the old one.
+  for (const dir of ['email', 'brand']) {
+    app.use(
+      `/${dir}`,
+      (_req, res, next) => {
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        next();
+      },
+      express.static(path.join(publicDir, dir), { immutable: true, maxAge: '365d', index: false }),
+      // Nothing else is served from here: a missing file (or a `..` path) is a plain 404. With
+      // `fallthrough: false` send's ENOENT error (status 404, not `expose`) reached the app's
+      // error handler as a 500 with a stack trace in the log (QA of task 10).
+      (_req: express.Request, res: express.Response) => {
+        res.status(404).json({ error: 'not_found' });
+      },
+    );
+  }
+
   app.use(express.static(publicDir));
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    // eslint-disable-next-line no-console
-    console.error('unhandled error:', err);
-    res.status(500).json({ error: 'internal_error' });
-  });
+  // Last: body-parser errors answer their own 4xx (413 over the 64 KB limit,
+  // 400 for bad JSON) and nothing logs a request body (src/lib/httpErrors.ts).
+  app.use(appErrorHandler);
 
   return app;
 }

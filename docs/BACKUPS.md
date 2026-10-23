@@ -22,6 +22,46 @@ subscriber must opt in again from zero.
 ledger. Restore without it and the poller treats every article currently in the
 feeds as new, re-pushing stories subscribers already received.
 
+**Email digest (added 2026-10-23, backup format v2).** The export also carries:
+
+| Table | Why |
+|---|---|
+| **`EmailSuppression`** | Who must not be mailed. An opt-out cannot be re-derived; restoring without it would re-mail people who unsubscribed, bounced or complained. Holds addresses. |
+| `DigestTemplate`, `DigestAd`, `DigestAdImage` | Creative work. Image bytes are included as `{"$base64": …}` (each ≤ 150 KB, so a few MB for a few dozen ads), so a restored system can still draw every ad. |
+| `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` | The run ledger: history, the Mailercloud campaign id of every past variant, and the frozen html (≤ 30 days). `DigestItem` is the 90-day dedupe: without it yesterday's stories come back. Placements drive ad rotation and the per-ad report. **The ledger does NOT stop a same-day second digest** — see "What stops a second digest after a restore" below. |
+| `EmailEvent` | The live half of the digest counts and the webhook proof (hashes only, ≤ 90 days). |
+
+Restore order is the export order (foreign keys): `DigestAdImage` → `DigestAd`, and
+`DigestRun` → `DigestSend` → `DigestItem` / `DigestAdPlacement`.
+
+### What stops a second digest after a restore
+
+The backup runs at **02:20 IST** and the digest is built at **06:30** and sent at
+**07:30**. So the newest backup never contains today's run: a database restored
+mid-day has no record that this morning's digest went out, and the scheduler
+simply makes a fresh run for today. The restored ledger cannot help with that.
+
+What does stop it (since 2026-10-23) is **Mailercloud itself**:
+
+1. Campaign names are fixed per day and audience: `TS-DIGEST-2026-10-23-FREE`,
+   `TS-DIGEST-2026-10-23-PREMIUM` (another portal than taxscan adds its name:
+   `TS-DIGEST-academy-2026-10-23-FREE`). A fresh run computes exactly the names
+   the lost run used.
+2. Before creating a campaign for the first time, the runner always looks that name
+   up in Mailercloud (`findCampaignByName`; one list call per audience per day). If
+   it exists, the runner **adopts** it instead of creating a second one, and
+   Mailercloud's status decides what happens: sent, sending or scheduled → recorded
+   as such, **never scheduled again**; failed → final for the day; a draft →
+   scheduled at the normal time after one more status check. An adopted campaign
+   that was already sent or scheduled raises an "already in Mailercloud" alert.
+3. If the lookup fails, nothing is created; it is retried on the usual schedule.
+
+Two limits remain, which is why the runbook step below exists: (a) whether
+Mailercloud's list search finds drafts and sent campaigns by exact name is not yet verified (design §12, open
+question 3), and (b) someone may have duplicated or renamed the campaign by hand in
+Mailercloud, which no lookup can see (two campaigns with exactly today's name make the lookup inconclusive: nothing is created or adopted, and the version is skipped at 17:00 unless someone deletes the copy). Older rows named `TS-DIGEST-<date>-<AUDIENCE>-<runId>`
+keep working: the webhook links by the stored name.
+
 ## ⚠️ The VAPID keypair is half of every restore
 
 `VAPID_PRIVATE_KEY` is 43 characters and lives in Railway's variables and in
@@ -32,6 +72,15 @@ A perfect subscriber dump plus a lost private key is 2,954 rows you can never
 send to. Keep the keypair in a password manager. Never run `npm run gen:vapid`
 for this project: deploying a new keypair orphans every existing subscriber
 instantly and irreversibly.
+
+**After any VAPID key rotation** (deliberate, e.g. after a credential leak),
+every staff device must tap **Notify me on this device** on Digests again: its
+subscription was made for the old key and can no longer receive the digest
+alerts. The Digests card detects this by itself (it compares the browser's
+subscription key with the server's and shows *Off* with "The notification key
+has changed"), and the tap drops the old device row. Readers are a separate,
+much larger matter — the rotation orphans their subscriptions as described
+above.
 
 Verify a copy is the right one:
 
@@ -87,7 +136,12 @@ once in the platform's history.) Even then nothing is lost: `/api/subscribe`
 upserts on endpoint, so a returning endpoint with no row simply creates a fresh
 `ACTIVE` one — the same outcome. Excluding them drops ~72% of the rows and stops
 us storing thousands of dead push endpoints, which are personal data with no
-remaining purpose. The header line in each file records the exclusion. Free at this size: R2 gives 10 GB and charges nothing for
+remaining purpose. The header line in each file records the exclusion.
+
+**Staff notification devices (`StaffPushSubscription`, digest task 14) are not
+backed up either**: a handful of rows, useless without the VAPID key, and each
+approver re-subscribes with one tap (Digests → *Notify me on this device*).
+After a restore, ask the approvers to do that once. Free at this size: R2 gives 10 GB and charges nothing for
 egress, so this layer cannot be switched off by a failed payment.
 
 The uploader (`src/lib/r2.ts`) signs SigV4 by hand with `node:crypto` — no new
@@ -144,8 +198,22 @@ npm run restore:backup -- --file backup.ndjson.gz --only Subscriber --yes
 It prints the target database and refuses to write without `--yes`, because the
 realistic way to cause harm is running it against the wrong database while
 panicking. Every row is upserted on its natural key (`Subscriber.endpoint`,
-`User.email`, `FeedItem.guid`), so re-running is safe and a partial restore can
-simply be repeated.
+`User.email`, `FeedItem.guid`, `EmailSuppression.email`, `EmailEvent.dedupeKey`;
+the id elsewhere), so re-running is safe and a partial restore can simply be
+repeated. A row that fails is reported by table, Prisma error name and code only
+(never its values, which can hold an address). An `EmailSuppression` row that already
+exists is never weakened by an older backup: the higher-ranked reason (MANUAL is never
+rewritten), the earliest `firstSeenAt` and the latest `lastSeenAt` are kept
+(`mergeSuppressionForRestore` in `src/services/digest/webhook.ts`).
+
+**Templates: one known skip.** The database allows one ACTIVE template per
+audience. Restoring onto a database that already has a *different* ACTIVE
+template for that audience fails that `DigestTemplate` row on the
+`one_active_template_per_audience` index; it is reported as skipped (table and
+error code only) and the existing ACTIVE template stays. Into an empty database
+this cannot happen. If you need the backed-up one, archive the current ACTIVE
+template on the Templates screen and run the restore again with
+`--only DigestTemplate`.
 
 The format is one JSON object per line behind a header line. It restores with
 this script, with `psql`, or by hand — a backup you can only read with the
@@ -161,6 +229,33 @@ software that just failed is not a backup.
    can be reissued.
 5. Confirm `GET /api/config` returns the **original** public key. If it does
    not, restored subscribers are inert and will fail silently at send time.
+
+### After ANY restore: the email digest stays off until Mailercloud is checked
+
+Applies to a full rebuild and to a partial restore alike.
+
+1. Before the app starts against the restored database, set **`DIGEST_ENABLED=false`**
+   and **`DIGEST_SEND_LIVE=false`** in Railway (keep `DIGEST_WEBHOOKS_ENABLED` as it
+   was: webhooks only record opt-outs and never send).
+2. In Mailercloud → Campaigns, search `TS-DIGEST-` and look for **today's** date
+   (or, read-only, `npm run digest:lookup -- --date <today>` in the service).
+   Note whether each of `…-FREE` and `…-PREMIUM` exists and its status (Draft,
+   Scheduled, Sending, Finished). Make sure there is at most one of each.
+   **Delete today's draft in Mailercloud before switching sending back on**: a draft
+   may hold content from before the restore. Leave a scheduled, sending or finished
+   campaign alone.
+3. Only then switch `DIGEST_ENABLED` back on, and `DIGEST_SEND_LIVE` if it was on.
+   The runner adopts what you saw in step 2 and never sends a second copy. Admin →
+   Digests should show today's variants as sent/scheduled within a minute; an
+   "already in Mailercloud" alert for them is expected. A draft left in place is
+   adopted but **held for an Approve of that version, even with auto-send on** (owner
+   decision, 23 Oct 2026), because nothing can confirm its content matches today's
+   frozen email; deleting it instead lets a fresh draft be made at the next check.
+   (Narrowed the same day: the hold applies when THIS database never tried to create
+   the version — always true after a restore, which has no create marker for today.
+   A draft found after our own create's reply was lost is ours and carries on.)
+4. If step 2 shows a campaign renamed or duplicated by hand, leave `DIGEST_SEND_LIVE`
+   off for the rest of the day.
 
 ### Retention in production
 
@@ -205,6 +300,24 @@ as designed.
 
 The scratch database and the downloaded file were destroyed afterwards — both
 held real subscriber endpoints.
+
+**Drill 3 — digest tables, full rebuild into an empty database (2026-10-23,
+local only, no R2).** After format v2:
+
+1. Seeded the LOCAL dev database (`taxscan_push_dev`) with rehearsal rows on top of
+   the sample digest data: 4 `EmailSuppression` (UNSUBSCRIBE, HARD_BOUNCE, SPAM,
+   MANUAL; `@rehearsal.example.invalid`), 1 template, 1 ad on an existing image, 1
+   placement, `EmailEvent` rows with and without `meta` (a null Json column).
+2. `npm run backup:now -- --out <scratch>/local-backup.ndjson.gz` → 80 rows, 9,526 bytes.
+3. `createdb taxscan_push_restore_test` (empty) → `prisma migrate deploy` → all migrations.
+4. `restore:backup --yes` → 0 skipped: EmailSuppression 4 · DigestTemplate 1 ·
+   DigestAdImage 2 · DigestAd 1 · DigestRun 6 · DigestSend 12 · DigestItem 39 ·
+   DigestAdPlacement 1 · EmailEvent 4 (plus Subscriber 2, User 2, Campaign 2, EventRollup 4).
+5. Compared every restored table with the source: same count AND the same md5 over
+   `row_to_json` of every row in id order — **identical for all 13 tables**, including
+   image bytes, Json columns and timestamps. A second `restore --yes` changed nothing
+   (idempotent).
+6. Dropped the scratch database, deleted the file and the rehearsal rows.
 
 **Not yet rehearsed:** an actual push send from a rebuilt deployment, because
 that would deliver real notifications to real people.

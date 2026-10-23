@@ -40,7 +40,7 @@ describe('buildBackup', () => {
     const { header, rows } = parse(body);
 
     expect(header._format).toBe('taxscan-push-backup');
-    expect(header.version).toBe(1);
+    expect(header.version).toBe(2); // v2 (2026-10-23): email-digest tables, binary as {$base64}
     expect(header.generatedAt).toBe('2026-09-08T06:55:00.000Z');
     // The header must name the tables, so a restorer knows what to expect.
     expect(header.tables).toEqual([...BACKUP_TABLES]);
@@ -95,7 +95,7 @@ describe('buildBackup', () => {
     const tables = new Set(rows.map((r) => r._table));
     // Event is 86% of the database; the stat tables are re-fetchable mirrors;
     // AuditLog is an immutable compliance record that must not be re-inserted.
-    for (const excluded of ['Event', 'ArticleReadStat', 'ArticleSurfaceStat', 'AuditLog', 'UserSession']) {
+    for (const excluded of ['Event', 'ArticleReadStat', 'ArticleSurfaceStat', 'AuditLog', 'UserSession', 'StaffPushSubscription']) {
       expect(tables.has(excluded)).toBe(false);
     }
   });

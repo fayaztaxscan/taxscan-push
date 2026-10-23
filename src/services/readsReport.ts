@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 import { benchRowKey, categoryRowKey, benchRank, istDateKey } from './reports';
 import {
   loadGaCredentials,
@@ -314,7 +315,7 @@ export function startReadsReportCron(): void {
       console.log(`[reads-report] built windows=${r.windows} categories=${r.categories} benches=${r.benches}`);
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[reads-report] build failed (last build keeps serving)', e);
+      console.error('[reads-report] build failed (last build keeps serving)', safeErrorLog(e, { stack: true }));
     }
   };
 

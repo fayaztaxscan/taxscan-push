@@ -7,6 +7,9 @@ import Review from './views/Review.vue';
 import Queue from './views/Queue.vue';
 import Guide from './views/Guide.vue';
 import Reports from './views/Reports.vue';
+import Digests from './views/Digests.vue';
+import Ads from './views/Ads.vue';
+import Templates from './views/Templates.vue';
 import Dashboard from './views/Dashboard.vue';
 import ChangePassword from './views/ChangePassword.vue';
 import AcceptInvite from './views/AcceptInvite.vue';
@@ -38,6 +41,11 @@ export const router = createRouter({
     { path: '/queue', name: 'queue', component: Queue },
     { path: '/campaigns', name: 'campaigns', component: Campaigns },
     { path: '/reports', name: 'reports', component: Reports },
+    { path: '/digests', name: 'digests', component: Digests },
+    // Digest house ads (task 9): ADMIN only, like the API behind it.
+    { path: '/ads', name: 'ads', component: Ads, meta: { roles: ['ADMIN'] } },
+    // Digest templates (task 10): ADMIN only — they hold raw HTML.
+    { path: '/templates', name: 'templates', component: Templates, meta: { roles: ['ADMIN'] } },
     {
       path: '/users',
       name: 'users',

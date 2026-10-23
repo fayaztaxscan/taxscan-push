@@ -39,6 +39,23 @@ const ACTIONS = [
   'REVIEW_APPROVED',
   'REVIEW_REJECTED',
   'REVIEW_PUSHED',
+  // Email digest (written by later digest tasks; listed now so the filter covers the enum)
+  'DIGEST_APPROVED',
+  'DIGEST_HELD',
+  'DIGEST_SEND_NOW',
+  'DIGEST_RETRY',
+  'DIGEST_TEST_SENT',
+  'DIGEST_SCHEDULED',
+  'DIGEST_SKIPPED',
+  'DIGEST_TEMPLATE_SAVED',
+  'DIGEST_TEMPLATE_ACTIVATED',
+  'DIGEST_TEMPLATE_ARCHIVED',
+  'DIGEST_TEMPLATE_REVERTED',
+  'DIGEST_AD_SAVED',
+  'DIGEST_AD_ARCHIVED',
+  'STAFF_PUSH_SUBSCRIBED',
+  'STAFF_PUSH_UNSUBSCRIBED',
+  'STAFF_PUSH_REMOVED',
 ] as const;
 
 const api = useApi();
@@ -132,6 +149,41 @@ function summarize(item: AuditItem): string {
       return 'Rejected from Review — not sent';
     case 'REVIEW_PUSHED':
       return `Pushed from Review: sent ${m.sent ?? '?'}, failed ${m.failed ?? '?'}`;
+    case 'DIGEST_AD_SAVED': {
+      const changed = Array.isArray(m.changed) ? (m.changed as string[]) : null;
+      return m.created
+        ? `Added digest ad “${m.name ?? '—'}” (links to ${m.linkHost ?? '—'})`
+        : `Edited digest ad “${m.name ?? '—'}”${changed?.length ? `: ${changed.join(', ')}` : ''}`;
+    }
+    case 'STAFF_PUSH_SUBSCRIBED':
+      return `Turned on digest notifications on a device (${m.label ?? 'unknown device'})`;
+    case 'STAFF_PUSH_UNSUBSCRIBED':
+      return `Turned off digest notifications on a device (${m.label ?? 'unknown device'})`;
+    case 'STAFF_PUSH_REMOVED':
+      if (m.reason === 'device_limit') {
+        return `Oldest notification device turned off at the ${m.limit ?? 10}-device limit (${m.label ?? 'unknown device'})`;
+      }
+      return `Removed ${m.email ?? '—'}'s notification devices (${m.removed ?? '?'})`;
+    case 'DIGEST_AD_ARCHIVED':
+      return `Archived digest ad “${m.name ?? '—'}”`;
+    case 'DIGEST_TEMPLATE_SAVED': {
+      const who = m.audience === 'PREMIUM' ? 'Premium' : 'Free';
+      const changed = Array.isArray(m.changed) ? (m.changed as string[]) : null;
+      const checks = m.validationOk ? 'all checks pass' : `failing: ${Array.isArray(m.failed) ? (m.failed as string[]).join(', ') : '?'}`;
+      return m.created
+        ? `Added ${who} digest template “${m.name ?? '—'}” (${checks})`
+        : `Edited ${who} digest template “${m.name ?? '—'}”${changed?.length ? `: ${changed.join(', ')}` : ''} (${checks})`;
+    }
+    case 'DIGEST_TEMPLATE_ACTIVATED': {
+      const who = m.audience === 'PREMIUM' ? 'Premium' : 'Free';
+      return m.mode === 'scheduled'
+        ? `Scheduled ${who} digest template “${m.name ?? '—'}” for ${m.startsAt ?? '?'} – ${m.endsAt ?? '?'}`
+        : `Activated ${who} digest template “${m.name ?? '—'}” (replaced ${m.replacedName ?? '—'})`;
+    }
+    case 'DIGEST_TEMPLATE_ARCHIVED':
+      return `Archived digest template “${m.name ?? '—'}”`;
+    case 'DIGEST_TEMPLATE_REVERTED':
+      return `Reverted the ${m.audience === 'PREMIUM' ? 'Premium' : 'Free'} digest from “${m.revertedFromName ?? '—'}” to ${m.restoredName ?? '—'}`;
     default: {
       // Anything without its own case (a newly added action) still reads as
       // something rather than an empty "{}".

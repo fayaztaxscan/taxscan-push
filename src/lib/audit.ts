@@ -12,6 +12,7 @@
 
 import type { AuditAction, Prisma } from '@prisma/client';
 import { prisma } from './prisma';
+import { safeErrorLog } from './httpErrors';
 
 export type RecordAuditInput = {
   userId?: string | null;
@@ -37,8 +38,9 @@ export async function recordAudit(input: RecordAuditInput): Promise<void> {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    // Never the Prisma message: it quotes the row's `data`, and audit metadata can hold
+    // an address (user invites, role changes). safeErrorLog keeps name/code/target only.
     // eslint-disable-next-line no-console
-    console.warn(`[audit] failed to record ${input.action}: ${message}`);
+    console.warn(`[audit] failed to record ${input.action}`, safeErrorLog(err));
   }
 }

@@ -1,0 +1,11 @@
+{
+  "name": "Taxscan Push",
+  "short_name": "Taxscan Push",
+  "description": "Taxscan Push admin. Added to the Home Screen, it can show the digest approval notifications on an iPhone or iPad.",
+  "start_url": "/admin/digests",
+  "scope": "/admin/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [{ "src": "/brand/taxscan-icon-192.png", "sizes": "192x192", "type": "image/png" }]
+}

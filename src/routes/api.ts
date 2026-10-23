@@ -11,7 +11,7 @@ import {
   DEFAULT_NOTIFICATION_ICON,
   type Sender,
 } from '../services/send';
-import { sendToSubscriber } from '../lib/push';
+import { endpointHint, sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { customReportWindow, getReport, reportWindow } from '../services/reports';
 import { getReadsReport } from '../services/readsReport';
@@ -127,16 +127,8 @@ function isDuplicateRequestId(err: unknown): boolean {
   return Array.isArray(target) ? target.includes('clientRequestId') : String(target ?? '').includes('clientRequestId');
 }
 
-/** "fcm.googleapis.com…a1b2c3": enough to recognise a device, useless for sending to it. */
-export function endpointHint(endpoint: string): string {
-  let host = 'unknown';
-  try {
-    host = new URL(endpoint).host || host;
-  } catch {
-    // not a URL (e.g. a test fixture) — host stays 'unknown'
-  }
-  return `${host}…${endpoint.slice(-6)}`;
-}
+// Moved to lib/push.ts (staff devices use it too); re-exported for existing importers.
+export { endpointHint };
 
 // Test-on-this-device: the admin's own browser subscribes (via the SPA) and
 // posts its subscription here to receive a one-off preview of the composed

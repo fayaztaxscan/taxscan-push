@@ -12,6 +12,7 @@ import path from 'path';
 import vm from 'vm';
 import request from 'supertest';
 import { createApp } from '../app';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 
 type Trigger = { kind: string; ms?: number; ratio?: number };
@@ -94,7 +95,10 @@ describe('funnel tracking API', () => {
   });
 
   it('still accepts the original bare events (older SDKs in browser caches)', async () => {
+    const t0 = new Date(Date.now() - 5000);
     await request(app).post('/api/track').send({ type: 'PROMPT_SHOWN' }).expect(204);
+    // QA 2026-10-23: a bare PROMPT_SHOWN (no subscriber, no campaign) was left in the dev DB on every run.
+    await prisma.event.deleteMany({ where: { type: 'PROMPT_SHOWN', subscriberId: null, campaignId: null, meta: { equals: Prisma.DbNull }, createdAt: { gte: t0 } } });
   });
 
   it('/api/config tells the SDK which prompt to show (v1 unless SOFT_PROMPT_V2)', async () => {

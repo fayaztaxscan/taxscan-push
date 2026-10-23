@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -236,7 +237,7 @@ export function startMetricsWarmer(): void {
       // Keep serving the last good numbers; a failed refresh must never take
       // the Dashboard down, and the next tick retries.
       // eslint-disable-next-line no-console
-      console.error('[metrics] lifetime aggregate refresh failed (serving previous values)', e);
+      console.error('[metrics] lifetime aggregate refresh failed (serving previous values)', safeErrorLog(e, { stack: true }));
     });
   void run();
   heavyTimer = setInterval(run, every);
@@ -476,15 +477,16 @@ export function readsPath(url: string): string | null {
  * report the path with or without a trailing slash, so both spellings are
  * queried and folded onto the normalized key.
  */
-async function readsByPath(
+export async function readsByPath(
   paths: string[],
+  portal: string = env.rss.portal,
 ): Promise<Map<string, { reads: number; pushReads: number }>> {
   const out = new Map<string, { reads: number; pushReads: number }>();
   if (paths.length === 0) return out;
   const rows = await prisma.articleReadStat.groupBy({
     by: ['pagePath'],
     where: {
-      portal: env.rss.portal,
+      portal,
       pagePath: { in: [...paths, ...paths.map((p) => `${p}/`)] },
     },
     _sum: { totalViews: true, pushViews: true },

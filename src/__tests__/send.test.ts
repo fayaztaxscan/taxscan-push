@@ -7,7 +7,7 @@ import { startOfTodayIST } from '../lib/quietHours';
 import { validKeys } from './helpers';
 
 const TAXSCAN_BRAND_ICON =
-  'https://www.taxscan.in/images/icons/icon-192x192.png';
+  'https://push.taxscan.in/brand/taxscan-icon-192.png';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 function ist(year: number, month: number, day: number, hour: number, minute = 0): Date {

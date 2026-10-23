@@ -118,6 +118,11 @@ const TITLE_CATEGORY: { label: string; re: RegExp }[] = [
   },
 ];
 
+/** The title-inferred category rows, in rule order (the Ads screen offers them as ad topics). */
+export function reportCategoryLabels(): string[] {
+  return [...new Set(TITLE_CATEGORY.map((c) => c.label))];
+}
+
 export function categoryFromTitle(title: string): string | null {
   const t = title ?? '';
   for (const { label, re } of TITLE_CATEGORY) if (re.test(t)) return label;
@@ -371,13 +376,29 @@ const RECAPTURE_LOOKBACK_DAYS = 90;
  * unparseable rows are kept (they aren't academy/shop and counted before).
  */
 const NON_ARTICLE_HOSTS = /(^|\.)(?:academy|shop)\.taxscan\.in$/i;
-function isArticleUrl(url?: string | null): boolean {
+export function isArticleUrl(url?: string | null): boolean {
   const u = (url ?? '').trim();
   if (!u) return true;
   try {
     return !NON_ARTICLE_HOSTS.test(new URL(u).hostname);
   } catch {
     return true;
+  }
+}
+
+/**
+ * Stricter than `isArticleUrl` (which keeps URL-less rows for counting): a
+ * parseable http(s) URL on taxscan.in itself that is an article, not an
+ * academy/shop storefront link. The email digest needs a real link to show.
+ */
+export function isTaxscanArticleUrl(url?: string | null): boolean {
+  const u = (url ?? '').trim();
+  if (!u || !isArticleUrl(u)) return false;
+  try {
+    const parsed = new URL(u);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && TAXSCAN_HOST.test(parsed.hostname);
+  } catch {
+    return false;
   }
 }
 

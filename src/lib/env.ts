@@ -66,6 +66,98 @@ function nonNegIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
+/** Comma-separated list → trimmed, non-empty entries (Mailercloud list/segment/tag ids). */
+function listEnv(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Positive integer from `src[name]`, else `fallback` (intEnv for an explicit source). */
+function intFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const n = Number(src[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+/** Positive finite number from `src[name]` (decimals allowed), else `fallback`. */
+function posNumFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = src[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Automatic daily email digest (docs/EMAIL_DIGEST_DESIGN.md §5). Every flag
+ * defaults OFF except DIGEST_APPROVAL_REQUIRED, which defaults ON (an editor
+ * approves each send unless it is switched off deliberately). Times are IST
+ * HH:MM strings, validated by the digest scheduler at boot — a send time
+ * inside quiet hours or at/after the cut-off stops the scheduler, it does not
+ * crash the app. Takes the source as a parameter so the defaults are testable.
+ */
+export function parseDigestEnv(src: NodeJS.ProcessEnv) {
+  return {
+    enabled: src.DIGEST_ENABLED === 'true',
+    // Off = the run stops at CREATED ("preview only"); nothing reaches an audience.
+    sendLive: src.DIGEST_SEND_LIVE === 'true',
+    approvalRequired: src.DIGEST_APPROVAL_REQUIRED !== 'false',
+    webhooksEnabled: src.DIGEST_WEBHOOKS_ENABLED === 'true',
+    sendAt: (src.DIGEST_SEND_AT ?? '07:30').trim(),
+    buildLeadMinutes: intFrom(src, 'DIGEST_BUILD_LEAD_MINUTES', 60),
+    cutoff: (src.DIGEST_CUTOFF ?? '17:00').trim(),
+    maxItems: intFrom(src, 'DIGEST_MAX_ITEMS', 12),
+    minItems: intFrom(src, 'DIGEST_MIN_ITEMS', 5),
+    rollforwardItems: intFrom(src, 'DIGEST_ROLLFORWARD_ITEMS', 3),
+    sanityMaxCandidates: intFrom(src, 'DIGEST_SANITY_MAX_CANDIDATES', 150),
+    maxHtmlKb: intFrom(src, 'DIGEST_MAX_HTML_KB', 90),
+    htmlWarnKb: intFrom(src, 'DIGEST_HTML_WARN_KB', 75),
+    // Task 9: the per-email weight of distinct ad images; above it the build logs a warning.
+    maxImageKb: intFrom(src, 'DIGEST_MAX_IMAGE_KB', 600),
+    // Task 9: where ad images are served from (public /email-assets route). https only; no trailing slash.
+    assetBaseUrl: (src.DIGEST_ASSET_BASE_URL ?? 'https://push.taxscan.in').trim().replace(/\/+$/, ''),
+    htmlRetentionDays: intFrom(src, 'DIGEST_HTML_RETENTION_DAYS', 30),
+    emailEventRetentionDays: intFrom(src, 'EMAIL_EVENT_RETENTION_DAYS', 90),
+    // Task 13 (design §8): a previous send's spam-complaint rate (complaints / delivered, in %)
+    // ABOVE this holds the next day's run for an editor's approval even when approval is off.
+    // An unknown rate (no webhook proof) never holds; it is shown on the banner instead.
+    complaintHoldPct: posNumFrom(src, 'DIGEST_COMPLAINT_HOLD_PCT', 0.3),
+    // Required at build time (later task); the build fails closed when empty.
+    postalAddress: (src.DIGEST_POSTAL_ADDRESS ?? '').trim(),
+    // Internal addresses allowed for test sends, besides active app users. Never logged.
+    testRecipients: listEnv(src.DIGEST_TEST_RECIPIENTS).map((e) => e.toLowerCase()),
+    audiences: {
+      // Fail closed (later task): the Free campaign is never created without a premium exclude.
+      free: {
+        listIds: listEnv(src.DIGEST_FREE_LIST_IDS),
+        excludeListIds: listEnv(src.DIGEST_FREE_EXCLUDE_LIST_IDS),
+        excludeTagIds: listEnv(src.DIGEST_FREE_EXCLUDE_TAG_IDS),
+      },
+      premium: {
+        listIds: listEnv(src.DIGEST_PREMIUM_LIST_IDS),
+        segmentIds: listEnv(src.DIGEST_PREMIUM_SEGMENT_IDS),
+        tagIds: listEnv(src.DIGEST_PREMIUM_TAG_IDS),
+      },
+    },
+    // Railway secrets. Never logged, never put into an error message.
+    mailercloud: {
+      apiKey: src.MAILERCLOUD_API_KEY ?? '',
+      webhookToken: (src.MAILERCLOUD_WEBHOOK_TOKEN ?? '').trim(),
+      // Rotation only: the old token, still accepted until Mailercloud's webhook URL is updated.
+      // Default empty (= only the current token is accepted). Never logged.
+      webhookTokenPrevious: (src.MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS ?? '').trim(),
+      senderName: src.MAILERCLOUD_SENDER_NAME ?? '',
+      senderEmail: src.MAILERCLOUD_SENDER_EMAIL ?? '',
+      replyEmail: src.MAILERCLOUD_REPLY_EMAIL ?? '',
+      // Task 13, optional: the id of our webhook in Mailercloud. Set → health.ts reads its status
+      // once a day (GET /v1/webhooks/detail/{id}); unset → only the liveness check watches it.
+      webhookId: (src.MAILERCLOUD_WEBHOOK_ID ?? '').trim(),
+    },
+  };
+}
+
+export type DigestEnv = ReturnType<typeof parseDigestEnv>;
+
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -264,6 +356,19 @@ export const env = {
     // the next night continues from where it stopped.
     maxBatches: nonNegIntEnv('EVENT_RETENTION_MAX_BATCHES', 400),
   },
+  // Digest retention (src/sweepers/digestRetention.ts, design task 11). Folds EmailEvent
+  // rows older than EMAIL_EVENT_RETENTION_DAYS (90) into DigestSend.rolled* and deletes
+  // them; nulls DigestSend.html/text older than DIGEST_HTML_RETENTION_DAYS (30).
+  // EmailSuppression is never touched. Default OFF: it deletes rows — dry-run first
+  // with `npm run digest-retention`. 03:45 IST: after the audit sweep (03:00) and the
+  // event/feed retention (03:30), clear of the reconciler (:00/:20/:40) and the backup (02:20).
+  digestRetention: {
+    enabled: process.env.DIGEST_RETENTION_ENABLED === 'true',
+    cron: process.env.DIGEST_RETENTION_CRON ?? '45 3 * * *',
+    batchSize: intEnv('DIGEST_RETENTION_BATCH', 1000),
+    // Batches per nightly run; 0 = until clear. ~50 events/day, so 50 × 1,000 is ample.
+    maxBatches: nonNegIntEnv('DIGEST_RETENTION_MAX_BATCHES', 50),
+  },
   audit: {
     // Default ON so a deploy without the env var still gets retention
     // sweeping. Set AUDIT_LOG_SWEEPER_ENABLED=false to disable.
@@ -274,6 +379,15 @@ export const env = {
       'AUDIT_LOG_FAILED_LOGIN_RETENTION_DAYS',
       30,
     ),
+  },
+  // Automatic daily email digest — see parseDigestEnv above. Default off.
+  digest: parseDigestEnv(process.env),
+  // Digest task 14: staff push notifications for digest approval. A KILL-SWITCH,
+  // default ON: nothing is ever sent unless DIGEST_ENABLED is on too (the push rides
+  // on the digest's own editor alerts) AND a staff member tapped "Notify me on this
+  // device". Set DIGEST_STAFF_PUSH_ENABLED=false to stop the pushes (email unaffected).
+  staffPush: {
+    enabled: process.env.DIGEST_STAFF_PUSH_ENABLED !== 'false',
   },
   // Absolute origin the admin SPA is reachable at — used to build invite
   // links (`<appBaseUrl>/admin/accept-invite?token=…`). Falls back to the

@@ -5,7 +5,71 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-10-21)
+## ▶️ NEXT STEPS / open items (as of 2026-10-23)
+
+`main` = PR #75 (Node 24.22.1 via Dockerfile). `develop` carries the **email digest** (tasks 1–14) + the
+push-side fixes below, ready for the `develop` → `main` PR with **every digest flag OFF**. Suite **1,147**
+(63 files), admin guide **v2.3** (21 pages). Capability + flag detail lives in `CLAUDE.md`; digest detail
+in `docs/EMAIL_DIGEST_DESIGN.md` (§5 flags, §12 decisions, §13 "Built" notes) and
+`docs/DIGEST_PILOT_RUNBOOK.md`. This board only tracks what is open.
+
+**Live in production since the last board:**
+- **2026-10-23 — Railway builder = Dockerfile** (`node:24.22.1-bookworm-slim`, PR #75; the 2026-10-21
+  Node security release). Rollback: builder back to Nixpacks.
+- **2026-10-23 — Railway breach rotation, steps 1–5 done:** session secret, `ADMIN_TOKEN`, ElasticEmail,
+  R2 and GA keys rotated, old keys deleted (Postgres public TCP proxy removed 10-22). Mailercloud key kept
+  (created after containment).
+- **2026-10-22 — PR #74 + `SOFT_PROMPT_V2`=ON** (10:43:51 UTC): batched delivery events, stranded-claim
+  recovery, night rule (only Breaking at night), dead-link check on both Push now doors.
+
+**Shipping in the digest PR (all digest behaviour behind flags, OFF):**
+- **Email digest (Mailercloud, Option B), tasks 1–14:** builder, renderer + templates (plain HTML, MJML not
+  adopted), house ads, webhooks + `EmailSuppression`, retention, the 1-minute scheduler tick (06:15 health →
+  06:30 build + "ready" email/push → 07:30 send → verify → 08:30 reminder → 17:00 cut-off), approval ON
+  through the pilot, staff push via `/admin/sw-staff.js`, restore safety (provider lookup before the first
+  create, `TS-DIGEST-<date>-<AUDIENCE>` names, the `createSentAt` stamp). Digests / Ads / Templates screens.
+  **12 migrations, all additive** (new tables, new columns on new tables, new audit enum values).
+- **Push side:** own notification icon + badge at `push.taxscan.in/brand/taxscan-icon-192.png`; body-parser
+  errors → 413/400/415 with no body logged; `safeErrorLog` at every error log site; backup format v2 (digest
+  tables + `EmailSuppression`; v1 still restores) and the after-restore runbook step; nav hamburger below
+  1200 px; staff-push card warnings now amber.
+
+**OPEN — deploy + digest rollout:**
+1. **Deploy the digest PR** (owner merges). Post-deploy (runbook §1.1): today's backup fine *before* the
+   deploy; all 12 migrations applied; boot log `[digest] disabled (set DIGEST_ENABLED=true to start)` (the
+   new-build marker); the next pacer push goes out normally; a real notification shows the new icon.
+2. **Runbook stage 1 prerequisites** (§1.2–1.6: settings, secrets, ≥ 3 ads per version all green, webhook
+   flag-first then the five events) **and the Mailercloud tick list** (§2: merge tag, draft search, status
+   names, reach fields, quota codes, webhook fields, one-click headers, second-schedule refusal). Owner signs
+   the runbook before stage 2. Pilot readers must leave the hand-made digest.
+3. **Real-device staff-push test** — Android Chrome and iPhone Home Screen (iOS ≥ 16.4); headless checks
+   stub `PushManager`, so real delivery is unverified.
+4. **The designer's single-"T" Android badge** — requested; the badge currently reuses the 192 px icon
+   (Android renders badges as a monochrome silhouette).
+5. **Still-unbuilt digest items** (none blocks a stage): opens/clicks are not read (Clicks column "—");
+   "scheduled but not sent after 3 h → schedule again" (waits for Mailercloud check 2.8); no run record for
+   the digest retention sweep (a failed night is log-only); no template test send (test via a Digests run).
+
+**OPEN — security / platform:**
+6. **Postgres password rotation** — in a planned window (fresh backup, quiet hours, watched; Railway shows
+   role vs `DATABASE_URL` desync incidents).
+7. **VAPID decision** — rotating orphans every reader subscription until revisit; staff devices re-subscribe
+   with one tap. Never `npm run gen:vapid` without the owner's explicit decision.
+8. **Flaky test:** `eventRetention.test.ts` "lifetime totals… identical before and after a sweep" compares
+   DB-wide totals (needs a portal-scoped totals helper). Passed in the 2026-10-23 full run.
+
+**OPEN — measurement + owner-side:**
+9. **Soft-prompt v1/v2 compare from ~2026-11-05** (`scripts/sql/soft-prompt-funnel.sql`, grants/day +
+   shown/day over ≥ 2 weeks each side of 2026-10-22 10:43:51 UTC).
+10. Send the editorial 301-redirect note (`docs/NOTE-TO-EDITORIAL-deleted-articles.email.txt`).
+11. The SEO conversation: Discover down ~85% since January.
+12. Search Console sitemap "Couldn't fetch" (with the CMS team since 2026-09-29).
+13. Confirm the Railway e-mandate ceiling was raised (billing outage repeats otherwise); ElasticEmail renews
+    on the same card exposure.
+14. iZooto: only a subscriber export (endpoint + keys) **and** its VAPID key could reach its ~3M base.
+15. Slow-burn: `ArticleReadStat` ~2.2 MB/day kept forever; no disk-size alert yet.
+
+### Board as of 2026-10-21 (kept for history)
 
 `main` = PR #73, suite **438**, admin guide **v1.8**. Full capability + flag detail lives in
 `CLAUDE.md`; this board only tracks what is open.
@@ -43,7 +107,8 @@ status changes so a fresh Claude session can pick up cleanly.
   alone; seen once in three full runs on 2026-10-21). Fix needs a portal-scoped totals helper.
 
 **OPEN — owner-side (carried from 2026-09-29, unchanged unless noted):** items 1–6 below; item 7's
-guide is now **v1.8**.
+guide is now **v1.8**. *(Superseded by the 2026-10-23 board above: v2 is ON, the review findings and the
+guide moved on.)*
 
 ### Board as of 2026-09-29 (kept for history)
 
@@ -575,7 +640,7 @@ section went out **Mon 2026-07-13 07:00 IST** — confirm with the user it lande
 legal-news site), replacing/paralleling the third-party iZooto. Backend = Node 24 LTS + TypeScript +
 Express + Prisma/PostgreSQL on Railway; admin SPA = Vue 3 at `push.taxscan.in/admin`; push via the
 `web-push` library (VAPID); RSS polling via `node-cron`. Architecture is portal-tagged so
-academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 active subscribers.**
+academy/shop can plug in later. **Live in production since 2026-06-09; ~3,040 active subscribers.**
 
 **What's been built:**
 - **Capture** — browser SDK on taxscan.in (soft prompt, topic opt-in, recapture of iZooto-granted
@@ -615,7 +680,11 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~2,200 ac
   (bench/category × trailing 1w/1m/3m/6m/12m windows) via `GET /api/reports/reads`;
   sortable **Reads / via Push** columns on Campaigns; reads section in the emailed report.
   Creds: `GA_SERVICE_ACCOUNT_JSON` (Railway) / gitignored `ga-service-account.json` (local).
-- **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`).
+- **Email digest** (built 2026-10-23, shipped with every flag OFF) — the automatic daily Mailercloud digest
+  (Free + Premium): 1-minute IST tick, frozen 06:30 build, approval, 07:30 send, 17:00 cut-off, house ads,
+  templates, webhooks + suppressions, staff push for approvers. `src/services/digest/`,
+  `docs/EMAIL_DIGEST_DESIGN.md`, `docs/DIGEST_PILOT_RUNBOOK.md`.
+- **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`); v2.3.
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
 - **iZooto** — STOPPED (confirmed 2026-10-15: account access disabled, no longer sending). Its ~3M

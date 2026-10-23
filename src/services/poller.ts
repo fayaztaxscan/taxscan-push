@@ -3,6 +3,7 @@ import Parser from 'rss-parser';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 import { dispatchCampaign, type CampaignInput, type DispatchResult } from './send';
 import { classify, isJobPost, topicFromCategories } from './classify';
 
@@ -179,7 +180,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
         }
         errors++;
         // eslint-disable-next-line no-console
-        console.error('[rss] failed to claim feed item', { topic, guid, err });
+        console.error('[rss] failed to claim feed item', { topic, guid, err: safeErrorLog(err, { stack: true }) });
         continue;
       }
       newItems++;
@@ -271,7 +272,7 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
             topic,
             guid,
             feedItemId: claim.id,
-            err,
+            err: safeErrorLog(err, { stack: true }),
           });
         }
         continue;
@@ -291,14 +292,14 @@ export async function pollOnce(deps: PollDeps = {}): Promise<PollResult> {
           topic,
           guid,
           feedItemId: claim.id,
-          err,
+          err: safeErrorLog(err, { stack: true }),
         });
       }
     }
   } catch (err) {
     errors++;
     // eslint-disable-next-line no-console
-    console.error('[rss] poll failed', { topic, feedUrl, err });
+    console.error('[rss] poll failed', { topic, feedUrl, err: safeErrorLog(err, { stack: true }) });
   }
 
   const durationMs = Date.now() - startedAt;

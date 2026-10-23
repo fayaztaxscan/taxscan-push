@@ -4,7 +4,8 @@
  *   POST   /api/users                       create user
  *   GET    /api/users                       paginated list
  *   GET    /api/users/:id                   get one
- *   PATCH  /api/users/:id                   update role / isActive
+ *   PATCH  /api/users/:id                   update role / isActive (deactivating removes push devices)
+ *   DELETE /api/users/:id/push-devices      remove a user's notification devices (task 14)
  *   POST   /api/users/:id/reset-password    generate temp password + revoke sessions
  *
  * Phase 4 will route the inline `recordAudit` calls in this file through
@@ -16,6 +17,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcrypt';
 import type { AuditAction, User, UserRole } from '@prisma/client';
+import { removeAllStaffDevices, staffDeviceSummaries } from '../services/staffPush';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { requireUser } from '../lib/auth';
@@ -283,8 +285,13 @@ export function createUsersRouter(
         prisma.user.count({ where }),
       ]);
 
+      // Task 14: which users get digest notifications on a device (count + last delivery).
+      const devices = await staffDeviceSummaries(items.map((u) => u.id));
       return res.json({
-        items: items.map(publicUserShape),
+        items: items.map((u) => ({
+          ...publicUserShape(u),
+          pushDevices: devices.get(u.id) ?? { count: 0, lastSuccessAt: null },
+        })),
         total,
       });
     } catch (err) {
@@ -420,8 +427,12 @@ export function createUsersRouter(
 
       // If the target was deactivated, revoke their sessions so the change
       // takes effect immediately (rather than waiting for sliding expiry).
+      // Their notification devices go too (task 14): a deactivated user gets no digest push,
+      // and a later reactivation starts clean (they opt in again on each device).
+      let pushDevicesRemoved = 0;
       if (before.isActive && updated.isActive === false) {
         await revokeAllSessionsForUser(updated.id);
+        pushDevicesRemoved = await removeAllStaffDevices(updated.id);
       }
 
       const actions: AuditAction[] = [];
@@ -442,12 +453,36 @@ export function createUsersRouter(
             email: updated.email,
             before,
             after: { role: updated.role, isActive: updated.isActive },
+            ...(action === 'USER_DEACTIVATED' && pushDevicesRemoved ? { pushDevicesRemoved } : {}),
           },
           ipAddress: req.ip ?? null,
         });
       }
 
       return res.json({ user: publicUserShape(updated) });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Task 14: an admin removes every notification device of a user (a lost phone, a
+  // shared computer). The user can opt in again on any device they still use.
+  router.delete('/:id/push-devices', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+      if (!target) return res.status(404).json({ error: 'not_found' });
+      const removed = await removeAllStaffDevices(target.id);
+      if (removed > 0) {
+        await recordAudit({
+          userId: req.user!.id,
+          action: 'STAFF_PUSH_REMOVED',
+          resourceType: 'user',
+          resourceId: target.id,
+          metadata: { targetUserId: target.id, email: target.email, removed },
+          ipAddress: req.ip ?? null,
+        });
+      }
+      return res.json({ removed });
     } catch (err) {
       return next(err);
     }
