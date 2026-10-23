@@ -124,6 +124,15 @@ function isObj(v: unknown): v is Obj {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/**
+ * Postgres `text` and `jsonb` reject NUL. One NUL in a stored field would turn
+ * the delivery into a permanent 500, so Mailercloud would retry it (and every
+ * event batched with it) until it switched the webhook off.
+ */
+function noNul(v: string | null): string | null {
+  return v === null ? null : v.split('\u0000').join('');
+}
+
 /** First non-empty scalar among `keys`, on the event itself, then on its nested objects. */
 function pick(ev: Obj, keys: readonly string[]): string | null {
   const scopes: Obj[] = [ev, ...PAYLOAD_FIELDS.nested.map((k) => ev[k]).filter(isObj)];
@@ -149,7 +158,10 @@ function campaignObject(ev: Obj): Obj | null {
 export function normaliseEmail(raw: string | null): string | null {
   if (!raw) return null;
   const e = raw.trim().toLowerCase();
-  if (e.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return null;
+  // Control characters (NUL above all) are never part of a real mailbox, and
+  // Postgres rejects NUL in text: storing one would 500 the delivery forever.
+  // eslint-disable-next-line no-control-regex
+  if (e.length > 254 || /[\u0000-\u001f\u007f]/.test(e) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return null;
   return e;
 }
 
@@ -209,8 +221,8 @@ export function normaliseEvent(ev: Obj): NormalisedEvent {
   if (!rawType || !type) return { ignored: true, reason: 'unknown_type', rawType };
 
   const camp = campaignObject(ev);
-  const mcCampaignId = pick(ev, PAYLOAD_FIELDS.campaignId) ?? (camp ? pick(camp, ['id', 'campaign_id', 'uid']) : null);
-  const campaignName = pick(ev, PAYLOAD_FIELDS.campaignName) ?? (camp ? pick(camp, ['name', 'campaign_name']) : null);
+  const mcCampaignId = noNul(pick(ev, PAYLOAD_FIELDS.campaignId) ?? (camp ? pick(camp, ['id', 'campaign_id', 'uid']) : null)) || null;
+  const campaignName = noNul(pick(ev, PAYLOAD_FIELDS.campaignName) ?? (camp ? pick(camp, ['name', 'campaign_name']) : null)) || null;
   const campaignRef = mcCampaignId ? `id:${mcCampaignId}` : campaignName ? `name:${campaignName}` : null;
   const email = normaliseEmail(pick(ev, PAYLOAD_FIELDS.email));
   const hash = email ? emailHash(email) : null;
@@ -227,7 +239,7 @@ export function normaliseEvent(ev: Obj): NormalisedEvent {
     mcCampaignId: mcCampaignId ? mcCampaignId.slice(0, 100) : null,
     campaignName,
     at: eventTime(pick(ev, PAYLOAD_FIELDS.eventTime)),
-    errorText: type === 'CAMPAIGN_ERROR' ? pick(ev, PAYLOAD_FIELDS.errorText) : null,
+    errorText: type === 'CAMPAIGN_ERROR' ? noNul(pick(ev, PAYLOAD_FIELDS.errorText)) : null,
     // Campaign events are about the campaign, not a reader: one per campaign.
     dedupeKey: dedupeKeyOf(type, campaignRef, CAMPAIGN_TYPES.has(type) ? null : hash),
   };

@@ -57,15 +57,30 @@ export function silentSends<T extends LivenessSend>(sends: readonly T[], heard: 
   return judgeableSends(sends, now).filter((s) => !heard.has(s.mcCampaignId as string));
 }
 
-/** Which of these Mailercloud campaign ids we received a campaign webhook for. */
-async function heardCampaigns(ids: string[]): Promise<Set<string>> {
-  if (ids.length === 0) return new Set();
+/**
+ * The `mcCampaignId`s of these sends that we received a campaign webhook for.
+ * An event counts when it carries the campaign id OR was linked to the send
+ * (`sendId`) by our campaign name: the normaliser accepts a name-only event and
+ * links it, so judging by id alone would call a live webhook silent.
+ */
+async function heardCampaigns(sends: readonly Pick<LivenessSend, 'id' | 'mcCampaignId'>[]): Promise<Set<string>> {
+  const ids = sends.map((s) => s.mcCampaignId).filter((v): v is string => !!v);
+  if (sends.length === 0) return new Set();
   const rows = await prisma.emailEvent.findMany({
-    where: { mcCampaignId: { in: ids }, type: { in: [...CAMPAIGN_WEBHOOK_TYPES] } },
-    select: { mcCampaignId: true },
-    distinct: ['mcCampaignId'],
+    where: {
+      type: { in: [...CAMPAIGN_WEBHOOK_TYPES] },
+      OR: [{ mcCampaignId: { in: ids } }, { sendId: { in: sends.map((s) => s.id) } }],
+    },
+    select: { mcCampaignId: true, sendId: true },
   });
-  return new Set(rows.map((r) => r.mcCampaignId as string));
+  const byId = new Map(sends.map((s) => [s.id, s.mcCampaignId]));
+  const heard = new Set<string>();
+  for (const r of rows) {
+    if (r.mcCampaignId) heard.add(r.mcCampaignId);
+    const viaSend = r.sendId ? byId.get(r.sendId) : null;
+    if (viaSend) heard.add(viaSend);
+  }
+  return heard;
 }
 
 const SEND_FIELDS = { id: true, audience: true, state: true, mcCampaignId: true, sentConfirmedAt: true, sentVia: true } as const;
@@ -86,7 +101,7 @@ export async function checkWebhookLiveness(
     const sends = await prisma.digestSend.findMany({ where: { runId, state: { in: DONE_STATES } }, select: SEND_FIELDS });
     const judge = judgeableSends(sends, now);
     if (judge.length === 0) return [];
-    const silent = silentSends(judge, await heardCampaigns(judge.map((s) => s.mcCampaignId as string)), now);
+    const silent = silentSends(judge, await heardCampaigns(judge), now);
     if (silent.length === 0) return [];
     await recordRunAlert(runId, 'webhook_silent', now, silent.length === 1 ? { audience: silent[0].audience } : {});
     return silent.map((s) => s.audience);
@@ -131,7 +146,7 @@ export async function webhookHealth(opts: { portal: string; now?: Date; cfg?: Di
     let alive: boolean | null = null;
     if (judge.length > 0) {
       const latest = judge[0];
-      alive = (await heardCampaigns([latest.mcCampaignId as string])).has(latest.mcCampaignId as string);
+      alive = (await heardCampaigns([latest])).has(latest.mcCampaignId as string);
     }
     return { enabled: true, alive, lastEventAt: last ? last.receivedAt.toISOString() : null };
   } catch (err) {

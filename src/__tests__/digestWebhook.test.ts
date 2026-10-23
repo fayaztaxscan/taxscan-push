@@ -155,12 +155,39 @@ describe('storing events', () => {
     const b = { event: 'unsubscribe', email: addr('replay'), campaign_id: camp(), ts_event: 1761200000 };
     const first = await request(app()).post(URL_OK).send(b);
     const again = await request(app()).post(URL_OK).send(b);
-    const third = await request(app()).post(URL_OK).send({ ...b, ts: 1761209999 }); // a retry with a new delivery time
+    const supp0 = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(b.email) } });
+    // A retry with a new delivery time, in a field the normaliser actually reads (ts_event).
+    const third = await request(app()).post(URL_OK).send({ ...b, ts: 1761209999, ts_event: 1761209999 });
     expect(first.body).toMatchObject({ ok: true, stored: 1, duplicates: 0 });
     expect(again.body).toMatchObject({ ok: true, stored: 0, duplicates: 1 });
     expect(third.body).toMatchObject({ stored: 0, duplicates: 1 });
     expect(await eventsFor(b.campaign_id)).toHaveLength(1);
     expect(await prisma.emailSuppression.count({ where: { email: norm(b.email) } })).toBe(1);
+    // A replay re-asserts the suppression row but does not move lastSeenAt.
+    const supp1 = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(b.email) } });
+    expect(supp1.lastSeenAt.getTime()).toBe(supp0.lastSeenAt.getTime());
+  });
+
+  it('campaign events count once per campaign, whatever reader fields ride along', async () => {
+    const id = camp();
+    await request(app()).post(URL_OK).send({ event: 'campaign_sent', campaign_id: id, email: addr('cs1') });
+    const again = await request(app()).post(URL_OK).send({ event: 'campaign_sent', campaign_id: id, email: addr('cs2') });
+    expect(again.body).toMatchObject({ stored: 0, duplicates: 1 });
+    expect(await eventsFor(id)).toHaveLength(1);
+  });
+
+  it('a NUL byte never turns a delivery into a permanent 500', async () => {
+    const id = camp();
+    const nulAddr = await request(app()).post(URL_OK).send({ event: 'unsubscribe', email: `${ADDR_LOCAL}.nul\u0000@example.invalid`, campaign_id: id });
+    expect(nulAddr.status).toBe(200);
+    expect(nulAddr.body).toMatchObject({ stored: 0, ignored: 1 });
+    const nulText = await request(app())
+      .post(URL_OK)
+      .send({ event: 'campaign_error', campaign_id: `${id}\u0000`, description: 'quota\u0000 exceeded' });
+    expect(nulText.status).toBe(200);
+    const [ev] = await eventsFor(id);
+    expect(ev.type).toBe('CAMPAIGN_ERROR');
+    expect((ev.meta as { error: string }).error).toBe('quota exceeded');
   });
 
   it('concurrent duplicates still insert once', async () => {
@@ -344,6 +371,15 @@ describe('liveness: SENT by poll, no campaign webhook within 2 h', () => {
 
     const scheduled = await runWithSend({ state: 'SCHEDULED', sentConfirmedAt: null });
     expect(await checkWebhookLiveness(scheduled.run.id, { cfg: cfg() })).toEqual([]);
+  });
+
+  it('a campaign_sent linked by our campaign NAME (no id) counts as heard', async () => {
+    const { run, send, portal } = await runWithSend();
+    await request(app()).post(URL_OK).send({ event: 'campaign_sent', campaign_name: send.mcCampaignName });
+    expect(await checkWebhookLiveness(run.id, { cfg: cfg() })).toEqual([]);
+    expect(await marker(run.id)).toBeUndefined();
+    expect((await webhookHealth({ portal, cfg: cfg() })).alive).toBe(true);
+    await prisma.emailEvent.deleteMany({ where: { sendId: send.id } });
   });
 
   it('advanceRun runs the check (wired into the door), touching no provider', async () => {
