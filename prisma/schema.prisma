@@ -573,7 +573,7 @@ model EmailEvent {
 model EmailSuppression {
   id          String   @id @default(cuid())
   email       String   @unique // normalised: trimmed, lowercase
-  reason      String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL — the first reason seen is kept
+  reason      String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL — escalates SPAM > HARD_BOUNCE > UNSUBSCRIBE, never down; MANUAL is never rewritten
   source      String // mailercloud_webhook | manual
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())

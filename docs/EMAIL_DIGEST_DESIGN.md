@@ -329,7 +329,7 @@ model EmailEvent {
 model EmailSuppression {
   id          String   @id @default(cuid())
   email       String   @unique    // normalised lowercase; NEVER logged
-  reason      String              // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL
+  reason      String              // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL (escalates, never down)
   source      String              // mailercloud_webhook | manual
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
@@ -360,10 +360,19 @@ event: `marketing_consent = true` with a timestamp **newer than the suppression'
   filter). The trace stays without the address: an `EmailEvent` row of type `RESUBSCRIBE` with
   `emailHash`, `meta {source: 'cms_feed1', consentAt, liftedReason: 'UNSUBSCRIBE'}`, plus an audit row
   holding the hash only. A later unsubscribe simply creates the row again.
-- **HARD_BOUNCE and SPAM are NOT lifted automatically** until the owner confirms. A bounce is a
-  deliverability fact, not a preference, and re-mailing a spam complainant risks the sending reputation.
+- **HARD_BOUNCE and SPAM (owner decision, 23 Oct 2026): lifted only by an explicit opt-in dated AFTER the
+  bounce or complaint** (`consentAt > lastSeenAt`, with `marketing_consent = true` arriving as an opt-in
+  *event* in Feed 1), never by stale consent state such as a standing `marketing_consent = true` flag
+  re-sent in a snapshot. Same deletion and trace as above, with `liftedReason` naming the reason.
+- **MANUAL is never lifted automatically.** Only a person removes it.
 - An opt-in older than or equal to `lastSeenAt` changes nothing (the opt-out is newer).
-- Implementation lands with the Feed 1 task. Nothing in task 8 lifts a suppression.
+- **The recorded reason escalates (owner decision, 23 Oct 2026).** Rank **SPAM > HARD_BOUNCE >
+  UNSUBSCRIBE**: a higher-ranked new event upgrades `reason`, a lower one never downgrades it, so an
+  unsubscribe followed by a hard bounce is recorded as HARD_BOUNCE and a later opt-in is judged by the
+  bounce rule. **MANUAL ranks above all three and is never rewritten by a webhook** (rewriting it to
+  HARD_BOUNCE would make a person's decision liftable by an opt-in). `SUPPRESSION_RANK` in `webhook.ts` is
+  the single definition; the SQL rank is generated from it.
+- Implementation of the lift lands with the Feed 1 task. Nothing in task 8 lifts a suppression.
 
 **Backup.** Add `DigestTemplate`, `DigestAd`, `DigestAdImage` and `EmailSuppression` to `backup.ts`.
 Opt-outs and creative work cannot be re-derived after a restore.
@@ -556,7 +565,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
 | Webhook deactivated by Mailercloud | Daily webhook status check; or SENT by poll with no `campaign_sent` webhook within 2 h | Polling still verifies sends; suppression copy lags | Email + banner ("re-enable webhook") |
 | Webhook replay or duplicate | `dedupeKey` unique | Ignored, 200 | — |
 | Opt-out webhook without a readable address | `no_address` count per delivery | 200 (a retry would not help); a daily `NO_ADDRESS` row, no PII; not suppressed in our copy (Mailercloud still honours its own list) | Log warning + banner for 24 h |
-| Reader re-subscribes (CMS Feed 1 consent newer than the suppression) | Feed 1 task | UNSUBSCRIBE suppression deleted, `RESUBSCRIBE` event + audit by hash; HARD_BOUNCE/SPAM kept pending the owner | — |
+| Reader re-subscribes (CMS Feed 1 consent newer than the suppression) | Feed 1 task | An explicit opt-in dated after `lastSeenAt` deletes the suppression (UNSUBSCRIBE, HARD_BOUNCE or SPAM; never MANUAL), `RESUBSCRIBE` event + audit by hash; stale consent state lifts nothing | — |
 | ElasticEmail itself down | Alert send fails | Logged; the banner is the backstop | Banner |
 | `DIGEST_SEND_AT` set inside quiet hours | Boot validation | Scheduler not started | Boot log + banner `config_invalid` |
 | Complaint rate > 0.3% on a send | Webhook counts / reached | Hold tomorrow's run for approval even if approval is off | Email |
@@ -826,13 +835,15 @@ agents.
    - **Dedupe key** = sha256(`mailercloud|TYPE|campaign id (or name)|emailHash`). It is built from *what*
      happened, never from timestamps or delivery ids, so a retry with a new delivery time still counts once.
      Campaign events key on the campaign alone. Events are stored in chunks of 1,000, one transaction per
-     chunk with a constant three statements: `createManyAndReturn({skipDuplicates})` for the events, then
-     `createMany({skipDuplicates})` and `updateMany` for the suppressions (ON CONFLICT DO NOTHING, so
-     there is no unique-violation race). A body-limit-sized delivery (~2,400 realistic events in 256 KB) is
+     chunk with a constant two statements: `createManyAndReturn({skipDuplicates})` for the events, then
+     one `INSERT … ON CONFLICT (email) DO UPDATE` for the suppressions, one row per address, in address
+     order (no unique-violation race, no deadlock between concurrent deliveries). A body-limit-sized delivery (~2,400 realistic events in 256 KB) is
      stored in under a second locally. `MAX_EVENTS_PER_REQUEST` = 10,000 is above what 256 KB can carry
      in storable events (~7,900 of the smallest), so a delivery the body limit accepts is never rejected by
-     count; over 256 KB gets 413. The first
-     suppression reason is kept; a new event moves `lastSeenAt`, a replay does not. Opened, clicked,
+     count; over 256 KB gets 413. The
+     suppression reason escalates SPAM > HARD_BOUNCE > UNSUBSCRIBE and is never downgraded; MANUAL is never
+     rewritten (owner, 23 Oct 2026; §3). A new event moves `lastSeenAt`, a replay does not (a replay
+     re-asserts the row and its reason, which is idempotent). Opened, clicked,
      soft-bounce and unknown types are acknowledged and not stored, and so are campaign events with no
      campaign. **Opt-outs with no readable address are made visible:** the log line carries
      `ignored_type= no_campaign= no_address=` plus a warning, the response has `noAddress`, and one
@@ -867,8 +878,12 @@ agents.
      would wrongly cover sends made before the webhook was registered; a reader event alone is not proof
      either. **Task 11:** the fold must keep this proof (for example, stamp a column) when it deletes old
      campaign events.
-   - **Open:** the re-subscribe rule (§3) is implemented with the CMS Feed 1 task; whether HARD_BOUNCE/SPAM
-     may ever be lifted automatically waits for the owner.
+   - **Re-subscribe (decided 23 Oct 2026, built with the CMS Feed 1 task):** an explicit opt-in dated after
+     the suppression's `lastSeenAt` lifts UNSUBSCRIBE, HARD_BOUNCE and SPAM alike; stale consent state lifts
+     nothing; MANUAL is never lifted automatically (§3). **For that task:** a provider replay of an old
+     opt-out after a lift would re-create the row (the event's dedupe key already exists, but the
+     suppression upsert still runs); the lift must leave a marker the upsert respects, or replays must skip
+     the suppression when the event row was a duplicate.
    - **UNVERIFIED — confirm on the first live webhook** (Mailercloud documents the campaign event names but
      not the request body; the guesses live only in `PAYLOAD_FIELDS`/`TYPE_MAP` in `webhook.ts`):
      1. the body is JSON, one event per POST: an object, possibly an array, or `{events|data|payload: […]}`;

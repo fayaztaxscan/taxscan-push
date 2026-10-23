@@ -8,7 +8,7 @@ import { alertCopy } from '../services/digest/alerts';
 import { digestAttention, digestStatus } from '../services/digest/status';
 import { digestHistory } from '../services/digest/screen';
 import { checkWebhookLiveness, webhookHealth, WEBHOOK_SILENT_AFTER_MS } from '../services/digest/webhookLiveness';
-import { handleMailercloudWebhook, normaliseEvent, webhookTokenMatches } from '../services/digest/webhook';
+import { escalateReason, handleMailercloudWebhook, normaliseEvent, SUPPRESSION_RANK, webhookTokenMatches } from '../services/digest/webhook';
 import { istDateOf } from '../services/digest/retryPolicy';
 import { FakeSender } from './digestFakeSender';
 
@@ -237,7 +237,7 @@ describe('storing events', () => {
     expect(ev.emailHash).toBeNull();
   });
 
-  it('suppression: one row per normalised address; first reason kept, lastSeenAt moves', async () => {
+  it('suppression: one row per normalised address; a hard bounce upgrades an unsubscribe, lastSeenAt moves', async () => {
     const raw = addr('supp');
     await request(app()).post(URL_OK).send({ event: 'unsubscribe', email: raw, campaign_id: camp() });
     const a = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(raw) } });
@@ -246,7 +246,7 @@ describe('storing events', () => {
     await request(app()).post(URL_OK).send({ event: 'hard_bounce', email: raw.toUpperCase(), campaign_id: camp() });
     const b = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(raw) } });
     expect(b.id).toBe(a.id);
-    expect(b.reason).toBe('UNSUBSCRIBE');
+    expect(b.reason).toBe('HARD_BOUNCE');
     expect(b.lastSeenAt.getTime()).toBeGreaterThan(a.lastSeenAt.getTime());
     expect(b.firstSeenAt.getTime()).toBe(a.firstSeenAt.getTime());
   });
@@ -557,7 +557,7 @@ describe('QA verification of e43217f', () => {
     );
     expect(r).toMatchObject({ stored: 1, duplicates: 2 });
     let s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
-    expect(s.reason).toBe('UNSUBSCRIBE');
+    expect(s.reason).toBe('HARD_BOUNCE');
     expect(s.firstSeenAt.getTime()).toBe(t0.getTime());
     expect(s.lastSeenAt.getTime()).toBe(t1.getTime());
     await handleMailercloudWebhook(
@@ -612,6 +612,112 @@ describe('QA verification of e43217f', () => {
     expect(await prisma.emailEvent.count({ where: { mcCampaignId: id } })).toBe(1200);
     expect(await prisma.emailSuppression.count({ where: { email: { startsWith: `${ADDR_LOCAL}.cf` } } })).toBe(1200);
     expect(((await noAddr())!.meta as { count: number }).count).toBe(1);
+  });
+});
+
+describe('suppression reason escalation (owner, 2026-10-23): SPAM > HARD_BOUNCE > UNSUBSCRIBE, never down', () => {
+  const reasonOf = async (a: string) => (await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } })).reason;
+  const send = (events: object | object[], now = new Date()) => handleMailercloudWebhook(events, { cfg: cfg(), now });
+
+  it('escalateReason / SUPPRESSION_RANK: the pure rule', () => {
+    expect(SUPPRESSION_RANK.SPAM).toBeGreaterThan(SUPPRESSION_RANK.HARD_BOUNCE);
+    expect(SUPPRESSION_RANK.HARD_BOUNCE).toBeGreaterThan(SUPPRESSION_RANK.UNSUBSCRIBE);
+    expect(SUPPRESSION_RANK.MANUAL).toBeGreaterThan(SUPPRESSION_RANK.SPAM);
+    expect(escalateReason('UNSUBSCRIBE', 'HARD_BOUNCE')).toBe('HARD_BOUNCE');
+    expect(escalateReason('HARD_BOUNCE', 'SPAM')).toBe('SPAM');
+    expect(escalateReason('SPAM', 'UNSUBSCRIBE')).toBe('SPAM');
+    expect(escalateReason('SPAM', 'HARD_BOUNCE')).toBe('SPAM');
+    expect(escalateReason('MANUAL', 'SPAM')).toBe('MANUAL');
+  });
+
+  it('upgrade: unsubscribe → hard bounce → spam, each a later delivery', async () => {
+    const a = addr('esc-up');
+    await send({ event: 'unsubscribe', email: a, campaign_id: camp() });
+    expect(await reasonOf(a)).toBe('UNSUBSCRIBE');
+    await send({ event: 'hard_bounce', email: a, campaign_id: camp() });
+    expect(await reasonOf(a)).toBe('HARD_BOUNCE');
+    await send({ event: 'spam', email: a, campaign_id: camp() });
+    expect(await reasonOf(a)).toBe('SPAM');
+  });
+
+  it('never downgrade: spam then hard bounce then unsubscribe stays SPAM (lastSeenAt still moves)', async () => {
+    const a = addr('esc-down');
+    const t0 = new Date(Date.now() - 30 * 60_000);
+    const t1 = new Date(Date.now() - 20 * 60_000);
+    const t2 = new Date(Date.now() - 10 * 60_000);
+    await send({ event: 'spam', email: a, campaign_id: camp() }, t0);
+    await send({ event: 'hard_bounce', email: a, campaign_id: camp() }, t1);
+    expect(await reasonOf(a)).toBe('SPAM');
+    await send({ event: 'unsubscribe', email: a, campaign_id: camp() }, t2);
+    const s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(s.reason).toBe('SPAM');
+    expect(s.lastSeenAt.getTime()).toBe(t2.getTime());
+    expect(s.firstSeenAt.getTime()).toBe(t0.getTime());
+    // and a hard bounce is not downgraded by an unsubscribe either
+    const b = addr('esc-down2');
+    await send({ event: 'hard_bounce', email: b, campaign_id: camp() });
+    await send({ event: 'unsubscribe', email: b, campaign_id: camp() });
+    expect(await reasonOf(b)).toBe('HARD_BOUNCE');
+  });
+
+  it('one batch with the same address twice, either order: the higher reason wins, one row', async () => {
+    const a = addr('esc-batch1');
+    const b = addr('esc-batch2');
+    const r = await send([
+      { event: 'unsubscribe', email: a, campaign_id: camp() },
+      { event: 'spam', email: a.toUpperCase(), campaign_id: camp() },
+      { event: 'hard_bounce', email: b, campaign_id: camp() },
+      { event: 'unsubscribe', email: b, campaign_id: camp() },
+    ]);
+    expect(r).toMatchObject({ stored: 4, duplicates: 0 });
+    expect(await reasonOf(a)).toBe('SPAM');
+    expect(await reasonOf(b)).toBe('HARD_BOUNCE');
+    expect(await prisma.emailSuppression.count({ where: { email: { in: [norm(a), norm(b)] } } })).toBe(2);
+  });
+
+  it('existing row + a batch holding a lower and a higher event: upgrades once', async () => {
+    const a = addr('esc-batch3');
+    await send({ event: 'hard_bounce', email: a, campaign_id: camp() });
+    await send([
+      { event: 'unsubscribe', email: a, campaign_id: camp() },
+      { event: 'spam', email: a, campaign_id: camp() },
+    ]);
+    expect(await reasonOf(a)).toBe('SPAM');
+  });
+
+  it('replay-safe: replaying the lower event after an upgrade changes nothing; replaying the higher keeps it', async () => {
+    const a = addr('esc-replay');
+    const unsub = { event: 'unsubscribe', email: a, campaign_id: camp() };
+    const bounce = { event: 'hard_bounce', email: a, campaign_id: camp() };
+    const t0 = new Date(Date.now() - 30 * 60_000);
+    const t1 = new Date(Date.now() - 20 * 60_000);
+    await send(unsub, t0);
+    await send(bounce, t1);
+    const before = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(before.reason).toBe('HARD_BOUNCE');
+    const r = await send([unsub, bounce, unsub], new Date());
+    expect(r).toMatchObject({ stored: 0, duplicates: 3 });
+    const after = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(after).toEqual(before);
+  });
+
+  it('MANUAL is never rewritten by a webhook', async () => {
+    const a = addr('esc-manual');
+    await prisma.emailSuppression.create({ data: { email: norm(a), reason: 'MANUAL', source: 'manual' } });
+    await send([{ event: 'spam', email: a, campaign_id: camp() }, { event: 'hard_bounce', email: a, campaign_id: camp() }]);
+    const s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
+    expect(s).toMatchObject({ reason: 'MANUAL', source: 'manual' });
+  });
+
+  it('concurrent opposite-order deliveries still escalate without deadlock', async () => {
+    const addrs = Array.from({ length: 300 }, (_, i) => `${ADDR_LOCAL}.escdl.${i}@example.invalid`);
+    const a = addrs.map((email) => ({ event: 'unsubscribe', email, campaign_id: `${CAMP}-escA` }));
+    const b = [...addrs].reverse().map((email) => ({ event: 'spam', email, campaign_id: `${CAMP}-escB` }));
+    const rs = await Promise.allSettled([send(a), send(b)]);
+    expect(rs.map((x) => x.status)).toEqual(['fulfilled', 'fulfilled']);
+    const rows = await prisma.emailSuppression.findMany({ where: { email: { startsWith: `${ADDR_LOCAL}.escdl.` } } });
+    expect(rows).toHaveLength(300);
+    expect(new Set(rows.map((r) => r.reason))).toEqual(new Set(['SPAM']));
   });
 });
 
