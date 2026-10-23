@@ -97,7 +97,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
   router.get('/runs', requireBearerOrUser(), async (req, res, next) => {
     try {
       const days = Number(req.query.days ?? 14);
-      const runs = await digestHistory({ portal: portalOf(), days: Number.isFinite(days) ? days : 14, now: nowOf() });
+      const runs = await digestHistory({ portal: portalOf(), days: Number.isFinite(days) ? days : 14, now: nowOf(), cfg: cfgOf() });
       res.setHeader('Cache-Control', 'no-store');
       return res.json({ runs });
     } catch (err) {

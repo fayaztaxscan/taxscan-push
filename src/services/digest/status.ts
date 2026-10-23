@@ -6,6 +6,7 @@ import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, runDateKey } from './retryPolicy';
 import { validateDigestSchedule } from './scheduler';
 import { BLOCKING_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
+import { webhookHealth, type WebhookHealth } from './webhookLiveness';
 
 /**
  * `GET /api/digest/status` payload and the Dashboard banner decision
@@ -39,6 +40,8 @@ export type AttentionInput = {
     lastError: string | null;
     lastErrorKind: SenderErrorKind | null;
   }>;
+  /** Task 8: the most recent judgeable send got no campaign webhook (`webhookHealth().alive === false`). */
+  webhookSilent?: boolean;
 };
 
 export type Attention = { code: string; headline: string; action: string; link: string };
@@ -58,10 +61,26 @@ function attention(code: string, headline: string, action: string): Attention {
  *     except the routine cut-off skip of unscheduled drafts);
  *  4. partially sent;
  *  5. waiting for approval past the send time;
- *  6. a variant is retrying after a temporary provider error.
+ *  6. a variant is retrying after a temporary provider error;
+ *  7. (task 8) the Mailercloud webhook looks switched off — shown even with no
+ *     run today, because it concerns an earlier send.
  */
 export function digestAttention(i: AttentionInput): Attention | null {
-  if (!i.enabled || !i.run) return null;
+  if (!i.enabled) return null;
+  const forRun = i.run ? runAttention(i) : null;
+  if (forRun) return forRun;
+  if (i.webhookSilent) {
+    return attention(
+      'webhook_silent',
+      'Mailercloud has stopped calling our webhook.',
+      'Switch the webhook back on in Mailercloud. Sends are still checked, but unsubscribes and bounces are not being copied meanwhile.',
+    );
+  }
+  return null;
+}
+
+function runAttention(i: AttentionInput): Attention | null {
+  if (!i.run) return null;
   const { run, sends, cfg } = i;
   const cutoff = `${cfg.cutoff} IST`;
   const state = digestRunState(run, sends);
@@ -141,7 +160,10 @@ export type DigestStatusPayload = {
     cutoff: string;
     providerConfigured: boolean;
     alertEmailConfigured: boolean;
+    webhooksEnabled: boolean;
   };
+  /** Task 8: whether the Mailercloud webhook looks alive (null = nothing to judge yet). */
+  webhook: WebhookHealth;
   today: null | {
     runId: string;
     runDate: string;
@@ -188,7 +210,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
   const cfg = opts.cfg ?? env.digest;
   const now = opts.now ?? new Date();
   const portal = opts.portal ?? env.rss.portal;
-  const base: Omit<DigestStatusPayload, 'today' | 'attention' | 'history'> = {
+  const base: Omit<DigestStatusPayload, 'today' | 'attention' | 'history' | 'webhook'> = {
     enabled: cfg.enabled,
     generatedAt: now.toISOString(),
     config: {
@@ -199,9 +221,12 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       cutoff: cfg.cutoff,
       providerConfigured: cfg.mailercloud.apiKey.trim() !== '',
       alertEmailConfigured: isEmailConfigured(),
+      webhooksEnabled: cfg.webhooksEnabled,
     },
   };
-  if (!cfg.enabled) return { ...base, today: null, attention: null, history: [] };
+  if (!cfg.enabled) return { ...base, webhook: { enabled: cfg.webhooksEnabled, alive: null, lastEventAt: null }, today: null, attention: null, history: [] };
+  const webhook = await webhookHealth({ portal, now, cfg });
+  const webhookSilent = webhook.alive === false;
 
   const todayDate = istDateOf(now);
   const runs = await prisma.digestRun.findMany({
@@ -228,7 +253,9 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
   });
   const history = runs.map((r) => ({ runDate: runDateKey(r.runDate), state: digestRunState(r, r.sends) }));
   const run = runs.find((r) => r.runDate.getTime() === todayDate.getTime()) ?? null;
-  if (!run) return { ...base, today: null, attention: null, history };
+  if (!run) {
+    return { ...base, webhook, today: null, attention: digestAttention({ enabled: cfg.enabled, now, cfg, run: null, sends: [], webhookSilent }), history };
+  }
 
   const alerts = (run.alerts ?? {}) as AlertMap;
   const resolvedAt = alerts.resolved?.raisedAt ?? null;
@@ -246,6 +273,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
 
   return {
     ...base,
+    webhook,
     today: {
       runId: run.id,
       runDate: runDateKey(run.runDate),
@@ -261,7 +289,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       alerts: alertRows,
       resolvedAt,
     },
-    attention: digestAttention({ enabled: cfg.enabled, now, cfg, run, sends: run.sends }),
+    attention: digestAttention({ enabled: cfg.enabled, now, cfg, run, sends: run.sends, webhookSilent }),
     history,
   };
 }

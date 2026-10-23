@@ -7,6 +7,7 @@ import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, istInstant, runDateKey } from './retryPolicy';
 import { TERMINAL_ERRORS } from './runner';
 import { safeDetail, skipWords } from './alerts';
+import { digestSendStats } from './stats';
 
 /**
  * Payloads for the Digests screen (docs/EMAIL_DIGEST_DESIGN.md §6, §7, task 7):
@@ -378,14 +379,14 @@ export type HistoryRow = {
     mcCampaignId: string | null;
     delivered: number | null;
     clicks: number | null;
-    /** Null until the webhook counts exist (tasks 8 and 11, `digestSendStats()`): never a fake 0. */
+    /** From `digestSendStats()` (rolled + live). Null while DIGEST_WEBHOOKS_ENABLED is off: never a fake 0. */
     unsubscribes: number | null;
     complaints: number | null;
   }[];
 };
 
 /** The last `days` IST days of runs for `portal`, newest first. */
-export async function digestHistory(opts: { portal: string; days?: number; now?: Date }): Promise<HistoryRow[]> {
+export async function digestHistory(opts: { portal: string; days?: number; now?: Date; cfg?: DigestEnv }): Promise<HistoryRow[]> {
   const days = Math.min(HISTORY_MAX_DAYS, Math.max(1, Math.floor(opts.days ?? HISTORY_DEFAULT_DAYS)));
   const today = istDateOf(opts.now ?? new Date());
   const runs = await prisma.digestRun.findMany({
@@ -398,11 +399,13 @@ export async function digestHistory(opts: { portal: string; days?: number; now?:
       skipReason: true,
       sends: {
         orderBy: { audience: 'asc' },
-        select: { audience: true, state: true, mcCampaignId: true, reached: true, clicks: true },
+        select: { id: true, audience: true, state: true, mcCampaignId: true, reached: true, clicks: true },
       },
       items: { select: { audience: true } },
     },
   });
+  const counted = (opts.cfg ?? env.digest).webhooksEnabled;
+  const stats = counted ? await digestSendStats(runs.flatMap((r) => r.sends.map((s) => s.id))) : null;
   return runs.map((r) => {
     const items = {} as Record<DigestAudience, number>;
     for (const a of AUDIENCES) items[a] = r.items.filter((it) => it.audience === null || it.audience === a).length;
@@ -418,8 +421,8 @@ export async function digestHistory(opts: { portal: string; days?: number; now?:
         mcCampaignId: s.mcCampaignId,
         delivered: s.reached,
         clicks: s.clicks,
-        unsubscribes: null,
-        complaints: null,
+        unsubscribes: stats?.get(s.id)?.unsubscribes ?? null,
+        complaints: stats?.get(s.id)?.complaints ?? null,
       })),
     };
   });

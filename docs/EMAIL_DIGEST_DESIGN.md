@@ -426,6 +426,7 @@ All flags default OFF. The owner sets them on Railway.
 | `DIGEST_WEBHOOKS_ENABLED` | `false` | When off, the webhook route answers 404. |
 | `MAILERCLOUD_API_KEY` | — | Railway secret, set by the owner. Without it, the scheduler logs "not configured" and the banner says so. The app does not crash. |
 | `MAILERCLOUD_WEBHOOK_TOKEN` | — | ≥32 random bytes (hex), used in the webhook URL path. |
+| `MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS` | — (empty) | Rotation only: the old token, still accepted until the Mailercloud webhook URL is updated; then unset it. Tokens shorter than 32 characters are treated as unset (404). |
 | `MAILERCLOUD_SENDER_NAME` / `_SENDER_EMAIL` / `_REPLY_EMAIL` | — | `sender_email` must be a verified sender in Mailercloud. |
 | `DIGEST_SEND_AT` | `07:30` | IST. **Refused at boot** (the scheduler is not started) if it falls inside 23:00–07:00 or after the cut-off. |
 | `DIGEST_BUILD_LEAD_MINUTES` | `60` | Build and create the draft at T−60, so failures surface before the send time. |
@@ -792,6 +793,64 @@ agents.
 8. **Webhooks.** Route, token, EmailEvent (hashed), EmailSuppression, dedupe, liveness check.
    *Accept:* replaying a payload is counted once; a wrong token gets 404; no address appears in the logs
    or in `EmailEvent`.
+   *Built 2026-10-23 (migration `20261023063316_digest_webhooks`: `EmailEvent` + `EmailSuppression`, new
+   tables only; `webhook.ts`, `webhookLiveness.ts`, `runAlerts.ts`, `stats.ts`, `src/routes/webhooks.ts`;
+   tests `digestWebhook`).*
+   - **Route.** `/api/webhooks` is mounted before the global `express.json`, because body-parser's parse
+     error carries the raw body and the catch-all error handler logs it. Rate limit 1,200/min per IP:
+     generous on purpose, since a 429 counts as a failed delivery toward Mailercloud switching the webhook
+     off. The token is checked before the body is read. A wrong, unset or short (<32 chars) token, or
+     `DIGEST_WEBHOOKS_ENABLED` off, gets a JSON 404 that never echoes the path. The comparison hashes both
+     sides with SHA-256 and uses `timingSafeEqual`. `MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS` (default empty)
+     is also accepted during a rotation. Any Content-Type is accepted. A blank body counts as an empty
+     payload and gets 200; a body that is not JSON, or is `null` or a scalar, gets 400 with nothing echoed.
+     A storage failure gets 500, so Mailercloud retries rather than an opt-out being lost. The one log line
+     per request has counts and types only.
+   - **Dedupe key** = sha256(`mailercloud|TYPE|campaign id (or name)|emailHash`). It is built from *what*
+     happened, never from timestamps or delivery ids, so a retry with a new delivery time still counts once.
+     Campaign events key on the campaign alone. The unique index plus `createMany({skipDuplicates})` and the
+     suppression upsert run in one transaction (10 s timeout; one retry on a P2002 race). The first
+     suppression reason is kept; a new event moves `lastSeenAt`, a replay does not. Opened, clicked,
+     soft-bounce and unknown types are acknowledged and not stored, and so are suppression events with no
+     valid address and campaign events with no campaign.
+   - **PII.** `EmailEvent` holds `emailHash` only. `meta` = `{event, at?, campaignName? (only our
+     TS-DIGEST- names), error? (campaign_error only, redacted, ≤200 chars)}`; bounce text is never kept.
+     The test asserts on the raw `row_to_json` of the row and on every captured log line.
+   - **campaign_sent / campaign_error do not move state** (a deviation from `sentVia = webhook`). A
+     `campaign_sent` carries no reach counts, so marking SENT from it would hide a short send that the poll
+     would call PARTIALLY_SENT. Instead, on a SCHEDULED variant that no step holds, the webhook only brings
+     `nextAttemptAt` forward to now, and the runner's own `verifyStep` decides on the next tick. No provider
+     call is ever made from a webhook. `sentVia` stays `status_poll`. The nudge has no effect until the
+     scheduler tick is wired (it is still log-only).
+   - **Liveness.** `checkWebhookLiveness(runId)` runs after every `advanceRun`. A variant SENT or
+     PARTIALLY_SENT by poll ≥ 2 h ago, with no CAMPAIGN_SENT or CAMPAIGN_ERROR event for its `mcCampaignId`,
+     raises a `webhook_silent` marker (once per run, through the single marker writer `recordRunAlert`;
+     not a blocking kind), and task 6 emails it. `/api/digest/status` gains `config.webhooksEnabled` and
+     `webhook {enabled, alive, lastEventAt}`, judged on the most recent such send in 14 days (null = nothing
+     to judge). `digestAttention` shows `webhook_silent` last, even with no run today. The banner is derived
+     from data, so it clears once a webhook arrives. Mailercloud's read endpoint `GET /v1/webhooks/detail/{id}`
+     (`status` Active/1 vs 0) is noted for `health.ts`'s daily check; it is not called yet. **Caveat:** the
+     scheduler is not wired, so in production the check runs only on Retry now / Send now until it is.
+   - **Counts.** `digestSendStats()` (rolled + live, one grouped query) fills the Digests history
+     unsubscribes/complaints. These are null while webhooks are off, never a fake 0.
+   - **UNVERIFIED — confirm on the first live webhook** (Mailercloud documents the campaign event names but
+     not the request body; the guesses live only in `PAYLOAD_FIELDS`/`TYPE_MAP` in `webhook.ts`):
+     1. the body is JSON, one event per POST: an object, possibly an array, or `{events|data|payload: […]}`;
+     2. the type field is `event` (else `event_type`, `eventType`, `type`, `event_name`, `trigger`,
+        `webhook_event`), and the values are the documented names;
+     3. the address is `email` (else `contact_email`, `email_address`, `emailAddress`, `subscriber_email`,
+        `recipient`), possibly nested under `data`, `payload`, `contact`, `subscriber` or `details`;
+     4. the campaign is `campaign_id` (else `campaignId`, `campaign_uid`, `campaign_key`, `campaign`, or
+        `campaign.{id,name}`); **it must equal the id `POST /v2/campaign/save` returned**, or `sendId`
+        linking and liveness fail (a silent webhook would then be reported even when it is alive);
+     5. the event time is `ts_event`, `date_event`, `event_time`, `timestamp`, `event_date`, `created_at` or
+        `date` (meta only), and the error text is `description`, `reason`, `error`, `error_message` or
+        `message`;
+     6. Mailercloud's own test ping is accepted (blank or unknown → 200);
+     7. the webhook is account-wide, so events from other campaigns (hand-made digest, promotions) arrive
+        too. Their suppressions are stored (an opt-out is account-level) with `sendId` null. **Register only
+        unsubscribe, hard_bounce, spam, campaign_sent and campaign_error**, never opened or clicked: those
+        would be hundreds of thousands of POSTs.
 9. **Ads.** Model, image upload and the `/email-assets` route, `pickAds` with defaults and the
    SUBSCRIPTION guard, the Ads screen, and slot coverage.
    *Accept:* Premium never receives a SUBSCRIPTION ad (both directions); an unfillable slot fails the

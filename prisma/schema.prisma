@@ -545,3 +545,36 @@ model DigestItem {
   @@index([articleKey])
   @@index([campaignId])
 }
+
+/// Mailercloud webhook events (task 8). NO email address is ever stored here: `emailHash` is
+/// sha256 of the normalised (trimmed, lowercased) address, kept only for dedupe and per-reader
+/// joins later. `dedupeKey` is unique, so a provider retry or a replayed payload inserts once.
+/// Kept 90 days, then folded into DigestSend.rolled* (task 11); `digestSendStats()` is the single
+/// rolled + live implementation.
+model EmailEvent {
+  id           String   @id @default(cuid())
+  provider     String   @default("mailercloud")
+  type         String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | CAMPAIGN_SENT | CAMPAIGN_ERROR
+  mcCampaignId String?
+  sendId       String? // DigestSend.id when the campaign is one of ours; null for other campaigns
+  emailHash    String? // sha256(normalised address); never the address
+  dedupeKey    String   @unique
+  meta         Json? // provider event name, event time, redacted error text — never an address
+  receivedAt   DateTime @default(now())
+
+  @@index([sendId])
+  @@index([receivedAt])
+  @@index([mcCampaignId])
+}
+
+/// Our copy of who must not be mailed (task 8). Mailercloud enforces its own list for campaigns;
+/// this copy is what future lifecycle sends check and what restores opt-outs after a disaster.
+/// Never deleted automatically. `email` is NEVER logged and is shown as a count only.
+model EmailSuppression {
+  id          String   @id @default(cuid())
+  email       String   @unique // normalised: trimmed, lowercase
+  reason      String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL — the first reason seen is kept
+  source      String // mailercloud_webhook | manual
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+}

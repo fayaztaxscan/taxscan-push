@@ -16,6 +16,8 @@ import { digestRunState, type DigestRunState } from './runState';
 import { renderDigestContent, senderAddressProblems, type BuildContent } from './renderer';
 import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
 import { sendDigestAlerts } from './alerts';
+import { recordRunAlert } from './runAlerts';
+import { checkWebhookLiveness } from './webhookLiveness';
 
 /**
  * The digest state machine and the ONLY door a digest leaves through
@@ -124,7 +126,8 @@ export type DigestAlertKind =
   | 'provider_failed'
   | 'not_confirmed_by_cutoff'
   | 'build_failed'
-  | 'sanity_hold';
+  | 'sanity_hold'
+  | 'webhook_silent';
 
 /**
  * `lastError` prefixes that end a FAILED variant for the day: no door resumes
@@ -297,16 +300,7 @@ function isTerminal(s: Pick<DigestSend, 'state' | 'lastError'>): boolean {
  * SQL so two runners cannot both raise it. Never throws.
  */
 async function raiseAlert(ctx: Ctx, kind: DigestAlertKind, detail: Record<string, unknown> = {}): Promise<void> {
-  const value = JSON.stringify({ raisedAt: ctx.now.toISOString(), emailedAt: null, ...detail });
-  try {
-    await prisma.$executeRaw`
-      UPDATE "DigestRun"
-         SET alerts = alerts || jsonb_build_object(${kind}::text, ${value}::jsonb)
-       WHERE id = ${ctx.run.id} AND alerts -> ${kind}::text IS NULL`;
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`[digest] run=${ctx.run.id} could not record alert ${kind}: ${redactError(err)}`);
-  }
+  await recordRunAlert(ctx.run.id, kind, ctx.now, detail);
 }
 
 /** Sets the run's skip reason the first time a variant is skipped. */
@@ -341,6 +335,9 @@ export async function advanceRun(runId: string, trigger: DigestTrigger, deps: Ad
     return r;
   } finally {
     if (found) {
+      // Task 8: a send confirmed by polling with no campaign webhook after 2 h
+      // raises `webhook_silent`. Read-only apart from the marker; never throws.
+      await checkWebhookLiveness(runId, { now: deps.now ?? new Date(), cfg });
       const pass = afterAdvance(runId, deps, cfg);
       inFlightAlerts.add(pass);
       void pass.finally(() => inFlightAlerts.delete(pass));

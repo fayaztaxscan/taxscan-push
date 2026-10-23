@@ -10,6 +10,7 @@ import { createAuthRouter } from './routes/auth';
 import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
+import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
 import { env } from './lib/env';
 import type { Sender } from './services/send';
 import type { EmailSender } from './lib/email';
@@ -30,6 +31,8 @@ export type CreateAppOptions = {
   isUrlDead?: (url: string) => Promise<boolean>;
   // Email digest routes — tests inject config/clock/portal.
   digest?: DigestRouterOptions;
+  // Provider webhooks (Mailercloud) — tests inject config, clock, rate limit.
+  webhooks?: WebhookRouterOptions;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -54,6 +57,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   app.use(corsMiddleware);
+  // Provider webhooks parse their own bodies and must come BEFORE the global
+  // JSON parser: its parse errors carry the raw body, which the catch-all
+  // error handler below would log (reader addresses). No session/cookie use.
+  app.use('/api/webhooks', createWebhooksRouter(opts.webhooks));
   app.use(express.json({ limit: '64kb' }));
   // Signs cookies with SESSION_COOKIE_SECRET. Phase 2's auth router uses the
   // signed-cookie path; the helper reads from req.signedCookies and ignores

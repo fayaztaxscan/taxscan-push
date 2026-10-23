@@ -126,7 +126,10 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
     // Railway secrets. Never logged, never put into an error message.
     mailercloud: {
       apiKey: src.MAILERCLOUD_API_KEY ?? '',
-      webhookToken: src.MAILERCLOUD_WEBHOOK_TOKEN ?? '',
+      webhookToken: (src.MAILERCLOUD_WEBHOOK_TOKEN ?? '').trim(),
+      // Rotation only: the old token, still accepted until Mailercloud's webhook URL is updated.
+      // Default empty (= only the current token is accepted). Never logged.
+      webhookTokenPrevious: (src.MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS ?? '').trim(),
       senderName: src.MAILERCLOUD_SENDER_NAME ?? '',
       senderEmail: src.MAILERCLOUD_SENDER_EMAIL ?? '',
       replyEmail: src.MAILERCLOUD_REPLY_EMAIL ?? '',

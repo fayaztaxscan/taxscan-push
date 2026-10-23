@@ -47,6 +47,7 @@ export type AlertKind =
   | 'not_confirmed_by_cutoff'
   | 'build_failed'
   | 'sanity_hold'
+  | 'webhook_silent'
   | 'resolved';
 
 /**
@@ -116,7 +117,7 @@ export type AlertCopy = {
 export function safeDetail(value: unknown, cfg: Pick<DigestEnv, 'mailercloud'> = env.digest): string {
   if (value === null || value === undefined) return '';
   const raw = Array.isArray(value) ? value.map(String).join('; ') : String(value);
-  const secrets = [cfg.mailercloud.apiKey, cfg.mailercloud.webhookToken, env.email.apiKey];
+  const secrets = [cfg.mailercloud.apiKey, cfg.mailercloud.webhookToken, cfg.mailercloud.webhookTokenPrevious, env.email.apiKey];
   const red = redactError(raw, secrets);
   return red.length > DETAIL_MAX ? `${red.slice(0, DETAIL_MAX - 3)}...` : red;
 }
@@ -233,6 +234,13 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         what: `Today's digest found ${m.candidates ?? 'too many'} candidate stories (the limit is ${m.max ?? cfg.sanityMaxCandidates}). This usually means the site re-published its feed.`,
         did: 'Held for approval — nothing is sent until an editor approves.',
         todo: `Check the story list, then approve or hold it in Admin → Digests before ${cutoff}.`,
+      };
+    case 'webhook_silent':
+      return {
+        short: 'Mailercloud webhook is silent — re-enable it',
+        what: `${who} was confirmed sent by polling, but Mailercloud never called our webhook about it. Mailercloud switches a webhook off after repeated failed deliveries.`,
+        did: 'Sends are still verified by polling; unsubscribes, bounces and spam reports are not being copied to our suppression list meanwhile.',
+        todo: 'In Mailercloud, check the webhook pointing at push.taxscan.in and switch it back on (or re-create it with the current URL).',
       };
     case 'resolved':
       return {
