@@ -1,7 +1,9 @@
 # Automatic daily email digest: design (phase 1)
 
-Status: **DESIGN, not built.** Written 2026-10-22 for owner review. Nothing in this document is
-enabled; every behaviour below sits behind flags that default OFF.
+Status (23 Oct 2026): **tasks 1–12 built on `develop`** (the "Built" notes in §13), **not enabled and not yet
+runnable**: the scheduler tick that creates each day's run is not wired (`scheduler.ts` is still the task-1 skeleton),
+nor is `health.ts`. Every behaviour sits behind flags that default OFF. Rollout: `docs/DIGEST_PILOT_RUNBOOK.md`.
+Written 2026-10-22 for owner review.
 
 Owner rulings this design is bound by (all 2026-10-22):
 
@@ -439,33 +441,66 @@ ledger — `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` — and 
 
 ## 5. Flags, env vars, schedule
 
-All flags default OFF. The owner sets them on Railway.
+All flags default OFF (except `DIGEST_APPROVAL_REQUIRED`, which defaults ON). Every value is read once at boot by
+`parseDigestEnv` (`src/lib/env.ts`), so a change takes effect on the next deploy/restart. **Who sets it:** *Owner* =
+a deliberate rollout decision, set by the owner on Railway (the order is in `docs/DIGEST_PILOT_RUNBOOK.md`);
+*Owner (secret)* = a Railway secret, never in a file, chat or log; *Platform* = set once on Railway by whoever runs the
+platform, from values the owner supplies; *Default* = leave unset unless there is a reason. Completed 23 Oct 2026
+(task 12).
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `DIGEST_ENABLED` | `false` | Master switch. When off, the scheduler logs `[digest] disabled (set DIGEST_ENABLED=true to start)`. That line exists only in the new build, so it is the **marker that proves a backend-only deploy**. When on, the scheduler builds, renders, creates drafts, previews and checks health, but sends nothing to an audience unless the next flag is on. |
-| `DIGEST_SEND_LIVE` | `false` | Allows `schedule()` to the configured audiences. When off, the run stops at CREATED and the history shows `preview only`. |
-| `DIGEST_APPROVAL_REQUIRED` | `true` | An editor must approve before the send. |
-| `DIGEST_WEBHOOKS_ENABLED` | `false` | When off, the webhook route answers 404. |
-| `MAILERCLOUD_API_KEY` | — | Railway secret, set by the owner. Without it, the scheduler logs "not configured" and the banner says so. The app does not crash. |
-| `MAILERCLOUD_WEBHOOK_TOKEN` | — | ≥32 random bytes (hex), used in the webhook URL path. |
-| `MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS` | — (empty) | Rotation only: the old token, still accepted until the Mailercloud webhook URL is updated; then unset it. Tokens shorter than 32 characters are treated as unset (404). |
-| `MAILERCLOUD_SENDER_NAME` / `_SENDER_EMAIL` / `_REPLY_EMAIL` | — | `sender_email` must be a verified sender in Mailercloud. |
-| `DIGEST_SEND_AT` | `07:30` | IST. **Refused at boot** (the scheduler is not started) if it falls inside 23:00–07:00 or after the cut-off. |
-| `DIGEST_BUILD_LEAD_MINUTES` | `60` | Build and create the draft at T−60, so failures surface before the send time. |
-| `DIGEST_CUTOFF` | `17:00` | Owner ruling. |
-| `DIGEST_MAX_ITEMS` / `_MIN_ITEMS` / `_ROLLFORWARD_ITEMS` | `12` / `5` / `3` | |
-| `DIGEST_SANITY_MAX_CANDIDATES` | `150` | |
-| `DIGEST_FREE_LIST_IDS`, `DIGEST_FREE_EXCLUDE_LIST_IDS`, `DIGEST_FREE_EXCLUDE_TAG_IDS` | — | **Fail closed:** the Free campaign is never created without an exclude for premium. |
-| `DIGEST_PREMIUM_LIST_IDS` / `_SEGMENT_IDS` / `_TAG_IDS` | — | |
-| `DIGEST_TEST_RECIPIENTS` | — | Extra internal addresses allowed for test sends. |
-| `DIGEST_POSTAL_ADDRESS` | — | Required. The build fails closed if it is empty. |
-| `DIGEST_MAX_HTML_KB` / `_HTML_WARN_KB` | `90` / `75` | |
-| `DIGEST_MAX_IMAGE_KB` | `600` | Task 9: distinct ad-image weight per email; above it the build logs a warning. |
-| `DIGEST_ASSET_BASE_URL` | `https://push.taxscan.in` | Task 9: where `/email-assets/<sha>.<ext>` is served from (ad image URLs in the email). |
-| `DIGEST_HTML_RETENTION_DAYS` / `EMAIL_EVENT_RETENTION_DAYS` | `30` / `90` | |
-| `DIGEST_RETENTION_ENABLED` | `false` | Task 11: the nightly fold + html nulling (`docs/DIGEST_RETENTION.md`). Independent of `DIGEST_ENABLED`. Dry run: `npm run digest-retention`. |
-| `DIGEST_RETENTION_CRON` / `_BATCH` / `_MAX_BATCHES` | `45 3 * * *` / `1000` / `50` | |
+**Switches (the rollout order)**
+
+| Variable | Default | What it does | Who sets it |
+|---|---|---|---|
+| `DIGEST_ENABLED` | `false` | Master switch. Off: the scheduler logs `[digest] disabled (set DIGEST_ENABLED=true to start)` — the line exists only in the new build, so it is the **marker that proves a backend-only deploy** — the Digests screen says "switched off", and every send/retry door answers "not enabled". On: builds, renders, creates **drafts**, previews; still sends nothing to an audience unless the next flag is on. Ads and Templates work whatever its value. | Owner |
+| `DIGEST_SEND_LIVE` | `false` | Allows `schedule()` to the configured audiences. Off: a run stops at CREATED, the history shows "preview only", Send now / Retry never schedule. **The rollback switch** from stage 2 on. | Owner |
+| `DIGEST_APPROVAL_REQUIRED` | `true` | An editor must Approve before the send; unapproved at the cut-off = skipped (`not_approved`). Off = auto-send (owner decides before stage 4). The sanity hold (> `DIGEST_SANITY_MAX_CANDIDATES`) asks for approval whatever this says. | Owner |
+| `DIGEST_WEBHOOKS_ENABLED` | `false` | Off: `POST /api/webhooks/mailercloud/:token` answers 404 and the history's unsubscribe/bounce/complaint columns show "—". Never sends anything. | Owner |
+| `DIGEST_RETENTION_ENABLED` | `false` | Nightly fold of `EmailEvent` > 90 days into `DigestSend.rolled*` and html nulled > 30 days (`docs/DIGEST_RETENTION.md`). Independent of `DIGEST_ENABLED`. Dry run: `npm run digest-retention`. | Owner |
+
+**Mailercloud (secrets and sender)**
+
+| Variable | Default | What it does | Who sets it |
+|---|---|---|---|
+| `MAILERCLOUD_API_KEY` | — | Sent as `Authorization: <key>` (no `Bearer`). Unset: the scheduler logs "not configured", test send says "not configured"; the app does not crash. Never in a log, error or `lastError`. | Owner (secret) |
+| `MAILERCLOUD_WEBHOOK_TOKEN` | — | ≥ 32 characters (64 hex = `openssl rand -hex 32`), the last path segment of the webhook URL. Shorter = treated as unset (404). | Owner (secret) |
+| `MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS` | — (empty) | Rotation only: the old token, still accepted until Mailercloud's webhook URL is updated; then unset it. | Owner (secret) |
+| `MAILERCLOUD_SENDER_NAME` / `_SENDER_EMAIL` / `_REPLY_EMAIL` | — | From name, From address (must be a verified sender in Mailercloud) and the monitored reply address. A `noreply`-style address is refused at boot and at build. | Platform |
+
+**Audiences (fail closed)**
+
+| Variable | Default | What it does | Who sets it |
+|---|---|---|---|
+| `DIGEST_FREE_LIST_IDS` | — | Mailercloud list id(s) for the Free digest (comma-separated). | Platform |
+| `DIGEST_FREE_EXCLUDE_LIST_IDS`, `DIGEST_FREE_EXCLUDE_TAG_IDS` | — | The premium exclude. **At least one is required**: without it the Free campaign is never created (`config_invalid`). | Platform |
+| `DIGEST_PREMIUM_LIST_IDS` / `_SEGMENT_IDS` / `_TAG_IDS` | — | Who the Premium digest goes to; at least one is required. | Platform |
+| `DIGEST_TEST_RECIPIENTS` | — | Addresses (comma-separated) allowed to use "Test send to me". The viewer's own login address must be listed. Never logged. | Platform |
+| `DIGEST_POSTAL_ADDRESS` | — | The footer's postal address. **Required**: the build fails closed when empty. | Platform |
+
+**Timing and content**
+
+| Variable | Default | What it does | Who sets it |
+|---|---|---|---|
+| `DIGEST_SEND_AT` | `07:30` | IST send time. **Refused at boot** (scheduler not started, `config_invalid`) if inside quiet hours or not before the cut-off. | Default |
+| `DIGEST_BUILD_LEAD_MINUTES` | `60` | Build + draft at T−60 (06:30), so failures surface before the send. | Default |
+| `DIGEST_CUTOFF` | `17:00` | IST. After it nothing is scheduled; unsent variants are skipped and roll forward. Owner ruling. | Default |
+| `DIGEST_MAX_ITEMS` / `_MIN_ITEMS` / `_ROLLFORWARD_ITEMS` | `12` / `5` / `3` | Story cap; fewer MAIN stories than the minimum = `too_little_news` skip; ICYMI stories carried from a skipped/partial day. | Default |
+| `DIGEST_SANITY_MAX_CANDIDATES` | `150` | More candidates than this (normal ~25–35) holds the run for an editor even with approval off (the re-platform guard). | Default |
+| `DIGEST_MAX_HTML_KB` / `_HTML_WARN_KB` | `90` / `75` | Size budget (html + 150 B per link for Mailercloud's tracking rewrite): warn / refuse. Gmail clips at ~102 KB. | Default |
+| `DIGEST_MAX_IMAGE_KB` | `600` | Distinct ad-image weight per email; above it the build logs a warning (never refuses). | Default |
+| `DIGEST_ASSET_BASE_URL` | `https://push.taxscan.in` | Where `/email-assets/<sha>.<ext>` and `/email/…` (logo) are served from. https, no trailing slash. | Default |
+| `DIGEST_HTML_RETENTION_DAYS` / `EMAIL_EVENT_RETENTION_DAYS` | `30` / `90` | Frozen html kept / webhook events kept before the fold. | Default |
+| `DIGEST_RETENTION_CRON` / `_BATCH` / `_MAX_BATCHES` | `45 3 * * *` / `1000` / `50` | The retention sweeper's schedule (IST) and batch limits. | Default |
+
+**Shared with push (not digest-specific, but the digest depends on them)**
+
+| Variable | Default | What it means for the digest | Who sets it |
+|---|---|---|---|
+| `QUIET_HOURS_START` / `QUIET_HOURS_END` | `23:00` / `07:00` | The night rule: `schedule()` is never called inside it, on any door; `DIGEST_SEND_AT` inside it is refused at boot. | Platform (already set for push) |
+| `ALLOWED_PUSH_HOSTS` | taxscan.in + academy/shop | The one allowlist for article, ad and template links (ads also need https). | Platform (already set) |
+| `ELASTICEMAIL_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` | — | The **alert** channel (deliberately not Mailercloud). Without it alerts are banner-only. | Platform (already set for reports) |
+| `ADMIN_TOKEN` | — | Bearer for curl on the same doors (same gates). | Platform (already set) |
+| `E2E_MOCK_SENDER` | unset | **Local only**: an in-memory Mailercloud stand-in. Refused in production. | Never on Railway |
 
 **Daily timeline** (IST, with the default 07:30 send):
 
@@ -544,7 +579,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
   - A per-slot coverage check: "Slot 3 — Premium: no eligible ad and no default ✗". This error stops
     the build, so it is shown on this screen, not discovered at 06:30.
 
-**Phone rules (existing):** 16 px fields, the hamburger menu at ≤1024 px, and full-size confirm buttons.
+**Phone rules (existing):** 16 px fields, the hamburger menu below 1200 px (was ≤1024 px; widened in task 7 when the Digests, Ads and Templates entries made the bar wrap — `admin/src/styles/app.css`), and full-size confirm buttons.
 
 ---
 
@@ -1190,3 +1225,33 @@ agents.
 12. **Documentation and pilot runbook.** Guide section, flag table, the Mailercloud checks in §12.14 as
     a checklist, and the stage 1–4 runbook. Updating `CLAUDE.md`/`NEXT_STEP.md` is the owner's call.
     *Accept:* the owner signs off on the runbook before stage 2.
+    *Built 2026-10-23 (docs only; no code, schema or flag change):*
+    - **Admin guide v2.0** (`docs/Taxscan-Push-Admin-Guide.html` → `npm run build:guide` → `.pdf`, 21 pages, was 18).
+      New §9 "The email digest — the Digests screen" (day plan 06:30 / 07:30 / 17:00 and the night rule; the screen;
+      Approve / Hold / Send now / Retry now / Test send to me; who can do what; build retries +1/+5/+15 then hourly; a
+      later-built version needs its own Approve; "No longer stored" after 30 days; the amber notices with what to do;
+      "don't touch TS-DIGEST- campaigns"; the history columns, the five webhook events, "—" until campaign_sent proof,
+      the re-subscribe and suppression rules; Activity) and §10 "Digest ads and templates (Admins)" (coverage check;
+      slots 1/2/3 and their positions, slot 2 only with ≥ 9 stories; three different ads per version; no subscription ad
+      for Premium and "Free only (never Premium)"; image rules; https + allowlist + no `utm_`; dates, priority, rotation,
+      topics, defaults; archive is final; an unfillable slot holds back only that version; the Templates screen,
+      placeholders and which are required, every checklist rule with its fix, Draft → Activate / Schedule / Archive and
+      Revert, the built-in look and fallback, logo files never overwritten). Quick reference → §11, FAQ → §12, with two
+      digest FAQs; role table, screens table and daily checklist mention Digests; the phone FAQ says the menu folds into
+      ☰ below ~1200 px (matching the code; CLAUDE.md still says ≤1024 px). Flags are not in the guide (it carries none);
+      they live in §5 and the runbook.
+    - **Layout found on reading the PDF, fixed:** three near-empty pages from callouts and short tails pushed by forced
+      page breaks in the new sections (now flowing sections); a near-empty page in §6 from one pushed callout (two short
+      callouts merged); the quick reference's last row alone on a page — **already so in v1.9** (now `table.compact`,
+      one page); `{{placeholder}}` "required" pills wrapping (wider column). Global print rules added: `h3` never ends a
+      page, a table row never splits.
+    - **§5 flag table completed**: every digest variable with default, effect and who sets it, plus the push variables
+      the digest depends on (quiet hours, allowlist, ElasticEmail, `ADMIN_TOKEN`, `E2E_MOCK_SENDER`).
+    - **`docs/DIGEST_PILOT_RUNBOOK.md`**: owner sign-off line; §0 what is NOT built and blocks stage 1 (the scheduler
+      tick — `scheduler.ts` is still the task-1 skeleton, so no run is ever created — `health.ts`, the complaint-rate
+      hold, the "not approved by T" email); prerequisites in order (deploy + backup + the nine migrations + boot marker,
+      settings, secrets, ads, webhook: flag first, then register the five events); the Mailercloud checks as a tick list
+      (merge tag, draft search, status names, reach fields, quota codes, webhook fields, one-click headers, plus the §12
+      extras), each with how to check and what to do if wrong; stages 1–4 with what is on, who receives it, how long,
+      go/no-go numbers (complaints < 0.1% from §10; unsubscribes < 0.5% and hard bounces < 2% marked as proposals for the
+      owner), rollback flag and who signs off; the night rule, one-a-day, the after-restore step and the unverified list.
