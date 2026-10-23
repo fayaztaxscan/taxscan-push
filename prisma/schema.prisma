@@ -526,6 +526,17 @@ model DigestSend {
   // frozen, this variant's html is rendered from them once ads are fixed (state FAILED,
   // lastError "ads_unfillable: …" until then). Null for every normally built variant.
   contentPendingAt    DateTime?
+  // Owner, 2026-10-23: a variant rendered AFTER the build (the contentPendingAt path) is
+  // never covered by the run's approval — in approval mode it needs its own (approvedAt).
+  // False for every variant frozen at the build (the run approval covers those).
+  ownApprovalRequired Boolean          @default(false)
+  approvedAt          DateTime?
+  approvedByUserId    String?
+  // Owner, 2026-10-23: the custom template failed at send time, so this variant was
+  // rendered with the built-in template (templateId null). The template it fell back from
+  // and why (RenderError text, redacted). Null when no fallback happened.
+  templateFallbackFromId String?
+  templateFallbackReason String?
 
   run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   placements DigestAdPlacement[]

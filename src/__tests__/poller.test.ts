@@ -12,8 +12,13 @@ import type { CampaignInput, DispatchResult } from '../services/send';
 
 const TEST_FEED_PREFIX = 'https://test-feed.example.com/';
 
+// Every fresh feed is tracked for afterAll's cleanup. The editorial-routing tests used
+// to skip trackFeed, so each run left ~6 campaigns on portal `taxscan` behind (2026-10-23:
+// 851 of them pushed a seeded row out of eventRetention's listCampaigns(500) parity test).
 function freshFeedUrl(name: string): string {
-  return `${TEST_FEED_PREFIX}${name}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  const url = `${TEST_FEED_PREFIX}${name}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  trackFeed(url);
+  return url;
 }
 
 type FakeItem = {
@@ -73,7 +78,7 @@ function failingDispatcher(): DispatcherSpy {
 
 const createdFeeds: string[] = [];
 function trackFeed(url: string) {
-  createdFeeds.push(url);
+  if (!createdFeeds.includes(url)) createdFeeds.push(url);
 }
 
 afterAll(async () => {

@@ -57,7 +57,12 @@ export type DigestContent = {
   placements?: AdPlacementRecord[];
   /** Task 10: the template used (null = built-in; absent from stub content). */
   templateId?: string | null;
+  /** Set when the custom template failed and the built-in one was used instead (owner, 2026-10-23). */
+  templateFallback?: TemplateFallback;
 };
+
+/** The custom template a variant fell back from, and the refusal that made it. */
+export type TemplateFallback = { fromId: string; fromName: string; reason: string };
 
 /**
  * Builds one variant's frozen content. `items` is that audience's frozen list
@@ -244,9 +249,33 @@ export function assertReplyAddresses(mc: Pick<DigestEnv['mailercloud'], 'senderE
 /* Small pure helpers                                                  */
 /* ------------------------------------------------------------------ */
 
-/** HTML-escapes text for element content AND double-quoted attributes. */
+/**
+ * HTML-escapes text for element content AND double-quoted attributes. Braces become
+ * `&#123;` / `&#125;` too (owner, 2026-10-23): a headline, excerpt or ad text that contains
+ * `{{…}}` must never reach Mailercloud as a live merge tag. The renderer's own merge tag
+ * (the unsubscribe link) is inserted raw, never through here.
+ */
 export function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
+  return s.replace(
+    /[&<>"'{}]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '{': '&#123;', '}': '&#125;' })[c] as string,
+  );
+}
+
+/**
+ * The same guard for text that is not HTML: the subject, the preheader and the plain-text
+ * part. A doubled brace — the merge-tag syntax (`{{unsubscribe_link}}`) — is split with a
+ * space ("{ {", "} }"), so no reader-supplied `{{…}}` can be expanded; single braces are
+ * left as written. Mailercloud documents no other merge-tag syntax (checked 2026-10-23), so
+ * `[…]` and `%…%` are left alone.
+ */
+export function defuseMergeTags(s: string): string {
+  return s.replace(/\{(?=\{)/g, '{ ').replace(/\}(?=\})/g, '} ');
+}
+
+/** A URL in the plain-text part: braces percent-encoded, so it stays one clickable token. */
+function textUrl(u: string): string {
+  return u.replace(/\{/g, '%7B').replace(/\}/g, '%7D');
 }
 
 /** Collapses whitespace (incl. newlines/control chars) to single spaces. */
@@ -470,9 +499,10 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   }
 
   const dateText = formatDigestDate(runDate);
-  const subject = trimWords(main[0].title, SUBJECT_MAX);
+  // Reader text never carries a live merge tag (owner, 2026-10-23).
+  const subject = defuseMergeTags(trimWords(main[0].title, SUBJECT_MAX));
   const second = items[1];
-  const preheader = second ? preheaderFor(items.length - 1, second.title) : `Taxscan Daily Digest · ${dateText}`;
+  const preheader = defuseMergeTags(second ? preheaderFor(items.length - 1, second.title) : `Taxscan Daily Digest · ${dateText}`);
   const campaignName = digestCampaignName(runDate, audience);
   const homeHref = withUtm('https://www.taxscan.in/', { campaign: utmCampaign, content: 'header' });
   if (!isAllowedDigestUrl(homeHref)) throw new RenderError('link_not_allowed', 'the header link host is not on ALLOWED_PUSH_HOSTS');
@@ -542,7 +572,8 @@ function adHookFor(ads: RenderAd[], audience: DigestAudience, utmCampaign: strin
 function textAdsFor(ads: RenderAd[], utmCampaign: string): Map<number, string> {
   const out = new Map<number, string>();
   for (const a of ads) {
-    const lines = [`* ${clean(a.headline)}`, a.body ? `  ${clean(a.body)}` : null, `  ${clean(a.ctaText)}: ${adHref(a, utmCampaign)}`];
+    const t = (x: string) => defuseMergeTags(clean(x));
+    const lines = [`* ${t(a.headline)}`, a.body ? `  ${t(a.body)}` : null, `  ${t(a.ctaText)}: ${textUrl(adHref(a, utmCampaign))}`];
     out.set(a.slot, lines.filter((l): l is string => l !== null).join('\n'));
   }
   return out;
@@ -954,8 +985,9 @@ function renderText(p: {
     for (const s of AD_SLOTS) if (s.position === 'afterItem' && s.afterItem === n && p.ads.has(s.slot)) out.push(p.ads.get(s.slot) as string, '');
     return out;
   };
+  const t = defuseMergeTags;
   const block = (it: Prepared, n: number) =>
-    [`${n}. ${it.title}`, it.label ? `   ${it.label}` : null, it.summary ? `   ${it.summary}` : null, `   ${it.href}`]
+    [`${n}. ${t(it.title)}`, it.label ? `   ${t(it.label)}` : null, it.summary ? `   ${t(it.summary)}` : null, `   ${textUrl(it.href)}`]
       .filter((l): l is string => l !== null)
       .join('\n');
   const out: string[] = [`TAXSCAN DAILY DIGEST${premium ? ' (PREMIUM)' : ''}`, p.dateText, ''];
@@ -969,8 +1001,8 @@ function renderText(p: {
     '----',
     `${premium ? PREMIUM_REASON : FREE_REASON} Questions or feedback? Just reply to this email.`,
     `Unsubscribe from this digest: ${UNSUBSCRIBE_TAG}`,
-    `Taxscan · ${p.postal}`,
-    p.homeHref,
+    `Taxscan · ${t(p.postal)}`,
+    textUrl(p.homeHref),
     '',
   );
   return out.join('\n');

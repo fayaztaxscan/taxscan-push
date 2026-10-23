@@ -1,4 +1,5 @@
 import type { DigestAudience, SenderErrorKind } from '@prisma/client';
+import { redactText } from '../../lib/redact';
 import { env } from '../../lib/env';
 
 /**
@@ -118,12 +119,6 @@ export function errorKind(err: unknown): SenderErrorKind {
   return err instanceof SenderError ? err.kind : 'RETRYABLE';
 }
 
-// Plain and URL-encoded (%40) addresses.
-const EMAIL_SHAPED = /[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gi;
-// key=…, api_key: …, token=…, "Authorization: <key>" / "Authorization: Bearer <key>".
-const SECRET_PARAM =
-  /\b(api[_-]?key|apikey|access[_-]?token|token|secret|password|key|authorization)(["']?\s*[=:]\s*["']?)(?:bearer\s+)?[^\s&"',;]+/gi;
-
 /**
  * The text stored in `DigestSend.lastError` and alerts: email-shaped
  * substrings (plain or %40-encoded) masked, key-like parameters and any
@@ -136,10 +131,6 @@ export function redactError(err: unknown, secrets: string[] = [env.digest.mailer
     const tags = [err.http !== null ? `http=${err.http}` : '', err.code ? `code=${err.code}` : ''].filter(Boolean);
     if (tags.length) msg = `${msg} (${tags.join(' ')})`;
   }
-  for (const secret of secrets) {
-    // Short values would mask ordinary words; a real key is long.
-    if (secret && secret.length >= 8) msg = msg.split(secret).join('[secret]');
-  }
-  msg = msg.replace(EMAIL_SHAPED, '[email]').replace(SECRET_PARAM, '$1$2[redacted]');
+  msg = redactText(msg, secrets);
   return msg.length > 300 ? `${msg.slice(0, 297)}...` : msg;
 }

@@ -58,6 +58,9 @@ export type ActionsInput = {
     nextAttemptAt: Date | null;
     mcCampaignId: string | null;
     hasHtml: boolean;
+    /** Owner 2026-10-23: rendered after the build — needs its own approval in approval mode. */
+    ownApprovalRequired?: boolean;
+    approvedAt?: Date | null;
   }>;
 };
 
@@ -68,6 +71,21 @@ const off = (reason: string): ScreenAction => ({ show: true, enabled: false, rea
 /** A FAILED variant whose failure ends it for the day (no door resumes it). */
 export function isTerminalFailure(s: { state: DigestSendState; lastError: string | null }): boolean {
   return s.state === 'FAILED' && TERMINAL_ERRORS.some((e) => s.lastError?.startsWith(e));
+}
+
+/**
+ * Variants with content that were rendered after the build and have no approval of their
+ * own yet, and could still go out today. The single rule the screen, the route and the
+ * banner share (the runner's gate is `awaitingOwnApproval`).
+ */
+export function variantsAwaitingOwnApproval<T extends ActionsInput['sends'][number]>(sends: ReadonlyArray<T>): T[] {
+  return sends.filter(
+    (s) =>
+      s.ownApprovalRequired === true &&
+      !s.approvedAt &&
+      s.hasHtml &&
+      (s.state === 'PENDING' || s.state === 'CREATED' || (s.state === 'FAILED' && !isTerminalFailure(s))),
+  );
 }
 
 /** Why a variant cannot be sent from this screen right now, or null. Shared by Send now and Retry now. */
@@ -97,18 +115,24 @@ export function digestActions(i: ActionsInput): DigestActions {
   );
   const open = run.build === 'BUILT' && !pastCutoff && !handedOver && sendable;
 
-  const approve = open && (run.approval === 'PENDING' || run.approval === 'HELD') ? on() : HIDDEN;
+  const needsApproval = i.cfg.approvalRequired || run.candidateCount > i.cfg.sanityMaxCandidates;
+  // A variant rendered after the run was approved is not covered by that approval (owner,
+  // 2026-10-23): Approve stays on offer for it alone, even once the other variant went out.
+  const waitingOwn = needsApproval && run.build === 'BUILT' && !pastCutoff ? variantsAwaitingOwnApproval(sends) : [];
+  const runLevelApprove = open && (run.approval === 'PENDING' || run.approval === 'HELD');
+  const approve = runLevelApprove || (run.approval === 'APPROVED' && waitingOwn.length > 0) ? on() : HIDDEN;
   const hold = open && run.approval !== 'HELD' ? on() : HIDDEN;
 
   let sendNow: ScreenAction = HIDDEN;
   if (open && !skipped) {
-    const needsApproval = i.cfg.approvalRequired || run.candidateCount > i.cfg.sanityMaxCandidates;
     const blocker =
       sendBlocker(i) ??
       (run.approval === 'HELD'
         ? 'An editor held it. Approve it first.'
         : needsApproval && run.approval !== 'APPROVED'
           ? 'Approve it first.'
+          : waitingOwn.length > 0
+            ? `Approve the ${waitingOwn.map((s) => (s.audience === 'PREMIUM' ? 'Premium' : 'Free')).join(' and ')} digest first: it was built after the approval.`
           : isQuietHours(i.now, i.quiet.start, i.quiet.end)
             ? `It is quiet hours (${i.quiet.start}–${i.quiet.end} IST); nothing is sent at night.`
             : null);
@@ -234,6 +258,11 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
           lastError: true,
           lastErrorKind: true,
           contentPendingAt: true,
+          ownApprovalRequired: true,
+          approvedAt: true,
+          approvedByUserId: true,
+          templateFallbackFromId: true,
+          templateFallbackReason: true,
           targeted: true,
           reached: true,
           opens: true,
@@ -253,6 +282,19 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
   const approver = run.approvedByUserId
     ? await prisma.user.findUnique({ where: { id: run.approvedByUserId }, select: { email: true } })
     : null;
+  const variantApproverIds = [...new Set(run.sends.map((s) => s.approvedByUserId).filter((x): x is string => Boolean(x)))];
+  const variantApprovers = new Map(
+    (variantApproverIds.length ? await prisma.user.findMany({ where: { id: { in: variantApproverIds } }, select: { id: true, email: true } }) : []).map(
+      (u) => [u.id, u.email],
+    ),
+  );
+  const needsApproval = cfg.approvalRequired || run.candidateCount > cfg.sanityMaxCandidates;
+  /** not_needed | waiting | approved — per variant (owner 2026-10-23: a later-rendered one has its own). */
+  const variantApproval = (s: { ownApprovalRequired: boolean; approvedAt: Date | null }): 'not_needed' | 'waiting' | 'approved' => {
+    if (!needsApproval) return 'not_needed';
+    if (s.ownApprovalRequired) return s.approvedAt ? 'approved' : 'waiting';
+    return run.approval === 'APPROVED' ? 'approved' : 'waiting';
+  };
 
   const sends = run.sends.map((s) => ({ ...s, hasHtml: withHtml.has(s.id) }));
   const actions = digestActions({
@@ -317,6 +359,15 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       lastErrorKind: s.lastErrorKind as SenderErrorKind | null,
       targeted: s.targeted,
       reached: s.reached,
+      // Owner 2026-10-23: rendered after the build → its own approval, never the run's.
+      approval: variantApproval(s),
+      ownApproval: s.ownApprovalRequired,
+      approvedAt: s.ownApprovalRequired ? s.approvedAt : run.approvedAt,
+      approvedBy: s.ownApprovalRequired ? (s.approvedByUserId ? (variantApprovers.get(s.approvedByUserId) ?? null) : null) : (approver?.email ?? null),
+      // Owner 2026-10-23: the custom template failed; this copy uses the built-in template.
+      templateFallback: s.templateFallbackFromId
+        ? { fromId: s.templateFallbackFromId, reason: s.templateFallbackReason ? safeDetail(s.templateFallbackReason, cfg) : null }
+        : null,
       // Task 9: the house ad drawn in each slot of this frozen email.
       ads: s.placements.map((p) => ({ slot: p.slot, adId: p.adId, name: p.ad.name, kind: p.ad.kind, utmContent: p.utmContent })),
     })),
@@ -358,7 +409,7 @@ async function runTimeline(
   for (const r of rows) {
     const m = (r.metadata ?? {}) as Record<string, unknown>;
     const parts = [AUDIT_WORDS[r.action] ?? r.action];
-    const who = audienceWord(m.audience);
+    const who = audienceWord(m.audience) ?? (Array.isArray(m.audiences) ? m.audiences.map(audienceWord).filter(Boolean).join(' and ') || null : null);
     if (who) parts.push(`(${who})`);
     if (r.action === 'DIGEST_SKIPPED' && typeof m.reason === 'string') parts.push(`— ${skipWords(m.reason)}`);
     if ((r.action === 'DIGEST_SEND_NOW' || r.action === 'DIGEST_RETRY') && m.outcome === 'refused') {

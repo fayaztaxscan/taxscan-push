@@ -48,6 +48,7 @@ export type AlertKind =
   | 'build_failed'
   | 'sanity_hold'
   | 'webhook_silent'
+  | 'template_fallback'
   | 'resolved';
 
 /**
@@ -265,6 +266,17 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         did: 'Sends are still verified by polling; unsubscribes, bounces and spam reports are not being copied to our suppression list meanwhile.',
         todo: 'In Mailercloud, check the webhook pointing at push.taxscan.in and switch it back on (or re-create it with the current URL).',
       };
+    case 'template_fallback': {
+      const names = Array.isArray(m.templates)
+        ? (m.templates as { audience?: string; name?: string }[]).map((t) => `"${safeDetail(t.name, cfg)}" (${t.audience === 'PREMIUM' ? 'Premium' : 'Free'})`).join(' and ')
+        : `"${safeDetail(m.templateName, cfg)}"`;
+      return {
+        short: 'Digest template failed — the built-in template was used',
+        what: `The digest template ${names} could not be used at send time${m.reason ? ` (${safeDetail(m.reason, cfg)})` : ''}.`,
+        did: 'That digest was built with the built-in template instead, with every usual check (allowlist, size, no subscription ad for Premium). Nothing else changed.',
+        todo: 'Open Admin → Templates, run the checklist on that template and fix it (or revert to the previous one). Tomorrow uses it again unless it is fixed or replaced.',
+      };
+    }
     case 'resolved':
       return {
         short: 'Resolved — digest sent',

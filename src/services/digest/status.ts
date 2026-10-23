@@ -50,6 +50,11 @@ export type AttentionInput = {
     lastErrorKind: SenderErrorKind | null;
     /** Set while the variant waits for its ads (frozen without content). */
     contentPendingAt?: Date | null;
+    /** Owner 2026-10-23: rendered after the build, so it needs its own approval in approval mode. */
+    ownApprovalRequired?: boolean;
+    approvedAt?: Date | null;
+    /** Owner 2026-10-23: the custom template failed and the built-in one was used. */
+    templateFallbackFromId?: string | null;
   }>;
   /** Task 8: the most recent judgeable send got no campaign webhook (`webhookHealth().alive === false`). */
   webhookSilent?: boolean;
@@ -197,8 +202,33 @@ function runAttention(i: AttentionInput): Attention | null {
     }
   }
 
+  // A variant rendered after the run was approved waits for its OWN approval (owner, 2026-10-23).
+  const approvalNeeded = cfg.approvalRequired || run.candidateCount > cfg.sanityMaxCandidates;
+  const waitingOwn = sends.filter(
+    (s) => s.ownApprovalRequired && !s.approvedAt && (s.state === 'PENDING' || s.state === 'CREATED') && !s.contentPendingAt,
+  );
+  if (cfg.sendLive && approvalNeeded && run.approval === 'APPROVED' && waitingOwn.length > 0 && waitingOwn.some((s) => i.now.getTime() >= s.sendAfter.getTime())) {
+    const names = waitingOwn.map((s) => audienceName(s.audience)).join(' and ');
+    return attention(
+      'awaiting_approval',
+      `The ${names} digest is waiting for approval: it was built after today's approval, so that approval does not cover it.`,
+      `Check it and press Approve in Digests before ${cutoff}, or it is skipped.`,
+    );
+  }
+
   if (sends.some((s) => (s.state === 'PENDING' || s.state === 'CREATED') && s.lastError)) {
     return attention('retrying', 'Mailercloud is not answering; today’s digest is retrying.', `Retries continue automatically until ${cutoff}. Nothing to do yet.`);
+  }
+
+  // Owner, 2026-10-23: a custom template failed at send time and the built-in one was used.
+  const fellBack = sends.filter((s) => s.templateFallbackFromId);
+  if (fellBack.length > 0) {
+    const names = fellBack.map((s) => audienceName(s.audience)).join(' and ');
+    return attention(
+      'template_fallback',
+      `Today's ${names} digest used the built-in template: its own template could not be used.`,
+      'Open Templates, fix that template (its checklist shows why) or revert it; until then each digest falls back the same way.',
+    );
   }
   return null;
 }
@@ -321,6 +351,10 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
           targeted: true,
           reached: true,
           contentPendingAt: true,
+          ownApprovalRequired: true,
+          approvedAt: true,
+          templateFallbackFromId: true,
+          templateFallbackReason: true,
         },
       },
     },
@@ -361,7 +395,11 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       builtAt: run.builtAt,
       buildFailure: run.buildFailure,
       buildError: run.buildError ? safeDetail(run.buildError, cfg) : null,
-      variants: run.sends.map((s) => ({ ...s, lastError: s.lastError ? safeDetail(s.lastError, cfg) : null })),
+      variants: run.sends.map((s) => ({
+        ...s,
+        lastError: s.lastError ? safeDetail(s.lastError, cfg) : null,
+        templateFallbackReason: s.templateFallbackReason ? safeDetail(s.templateFallbackReason, cfg) : null,
+      })),
       alerts: alertRows,
       resolvedAt,
     },

@@ -159,13 +159,35 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
     }
   });
 
-  /** Approve / hold: a conditional update, refused once the run is past the point where it matters. */
+  /**
+   * Approve / hold: a conditional update, refused once the run is past the point where it matters.
+   *
+   * Approve covers the run's variants that were frozen at the build. A variant rendered LATER
+   * (its ads were fixed after the build) is never covered by the run's approval (owner,
+   * 2026-10-23): it is approved only when the request names it in `audiences` — the screen
+   * sends the variants it showed as built and waiting — and only if it has content at the
+   * instant of the update. So an approval pressed before (or while) a variant was rendered
+   * can never count for it; the editor must see it and press Approve again.
+   */
   async function setApproval(req: Request, res: Response, kind: 'approve' | 'hold') {
     const cfg = cfgOf();
     if (!cfg.enabled) return notEnabled(res);
     const run = await prisma.digestRun.findUnique({
       where: { id: req.params.id },
-      include: { sends: { select: { audience: true, state: true, lastError: true, nextAttemptAt: true, mcCampaignId: true } } },
+      include: {
+        sends: {
+          select: {
+            audience: true,
+            state: true,
+            lastError: true,
+            nextAttemptAt: true,
+            mcCampaignId: true,
+            contentPendingAt: true,
+            ownApprovalRequired: true,
+            approvedAt: true,
+          },
+        },
+      },
     });
     if (!run) return res.status(404).json({ error: 'not_found' });
     const actions = digestActions({
@@ -175,7 +197,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       providerReady: true,
       viewerCanTest: false,
       run,
-      sends: run.sends.map((s) => ({ ...s, hasHtml: true })),
+      sends: run.sends.map((s) => ({ ...s, hasHtml: s.contentPendingAt === null })),
     });
     const allowed = kind === 'approve' ? actions.approve.show : actions.hold.show;
     if (!allowed) {
@@ -189,26 +211,65 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
     }
     const userId = req.user!.id;
     const now = nowOf();
-    const r =
-      kind === 'approve'
-        ? await prisma.digestRun.updateMany({
-            where: { id: run.id, approval: { in: ['PENDING', 'HELD'] } },
-            data: { approval: 'APPROVED', approvedByUserId: userId, approvedAt: now },
+    if (kind === 'hold') {
+      const r = await prisma.digestRun.updateMany({
+        where: { id: run.id, approval: { in: ['PENDING', 'APPROVED', 'NOT_REQUIRED'] } },
+        data: { approval: 'HELD' },
+      });
+      if (r.count !== 1) return res.status(409).json({ error: 'changed', message: 'Someone else changed it a moment ago. Refresh.' });
+      await recordAudit({
+        userId,
+        action: 'DIGEST_HELD',
+        resourceType: 'DigestRun',
+        resourceId: run.id,
+        metadata: { runDate: run.runDate.toISOString().slice(0, 10), from: run.approval },
+        ipAddress: req.ip ?? null,
+      });
+      return res.json({ ok: true, approval: 'HELD' });
+    }
+
+    const raw: unknown = req.body?.audiences;
+    const listed = (Array.isArray(raw) ? raw : []).map((a) => (typeof a === 'string' ? parseAudience(a) : null)).filter((a): a is DigestAudience => a !== null);
+    const outcome = await prisma.$transaction(async (tx) => {
+      const r = await tx.digestRun.updateMany({
+        where: { id: run.id, approval: { in: ['PENDING', 'HELD'] } },
+        data: { approval: 'APPROVED', approvedByUserId: userId, approvedAt: now },
+      });
+      // Only a later-rendered variant that the editor saw (listed) and that has content NOW.
+      const stamped = listed.length
+        ? await tx.digestSend.updateManyAndReturn({
+            where: {
+              runId: run.id,
+              audience: { in: listed },
+              ownApprovalRequired: true,
+              approvedAt: null,
+              html: { not: null },
+              contentPendingAt: null,
+              state: { in: ['PENDING', 'CREATED', 'FAILED'] },
+            },
+            data: { approvedAt: now, approvedByUserId: userId },
+            select: { audience: true },
           })
-        : await prisma.digestRun.updateMany({
-            where: { id: run.id, approval: { in: ['PENDING', 'APPROVED', 'NOT_REQUIRED'] } },
-            data: { approval: 'HELD' },
-          });
-    if (r.count !== 1) return res.status(409).json({ error: 'changed', message: 'Someone else changed it a moment ago. Refresh.' });
+        : [];
+      return { runApproved: r.count === 1, variants: stamped.map((x) => x.audience) };
+    });
+    if (!outcome.runApproved && outcome.variants.length === 0) {
+      return res.status(409).json({ error: 'changed', message: 'Nothing was waiting for approval any more (someone else approved it, or it changed). Refresh.' });
+    }
     await recordAudit({
       userId,
-      action: kind === 'approve' ? 'DIGEST_APPROVED' : 'DIGEST_HELD',
+      action: 'DIGEST_APPROVED',
       resourceType: 'DigestRun',
       resourceId: run.id,
-      metadata: { runDate: run.runDate.toISOString().slice(0, 10), from: run.approval },
+      metadata: {
+        runDate: run.runDate.toISOString().slice(0, 10),
+        from: run.approval,
+        ...(outcome.runApproved ? {} : { scope: 'variant' }),
+        ...(outcome.variants.length ? { audiences: outcome.variants } : {}),
+      },
       ipAddress: req.ip ?? null,
     });
-    return res.json({ ok: true, approval: kind === 'approve' ? 'APPROVED' : 'HELD' });
+    return res.json({ ok: true, approval: 'APPROVED', variants: outcome.variants });
   }
 
   router.post('/runs/:id/approve', requireUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {

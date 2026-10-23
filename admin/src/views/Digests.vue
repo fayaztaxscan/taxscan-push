@@ -56,6 +56,13 @@ type Variant = {
   attempts: number;
   lastError: string | null;
   reached: number | null;
+  /** Per variant (2026-10-23): a variant built after the approval needs its own. */
+  approval?: 'not_needed' | 'waiting' | 'approved';
+  ownApproval?: boolean;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  /** The custom template failed at send time; this copy uses the built-in template. */
+  templateFallback?: { fromId: string; reason: string | null } | null;
 };
 type Item = {
   rank: number;
@@ -178,7 +185,10 @@ async function act(kind: 'approve' | 'hold') {
   error.value = null;
   notice.value = null;
   try {
-    await api.post(`/api/digest/runs/${detail.value.runId}/${kind}`, {});
+    // Approve names the variants this screen shows as built and waiting: one built after the
+    // run was approved is covered only by an approval given while it was on screen.
+    const audiences = detail.value.variants.filter((v) => v.hasPreview && v.approval === 'waiting').map((v) => v.audience);
+    await api.post(`/api/digest/runs/${detail.value.runId}/${kind}`, kind === 'approve' ? { audiences } : {});
     notice.value = kind === 'approve' ? 'Approved.' : 'Held. It will not send until someone approves it.';
     await load();
   } catch (e) {
@@ -247,6 +257,12 @@ const confirmTitle = computed(() => {
 
 /** One plain line per variant about what happens next. */
 function variantNote(v: Variant): string | null {
+  if (v.ownApproval && v.approval === 'waiting' && v.hasPreview && (v.state === 'PENDING' || v.state === 'CREATED')) {
+    return 'Waiting for approval: built after today’s approval, so it needs its own.';
+  }
+  if (v.templateFallback && (v.state === 'PENDING' || v.state === 'CREATED' || v.state === 'SCHEDULED')) {
+    return `Uses the built-in template: its own template failed${v.templateFallback.reason ? ` (${v.templateFallback.reason})` : ''}.`;
+  }
   if (v.lastError && (v.state === 'FAILED' || v.state === 'PENDING' || v.state === 'CREATED')) {
     const next = v.nextAttemptAt ? ` Next try at ${timeIst(v.nextAttemptAt)} IST.` : '';
     return `${v.lastError}.${next}`;

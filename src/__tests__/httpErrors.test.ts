@@ -122,3 +122,70 @@ describe('the rules, pure', () => {
     expect(safeErrorLog('plain')).toEqual({ message: 'plain' });
   });
 });
+
+describe('templates: authenticated before the 600 KB JSON parser (2026-10-23)', () => {
+  it('no session → 401 without parsing: malformed JSON is not a 400, an oversized body is not a 413', async () => {
+    const broken = await request(app).post('/api/digest/templates').set('Content-Type', 'application/json').send(`{"name": "${SENTINEL}", broken`);
+    expect(broken.status).toBe(401);
+    const huge = `{"source": "${'x'.repeat(700 * 1024)}"}`;
+    const big = await request(app).put('/api/digest/templates/abc').set('Content-Type', 'application/json').send(huge);
+    expect(big.status).toBe(401);
+    expect(logged.join('\n')).not.toContain(SENTINEL);
+    expect(logged.join('\n')).not.toMatch(/entity\.(parse\.failed|too\.large)/);
+  });
+
+  it('the ADMIN bearer still reaches the parser (malformed JSON → 400)', async () => {
+    const res = await request(app)
+      .post('/api/digest/templates')
+      .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`)
+      .set('Content-Type', 'application/json')
+      .send('{"name": broken');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_json' });
+  });
+});
+
+describe('safeErrorLog: no query arguments, no addresses (2026-10-23)', () => {
+  it('a Prisma error logs name/code/target/model only — never its message', () => {
+    const e = Object.assign(new Error(`Invalid \`prisma.user.create()\` invocation:\n{ data: { email: "${SENTINEL}" } }\nUnique constraint failed`), {
+      name: 'PrismaClientKnownRequestError',
+      code: 'P2002',
+      clientVersion: '6.19.3',
+      meta: { target: ['email'], modelName: 'User', cause: SENTINEL },
+    });
+    const out = safeErrorLog(e, { stack: true });
+    expect(out).toMatchObject({ name: 'PrismaClientKnownRequestError', code: 'P2002', target: ['email'], model: 'User' });
+    expect(out.message).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain(SENTINEL);
+    expect(JSON.stringify(out)).not.toContain('Invalid');
+  });
+
+  it('a validation error (no code) and an error carrying only clientVersion are treated the same', () => {
+    const v = Object.assign(new Error(`Argument email: Invalid value "${SENTINEL}"`), { name: 'PrismaClientValidationError', clientVersion: '6.19.3' });
+    expect(JSON.stringify(safeErrorLog(v, { stack: true }))).not.toContain(SENTINEL);
+    const w = Object.assign(new Error(`where: { email: "${SENTINEL}" }`), { clientVersion: '6.19.3' });
+    expect(JSON.stringify(safeErrorLog(w, { stack: true }))).not.toContain(SENTINEL);
+  });
+
+  it('any other error keeps its message, with addresses and secrets masked (stack too)', () => {
+    const e = new Error(`could not mail ${SENTINEL} with token=abc123secretvalue`);
+    const out = safeErrorLog(e, { stack: true });
+    expect(out.message).toBe('could not mail [email] with token=[redacted]');
+    expect(JSON.stringify(out)).not.toContain(SENTINEL);
+    expect(JSON.stringify(out)).not.toContain('abc123secretvalue');
+    expect(String(out.stack)).toMatch(/^Error: could not mail \[email\]/);
+    expect(safeErrorLog(`plain ${SENTINEL}`)).toEqual({ message: 'plain [email]' });
+  });
+
+  it('the 500 handler logs a Prisma error without the address its message quotes', async () => {
+    const mini = express();
+    mini.get('/p', () => {
+      throw Object.assign(new Error(`Unique constraint failed on { email: "${SENTINEL}" }`), { name: 'PrismaClientKnownRequestError', code: 'P2002', clientVersion: '6' });
+    });
+    mini.use(appErrorHandler);
+    const res = await request(mini).get('/p');
+    expect(res.status).toBe(500);
+    expect(logged.join('\n')).toContain('P2002');
+    expect(logged.join('\n')).not.toContain(SENTINEL);
+  });
+});

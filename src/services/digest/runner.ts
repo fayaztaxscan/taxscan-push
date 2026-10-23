@@ -13,7 +13,7 @@ import {
 } from './sender';
 import { isPastCutoff, istDateOf, istInstant, nextAttemptAt, runDateKey } from './retryPolicy';
 import { digestRunState, type DigestRunState } from './runState';
-import { senderAddressProblems, type AdPlacementRecord, type BuildContent } from './renderer';
+import { senderAddressProblems, type AdPlacementRecord, type BuildContent, type TemplateFallback } from './renderer';
 import { renderDigestContent } from './content';
 import { AdSlotError, assertPlacementsAllowed } from './ads';
 import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
@@ -150,7 +150,8 @@ export type DigestAlertKind =
   | 'not_confirmed_by_cutoff'
   | 'build_failed'
   | 'sanity_hold'
-  | 'webhook_silent';
+  | 'webhook_silent'
+  | 'template_fallback';
 
 /**
  * `lastError` prefixes that end a FAILED variant for the day: no door resumes
@@ -577,6 +578,8 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
           mcCampaignName: name(c.audience),
           sendAfter,
           templateId: c.templateId ?? null,
+          templateFallbackFromId: c.templateFallback?.fromId ?? null,
+          templateFallbackReason: c.templateFallback?.reason ?? null,
         })),
         // The broken audience: no content, so nothing can be created for it until
         // its ads are fixed and it is rendered from the stories frozen above.
@@ -618,6 +621,7 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
     });
     for (const b of blocked) log(ctx, b.audience, 'build:ads_unfillable:content_pending');
   }
+  if (built) await raiseTemplateFallback(ctx, contents);
   if (built && selection?.outcome === 'sanity_hold') {
     await raiseAlert(ctx, 'sanity_hold', { candidates: selection.candidateCount, max: ctx.cfg.sanityMaxCandidates });
     log(ctx, null, `build:sanity_hold:${selection.candidateCount}`);
@@ -625,6 +629,25 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
   if (built && selection) log(ctx, null, `build:items:${selection.rows.length}:reads=${selection.reads.used ? selection.reads.source : 'off'}`);
   log(ctx, null, built ? 'build:frozen' : 'build:claimed_elsewhere');
   return built;
+}
+
+/**
+ * One alert (email + banner) when a variant was rendered with the built-in template
+ * because its custom template failed (owner, 2026-10-23). Once per run, like every kind:
+ * a second fallback later the same day (a pending variant) is still visible on the
+ * variant row and the banner, which read `templateFallbackFromId`.
+ */
+async function raiseTemplateFallback(ctx: Ctx, contents: VariantContent[]): Promise<void> {
+  const fell = contents.filter((c) => c.templateFallback);
+  if (fell.length === 0) return;
+  await raiseAlert(ctx, 'template_fallback', {
+    audiences: fell.map((c) => c.audience),
+    ...(fell.length === 1 ? { audience: fell[0].audience } : {}),
+    templates: fell.map((c) => ({ audience: c.audience, id: c.templateFallback!.fromId, name: c.templateFallback!.fromName })),
+    templateName: fell[0].templateFallback!.fromName,
+    reason: fell[0].templateFallback!.reason,
+  });
+  for (const c of fell) log(ctx, c.audience, `build:template_fallback:${c.templateFallback!.fromId}`);
 }
 
 /** The `lastError` of a variant waiting for its ads (plain words: slot and audience, no URL). */
@@ -671,6 +694,7 @@ type VariantContent = {
   text: string;
   placements?: AdPlacementRecord[];
   templateId?: string | null;
+  templateFallback?: TemplateFallback;
 };
 
 /**
@@ -772,6 +796,19 @@ async function skipTooLittleNews(ctx: Ctx, sel: DigestSelection): Promise<boolea
   }
   log(ctx, null, skipped ? 'build:skipped:too_little_news' : 'build:claimed_elsewhere');
   return false;
+}
+
+/** Whether this run needs an editor's approval at all (approval mode, or the sanity hold). */
+function approvalNeeded(ctx: Ctx): boolean {
+  return ctx.cfg.approvalRequired || ctx.run.candidateCount > ctx.cfg.sanityMaxCandidates;
+}
+
+/**
+ * A variant rendered after the build (owner, 2026-10-23) that has not had its own
+ * approval yet. Only in approval mode; outside it nothing changes.
+ */
+function awaitingOwnApproval(ctx: Ctx, send: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt'>): boolean {
+  return approvalNeeded(ctx) && send.ownApprovalRequired && send.approvedAt === null;
 }
 
 /** True while a run over the sanity limit has not been approved by an editor. */
@@ -884,6 +921,15 @@ async function renderPendingStep(ctx: Ctx, send: DigestSend): Promise<DigestSend
         text: c.text,
         htmlBytes: Buffer.byteLength(c.html, 'utf8'),
         templateId: c.templateId ?? null,
+        templateFallbackFromId: c.templateFallback?.fromId ?? null,
+        templateFallbackReason: c.templateFallback?.reason ?? null,
+        // Owner, 2026-10-23: content that did not exist when the run was approved is not
+        // covered by that approval. In approval mode it waits for its own (approvedAt),
+        // whatever the run's approval says now — set in the same fenced write as the html,
+        // so no approval taken before this instant can ever count for it.
+        ownApprovalRequired: true,
+        approvedAt: null,
+        approvedByUserId: null,
         contentPendingAt: null,
         lastError: null,
         lastErrorKind: null,
@@ -898,6 +944,7 @@ async function renderPendingStep(ctx: Ctx, send: DigestSend): Promise<DigestSend
     return true;
   });
   log(ctx, a, stored ? 'render:frozen' : 'render:claimed_elsewhere');
+  if (stored) await raiseTemplateFallback(ctx, [c]);
   return stored ? fresh(send.id) : null;
 }
 
@@ -1088,6 +1135,7 @@ function scheduleBlocker(ctx: Ctx, send: DigestSend): string | null {
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
   if (sanityHeld(ctx)) return 'sanity_hold';
   if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'awaiting_approval';
+  if (awaitingOwnApproval(ctx, send)) return 'awaiting_variant_approval';
   if (ctx.clock().getTime() < send.sendAfter.getTime()) return 'waiting_send_time';
   const clock = clockBlocker(ctx);
   if (clock) return clock;
@@ -1378,11 +1426,13 @@ async function auditSkipped(ctx: Ctx, send: DigestSend, reason: string): Promise
 /* Cut-off                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Why unfinished variants are being skipped at the cut-off. */
-function cutoffReason(ctx: Ctx): string {
+/** Why an unfinished variant is being skipped at the cut-off. */
+function cutoffReason(ctx: Ctx, send?: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt'>): string {
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
   if (sanityHeld(ctx)) return 'sanity_hold_expired';
   if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'not_approved';
+  // A variant rendered after the run was approved that never got its own approval.
+  if (send && awaitingOwnApproval(ctx, send)) return 'not_approved';
   return 'cutoff_passed';
 }
 
@@ -1416,10 +1466,10 @@ async function cutoffSweep(ctx: Ctx): Promise<void> {
     return;
   }
 
-  const reason = cutoffReason(ctx);
   for (const audience of AUDIENCES) {
     const s = await prisma.digestSend.findUnique({ where: { runId_audience: { runId: ctx.run.id, audience } } });
     if (!s) continue;
+    const reason = cutoffReason(ctx, s);
     if (s.state === 'SCHEDULED') {
       await verifyStep(ctx, s, true);
       continue;

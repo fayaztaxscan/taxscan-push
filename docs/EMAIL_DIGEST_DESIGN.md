@@ -689,7 +689,8 @@ Selection and failure-handling tests:
   timezone does not matter.
 - **Pilot:** an internal list, then a small engaged segment. If approval is missing at send time, the
   digest **holds until the cut-off**, then skips. Auto-send is decided before going to full.
-- **MJML** approved, on condition that one Railway build is verified on a branch first.
+- ~~**MJML** approved, on condition that one Railway build is verified on a branch first.~~ **Superseded 23 Oct
+  2026: MJML is not adopted for now** — see below.
 - **Roles:** publishers may approve, hold, Send now and Retry (like Push now); Templates and Ads are admin-only.
 - **Item cap 12**, minimum 5. **Content:** queue-approved items only (no unreviewed explainers or job posts).
 - **Reply address:** a monitored address on the verified sending subdomain, replacing `noreply@`.
@@ -715,6 +716,22 @@ Selection and failure-handling tests:
 - **Ranking signal.** Within a group, organic reads per hour (views minus push views) — see §4.1 and the task 4
   notes. Reads come through a swappable `ReadsSource`: GA4 today, CMS view counts (bots excluded, push views
   split) when Feed 2 exists, with GA as the fallback.
+
+**Decided 23 Oct 2026 (owner):**
+
+- **MJML: not adopted for now.** Templates are plain email HTML. The lazy MJML seam in `templates.ts` stays
+  (`format` HTML | MJML, `loadMjml()` at save time only); the Templates screen offers HTML only, and an MJML
+  template sent through the API fails to compile with "MJML is not available in this build: templates are
+  plain email HTML", which blocks activation. Adding MJML later needs the owner's go-ahead, `mjml@5.4.1`
+  (Node ≥ 20.18) and one verified Railway branch build.
+- **Built-in fallback at send time.** If the resolved custom template cannot be rendered while a variant is
+  built, that variant is rendered with the built-in template instead (`templateId` null), and one
+  `template_fallback` alert (email + banner) names the template and the reason. Only for failures that are the
+  template's: never for ads, items, link checks or DB errors.
+- **A later-rendered variant needs its own approval.** In approval mode, a variant rendered after the run was
+  approved (the `contentPendingAt` path) is never covered by the run's approval.
+- **Reader text never carries a live merge tag** (`{{…}}` in a headline, excerpt, ad text, subject or
+  preheader is neutralised).
 
 **Still open (owner checks in the Mailercloud account; do not ask Mailercloud support):**
 
@@ -974,8 +991,8 @@ agents.
        Both audiences broken → `BUILD_FAILED` exactly as before. A freeze-guard refusal (`AdSlotError` at
        freeze) is per audience too. Chosen over "SKIPPED `ads_unfillable`" because the variant row model
        carries it safely: the frozen stories are already the content, and no provider call is possible
-       without html. Note: in approval mode the run's approval covers a variant rendered later (same
-       stories; only the ads differ).
+       without html. ~~Note: in approval mode the run's approval covers a variant rendered later.~~
+       **Superseded 23 Oct 2026:** it needs its own approval (task 10 owner decisions below).
      - Retry now while the variant is still unfillable and nothing else can progress is **refused** with
        the audience and slot. The alert (`config_invalid`, `source: 'ads'`, `audience`, `audiences`) and
        the banner (`ads_unfillable`) name the audience and slot; a Free-sent + Premium-skipped day shows
@@ -1010,12 +1027,13 @@ agents.
     constraints on status, format, the override window and compiled html for ACTIVE/SCHEDULED; create-only, no
     `lock_timeout` (no existing table touched). `templates.ts`, `src/routes/digestTemplates.ts`,
     `admin/src/views/Templates.vue`, `components/EmailPreviewFrame.vue`; tests `digestTemplates`).*
-    - **MJML: NOT added in this task.** `mjml@5.4.1` would add 234 packages (~57 MB, package-lock 637 → ~871
+    - **MJML: NOT added in this task — and not adopted for now (owner, 23 Oct 2026): templates are plain email
+      HTML; the seam below stays.** `mjml@5.4.1` would add 234 packages (~57 MB, package-lock 637 → ~871
       entries, no install scripts) and needs Node ≥ 20.18 (cheerio/undici; cssnano declares ^22.11 || ^24.11): it
       crashes on load under the Node 18 that this Mac's shell runs jest with. `mjml@4.15.3` (167 packages) runs on
       Node 18 but carries the unfixable html-minifier ReDoS advisory. Stopped and reported per the brief. The seam is
       in place: `format` HTML | MJML, `compileTemplate()` lazily `require`s `mjml` at SAVE time only; without it an
-      MJML template fails to compile with a readable message ("MJML is not available in this build yet…"), which
+      MJML template fails to compile with a readable message ("MJML is not available in this build: templates are plain email HTML…"), which
       blocks activation (fail safe; tested with injected compilers, including an MJML error). Adding it later =
       `npm i mjml@5.4.1` + nothing else. **Railway branch build verification still required before this ships**
       (owner's condition for MJML).
@@ -1071,6 +1089,40 @@ agents.
       `EmailPreviewFrame` (Digests now uses the same component). Verified in headless Chromium at 1280 and 390 px.
     - **Backup:** `DigestTemplate` is listed for `backup.ts` in §3 and joins it in task 11 (with DigestAd,
       DigestAdImage, EmailSuppression).
+    - **Owner decisions of 23 Oct 2026 — built** (migration `20261023…_digest_variant_approval_and_template_fallback`:
+      five nullable/defaulted columns on `DigestSend` only; tests `digestOwnerDecisions`, plus `httpErrors`):
+      - **Built-in fallback** (`content.ts`). When a CUSTOM template's render throws, the same items, ads and
+        config are rendered with the built-in template. If that succeeds the failure was the template's: the
+        variant is frozen with `templateId` null, `templateFallbackFromId` + `templateFallbackReason` (the
+        RenderError in plain words, redacted), and the runner raises `template_fallback` (once per run; detail
+        names every audience and template that fell back at that build; a later pending render raises it if not
+        raised yet). If the built-in render also refuses, its refusal is thrown as before (an off-allowlist story,
+        a SUBSCRIPTION ad, no postal address, over the size limit even when built-in). Ads are picked BEFORE the
+        render, so `AdSlotError` never reaches the fallback; DB errors in `resolveTemplate` are outside it. The
+        built-in render runs every renderer guard. Banner `template_fallback` (lowest run priority) reads the
+        variant row, so it stays up for the day; the Digests screen notes "Uses the built-in template".
+      - **Own approval for a later-rendered variant** (`runner.ts`, `routes/digest.ts`, `screen.ts`).
+        `renderPendingStep` stores the html with `ownApprovalRequired = true` and `approvedAt` null in the same
+        fenced write. In approval mode (`DIGEST_APPROVAL_REQUIRED`, or the sanity hold) such a variant is
+        scheduled only once `DigestSend.approvedAt` is set (`awaiting_variant_approval`), whatever the run's
+        approval says. `POST /runs/:id/approve` takes `{audiences: [...]}` — the SPA sends the variants it showed
+        built and waiting — and, in one transaction, approves the run if it was PENDING/HELD and stamps
+        `approvedAt`/`approvedByUserId` only on listed later-rendered variants that have content at that instant.
+        So an approval pressed before or during the render never counts for it (both races tested). Audit
+        `DIGEST_APPROVED` carries `audiences` (and `scope: 'variant'` when the run was already approved). Approve
+        stays on offer for such a variant even after the other one went out; the banner says
+        `awaiting_approval` for it. At the cut-off it is SKIPPED `not_approved`. Non-approval mode: unchanged.
+      - **Merge tags.** `esc()` encodes `{`/`}` as `&#123;`/`&#125;` in every reader value in the HTML; the
+        subject, preheader and plain-text part split doubled braces (`defuseMergeTags`: "{{" → "{ {"); text URLs
+        get `%7B`/`%7D`. The renderer's own `{{unsubscribe_link}}` is inserted raw and still works. Mailercloud
+        documents no other merge-tag syntax (checked 23 Oct 2026), so `[…]`/`%…%` are left alone.
+      - **Templates JSON parsed after auth.** `/api/digest/templates*` runs the ADMIN check before its 600 KB
+        parser: anonymous → 401 with nothing parsed.
+      - **Error logs.** `safeErrorLog` never logs a Prisma error's message (it quotes query arguments): name,
+        code, `meta.target`, `meta.modelName`, stack frames. Other messages and stacks pass the shared redactor
+        (`src/lib/redact.ts`, also used by `redactError`). The cron catch-blocks of `reportScheduler`,
+        `reconciler` (+ retention), `backup`, `pacer`, `auditRetention` and `eventRetention` log through it,
+        same prefixes; `[report] email failed` no longer logs the recipient address.
 11. **Retention and backup.** Nightly fold of EmailEvent into `rolled*` plus `digestSendStats()`, html
     nulled after 30 days, and the new tables added to `backup.ts`.
     *Accept:* counts are identical before and after the fold, and a backup and restore rehearsal

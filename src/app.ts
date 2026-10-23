@@ -14,6 +14,7 @@ import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhoo
 import { emailAssetsHandler } from './routes/digestAds';
 import { env } from './lib/env';
 import { appErrorHandler } from './lib/httpErrors';
+import { requireBearerOrUser } from './lib/auth';
 import type { Sender } from './services/send';
 import type { EmailSender } from './lib/email';
 
@@ -65,7 +66,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/webhooks', createWebhooksRouter(opts.webhooks));
   // Digest templates (task 10, ADMIN only) carry a whole email layout: their own,
   // larger JSON limit, ahead of the global one (which then skips a parsed body).
-  app.use('/api/digest/templates', express.json({ limit: '600kb' }));
+  // Authenticated FIRST (2026-10-23): an anonymous caller gets 401 before a byte of
+  // a 600 KB body is parsed. The cookie parser runs here too (it skips itself later).
+  app.use(
+    '/api/digest/templates',
+    cookieParser(env.sessionCookieSecret),
+    requireBearerOrUser(['ADMIN']),
+    express.json({ limit: '600kb' }),
+  );
   app.use(express.json({ limit: '64kb' }));
   // Signs cookies with SESSION_COOKIE_SECRET. Phase 2's auth router uses the
   // signed-cookie path; the helper reads from req.signedCookies and ignores

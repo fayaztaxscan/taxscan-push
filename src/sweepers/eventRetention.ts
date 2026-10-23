@@ -40,6 +40,7 @@ import cron from 'node-cron';
 import type { EventType, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -238,7 +239,7 @@ export function startEventRetentionSweeper(): void {
         await sweepEventRetention();
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('[event-retention] tick failed', err);
+        console.error('[event-retention] tick failed', safeErrorLog(err, { stack: true }));
       } finally {
         isSweeping = false;
       }

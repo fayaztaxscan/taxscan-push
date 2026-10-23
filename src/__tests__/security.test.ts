@@ -1,8 +1,28 @@
 import request from 'supertest';
 import { createApp } from '../app';
 import { validKeys } from './helpers';
+import { prisma } from '../lib/prisma';
 
 const TEST_PREFIX = 'https://test-security.example.com/sub/';
+
+// Everything this file writes is on its own portals ('test-sec' subscribers, 'taxscan-allowlist'
+// campaigns from the allowlist tests). Without this the dev DB gained 4 campaigns and ~9
+// subscribers per run (2026-10-23: 341 + 417 left behind).
+afterAll(async () => {
+  const campaigns = await prisma.campaign.findMany({ where: { portal: 'taxscan-allowlist' }, select: { id: true } });
+  const ids = campaigns.map((c) => c.id);
+  if (ids.length) {
+    await prisma.event.deleteMany({ where: { campaignId: { in: ids } } });
+    await prisma.campaign.deleteMany({ where: { id: { in: ids } } });
+  }
+  const subs = await prisma.subscriber.findMany({ where: { portal: 'test-sec', endpoint: { startsWith: TEST_PREFIX } }, select: { id: true } });
+  const subIds = subs.map((x) => x.id);
+  if (subIds.length) {
+    await prisma.event.deleteMany({ where: { subscriberId: { in: subIds } } });
+    await prisma.subscriber.deleteMany({ where: { id: { in: subIds } } });
+  }
+  await prisma.$disconnect();
+});
 
 function makeSubscription(suffix: string) {
   return {

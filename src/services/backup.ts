@@ -27,6 +27,7 @@ import type { BackupRun } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { deleteObject, isR2Configured, listObjects, putObject, type R2Config } from '../lib/r2';
+import { safeErrorLog } from '../lib/httpErrors';
 
 /**
  * The tables that go in, and the reasoning for each. Order matters on restore:
@@ -269,7 +270,7 @@ async function recordRun(input: {
     await prisma.backupRun.create({ data: { ...input, error: input.error ? input.error.slice(0, 500) : null } });
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[backup] could not record the run', e);
+    console.error('[backup] could not record the run', safeErrorLog(e, { stack: true }));
   }
 }
 
@@ -300,7 +301,7 @@ export function startBackupCron(): void {
       );
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[backup] FAILED — the off-platform copy is now stale', e);
+      console.error('[backup] FAILED — the off-platform copy is now stale', safeErrorLog(e, { stack: true }));
       return; // Nothing was written, so there is nothing to prune.
     }
 
@@ -318,7 +319,7 @@ export function startBackupCron(): void {
       // eslint-disable-next-line no-console
       console.error(
         `[backup] copy uploaded fine, but pruning failed — retention (${env.backup.keepDays}d) was not enforced this run`,
-        e,
+        safeErrorLog(e, { stack: true }),
       );
     }
   };

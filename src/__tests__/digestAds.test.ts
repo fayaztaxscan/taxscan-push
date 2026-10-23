@@ -1318,14 +1318,21 @@ describe('QA verification of 36503cb: the pending variant', () => {
     expect(t.sender.count('schedule')).toBe(0);
   });
 
-  it('approval mode: the run approved while Premium was pending covers the Premium email rendered later (judgement call, pinned)', async () => {
+  it('approval mode: the run approved while Premium was pending does NOT cover the Premium email rendered later (owner, 2026-10-23)', async () => {
     const conf = cfg({ DIGEST_APPROVAL_REQUIRED: 'true' });
     const t = await setup(conf);
     await t.go('cron', AT);
     await prisma.digestRun.update({ where: { id: t.run.id }, data: { approval: 'APPROVED', approvedAt: IST(6, 45) } });
     await dbAd(t.portal, { name: 'added after the approval' });
     await t.go('cron', IST(7, 30));
-    const s = await t.sends();
+    let s = await t.sends();
+    expect(s.FREE.state).toBe('SCHEDULED');
+    expect(s.PREMIUM).toMatchObject({ state: 'CREATED', ownApprovalRequired: true, approvedAt: null });
+    expect(t.sender.count('schedule')).toBe(1);
+    // Its own approval releases it.
+    await prisma.digestSend.update({ where: { id: s.PREMIUM.id }, data: { approvedAt: IST(7, 35) } });
+    await t.go('cron', IST(7, 36));
+    s = await t.sends();
     expect(s.PREMIUM.state).toBe('SCHEDULED');
     expect(t.sender.count('schedule')).toBe(2);
   });

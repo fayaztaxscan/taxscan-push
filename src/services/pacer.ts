@@ -5,6 +5,7 @@ import { env } from '../lib/env';
 import { isQuietHours, startOfTodayIST, isBeforeIST } from '../lib/quietHours';
 import { executeCampaign, type Sender } from './send';
 import { authorityTier } from './classify';
+import { safeErrorLog } from '../lib/httpErrors';
 
 /**
  * The editorial pacer (SEND_PACING_PLAN.md §4–§5). Replaces "send each article
@@ -360,7 +361,7 @@ export async function runPacerTick(deps: PacerDeps = {}): Promise<PacerResult> {
     // claimed row stranded as SCHEDULED — only a confirmed 404/410 stops a send.
     const dead = await isDead(campaign.url).catch((err: unknown) => {
       // eslint-disable-next-line no-console
-      console.warn('[pacer] link check threw — sending anyway', { campaignId: campaign.id, err });
+      console.warn('[pacer] link check threw — sending anyway', { campaignId: campaign.id, err: safeErrorLog(err, { stack: true }) });
       return false;
     });
     if (dead) {
@@ -397,7 +398,7 @@ export async function runPacerTick(deps: PacerDeps = {}): Promise<PacerResult> {
   } catch (err) {
     // executeCampaign already flips the campaign to FAILED on throw.
     // eslint-disable-next-line no-console
-    console.error('[pacer] executeCampaign threw', { campaignId: campaign.id, err });
+    console.error('[pacer] executeCampaign threw', { campaignId: campaign.id, err: safeErrorLog(err, { stack: true }) });
     return { released: null, campaignId: campaign.id, reason: 'error', sentToday, backfill: viaBackfill };
   }
 }
@@ -480,7 +481,7 @@ export function startPacer(): void {
       try {
         await recoverStrandedClaims().catch((err: unknown) => {
           // eslint-disable-next-line no-console
-          console.error('[pacer] stranded-claim recovery failed', err);
+          console.error('[pacer] stranded-claim recovery failed', safeErrorLog(err, { stack: true }));
         });
         const r = await runPacerTick();
         if (r.reason === 'sent') {

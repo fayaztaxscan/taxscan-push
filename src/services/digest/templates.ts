@@ -59,12 +59,12 @@ export type MjmlCompiler = (source: string) => Promise<{ html: string; errors?: 
 /**
  * The MJML compiler, when the `mjml` package is installed; null otherwise.
  *
- * NOT INSTALLED in this build (task 10, 2026-10-23): mjml@5.4.1 adds 234
- * packages (~57 MB) and needs Node ≥ 20.18 (cheerio/undici; cssnano declares
- * ^22.11 || ^24.11), and the owner's approval is conditional on one verified
- * Railway branch build. Until it is added, an MJML template fails to compile
- * with a readable message, which blocks activation (fail safe). Loaded lazily
- * so nothing at boot depends on it.
+ * NOT ADOPTED (owner, 2026-10-23): templates are plain email HTML. This lazy
+ * seam stays so MJML can be added later — that needs the owner's go-ahead,
+ * `mjml@5.4.1` (234 packages, ~57 MB; Node ≥ 20.18) and one verified Railway
+ * branch build. Without it an MJML template fails to compile with a readable
+ * message, which blocks activation (fail safe). The Templates screen offers
+ * HTML only. Loaded lazily so nothing at boot depends on it.
  */
 export function loadMjml(): MjmlCompiler | null {
   const name = 'mjml';
@@ -86,7 +86,7 @@ export async function compileTemplate(format: TemplateFormat, source: string, op
   if (format === 'HTML') return { html: source, error: null };
   const mjml = opts.mjml === undefined ? loadMjml() : opts.mjml;
   if (!mjml) {
-    return { html: null, error: 'MJML is not available in this build yet. Save the template as HTML, or ask the developer to add the MJML compiler.' };
+    return { html: null, error: 'MJML is not available in this build: templates are plain email HTML. Save the template as HTML.' };
   }
   try {
     const out = await mjml(source);

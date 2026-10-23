@@ -348,7 +348,7 @@ describe('checklist: every rule, red and green', () => {
 describe('MJML: compiled at save only; a compile error blocks activation with a readable message', () => {
   it('compileTemplate: HTML passes through; MJML without the compiler, with errors, or throwing → a readable error', async () => {
     expect(await compileTemplate('HTML', '<p>x</p>')).toEqual({ html: '<p>x</p>', error: null });
-    expect((await compileTemplate('MJML', '<mjml/>', { mjml: null })).error).toMatch(/MJML is not available in this build yet/);
+    expect((await compileTemplate('MJML', '<mjml/>', { mjml: null })).error).toMatch(/MJML is not available in this build: templates are plain email HTML/);
     const bad: MjmlCompiler = async () => ({ html: '<html></html>', errors: [{ formattedMessage: 'Line 3 of input (mj-text) — mj-text cannot be used inside mj-section' }] });
     expect(await compileTemplate('MJML', '<mjml/>', { mjml: bad })).toEqual({ html: null, error: 'MJML error: Line 3 of input (mj-text) — mj-text cannot be used inside mj-section' });
     const boom: MjmlCompiler = async () => {

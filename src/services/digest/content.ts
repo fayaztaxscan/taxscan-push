@@ -1,7 +1,8 @@
 import { env } from '../../lib/env';
 import { assetUrl } from './adImages';
 import { loadAdPool, pickAds, type Placement } from './ads';
-import { resolveTemplate } from './templates';
+import { builtinTemplate, resolveTemplate } from './templates';
+import { redactError } from './sender';
 import {
   RenderError,
   assertReplyAddresses,
@@ -10,6 +11,7 @@ import {
   slotsForMainCount,
   type BuildContent,
   type RenderAd,
+  type TemplateFallback,
 } from './renderer';
 
 /**
@@ -39,7 +41,25 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
   // Task 10: the layout comes from resolveTemplate() — an override in its window, else the
   // ACTIVE template, else the built-in one — judged at the build instant like the ads.
   const template = await resolveTemplate(audience, at ?? new Date(), { portal: portal ?? env.rss.portal });
-  const r = renderDigest({ items, audience, runDate, cfg: c, ads, template: { html: template.html }, assetBaseUrl: c.assetBaseUrl });
+  const render = (html: string) => renderDigest({ items, audience, runDate, cfg: c, ads, template: { html }, assetBaseUrl: c.assetBaseUrl });
+  let r: ReturnType<typeof renderDigest>;
+  let templateId = template.id;
+  let templateFallback: TemplateFallback | undefined;
+  try {
+    r = render(template.html);
+  } catch (err) {
+    // Owner, 2026-10-23: a CUSTOM template that cannot be rendered at send time falls back to
+    // the built-in one, but only when the failure is the template's. The proof: the built-in
+    // template renders the very same items, ads and config. If it refuses too, the cause is
+    // not the template (an off-allowlist story link, a SUBSCRIPTION ad, no postal address…)
+    // and that refusal is thrown as before. Every renderer guard applies to the built-in render.
+    if (template.id === null) throw err;
+    r = render(builtinTemplate().html);
+    templateId = null;
+    templateFallback = { fromId: template.id, fromName: template.name, reason: fallbackReason(err) };
+    // eslint-disable-next-line no-console
+    console.warn(`[digest] ${audience} template ${template.id} failed at render; used the built-in template (${templateFallback.reason})`);
+  }
   if (r.sizeWarning) {
     // eslint-disable-next-line no-console
     console.warn(`[digest] ${audience} html is ${r.budgetBytes} bytes incl. tracking allowance (warn at ${c.htmlWarnKb} KB, limit ${c.maxHtmlKb} KB)`);
@@ -57,9 +77,16 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
     html: r.html,
     text: r.text,
     placements: drawn.map((p) => ({ adId: p.ad.id, slot: p.slot, utmContent: p.utmContent })),
-    templateId: template.id,
+    templateId,
+    ...(templateFallback ? { templateFallback } : {}),
   };
 };
+
+/** Why a custom template was set aside: the refusal in plain words, redacted, short. */
+function fallbackReason(err: unknown): string {
+  const text = redactError(err).replace(/^render refused \(([a-z_]+)\):\s*/, '$1: ');
+  return text.length > 300 ? `${text.slice(0, 297)}...` : text;
+}
 
 /** What the renderer draws for a placement. */
 export function toRenderAd(p: Placement, assetBase: string): RenderAd {

@@ -1,4 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
+import { env } from './env';
+import { redactText } from './redact';
 
 /**
  * The app's last error handler, and the one rule for what an error log line
@@ -59,21 +61,68 @@ export function clientErrorBody(status: number, err: unknown): { error: string }
   return { error: CODE_OF[status] ?? 'bad_request' };
 }
 
+/** Secrets a log line must never repeat verbatim (each ≥ 8 chars is masked by `redactText`). */
+function logSecrets(): string[] {
+  return [
+    env.adminToken,
+    env.sessionCookieSecret,
+    env.email.apiKey,
+    env.digest.mailercloud.apiKey,
+    env.digest.mailercloud.webhookToken,
+    env.digest.mailercloud.webhookTokenPrevious,
+  ].filter((x): x is string => typeof x === 'string' && x !== '');
+}
+
 /**
- * What a log line may hold about an error: name, message, type, status, and
- * the stack when asked (server errors). Never the object itself, so a `body`,
- * `rawBody`, request or response hung on the error is never written out.
+ * A Prisma client error (known request, validation, unknown request, init, panic). Their
+ * messages quote the query's arguments — a validation error prints the whole `where`/`data`
+ * object, which can hold an email address or a subscription endpoint — so only the
+ * structured fields are ever logged.
+ */
+function isPrismaError(e: ErrLike & { clientVersion?: unknown }): boolean {
+  return (typeof e.name === 'string' && e.name.startsWith('PrismaClient')) || typeof e.clientVersion === 'string';
+}
+
+/** Only the "    at …" frames: a stack's first line repeats the message. */
+function framesOnly(stack: string): string {
+  return stack
+    .split('\n')
+    .filter((l) => /^\s+at\s/.test(l))
+    .join('\n');
+}
+
+/**
+ * What a log line may hold about an error, and nothing more:
+ *  - a Prisma error: name, code, `meta.target` / `meta.modelName` and the stack frames —
+ *    NEVER its message (it quotes query arguments; 2026-10-23);
+ *  - anything else: name, message (passed through the email/secret redactor), type, status,
+ *    and the stack when asked (redacted the same way — its first line repeats the message).
+ * Never the object itself, so a `body`, `rawBody`, request or response hung on the error is
+ * never written out.
  */
 export function safeErrorLog(err: unknown, opts: { stack?: boolean } = {}): Record<string, unknown> {
-  if (!err || typeof err !== 'object') return { message: String(err) };
-  const e = err as ErrLike;
+  if (!err || typeof err !== 'object') return { message: redactText(String(err), logSecrets()) };
+  const e = err as ErrLike & { code?: unknown; meta?: unknown; clientVersion?: unknown };
   const out: Record<string, unknown> = {};
   if (typeof e.name === 'string') out.name = e.name;
-  if (typeof e.message === 'string') out.message = e.message;
+  if (isPrismaError(e)) {
+    if (typeof e.code === 'string') out.code = e.code;
+    const meta = e.meta && typeof e.meta === 'object' ? (e.meta as Record<string, unknown>) : null;
+    if (meta) {
+      const target = meta.target;
+      if (typeof target === 'string' || (Array.isArray(target) && target.every((t) => typeof t === 'string'))) out.target = target;
+      if (typeof meta.modelName === 'string') out.model = meta.modelName;
+    }
+    if (opts.stack && typeof e.stack === 'string') out.stack = framesOnly(e.stack);
+    return out;
+  }
+  if (typeof e.message === 'string') out.message = redactText(e.message, logSecrets());
   if (typeof e.type === 'string') out.type = e.type;
   const status = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
   if (status !== undefined) out.status = status;
-  if (opts.stack && typeof e.stack === 'string') out.stack = e.stack;
+  if (typeof e.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(e.code)) out.code = e.code;
+  // The stack's first line repeats the message: redacted the same way.
+  if (opts.stack && typeof e.stack === 'string') out.stack = redactText(e.stack, logSecrets());
   return out;
 }
 

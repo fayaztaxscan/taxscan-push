@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { pollOnce, type Fetcher } from './poller';
+import { safeErrorLog } from '../lib/httpErrors';
 
 /**
  * No-miss backstop + retention.
@@ -95,7 +96,7 @@ export function startReconciler(): void {
         }
       } catch (e) {
         // eslint-disable-next-line no-console
-        console.error('[reconciler] run failed', e);
+        console.error('[reconciler] run failed', safeErrorLog(e, { stack: true }));
       }
     },
     { timezone: env.rss.tz },
@@ -125,7 +126,7 @@ export function startRetention(): void {
         }
       } catch (e) {
         // eslint-disable-next-line no-console
-        console.error('[retention] run failed', e);
+        console.error('[retention] run failed', safeErrorLog(e, { stack: true }));
       }
     },
     { timezone: env.rss.tz },

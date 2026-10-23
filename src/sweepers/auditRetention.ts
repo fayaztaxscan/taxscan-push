@@ -19,6 +19,7 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 
 export type SweepDeps = {
   now?: Date;
@@ -98,7 +99,7 @@ export function startAuditRetentionSweeper(): void {
         await sweepAuditRetention();
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('[audit-sweep] tick failed', err);
+        console.error('[audit-sweep] tick failed', safeErrorLog(err, { stack: true }));
       } finally {
         isSweeping = false;
       }
