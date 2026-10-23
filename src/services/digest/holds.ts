@@ -37,6 +37,8 @@ export type ComplaintCheck = {
     delivered: number | null;
     /** complaints / delivered × 100; null = UNKNOWN (no webhook proof, or no delivered count). */
     ratePct: number | null;
+    /** The send was still unconfirmed at the cut-off (FAILED not_confirmed_by_cutoff): always UNKNOWN. */
+    unconfirmed?: boolean;
   }[];
 };
 

@@ -3,7 +3,7 @@ import type { DigestAudience } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import type { EmailSender } from '../lib/email';
-import { advanceRun, type AdvanceDeps, type SelectItems } from '../services/digest/runner';
+import { advanceRun, digestProviderCampaignName, type AdvanceDeps, type SelectItems } from '../services/digest/runner';
 import { createDigestTicker, digestTick, resetDigestTickLogForTests, type TickDeps } from '../services/digest/scheduler';
 import { EDITOR_KINDS, sendDigestAlerts } from '../services/digest/alerts';
 import { digestStatus } from '../services/digest/status';
@@ -352,20 +352,81 @@ describe('health recovery after a FATAL schedule error reuses the saved campaign
   });
 });
 
-describe('owner decision A also covers an ambiguous create (not only a crash)', () => {
-  it('auto mode: a create whose reply was lost is adopted as a draft and waits for a person', async () => {
+describe('owner decision A, narrowed (owner, 2026-10-23): only a draft this database never tried to create waits for a person', () => {
+  const HELD = 'Digest draft already in Mailercloud — held for approval';
+  const heldMails = (d: Day) => d.mails.filter((m) => m.subject.includes(HELD));
+
+  it('auto mode: a create whose reply was lost (our create marker exists) is adopted and sent normally — no hold, no alert', async () => {
     const d = newDay(auto());
     d.sender.fail('createDraft', 'AMBIGUOUS', 1, { applied: true });
     await tick(d, 6, 15);
     await tick(d, 6, 30); // FREE's create reached Mailercloud, the reply was lost
-    await tick(d, 6, 31); // the retry looks the name up and adopts it
+    await tick(d, 6, 31); // the retry looks the name up and adopts it as our own
     const free = await sendOf(d);
     expect(free.mcCampaignId).not.toBeNull();
+    expect(free.adoptedDraftAt).toBeNull();
+    expect(free.ownApprovalRequired).toBe(false);
+    await tick(d, 7, 30);
+    const premium = await sendOf(d, 'PREMIUM');
+    expect(schedulesById(d.sender)).toEqual({ [free.mcCampaignId!]: 1, [premium.mcCampaignId!]: 1 });
+    expect(d.sender.count('createDraft')).toBe(2);
+    expect(heldMails(d)).toHaveLength(0);
+    expect(((await runOf(d))!.alerts as Record<string, unknown>).adopted_existing).toBeUndefined();
+  });
+
+  it('auto mode, our marker, status unreadable at adoption: treated as our draft; the status is read again before the schedule', async () => {
+    const d = newDay(auto());
+    d.sender.fail('createDraft', 'AMBIGUOUS', 1, { applied: true });
+    await tick(d, 6, 15);
+    await tick(d, 6, 30);
+    d.sender.fail('status', 'RETRYABLE', 1); // the adoption's status read fails
+    await tick(d, 6, 31);
+    const free = await sendOf(d);
+    expect(free.mcCampaignId).not.toBeNull();
+    expect(free.adoptedDraftAt).toBeNull();
+    expect(free.scheduleAttemptedAt).not.toBeNull(); // the schedule step asks status() first
+    const statusBefore = d.sender.count('status');
+    await tick(d, 7, 30);
+    expect(d.sender.count('status')).toBeGreaterThan(statusBefore);
+    expect(schedulesById(d.sender)[free.mcCampaignId!]).toBe(1);
+    expect(heldMails(d)).toHaveLength(0);
+  });
+
+  it('auto mode: a campaign this database never tried to create (a restore, or hand-made) waits for its own Approve and raises the alert', async () => {
+    const d = newDay(auto());
+    await tick(d, 6, 15);
+    const run = (await runOf(d))!;
+    const foreign = 'made-before-the-restore';
+    d.sender.campaigns.set(foreign, { id: foreign, name: digestProviderCampaignName(d.portal, run.runDate, 'FREE'), state: 'DRAFT', input: {} as never });
+    await tick(d, 6, 30); // first create: the lookup finds it — no create marker of ours predates it
+    const free = await sendOf(d);
+    expect(free.mcCampaignId).toBe(foreign);
     expect(free.adoptedDraftAt).not.toBeNull();
+    expect(free.ownApprovalRequired).toBe(true);
     await tick(d, 7, 30);
     const premium = await sendOf(d, 'PREMIUM');
     expect(schedulesById(d.sender)).toEqual({ [premium.mcCampaignId!]: 1 }); // FREE waits for an Approve
-    expect(d.sender.count('createDraft')).toBe(2);
+    expect(d.sender.count('createDraft')).toBe(1);
+    expect(heldMails(d).length).toBeGreaterThan(0);
+    const banner = (await digestStatus({ portal: d.portal, now: ist(7, 31), cfg: d.c })).attention;
+    expect(banner?.code).toBe('adopted_draft');
+    expect(banner?.headline).toMatch(/which this system did not create \(e\.g\. after a database restore or a hand-made campaign\) — check it before approving/);
+  });
+
+  it('no marker of ours and the status unreadable: approval needed too', async () => {
+    const d = newDay(auto());
+    await tick(d, 6, 15);
+    const run = (await runOf(d))!;
+    const foreign = 'hand-made-unreadable';
+    d.sender.campaigns.set(foreign, { id: foreign, name: digestProviderCampaignName(d.portal, run.runDate, 'FREE'), state: 'DRAFT', input: {} as never });
+    d.sender.fail('status', 'RETRYABLE', 1);
+    await tick(d, 6, 30);
+    const free = await sendOf(d);
+    expect(free.adoptedDraftAt).not.toBeNull();
+    const alert = ((await runOf(d))!.alerts as Record<string, { providerState?: string; draft?: boolean }>).adopted_existing;
+    expect(alert).toMatchObject({ providerState: 'UNKNOWN', draft: true });
+    await tick(d, 7, 30);
+    expect(schedulesById(d.sender)[foreign]).toBeUndefined();
   });
 });
 

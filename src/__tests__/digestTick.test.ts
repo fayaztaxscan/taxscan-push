@@ -378,11 +378,16 @@ describe('overlap and robustness', () => {
     expect(d.sender.draftInputs()[0].audience).toBe('PREMIUM');
     const free = await sendOf(d);
     expect(free.mcCampaignId).toBe(freeId);
-    expect(free.adoptedDraftAt).not.toBeNull(); // decision A: an adopted draft waits for a person
+    // Decision A narrowed (owner, 2026-10-23): our own create marker was there, so the
+    // found draft is our lost create — adopted and carried on, no extra approval.
+    expect(free.adoptedDraftAt).toBeNull();
+    expect(free.ownApprovalRequired).toBe(false);
     expect(d.sender.campaigns.size).toBe(2);
 
     await tick(d, 7, 30);
-    expect(d.sender.calls.filter((c) => c.method === 'schedule').map((c) => c.args[0])).toEqual([(await sendOf(d, 'PREMIUM')).mcCampaignId]);
+    expect(d.sender.calls.filter((c) => c.method === 'schedule').map((c) => c.args[0]).sort()).toEqual(
+      [freeId, (await sendOf(d, 'PREMIUM')).mcCampaignId].sort(),
+    );
   });
 
   it('restart mid-schedule: the provider decides — accepted is not scheduled again, a draft is scheduled once', async () => {
@@ -667,6 +672,43 @@ describe('complaint-rate hold (design §8; DIGEST_COMPLAINT_HOLD_PCT, default 0.
     expect((await digestStatus({ portal: d.portal, now: ist(6, 31), cfg: { ...d.c, sendLive: false } })).attention).toBeNull();
     await tick(d, 7, 30);
     expect(d.sender.count('schedule')).toBe(2);
+  });
+
+  it('a send still unconfirmed at the 17:00 cut-off is judged as UNKNOWN: the banner says so, nothing is held (owner, 2026-10-23)', async () => {
+    const d = newDay(auto());
+    await yesterday(d, 1000, 0);
+    // FREE was never confirmed sent by the cut-off yesterday (FAILED not_confirmed_by_cutoff).
+    await prisma.digestSend.updateMany({
+      where: { run: { portal: d.portal, runDate: new Date(Date.UTC(2026, 9, 22)) }, audience: 'FREE' },
+      data: { state: 'FAILED', lastError: 'not_confirmed_by_cutoff', sentConfirmedAt: null },
+    });
+    await tick(d, 6, 15);
+    const run = (await runOf(d))!;
+    expect(run.approval).not.toBe('PENDING');
+    const check = run.complaintCheck as { held: boolean; previousRunDate: string; sends: { audience: string; ratePct: number | null; unconfirmed?: boolean }[] };
+    expect(check.held).toBe(false);
+    expect(check.previousRunDate).toBe('2026-10-22');
+    expect(check.sends.find((s) => s.audience === 'FREE')).toMatchObject({ ratePct: null, unconfirmed: true });
+    expect(check.sends.find((s) => s.audience === 'PREMIUM')?.ratePct).toBe(0);
+    await tick(d, 6, 30);
+    const banner = (await digestStatus({ portal: d.portal, now: ist(6, 31), cfg: d.c })).attention!;
+    expect(banner.code).toBe('complaint_rate_unknown');
+    expect(banner.headline).toMatch(/Free digest \(2026-10-22\) is unknown: it was never confirmed sent by the 17:00 IST cut-off/);
+    await tick(d, 7, 30);
+    expect(d.sender.count('schedule')).toBe(2); // unknown never holds
+  });
+
+  it('the most recent run had ONLY unconfirmed sends: it is still the one judged (an older sent run is not used instead)', async () => {
+    const d = newDay(auto());
+    await yesterday(d, 1000, 0);
+    await prisma.digestSend.updateMany({
+      where: { run: { portal: d.portal, runDate: new Date(Date.UTC(2026, 9, 22)) } },
+      data: { state: 'FAILED', lastError: 'not_confirmed_by_cutoff: timeout', sentConfirmedAt: null },
+    });
+    await tick(d, 6, 15);
+    const check = (await runOf(d))!.complaintCheck as { held: boolean; previousRunDate: string; sends: { ratePct: number | null }[] };
+    expect(check).toMatchObject({ held: false, previousRunDate: '2026-10-22' });
+    expect(check.sends.map((s) => s.ratePct)).toEqual([null, null]);
   });
 
   it('webhooks off: every rate is unknown (the history shows — too); no previous send: nothing to judge', async () => {

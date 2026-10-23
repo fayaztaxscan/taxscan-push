@@ -660,7 +660,7 @@ dismissed. The common ones:</p>
     <tr><td>Mailercloud rejected today's digest</td><td>Whoever runs the platform checks the Mailercloud key and plan, then <strong>Retry now</strong>.</td></tr>
     <tr><td>Mailercloud did not confirm today's digest</td><td>Look in Mailercloud for today's <code>TS-DIGEST-</code> draft, then <strong>Retry now</strong>. Nothing is ever sent twice.</td></tr>
     <tr><td>Two campaigns named TS-DIGEST-… exist in Mailercloud</td><td>Someone copied the campaign. An admin deletes the extra one in Mailercloud; the digest carries on by itself.</td></tr>
-    <tr><td>Mailercloud already had today's … draft</td><td>Usually after a database restore. An admin opens that draft in Mailercloud: delete it (a fresh one is made) or, if it is right, <strong>Approve</strong> that version. It never goes out without an Approve.</td></tr>
+    <tr><td>Mailercloud already had today's … campaign, which this system did not create</td><td>After a database restore, or a campaign made by hand. An admin opens it in Mailercloud: delete it (a fresh one is made) or, if it is right, <strong>Approve</strong> that version. It never goes out without an Approve.</td></tr>
     <tr><td>Mailercloud rejected the health check / is unreachable</td><td>Checked at 06:15 and 07:15 (hourly while rejected). Whoever runs the platform checks the key and plan; the digest picks itself up when it passes.</td></tr>
     <tr><td>Today's digest is held: … spam-complaint rate</td><td>Yesterday's readers marked it as spam unusually often (over 0.3%). Find out why, then <strong>Approve</strong> or <strong>Hold</strong>; it never goes out by itself that day.</td></tr>
     <tr><td>Today's digest settings are incomplete</td><td>A setting on the server is missing (lists, postal address, sender). Pass it to whoever runs the platform.</td></tr>
@@ -668,7 +668,7 @@ dismissed. The common ones:</p>
     <tr><td>Today's … digest used the built-in template</td><td>Today's email went out on the standard layout instead. An admin fixes the template on <strong>Templates</strong> (or reverts it).</td></tr>
     <tr><td>Only the Free (or Premium) digest went out today</td><td>The other version was skipped; the notice says why. Its top stories roll into the next digest.</td></tr>
     <tr><td>Mailercloud has stopped calling our webhook / reports it switched off</td><td>An admin switches the webhook back on in Mailercloud (see below). Sends are still checked meanwhile.</td></tr>
-    <tr><td>The spam-complaint rate of the last … digest is unknown</td><td>Mailercloud has not confirmed that send through the webhook, so the automatic hold can't protect today's digest. An admin checks the webhook.</td></tr>
+    <tr><td>The spam-complaint rate of the last … digest is unknown</td><td>Mailercloud has not confirmed that send through the webhook (or it was never confirmed sent by 17:00), so the automatic hold can't protect today's digest. An admin checks the webhook and that campaign.</td></tr>
     <tr><td>…event(s) from Mailercloud arrived without a readable address</td><td>Mailercloud still honours them on its side. Tell whoever runs the platform: the webhook format needs a look.</td></tr>
   </tbody>
 </table>

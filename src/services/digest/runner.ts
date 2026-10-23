@@ -96,7 +96,8 @@ import { isDuplicateNameError } from './sender';
  *  - owner decision A: a variant that ADOPTS a Mailercloud DRAFT (or a campaign
  *    whose status cannot be read) needs a person's approval of its own before it
  *    is scheduled, in any mode, and raises `adopted_existing` (the draft may hold
- *    content from before a database restore);
+ *    content from before a database restore) — only when this database never tried
+ *    to create it (no earlier `createAttemptedAt`; owner, narrowed 2026-10-23);
  *  - a lookup that finds two campaigns with the exact name is its own problem
  *    (`duplicate_name: …`, alert `duplicate_name`), retried on the policy so the
  *    variant carries on once a person deletes the extra campaign;
@@ -1167,7 +1168,9 @@ async function lookupThenCreate(
     await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true });
     return null;
   }
-  if (found) return adoptExisting(ctx, s, claimAt, found.campaignId);
+  // `rearm` = this database's write-ahead create marker predates this attempt: we tried
+  // to create the variant earlier today, so a draft found now is (most likely) that create.
+  if (found) return adoptExisting(ctx, s, claimAt, found.campaignId, rearm);
   // The provider confirms no such campaign: a create is safe.
   if (rearm && !(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now }))) return null;
   return issueCreate(ctx, s, claimAt, target);
@@ -1189,10 +1192,18 @@ async function lookupThenCreate(
  *    schedule() (someone may schedule the draft in Mailercloud meanwhile), and
  *    the cut-off sweep asks before calling it skipped.
  *
- * A campaign that was further along than this database knew raises
- * `adopted_existing` (not blocking): it usually means a restore.
+ * Owner decision A, narrowed 2026-10-23: `ownCreateMarker` says THIS database
+ * had already tried to create the variant (its write-ahead `createAttemptedAt`
+ * predates this attempt), so a DRAFT (or unreadable status) found now is our own
+ * create whose reply was lost (a timeout, a 2xx without an id, a 5xx that went
+ * through): adopted and carried on normally, the run's usual approval rules only.
+ * Without that marker (a restore, or a campaign made by hand under our name) a
+ * DRAFT / unreadable campaign needs its own approval in every mode
+ * (`adoptedDraftAt` + `ownApprovalRequired`, `holds.ts`) and raises
+ * `adopted_existing`. A campaign further along than this database knew
+ * (SCHEDULED / SENDING / SENT / FAILED) raises `adopted_existing` in both cases.
  */
-async function adoptExisting(ctx: Ctx, s: DigestSend, claimAt: Date, campaignId: string): Promise<DigestSend | null> {
+async function adoptExisting(ctx: Ctx, s: DigestSend, claimAt: Date, campaignId: string, ownCreateMarker: boolean): Promise<DigestSend | null> {
   const a = s.audience;
   let st: CampaignStatus | null;
   try {
@@ -1201,19 +1212,26 @@ async function adoptExisting(ctx: Ctx, s: DigestSend, claimAt: Date, campaignId:
     st = null;
   }
   const ahead = st !== null && st.state !== 'DRAFT';
+  const foreignDraft = !ahead && !ownCreateMarker;
   const kept = await persistCreated(ctx, s, campaignId, `create:adopted_existing:${st ? st.state.toLowerCase() : 'status_unknown'}`, {
     extra: {
       scheduleAttemptedAt: s.scheduleAttemptedAt ?? ctx.now,
-      // Owner decision A (2026-10-23): a draft we did not watch being made may hold
-      // other content (e.g. from before a database restore). It is never scheduled
-      // until a person approves it — its own approval, in every mode (`holds.ts`).
-      ...(ahead ? {} : { adoptedDraftAt: ctx.now, ownApprovalRequired: true, approvedAt: null, approvedByUserId: null }),
+      // Owner decision A (narrowed 2026-10-23): a draft this database never tried to
+      // create may hold other content (a restore, a hand-made campaign). It is never
+      // scheduled until a person approves it — its own approval, in every mode (`holds.ts`).
+      ...(foreignDraft ? { adoptedDraftAt: ctx.now, ownApprovalRequired: true, approvedAt: null, approvedByUserId: null } : {}),
     },
     keepClaim: ahead,
   });
   if (!kept) {
     if (ahead) await finishStep(s.id, claimAt, {}); // another runner saved an id first; let go of the claim
     return null;
+  }
+  if (!ahead && !foreignDraft) {
+    // Our own lost create: carry on. scheduleAttemptedAt makes the schedule step read the
+    // status again before it would schedule (an unreadable status is asked again there).
+    log(ctx, a, `create:adopted_own_draft:${st ? 'draft' : 'status_unknown'}`);
+    return kept;
   }
   if (!ahead || !st) {
     await raiseAlert(ctx, 'adopted_existing', {

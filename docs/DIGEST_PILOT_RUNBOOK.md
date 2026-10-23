@@ -476,7 +476,10 @@ in `docs/BACKUPS.md` → "After ANY restore". In short:
    by name and adopts them. It never sends a second copy. Expect an
    "already in Mailercloud" alert. If a draft was left, it is adopted
    but **held for an Approve** (even with auto-send on): check it in
-   Mailercloud first, or delete it there and a fresh one is made.
+   Mailercloud first, or delete it there and a fresh one is made. (A
+   restored database never tried to create today's versions, so this
+   always applies after a restore. On a normal day, a draft found after
+   our own create's reply was lost is ours and is NOT held.)
 4. [ ] If a campaign was renamed or copied by hand, leave
    `DIGEST_SEND_LIVE` off for the rest of the day.
 

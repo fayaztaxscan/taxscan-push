@@ -131,10 +131,17 @@ export function digestAttention(i: AttentionInput): Attention | null {
   }
   const check = i.run ? complaintCheckOf(i.run) : null;
   if (i.cfg.sendLive && check && !check.held && check.sends.some((x) => x.ratePct === null)) {
-    const names = check.sends.filter((x) => x.ratePct === null).map((x) => audienceName(x.audience as DigestAudience)).join(' and ');
+    const unknown = check.sends.filter((x) => x.ratePct === null);
+    const names = unknown.map((x) => audienceName(x.audience as DigestAudience)).join(' and ');
+    // Owner, 2026-10-23: a send still unconfirmed at the cut-off is judged as unknown too, and says why.
+    const why = unknown.every((x) => x.unconfirmed)
+      ? `it was never confirmed sent by the ${i.cfg.cutoff} IST cut-off`
+      : unknown.some((x) => x.unconfirmed)
+        ? `one was never confirmed sent by the ${i.cfg.cutoff} IST cut-off, and Mailercloud has not confirmed the other through the webhook`
+        : 'Mailercloud has not confirmed that send through the webhook';
     return attention(
       'complaint_rate_unknown',
-      `The spam-complaint rate of the last ${names} digest${check.previousRunDate ? ` (${check.previousRunDate})` : ''} is unknown: Mailercloud has not confirmed that send through the webhook.`,
+      `The spam-complaint rate of the last ${names} digest${check.previousRunDate ? ` (${check.previousRunDate})` : ''} is unknown: ${why}.`,
       `So the automatic hold (above ${check.thresholdPct}%) cannot protect today's digest. Check the Complaints column in Digests and the webhook in Mailercloud.`,
     );
   }
@@ -188,13 +195,14 @@ function runAttention(i: AttentionInput): Attention | null {
 
   const unfinished = state === 'building' || state === 'created';
 
-  // Owner decision A: a variant that adopted a Mailercloud draft waits for a person in every mode.
+  // Owner decision A (narrowed 2026-10-23): a variant that adopted a Mailercloud draft this
+  // database never tried to create waits for a person in every mode.
   const adopted = sends.filter((s) => s.adoptedDraftAt && !s.approvedAt && (s.state === 'PENDING' || s.state === 'CREATED'));
   if (adopted.length > 0) {
     const names = adopted.map((s) => audienceName(s.audience)).join(' and ');
     return attention(
       'adopted_draft',
-      `Mailercloud already had today's ${names} digest draft, which this system did not see being made (it may be from before a database restore). It is not sent until someone approves it.`,
+      `Mailercloud already had today's ${names} digest campaign, which this system did not create (e.g. after a database restore or a hand-made campaign) — check it before approving. It is not sent until someone approves it.`,
       `Open that draft in Mailercloud: delete it if it is not today's content (a fresh one is made by itself), or approve the ${names} digest in Digests before ${cutoff}.`,
     );
   }

@@ -612,9 +612,9 @@ All three screens use the existing visual system, `stack` tables on phones and `
 | Reader re-subscribes (CMS Feed 1 consent newer than the suppression) | Feed 1 task | An explicit opt-in dated after `lastSeenAt` deletes the suppression (UNSUBSCRIBE, HARD_BOUNCE or SPAM; never MANUAL), `RESUBSCRIBE` event + audit by hash; stale consent state lifts nothing | — |
 | ElasticEmail itself down | Alert send fails | Logged; the banner is the backstop | Banner |
 | `DIGEST_SEND_AT` set inside quiet hours | Boot validation | Scheduler not started | Boot log + banner `config_invalid` |
-| Complaint rate > 0.3% on a send | Webhook counts / reached (`digestSendStats`), judged once when the next run opens | Hold tomorrow's run for approval even if approval is off; not approved by 17:00 → SKIPPED `complaint_hold_expired`. An UNKNOWN rate (no webhook proof) never holds. *Built task 13.* | Email naming the rate + banner; an unknown rate shows on the banner while live |
+| Complaint rate > 0.3% on a send | Webhook counts / reached (`digestSendStats`), judged once when the next run opens (06:15) | Hold tomorrow's run for approval even if approval is off; not approved by 17:00 → SKIPPED `complaint_hold_expired`. An UNKNOWN rate (no webhook proof, no delivered count, or a send still unconfirmed at the cut-off) never holds. **Owner decision 2026-10-23: the rule stays as built** — judged once at 06:15, on the most recent earlier run (≤ 7 days) with a send that went out or was unconfirmed at the cut-off, rate = complaints ÷ reached per version, and one version's breach holds both. *Built task 13.* | Email naming the rate + banner; an unknown rate shows on the banner while live, naming an unconfirmed send as the cause |
 | Two campaigns with our exact name (copied by hand) | Name lookup finds 2 | Nothing created or sent; retried on the policy, so it carries on once a person deletes the extra one (*task 13*) | Email + banner ("Two campaigns named … exist; delete the extra one") |
-| Adopted a Mailercloud DRAFT (e.g. after a restore) | Name lookup finds a draft this database did not see made | Adopted, never scheduled without a person's approval of that version, in any mode (*owner decision A, task 13*) | Email + banner |
+| Adopted a Mailercloud DRAFT this database never tried to create (a restore, a hand-made campaign) | First create attempt (no earlier `createAttemptedAt`) finds a draft by name, or its status cannot be read | Adopted, never scheduled without a person's approval of that version, in any mode (*owner decision A, task 13; narrowed 2026-10-23*). A draft found on a LATER attempt (our create's reply was lost) is ours: adopted and carried on, no extra approval | Email + banner ("…which this system did not create … — check it before approving"); none for our own lost create |
 
 ---
 
@@ -1310,6 +1310,22 @@ agents.
       draft's content, so nothing can confirm it matches our frozen html. It also covers a crash between a create and
       its persist (the draft is then ours, but unprovably so). The banner `adopted_draft` asks to check it in
       Mailercloud — delete it there (a fresh one is made at the next check) or approve.
+      **Narrowed by the owner, 23 Oct 2026:** the old rule also caught ordinary lost create replies (a timeout, a 2xx
+      with no id, a 5xx that went through), so in auto mode one Mailercloud timeout held that version until someone
+      approved it, with misleading "before a restore" wording. Now the extra approval + `adopted_existing` apply only
+      when no create marker of THIS database predates the attempt (`adoptExisting(…, ownCreateMarker)`, set from the
+      `createAttemptedAt` that existed before the claim): a restore (no run for today) or a campaign made by hand
+      under our name. With our marker, a found DRAFT — or an unreadable status — is our own create: adopted, CREATED
+      with `scheduleAttemptedAt`, so the schedule step reads the status again before it would schedule; the run's
+      normal approval rules apply. The "ahead" states (SCHEDULED / SENDING / SENT / FAILED) raise `adopted_existing`
+      in both cases, as before. Wording: "Mailercloud already had today's campaign, which this system did not create
+      (e.g. after a database restore or a hand-made campaign) — check it before approving." Tests: `digestTickQa`
+      (both directions, unreadable status in both branches), `digestTick` restart mid-create.
+    - **Complaint check — sends unconfirmed at the cut-off (owner, 23 Oct 2026):** a FAILED
+      `not_confirmed_by_cutoff` send may have gone out, so the check now includes it (and a run whose only sends are
+      unconfirmed is still "the most recent run"), always as UNKNOWN (`unconfirmed: true`, no delivered count). It
+      never holds; the next day shows the `complaint_rate_unknown` banner, worded "it was never confirmed sent by the
+      17:00 IST cut-off". Tests: `digestTick` (two cases). The complaint rule itself stays as built (§8, owner).
     - **Duplicate names (7b):** `findCampaignByName` with two exact matches throws RETRYABLE with code
       `duplicate_name`; the runner stores `duplicate_name: two campaigns named "…" exist in Mailercloud`, raises
       `duplicate_name` (blocking kind) instead of `retrying`, and keeps retrying on the policy; banner

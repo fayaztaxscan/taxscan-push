@@ -244,7 +244,7 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
       if (m.draft === true) {
         return {
           short: 'Digest draft already in Mailercloud — held for approval',
-          what: `${who}: Mailercloud already had today's ${m.providerState === 'UNKNOWN' ? 'campaign (its status could not be read)' : 'draft'}${m.campaignName ? ` "${safeDetail(m.campaignName, cfg)}"` : ''}, which this system did not see being made. The Mailercloud draft may hold content from before a database restore.`,
+          what: `${who}: Mailercloud already had today's campaign${m.campaignName ? ` "${safeDetail(m.campaignName, cfg)}"` : ''}${m.providerState === 'UNKNOWN' ? ' (its status could not be read)' : ''}, which this system did not create (e.g. after a database restore, or a campaign made by hand) — check it before approving.`,
           did: 'Adopted it without sending. It is not sent until a person approves it, even with automatic sending on.',
           todo: 'In Mailercloud, open that draft: if it is not today’s content, delete it (a fresh one is made at the next check). If it is right, approve that version in Admin → Digests.',
         };

@@ -242,6 +242,9 @@ Applies to a full rebuild and to a partial restore alike.
    adopted but **held for an Approve of that version, even with auto-send on** (owner
    decision, 23 Oct 2026), because nothing can confirm its content matches today's
    frozen email; deleting it instead lets a fresh draft be made at the next check.
+   (Narrowed the same day: the hold applies when THIS database never tried to create
+   the version — always true after a restore, which has no create marker for today.
+   A draft found after our own create's reply was lost is ours and carries on.)
 4. If step 2 shows a campaign renamed or duplicated by hand, leave `DIGEST_SEND_LIVE`
    off for the rest of the day.
 

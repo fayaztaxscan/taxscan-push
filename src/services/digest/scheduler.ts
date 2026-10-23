@@ -363,24 +363,35 @@ export async function complaintCheckOnce(run: DigestRun, now: Date, cfg: DigestE
   return true;
 }
 
+/**
+ * The sends a complaint check looks at: those that went out (SENT, PARTIALLY_SENT) and
+ * — owner, 2026-10-23 — those still unconfirmed at the cut-off (FAILED
+ * `not_confirmed_by_cutoff`): they may have gone out, so they are judged too, always
+ * as UNKNOWN (no delivered count), which shows the "rate unknown" banner and never holds.
+ */
+const JUDGED_SENDS: Prisma.DigestSendWhereInput = {
+  OR: [{ state: { in: ['SENT', 'PARTIALLY_SENT'] } }, { state: 'FAILED', lastError: { startsWith: 'not_confirmed_by_cutoff' } }],
+};
+
 export async function judgeComplaints(run: Pick<DigestRun, 'portal' | 'runDate'>, now: Date, cfg: DigestEnv): Promise<ComplaintCheck> {
   const base = { checkedAt: now.toISOString(), thresholdPct: cfg.complaintHoldPct };
   const prev = await prisma.digestRun.findFirst({
     where: {
       portal: run.portal,
       runDate: { lt: run.runDate, gte: new Date(run.runDate.getTime() - COMPLAINT_LOOKBACK_DAYS * DAY_MS) },
-      sends: { some: { state: { in: ['SENT', 'PARTIALLY_SENT'] } } },
+      sends: { some: JUDGED_SENDS },
     },
     orderBy: { runDate: 'desc' },
-    select: { runDate: true, sends: { where: { state: { in: ['SENT', 'PARTIALLY_SENT'] } }, select: { id: true, audience: true, reached: true } } },
+    select: { runDate: true, sends: { where: JUDGED_SENDS, select: { id: true, audience: true, reached: true, state: true } } },
   });
   if (!prev) return { ...base, held: false, previousRunDate: null, sends: [] };
   const stats = cfg.webhooksEnabled ? await digestSendStats(prev.sends.map((x) => x.id)) : new Map();
   const sends = prev.sends.map((x) => {
     const complaints: number | null = stats.get(x.id)?.complaints ?? null;
-    const delivered = x.reached !== null && x.reached > 0 ? x.reached : null;
+    const unconfirmed = x.state === 'FAILED';
+    const delivered = !unconfirmed && x.reached !== null && x.reached > 0 ? x.reached : null;
     const ratePct = complaints !== null && delivered !== null ? Math.round((complaints / delivered) * 100 * 10_000) / 10_000 : null;
-    return { audience: x.audience as string, complaints, delivered, ratePct };
+    return { audience: x.audience as string, complaints, delivered, ratePct, ...(unconfirmed ? { unconfirmed: true } : {}) };
   });
   const held = sends.some((x) => x.ratePct !== null && x.ratePct > cfg.complaintHoldPct);
   return { ...base, held, previousRunDate: runDateKey(prev.runDate), sends };

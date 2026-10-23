@@ -197,7 +197,7 @@ describe('an adopted Mailercloud draft (owner decision A, 2026-10-23)', () => {
     expect(sender.calls.filter((x) => x.method === 'schedule')).toHaveLength(1); // PREMIUM only
     const banner = (await digestStatus({ portal: run.portal, now: ist(7, 31), cfg: c })).attention;
     expect(banner).toMatchObject({ code: 'adopted_draft' });
-    expect(banner?.headline).toMatch(/already had today's Free digest draft/);
+    expect(banner?.headline).toMatch(/already had today's Free digest campaign, which this system did not create/);
 
     const res = await request(app).post(`/api/digest/runs/${run.id}/approve`).set('Cookie', testerCookie).send({ audiences: ['FREE'] });
     expect(res.status).toBe(200);
