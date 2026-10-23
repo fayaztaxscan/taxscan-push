@@ -350,6 +350,25 @@ export function escalateReason(current: string, incoming: string): string {
   return (SUPPRESSION_RANK[incoming] ?? 0) > (SUPPRESSION_RANK[current] ?? 0) ? incoming : current;
 }
 
+type SuppressionFacts = { reason: string; source: string; firstSeenAt: Date; lastSeenAt: Date };
+
+/**
+ * What a backup restore writes onto an `EmailSuppression` row that already exists
+ * (scripts/restore-backup.ts). A backup is older than the live row, so it may only make
+ * the opt-out STRONGER, never weaker: the higher-ranked reason (MANUAL is never rewritten),
+ * its source, the earliest first-seen and the latest last-seen (`lastSeenAt` is what a
+ * later opt-in must beat, so moving it back would make the row easier to lift). Pure.
+ */
+export function mergeSuppressionForRestore(existing: SuppressionFacts, incoming: SuppressionFacts): SuppressionFacts {
+  const reason = escalateReason(existing.reason, incoming.reason);
+  return {
+    reason,
+    source: reason === existing.reason ? existing.source : incoming.source,
+    firstSeenAt: incoming.firstSeenAt < existing.firstSeenAt ? incoming.firstSeenAt : existing.firstSeenAt,
+    lastSeenAt: incoming.lastSeenAt > existing.lastSeenAt ? incoming.lastSeenAt : existing.lastSeenAt,
+  };
+}
+
 /** `CASE <col> WHEN 'UNSUBSCRIBE' THEN 1 … ELSE 0 END`, built from SUPPRESSION_RANK (constants only). */
 function rankSql(col: string): Prisma.Sql {
   const arms = Object.entries(SUPPRESSION_RANK)

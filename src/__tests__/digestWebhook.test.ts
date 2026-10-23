@@ -8,7 +8,7 @@ import { alertCopy } from '../services/digest/alerts';
 import { digestAttention, digestStatus } from '../services/digest/status';
 import { digestHistory } from '../services/digest/screen';
 import { checkWebhookLiveness, webhookHealth, WEBHOOK_SILENT_AFTER_MS } from '../services/digest/webhookLiveness';
-import { escalateReason, handleMailercloudWebhook, normaliseEvent, SUPPRESSION_RANK, webhookTokenMatches } from '../services/digest/webhook';
+import { escalateReason, handleMailercloudWebhook, mergeSuppressionForRestore, normaliseEvent, SUPPRESSION_RANK, webhookTokenMatches } from '../services/digest/webhook';
 import { istDateOf } from '../services/digest/retryPolicy';
 import { FakeSender } from './digestFakeSender';
 
@@ -807,5 +807,23 @@ describe('QA verification of 2b9bc83: lastSeenAt edges', () => {
     const s = await prisma.emailSuppression.findUniqueOrThrow({ where: { email: norm(a) } });
     expect(s.reason).toBe('SPAM');
     expect(s.lastSeenAt.getTime()).toBe(t1.getTime());
+  });
+});
+
+describe('QA: a backup restore onto an existing suppression only strengthens it (2026-10-23)', () => {
+  const t = (d: string) => new Date(`${d}T00:00:00Z`);
+  const live = { reason: 'MANUAL', source: 'manual', firstSeenAt: t('2026-09-01'), lastSeenAt: t('2026-12-01') };
+
+  it('an older backup never downgrades MANUAL nor moves lastSeenAt back', () => {
+    const backup = { reason: 'SPAM', source: 'mailercloud_webhook', firstSeenAt: t('2026-08-01'), lastSeenAt: t('2026-10-01') };
+    expect(mergeSuppressionForRestore(live, backup)).toEqual({ reason: 'MANUAL', source: 'manual', firstSeenAt: t('2026-08-01'), lastSeenAt: t('2026-12-01') });
+  });
+
+  it('a stronger reason in the backup wins, with its source; re-applying is a no-op', () => {
+    const cur = { reason: 'UNSUBSCRIBE', source: 'mailercloud_webhook', firstSeenAt: t('2026-10-01'), lastSeenAt: t('2026-10-02') };
+    const backup = { reason: 'HARD_BOUNCE', source: 'manual', firstSeenAt: t('2026-09-01'), lastSeenAt: t('2026-09-30') };
+    const once = mergeSuppressionForRestore(cur, backup);
+    expect(once).toEqual({ reason: 'HARD_BOUNCE', source: 'manual', firstSeenAt: t('2026-09-01'), lastSeenAt: t('2026-10-02') });
+    expect(mergeSuppressionForRestore(once, backup)).toEqual(once);
   });
 });

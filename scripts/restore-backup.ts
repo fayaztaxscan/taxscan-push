@@ -23,6 +23,7 @@ import { createGunzip } from 'node:zlib';
 import { createInterface } from 'node:readline';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
+import { mergeSuppressionForRestore } from '../src/services/digest/webhook';
 
 type Row = Record<string, unknown> & { _table?: string };
 
@@ -105,10 +106,23 @@ async function upsert(table: Restorable, data: Record<string, unknown>): Promise
       await prisma.eventRollup.upsert({ where: { type: data.type as never }, create: data as never, update: data as never });
       return;
     // Email digest (backup format v2). Natural keys where one exists, else the id.
-    case 'EmailSuppression':
-      // Keyed on the address: an opt-out restored onto a row that already exists keeps it.
-      await prisma.emailSuppression.upsert({ where: { email: data.email as string }, create: data as never, update: data as never });
+    case 'EmailSuppression': {
+      // Keyed on the address. Onto a row that already exists (a partial or --only restore
+      // into a live database) the older backup may only strengthen it: overwriting would
+      // downgrade an escalated reason (even MANUAL) and move lastSeenAt back, making the
+      // opt-out liftable by an opt-in it should outrank.
+      const email = data.email as string;
+      const existing = await prisma.emailSuppression.findUnique({ where: { email } });
+      if (!existing) {
+        await prisma.emailSuppression.create({ data: data as never });
+        return;
+      }
+      await prisma.emailSuppression.update({
+        where: { email },
+        data: mergeSuppressionForRestore(existing, data as unknown as Parameters<typeof mergeSuppressionForRestore>[1]),
+      });
       return;
+    }
     case 'DigestTemplate':
       await prisma.digestTemplate.upsert({ where: { id }, create: data as never, update: data as never });
       return;

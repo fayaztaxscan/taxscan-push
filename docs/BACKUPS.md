@@ -159,7 +159,10 @@ panicking. Every row is upserted on its natural key (`Subscriber.endpoint`,
 `User.email`, `FeedItem.guid`, `EmailSuppression.email`, `EmailEvent.dedupeKey`;
 the id elsewhere), so re-running is safe and a partial restore can simply be
 repeated. A row that fails is reported by table, Prisma error name and code only
-(never its values, which can hold an address).
+(never its values, which can hold an address). An `EmailSuppression` row that already
+exists is never weakened by an older backup: the higher-ranked reason (MANUAL is never
+rewritten), the earliest `firstSeenAt` and the latest `lastSeenAt` are kept
+(`mergeSuppressionForRestore` in `src/services/digest/webhook.ts`).
 
 The format is one JSON object per line behind a header line. It restores with
 this script, with `psql`, or by hand — a backup you can only read with the

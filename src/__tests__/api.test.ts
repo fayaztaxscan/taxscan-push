@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../app';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import type { Sender } from '../services/send';
 import { validKeys } from './helpers';
@@ -204,8 +205,11 @@ describe('POST /api/track', () => {
   });
 
   it('records a PROMPT_SHOWN event without an endpoint', async () => {
+    const t0 = new Date(Date.now() - 5000);
     const res = await request(app).post('/api/track').send({ type: 'PROMPT_SHOWN' });
     expect(res.status).toBe(204);
+    // QA 2026-10-23: a bare PROMPT_SHOWN (no subscriber, no campaign) was left in the dev DB on every run.
+    await prisma.event.deleteMany({ where: { type: 'PROMPT_SHOWN', subscriberId: null, campaignId: null, meta: { equals: Prisma.DbNull }, createdAt: { gte: t0 } } });
   });
 
   it('rejects a disallowed event type with 400', async () => {

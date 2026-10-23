@@ -215,3 +215,31 @@ describe('backup includes the digest tables', () => {
     expect(gunzipSync(Buffer.from(img.bytes.$base64, 'base64')).toString()).toBe(`fake-image-${RUN}`);
   });
 });
+
+/*
+ * QA additions (2026-10-23). Each of these guards survived a mutation run against the
+ * tests above: the window judged on the UTC date, the window off by one day, and a
+ * sweeper that deletes EmailSuppression rows (the earlier check compared 0 with 0).
+ */
+describe('QA: retention boundaries and what is never touched', () => {
+  it('the 30-day html window is the IST date at the cron’s own hour (03:45 IST = 22:15 UTC the day before), and is exact to the day', async () => {
+    const at = new Date('2026-07-14T22:15:00Z'); // 03:45 IST on 15 July; still 14 July in UTC
+    const gone = await runWithSends('2026-06-14'); // 31 IST days before → nulled
+    const kept = await runWithSends('2026-06-15'); // 30 IST days before → kept
+    const r = await sweepDigestRetention({ now: at, maxBatches: 0 });
+    expect(r.htmlKeepFrom.toISOString().slice(0, 10)).toBe('2026-06-15');
+    expect(await prisma.digestSend.findUniqueOrThrow({ where: { id: gone.free.id } })).toMatchObject({ html: null, text: null, htmlPurgedAt: at });
+    expect(await prisma.digestSend.findUniqueOrThrow({ where: { id: kept.free.id } })).toMatchObject({ html: '<html>frozen FREE</html>', htmlPurgedAt: null });
+  });
+
+  it('an EmailSuppression row older than every window is left exactly as it was', async () => {
+    const a = await runWithSends('2026-06-06');
+    const email = `qa-old-suppression-${RUN}@example.invalid`;
+    suppressionEmails.push(email);
+    const row = await prisma.emailSuppression.create({ data: { email, reason: 'HARD_BOUNCE', source: 'mailercloud_webhook', firstSeenAt: OLD, lastSeenAt: OLD } });
+    await event('HARD_BOUNCE', OLD, { sendId: a.free.id }); // so a fold batch really runs
+    const r = await sweepDigestRetention({ now: NOW, maxBatches: 0 });
+    expect(r.batches).toBeGreaterThanOrEqual(1);
+    expect(await prisma.emailSuppression.findUnique({ where: { email } })).toEqual(row);
+  });
+});
