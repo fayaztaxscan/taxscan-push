@@ -34,6 +34,19 @@ Read this first. These are development tasks, not settings.
   (stages 3 and 4).
 - [ ] **"Not approved by 07:30" email.** Not built. The banner shows it
   from 07:30, but no email is sent.
+- [ ] **"Ready for approval" email at 06:30** (design §5 timeline). Not
+  built. Editors must open Digests themselves to see the day's version.
+- [ ] **Nothing resumes a failed version while `DIGEST_SEND_LIVE` is off.**
+  Retry now and Send now are greyed out in preview mode ("Sending is
+  switched off"), the tick never resumes a FAILED version, and the
+  health check that would resume a rejected-key failure is not built.
+  So in stage 1 a failed or ad-blocked version simply waits for 17:00
+  and is skipped. Decide whether that is acceptable for the shadow
+  week, or ask for Retry now to work in preview mode (create the draft,
+  never schedule).
+- [ ] **A read-only name lookup for check 2.2.** There is no script for
+  it yet; the developer needs a one-off command that calls
+  `findCampaignByName` and prints only the id and status.
 
 Ask the developer to tick these off. Then start at section 1.
 
@@ -147,10 +160,17 @@ support (design §12). Each one says when it must be done by.
 - **How:** in stage 1, after the 06:30 build, the developer runs a
   read-only name lookup for `TS-DIGEST-<today>-FREE`. It must return
   the same campaign id as "View Free" on Digests.
+- **Then again in stage 2, after a real send:** the same lookup must
+  still find that day's campaign once Mailercloud shows it as
+  Finished. This is the case a restore depends on: if the search skips
+  sent campaigns, a restored system would create and send a second
+  digest.
 - **If wrong:** a crashed create can leave a spare draft. That is
   harmless: only the saved id is ever sent. But after a restore, the
-  check in section 4 must be done by eye. Note it on that step.
-- [ ] Checked. Result: __________
+  check in section 4 must be done by eye. Note it on that step. If the
+  search misses **sent** campaigns, tell the developer before stage 3.
+- [ ] Checked (draft, stage 1). Result: __________
+- [ ] Checked (sent, stage 2). Result: __________
 
 ### 2.3 Campaign status names (stage 2)
 
@@ -241,19 +261,22 @@ support (design §12). Each one says when it must be done by.
   - [ ] Alert test: put a wrong `MAILERCLOUD_API_KEY` on Railway
     for one build. Expect exactly **one** "Mailercloud rejected the
     digest" email to admins and the amber banner. Put the right key
-    back, press Retry now. Expect the draft to be created and the
-    banner gone. (The "Resolved" email comes only once a digest is
-    actually sent, so stage 1 never shows one. Repeat this test once
-    in stage 2 to see it.)
-  - [ ] A version with an empty ad slot: banner names the slot; fix
-    it; Retry now builds it.
+    back. Retry now is greyed out while `DIGEST_SEND_LIVE` is off, so
+    that day's version stays failed and is skipped at 17:00; the next
+    day's build must create its draft normally. (The recovery half,
+    Retry now and the "Resolved" email, can only be tested in stage 2.)
+  - [ ] A version with an empty ad slot: banner names the slot. In
+    stage 1 it cannot be rebuilt the same day (Retry now is greyed
+    out); fixing the slot makes the next day's build whole. The
+    same-day "fix it, Retry now builds it" check moves to stage 2.
 - **Go / no-go:**
   - 7 of 7 days built before 07:00 with no unexplained banner.
   - Size under **75 KB** for both versions every day. Never over
     90 KB: the build refuses above that.
   - Ad coverage green all week.
-  - The alert test worked both ways.
-  - 2.1 and 2.2 ticked.
+  - The alert test raised exactly one alert, and the next day built
+    cleanly.
+  - 2.1 and 2.2 (draft) ticked.
 - **Roll back:** `DIGEST_ENABLED=false`. Spare drafts in Mailercloud
   cannot send by themselves; delete them when convenient.
 - **Signs off:** the owner, with the editorial lead.
@@ -282,11 +305,18 @@ support (design §12). Each one says when it must be done by.
     asks first, then sends at once.
   - [ ] Hold once. Leave it held past 17:00. Expect a skip, and its
     top stories in the next day's "In case you missed it".
-  - [ ] Night rule: after 23:00, Send now is greyed out with
-    "quiet hours". Only look; don't try to get round it.
+  - [ ] The stage-1 recovery checks, now that Retry now works: the
+    wrong-key alert test with Retry now (expect the "Resolved" email
+    once it sends), and an empty ad slot fixed the same day.
+  - [ ] 2.2 again, after a real send (the lookup finds the sent
+    campaign).
+  - [ ] Night rule: between the 06:30 build and 07:00, Send now is
+    greyed out with "quiet hours". (After 17:00 it is not shown at
+    all: the day is past its cut-off.) Only look; don't try to get
+    round it.
 - **Go / no-go:**
   - **Zero** double sends.
-  - All four checks (2.3, 2.4, 2.6, 2.7) ticked.
+  - 2.2 (sent), 2.3, 2.4, 2.6 and 2.7 ticked.
   - One-click headers present (if not, see 2.7: stage 3 waits for
     your decision).
   - Delivered matches Mailercloud's report.
@@ -377,7 +407,7 @@ in `docs/BACKUPS.md` → "After ANY restore". In short:
 ### Known unverified items
 
 - The unsubscribe merge tag (2.1).
-- Whether the list search includes drafts (2.2).
+- Whether the list search finds drafts and sent campaigns (2.2).
 - Status names and reach fields (2.3, 2.4).
 - Quota error codes (2.5).
 - Webhook payload field names (2.6).

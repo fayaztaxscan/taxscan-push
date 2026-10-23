@@ -166,6 +166,15 @@ describe('findCampaignByName', () => {
     expect(fake.to('POST /v1/campaign/list')[0].body).toEqual({ limit: 100, page: 1, search: 'TS-DIGEST-2026-10-23-FREE-run1' });
   });
 
+  it('two campaigns with the exact name → inconclusive (throws), never the first one', async () => {
+    const name = 'TS-DIGEST-2026-10-23-FREE';
+    fake.addCampaign(name, 'Finished');
+    fake.addCampaign(name, 'Draft');
+    const e = await failure(client({ maxRetries: 0 }).findCampaignByName(name));
+    expect(e.kind).toBe('RETRYABLE');
+    expect(e.message).toContain('2 campaigns have this exact name');
+  });
+
   it('not found → null', async () => {
     fake.addCampaign('TS-DIGEST-2026-10-22-FREE-run0');
     expect(await client().findCampaignByName('TS-DIGEST-2026-10-23-FREE-run1')).toBeNull();

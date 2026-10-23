@@ -231,7 +231,14 @@ export class MailercloudSender implements DigestSender {
       });
       const items = listItems(reply.body);
       if (!items) throw this.err('RETRYABLE', 'findCampaignByName', 'unreadable campaign list reply');
-      const hit = items.find((c) => c.name === name);
+      const hits = items.filter((c) => c.name === name);
+      // Two campaigns with exactly our name (one copied and renamed by hand, say) prove
+      // nothing about which one is ours: adopting the wrong one could schedule a draft
+      // while its twin was already sent. Inconclusive, never a guess.
+      if (hits.length > 1) {
+        throw this.err('RETRYABLE', 'findCampaignByName', `lookup inconclusive: ${hits.length} campaigns have this exact name`);
+      }
+      const hit = hits[0];
       if (hit) {
         const id = idOf(hit);
         if (!id) throw this.err('RETRYABLE', 'findCampaignByName', 'matching campaign has no id');

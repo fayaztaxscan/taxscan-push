@@ -453,7 +453,7 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | Variable | Default | What it does | Who sets it |
 |---|---|---|---|
 | `DIGEST_ENABLED` | `false` | Master switch. Off: the scheduler logs `[digest] disabled (set DIGEST_ENABLED=true to start)` — the line exists only in the new build, so it is the **marker that proves a backend-only deploy** — the Digests screen says "switched off", and every send/retry door answers "not enabled". On: builds, renders, creates **drafts**, previews; still sends nothing to an audience unless the next flag is on. Ads and Templates work whatever its value. | Owner |
-| `DIGEST_SEND_LIVE` | `false` | Allows `schedule()` to the configured audiences. Off: a run stops at CREATED, the history shows "preview only", Send now / Retry never schedule. **The rollback switch** from stage 2 on. | Owner |
+| `DIGEST_SEND_LIVE` | `false` | Allows `schedule()` to the configured audiences. Off: a run stops at CREATED, the history shows "preview only", and Send now / Retry now are greyed out (the doors answer 409 `send_live_off`), so in preview mode nothing — no button, no tick — resumes a FAILED variant that day. **The rollback switch** from stage 2 on. | Owner |
 | `DIGEST_APPROVAL_REQUIRED` | `true` | An editor must Approve before the send; unapproved at the cut-off = skipped (`not_approved`). Off = auto-send (owner decides before stage 4). The sanity hold (> `DIGEST_SANITY_MAX_CANDIDATES`) asks for approval whatever this says. | Owner |
 | `DIGEST_WEBHOOKS_ENABLED` | `false` | Off: `POST /api/webhooks/mailercloud/:token` answers 404 and the history's unsubscribe/bounce/complaint columns show "—". Never sends anything. | Owner |
 | `DIGEST_RETENTION_ENABLED` | `false` | Nightly fold of `EmailEvent` > 90 days into `DigestSend.rolled*` and html nulled > 30 days (`docs/DIGEST_RETENTION.md`). Independent of `DIGEST_ENABLED`. Dry run: `npm run digest-retention`. | Owner |
@@ -778,7 +778,7 @@ Selection and failure-handling tests:
 3. Before stage 2: the exact unsubscribe merge tag; that `mailing_preference` shows a preference link;
    whether a v2 draft (`is_publish "0"`) can be scheduled through v1 `schedule/{id}`; that re-scheduling a
    scheduled or sent campaign is rejected or a no-op, never a second send; the campaign status values;
-   whether there is a webhook-status read endpoint.
+   whether there is a webhook-status read endpoint; that the campaign-list `search` finds a campaign by its exact name in every status (draft, scheduled, finished) — the restore guard depends on it.
 4. Can a batch upsert re-subscribe an unsubscribed contact? Tested on internal addresses before any contact
    sync (later phase). Phase 1 never writes contacts.
 5. Pilot membership: the internal addresses and the engaged segment. **Pilot readers must be removed from
@@ -807,7 +807,8 @@ agents.
    /v2/campaign/save` (draft), `POST /v1/campaign/schedule/{id}` (no `scheduled_at`), `GET /v1/campaign/{id}`
    (status + report from `report_summary`), `POST /v1/campaign/testmail/{id}` (one per address), `POST
    /v1/campaign/list` with `search` (exact-name `findCampaignByName`; an unreadable or over-long answer
-   throws, never "not found"). Status map: Draft → DRAFT; Scheduled/Rescheduled/Queued/Processing →
+   throws, never "not found"; since 2026-10-23 QA, two campaigns with the exact name on a page also throw — never
+   "adopt the first"). Status map: Draft → DRAFT; Scheduled/Rescheduled/Queued/Processing →
    SCHEDULED; Sending/Paused → SENDING; Finished → SENT; Aborted/Failed → FAILED; anything else throws.
    Still to confirm in the account (open question 3): `targeted`/`reached` = `queued_total`/`sent`; code
    9002 / quota wording on campaign calls; that the list search includes drafts. Not wired to a cron yet.

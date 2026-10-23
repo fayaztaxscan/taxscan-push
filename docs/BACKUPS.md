@@ -57,9 +57,9 @@ What does stop it (since 2026-10-23) is **Mailercloud itself**:
 3. If the lookup fails, nothing is created; it is retried on the usual schedule.
 
 Two limits remain, which is why the runbook step below exists: (a) whether
-Mailercloud's list search includes drafts is not yet verified (design §12, open
+Mailercloud's list search finds drafts and sent campaigns by exact name is not yet verified (design §12, open
 question 3), and (b) someone may have duplicated or renamed the campaign by hand in
-Mailercloud, which no lookup can see. Older rows named `TS-DIGEST-<date>-<AUDIENCE>-<runId>`
+Mailercloud, which no lookup can see (two campaigns with exactly today's name make the lookup inconclusive: nothing is created or adopted, and the version is skipped at 17:00 unless someone deletes the copy). Older rows named `TS-DIGEST-<date>-<AUDIENCE>-<runId>`
 keep working: the webhook links by the stored name.
 
 ## ⚠️ The VAPID keypair is half of every restore

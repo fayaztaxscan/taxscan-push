@@ -495,7 +495,7 @@ model DigestSend {
   html                String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
   text                String?
   htmlBytes           Int
-  mcCampaignName      String           @unique // TS-DIGEST-2026-10-23-FREE-<runId>
+  mcCampaignName      String           @unique // TS-DIGEST-2026-10-23-FREE (rows before 2026-10-23: …-FREE-<runId>)
   mcCampaignId        String?          @unique // persisted the instant create returns
   sendAfter           DateTime // planned send instant (Send now moves it earlier)
   scheduledAt         DateTime? // when we called schedule
