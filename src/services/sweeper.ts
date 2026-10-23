@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { executeCampaign, type Sender } from './send';
 
@@ -65,7 +66,7 @@ export async function sweepScheduledCampaigns(deps: SweepDeps = {}): Promise<Swe
     } catch (err) {
       errors++;
       // eslint-disable-next-line no-console
-      console.error('[sweeper] executeCampaign threw', { campaignId: campaign.id, err });
+      console.error('[sweeper] executeCampaign threw', { campaignId: campaign.id, err: safeErrorLog(err, { stack: true }) });
     }
   }
 

@@ -404,7 +404,8 @@ describe('error kinds', () => {
     await step(run.id, 'cron', ist(6, 30), sender);
     await step(run.id, 'cron', ist(6, 31), sender);
     expect((await sendOf(run.id)).state).toBe('CREATED');
-    expect(sender.count('findCampaignByName')).toBe(1);
+    // Asked before each first create (FREE, PREMIUM) and again before the FREE re-create.
+    expect(sender.count('findCampaignByName')).toBe(3);
     expect(sender.campaigns.size).toBe(2);
   });
 

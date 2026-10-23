@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 
 /**
  * Per-article read counts from the GA4 Data API (NEXT_STEP.md item 10, Phase B).
@@ -265,7 +266,7 @@ export function startGaReadsSync(): void {
       console.log(`[ga-reads] synced rows=${r.rows} dates=${r.dates}`);
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[ga-reads] sync failed (last-synced counts stay in place)', e);
+      console.error('[ga-reads] sync failed (last-synced counts stay in place)', safeErrorLog(e, { stack: true }));
     }
   };
 

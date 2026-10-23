@@ -1,6 +1,7 @@
 import type { Campaign, Prisma, Subscriber } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 import { sendToSubscriber, type PushPayload, type SendOutcome } from '../lib/push';
 import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { filterByCap } from '../lib/cap';
@@ -251,7 +252,7 @@ export async function executeCampaign(
       } catch (err) {
         pending = batch.concat(pending);
         // eslint-disable-next-line no-console
-        console.warn('[send] event write failed mid-send — will retry', { campaignId: campaign.id, err });
+        console.warn('[send] event write failed mid-send — will retry', { campaignId: campaign.id, err: safeErrorLog(err, { stack: true }) });
       }
     };
 

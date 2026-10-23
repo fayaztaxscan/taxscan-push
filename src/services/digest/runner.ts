@@ -143,6 +143,7 @@ export type DigestAlertKind =
   | 'ambiguous_create'
   | 'schedule_unconfirmed'
   | 'orphan_draft'
+  | 'adopted_existing'
   | 'retrying'
   | 'skipped'
   | 'partial_send'
@@ -219,6 +220,27 @@ export async function ensureRun(
     }
     throw err;
   }
+}
+
+/** The portal whose campaign names carry no portal part (the schema default). */
+const DEFAULT_PORTAL = 'taxscan';
+
+/**
+ * The provider campaign name of a variant: `TS-DIGEST-<yyyy-mm-dd>-<AUDIENCE>`
+ * (IST date), with the portal after the prefix for any portal but taxscan
+ * (`TS-DIGEST-academy-2026-10-23-FREE`).
+ *
+ * Deterministic per (portal, run date, audience) and deliberately WITHOUT the
+ * run id (2026-10-23, QA O1): a database restored from the 02:20 backup holds
+ * no run for today, so `ensureRun` makes a NEW run — and only a name that the
+ * new run computes identically lets `findCampaignByName` find the campaign the
+ * lost run already sent this morning. The provider becomes the source of truth
+ * for "already done today" (see `lookupThenCreate`). Names stored in the older
+ * `…-<AUDIENCE>-<runId>` form stay valid: the webhook links by the stored name.
+ */
+export function digestProviderCampaignName(portal: string, runDate: Date, audience: DigestAudience): string {
+  const portalPart = portal === DEFAULT_PORTAL ? '' : `${portal}-`;
+  return `TS-DIGEST-${portalPart}${runDateKey(runDate)}-${audience}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -540,7 +562,6 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
   }
 
   const sendAfter = istInstant(ctx.run.runDate, ctx.cfg.sendAt);
-  const dateKey = runDateKey(ctx.run.runDate);
   const firstRetry = nextAttemptAt(ctx.now, 1, ctx.cutoffAt) ?? ctx.cutoffAt;
   const built = await prisma.$transaction(async (tx) => {
     const claimed = await tx.digestRun.updateMany({
@@ -563,7 +584,7 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
         await tx.digestRun.updateMany({ where: { id: ctx.run.id, approval: 'NOT_REQUIRED' }, data: { approval: 'PENDING' } });
       }
     }
-    const name = (a: DigestAudience) => `TS-DIGEST-${dateKey}-${a}-${ctx.run.id}`;
+    const name = (a: DigestAudience) => digestProviderCampaignName(ctx.run.portal, ctx.run.runDate, a);
     const sends = await tx.digestSend.createManyAndReturn({
       select: { id: true, audience: true },
       data: [
@@ -984,8 +1005,16 @@ function provablyNotApplied(err: unknown): boolean {
 /**
  * Step 1: create the draft (cannot send by itself).
  *
- *  - Marker null → claim and set `createAttemptedAt` in one update, then call
- *    createDraft: nobody has created this variant before.
+ *  - Marker null → claim and set `createAttemptedAt` in one update. With a
+ *    lookup (`findCampaignByName`, which Mailercloud has), the provider is
+ *    asked FIRST, every time (2026-10-23, QA O1): our own marker only proves
+ *    THIS database never created the variant, and a database restored from
+ *    the 02:20 backup has never heard of the run that sent at 07:30. The name
+ *    is deterministic per portal + date + audience, so a found campaign is
+ *    today's: it is adopted, and its provider status decides the variant
+ *    (`adoptExisting`). Only "the provider has no such campaign" leads to a
+ *    create. Without a lookup, createDraft is called (this database's marker
+ *    is the only proof there is).
  *  - Marker set, no saved id → a create may have reached the provider. Look the
  *    draft up by its unique name and adopt it; if the provider confirms there
  *    is none, create. Without a lookup, stop for a human (FAILED +
@@ -1027,7 +1056,9 @@ async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null
       log(ctx, a, 'create:claimed_elsewhere');
       return null;
     }
-    return issueCreate(ctx, await fresh(send.id), claimAt, target.target);
+    const first = await fresh(send.id);
+    if (ctx.sender.findCampaignByName) return lookupThenCreate(ctx, first, claimAt, target.target, false);
+    return issueCreate(ctx, first, claimAt, target.target);
   }
 
   const claimAt = await claimStep(send.id, legal, ctx);
@@ -1037,19 +1068,7 @@ async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null
   }
   const s = await fresh(send.id);
 
-  if (ctx.sender.findCampaignByName) {
-    let found: { campaignId: string } | null;
-    try {
-      found = await ctx.sender.findCampaignByName(s.mcCampaignName);
-    } catch (err) {
-      await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true });
-      return null;
-    }
-    if (found) return persistCreated(ctx, s, found.campaignId, 'create:adopted_existing');
-    // The provider confirms no such campaign: a create is safe. Re-arm the marker first.
-    if (!(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now }))) return null;
-    return issueCreate(ctx, s, claimAt, target.target);
-  }
+  if (ctx.sender.findCampaignByName) return lookupThenCreate(ctx, s, claimAt, target.target, true);
 
   if ((ctx.trigger === 'retry' || ctx.trigger === 'send_now') && s.state === 'FAILED') {
     if (!(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now }))) return null;
@@ -1066,6 +1085,80 @@ async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null
   await raiseAlert(ctx, 'ambiguous_create', { audience: a, campaignName: s.mcCampaignName });
   log(ctx, a, 'create:ambiguous_needs_human');
   return null;
+}
+
+/**
+ * Asks the provider for the variant's campaign by its exact name, then adopts
+ * it or — only when the provider answers "none" — creates it. A lookup that
+ * fails proves nothing: the marker is kept and the retry policy applies (a
+ * missed digest rolls forward; a double send cannot be undone). `rearm`: the
+ * marker was already set by an earlier attempt, so it is stamped again before
+ * the create (the claim update set it on a first attempt).
+ */
+async function lookupThenCreate(
+  ctx: Ctx,
+  s: DigestSend,
+  claimAt: Date,
+  target: AudienceTarget,
+  rearm: boolean,
+): Promise<DigestSend | null> {
+  let found: { campaignId: string } | null;
+  try {
+    found = await (ctx.sender.findCampaignByName as NonNullable<DigestSender['findCampaignByName']>)(s.mcCampaignName);
+  } catch (err) {
+    await recordFailure(ctx, s, claimAt, err, 'create', { keepMarker: true });
+    return null;
+  }
+  if (found) return adoptExisting(ctx, s, claimAt, found.campaignId);
+  // The provider confirms no such campaign: a create is safe.
+  if (rearm && !(await writeClaimed(s.id, claimAt, { createAttemptedAt: ctx.now }))) return null;
+  return issueCreate(ctx, s, claimAt, target);
+}
+
+/**
+ * The provider already has this variant's campaign (an ambiguous create that
+ * went through, a crashed earlier attempt, or — after a database restore —
+ * the campaign a lost run created or SENT this morning). The id is saved and
+ * the provider's status, read now, decides the variant; schedule() is never
+ * called here:
+ *
+ *  - SCHEDULED / SENDING / SENT / PARTIALLY_SENT → SCHEDULED, verified at once
+ *    by `verifyStep` (status() again; SENT is final). Nothing is sent again.
+ *  - FAILED → `markProviderFailed`: terminal for the day (or PARTIALLY_SENT
+ *    when some readers were reached).
+ *  - DRAFT, or status unreadable → CREATED with `scheduleAttemptedAt` set, so
+ *    the schedule step asks status() once more right before it would call
+ *    schedule() (someone may schedule the draft in Mailercloud meanwhile), and
+ *    the cut-off sweep asks before calling it skipped.
+ *
+ * A campaign that was further along than this database knew raises
+ * `adopted_existing` (not blocking): it usually means a restore.
+ */
+async function adoptExisting(ctx: Ctx, s: DigestSend, claimAt: Date, campaignId: string): Promise<DigestSend | null> {
+  const a = s.audience;
+  let st: CampaignStatus | null;
+  try {
+    st = await ctx.sender.status(campaignId);
+  } catch {
+    st = null;
+  }
+  const ahead = st !== null && st.state !== 'DRAFT';
+  const kept = await persistCreated(ctx, s, campaignId, `create:adopted_existing:${st ? st.state.toLowerCase() : 'status_unknown'}`, {
+    extra: { scheduleAttemptedAt: s.scheduleAttemptedAt ?? ctx.now },
+    keepClaim: ahead,
+  });
+  if (!kept) {
+    if (ahead) await finishStep(s.id, claimAt, {}); // another runner saved an id first; let go of the claim
+    return null;
+  }
+  if (!ahead || !st) return kept;
+  await raiseAlert(ctx, 'adopted_existing', { audience: a, campaignName: s.mcCampaignName, providerState: st.state });
+  if (st.state === 'FAILED') {
+    await markProviderFailed(ctx, kept, claimAt, st);
+    return null;
+  }
+  await markScheduled(ctx, kept, claimAt, 'create:adopted_existing:accepted', { adopted: true });
+  return fresh(s.id);
 }
 
 async function issueCreate(ctx: Ctx, s: DigestSend, claimAt: Date, target: AudienceTarget): Promise<DigestSend | null> {
@@ -1092,15 +1185,22 @@ async function issueCreate(ctx: Ctx, s: DigestSend, claimAt: Date, target: Audie
  * on the claim: the id must be kept even after a stale-claim takeover. A lost
  * write leaves `createAttemptedAt` set, so the next attempt asks the provider.
  */
-async function persistCreated(ctx: Ctx, send: DigestSend, campaignId: string, what: string): Promise<DigestSend | null> {
+async function persistCreated(
+  ctx: Ctx,
+  send: DigestSend,
+  campaignId: string,
+  what: string,
+  opts: { extra?: Prisma.DigestSendUpdateManyMutationInput; keepClaim?: boolean } = {},
+): Promise<DigestSend | null> {
   const a = send.audience;
   try {
     const r = await prisma.digestSend.updateMany({
       where: { id: send.id, mcCampaignId: null },
       data: {
+        ...opts.extra,
         mcCampaignId: campaignId,
         state: 'CREATED',
-        stepClaimedAt: null,
+        ...(opts.keepClaim ? {} : { stepClaimedAt: null }),
         nextAttemptAt: null,
         lastError: null,
         lastErrorKind: null,
@@ -1227,11 +1327,12 @@ async function issueSchedule(ctx: Ctx, s: DigestSend, claimAt: Date, previousMar
   return fresh(s.id);
 }
 
-async function markScheduled(ctx: Ctx, send: DigestSend, claimAt: Date, what: string): Promise<void> {
+async function markScheduled(ctx: Ctx, send: DigestSend, claimAt: Date, what: string, opts: { adopted?: boolean } = {}): Promise<void> {
   const ok = await finishStep(send.id, claimAt, {
     state: 'SCHEDULED',
     scheduledAt: ctx.now,
-    nextAttemptAt: new Date(ctx.now.getTime() + VERIFY_OFFSETS_MIN[0] * MINUTE),
+    // An adopted campaign was accepted before we knew of it: verify at once.
+    nextAttemptAt: opts.adopted ? ctx.now : new Date(ctx.now.getTime() + VERIFY_OFFSETS_MIN[0] * MINUTE),
     lastError: null,
     lastErrorKind: null,
     stepAttempts: 0,
@@ -1246,7 +1347,7 @@ async function markScheduled(ctx: Ctx, send: DigestSend, claimAt: Date, what: st
     action: 'DIGEST_SCHEDULED',
     resourceType: 'DigestSend',
     resourceId: send.id,
-    metadata: { runId: ctx.run.id, audience: send.audience, trigger: ctx.trigger },
+    metadata: { runId: ctx.run.id, audience: send.audience, trigger: ctx.trigger, ...(opts.adopted ? { adopted: true } : {}) },
   });
   log(ctx, send.audience, what);
 }

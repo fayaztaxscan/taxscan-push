@@ -40,6 +40,7 @@ export type AlertKind =
   | 'ambiguous_create'
   | 'schedule_unconfirmed'
   | 'orphan_draft'
+  | 'adopted_existing'
   | 'retrying'
   | 'skipped'
   | 'partial_send'
@@ -198,6 +199,13 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         what: `${who}: a second draft${m.campaignName ? ` named "${safeDetail(m.campaignName, cfg)}"` : ''} exists in Mailercloud.`,
         did: 'Nothing was sent from it — only the saved draft is ever scheduled.',
         todo: 'Delete the spare draft in Mailercloud when convenient.',
+      };
+    case 'adopted_existing':
+      return {
+        short: 'Digest already in Mailercloud — adopted, not re-sent',
+        what: `${who}: Mailercloud already had today's campaign${m.campaignName ? ` "${safeDetail(m.campaignName, cfg)}"` : ''}${typeof m.providerState === 'string' ? ` (${safeDetail(m.providerState.toLowerCase(), cfg)})` : ''} before this system had sent anything. This usually follows a database restore.`,
+        did: 'Adopted that campaign and followed its status in Mailercloud. Nothing was created or sent a second time.',
+        todo: 'Check Mailercloud shows exactly one campaign with that name for today. The story list on Admin → Digests may differ from what that campaign carried.',
       };
     case 'retrying':
       return {

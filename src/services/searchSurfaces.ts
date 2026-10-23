@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import type { SearchSurface } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { safeErrorLog } from '../lib/httpErrors';
 import { readsPath } from './metrics';
 import {
   loadGaCredentials,
@@ -289,7 +290,7 @@ export function startSearchSurfacesSync(): void {
       );
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[surfaces] sync failed (last-synced counts stay in place)', e);
+      console.error('[surfaces] sync failed (last-synced counts stay in place)', safeErrorLog(e, { stack: true }));
     }
   };
 

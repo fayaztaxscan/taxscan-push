@@ -28,11 +28,39 @@ feeds as new, re-pushing stories subscribers already received.
 |---|---|
 | **`EmailSuppression`** | Who must not be mailed. An opt-out cannot be re-derived; restoring without it would re-mail people who unsubscribed, bounced or complained. Holds addresses. |
 | `DigestTemplate`, `DigestAd`, `DigestAdImage` | Creative work. Image bytes are included as `{"$base64": …}` (each ≤ 150 KB, so a few MB for a few dozen ads), so a restored system can still draw every ad. |
-| `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` | The run ledger. `DigestRun`'s unique (portal, runDate) IS the one-digest-a-day rule: without it a same-day restore could send a second digest. `DigestSend` keeps the Mailercloud campaign id (a draft is resumed, never re-created) and the frozen html (≤ 30 days). `DigestItem` is the 90-day dedupe: without it yesterday's stories come back. Placements drive ad rotation and the per-ad report. |
+| `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` | The run ledger: history, the Mailercloud campaign id of every past variant, and the frozen html (≤ 30 days). `DigestItem` is the 90-day dedupe: without it yesterday's stories come back. Placements drive ad rotation and the per-ad report. **The ledger does NOT stop a same-day second digest** — see "What stops a second digest after a restore" below. |
 | `EmailEvent` | The live half of the digest counts and the webhook proof (hashes only, ≤ 90 days). |
 
 Restore order is the export order (foreign keys): `DigestAdImage` → `DigestAd`, and
 `DigestRun` → `DigestSend` → `DigestItem` / `DigestAdPlacement`.
+
+### What stops a second digest after a restore
+
+The backup runs at **02:20 IST** and the digest is built at **06:30** and sent at
+**07:30**. So the newest backup never contains today's run: a database restored
+mid-day has no record that this morning's digest went out, and the scheduler
+simply makes a fresh run for today. The restored ledger cannot help with that.
+
+What does stop it (since 2026-10-23) is **Mailercloud itself**:
+
+1. Campaign names are fixed per day and audience: `TS-DIGEST-2026-10-23-FREE`,
+   `TS-DIGEST-2026-10-23-PREMIUM` (another portal than taxscan adds its name:
+   `TS-DIGEST-academy-2026-10-23-FREE`). A fresh run computes exactly the names
+   the lost run used.
+2. Before creating a campaign for the first time, the runner always looks that name
+   up in Mailercloud (`findCampaignByName`; one list call per audience per day). If
+   it exists, the runner **adopts** it instead of creating a second one, and
+   Mailercloud's status decides what happens: sent, sending or scheduled → recorded
+   as such, **never scheduled again**; failed → final for the day; a draft →
+   scheduled at the normal time after one more status check. An adopted campaign
+   that was already sent or scheduled raises an "already in Mailercloud" alert.
+3. If the lookup fails, nothing is created; it is retried on the usual schedule.
+
+Two limits remain, which is why the runbook step below exists: (a) whether
+Mailercloud's list search includes drafts is not yet verified (design §12, open
+question 3), and (b) someone may have duplicated or renamed the campaign by hand in
+Mailercloud, which no lookup can see. Older rows named `TS-DIGEST-<date>-<AUDIENCE>-<runId>`
+keep working: the webhook links by the stored name.
 
 ## ⚠️ The VAPID keypair is half of every restore
 
@@ -164,6 +192,15 @@ exists is never weakened by an older backup: the higher-ranked reason (MANUAL is
 rewritten), the earliest `firstSeenAt` and the latest `lastSeenAt` are kept
 (`mergeSuppressionForRestore` in `src/services/digest/webhook.ts`).
 
+**Templates: one known skip.** The database allows one ACTIVE template per
+audience. Restoring onto a database that already has a *different* ACTIVE
+template for that audience fails that `DigestTemplate` row on the
+`one_active_template_per_audience` index; it is reported as skipped (table and
+error code only) and the existing ACTIVE template stays. Into an empty database
+this cannot happen. If you need the backed-up one, archive the current ACTIVE
+template on the Templates screen and run the restore again with
+`--only DigestTemplate`.
+
 The format is one JSON object per line behind a header line. It restores with
 this script, with `psql`, or by hand — a backup you can only read with the
 software that just failed is not a backup.
@@ -178,6 +215,24 @@ software that just failed is not a backup.
    can be reissued.
 5. Confirm `GET /api/config` returns the **original** public key. If it does
    not, restored subscribers are inert and will fail silently at send time.
+
+### After ANY restore: the email digest stays off until Mailercloud is checked
+
+Applies to a full rebuild and to a partial restore alike.
+
+1. Before the app starts against the restored database, set **`DIGEST_ENABLED=false`**
+   and **`DIGEST_SEND_LIVE=false`** in Railway (keep `DIGEST_WEBHOOKS_ENABLED` as it
+   was: webhooks only record opt-outs and never send).
+2. In Mailercloud → Campaigns, search `TS-DIGEST-` and look for **today's** date.
+   Note whether each of `…-FREE` and `…-PREMIUM` exists and its status (Draft,
+   Scheduled, Sending, Finished). Make sure there is at most one of each; delete any
+   spare draft.
+3. Only then switch `DIGEST_ENABLED` back on, and `DIGEST_SEND_LIVE` if it was on.
+   The runner adopts what you saw in step 2 and never sends a second copy. Admin →
+   Digests should show today's variants as sent/scheduled within a minute; an
+   "already in Mailercloud" alert for them is expected.
+4. If step 2 shows a campaign renamed or duplicated by hand, leave `DIGEST_SEND_LIVE`
+   off for the rest of the day.
 
 ### Retention in production
 

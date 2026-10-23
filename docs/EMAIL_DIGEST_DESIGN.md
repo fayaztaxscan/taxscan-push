@@ -198,7 +198,7 @@ model DigestSend {
   html             String?         // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
   text             String?
   htmlBytes        Int
-  mcCampaignName   String          @unique   // TS-DIGEST-2026-10-23-FREE-<runId>
+  mcCampaignName   String          @unique   // TS-DIGEST-2026-10-23-FREE (since 23 Oct 2026; was …-FREE-<runId>)
   mcCampaignId     String?         @unique   // persisted the instant create returns
   sendAfter        DateTime                  // planned send instant (Send now moves it earlier)
   scheduledAt      DateTime?                 // when we called schedule
@@ -1125,7 +1125,13 @@ agents.
         code, `meta.target`, `meta.modelName`, stack frames. Other messages and stacks pass the shared redactor
         (`src/lib/redact.ts`, also used by `redactError`). The cron catch-blocks of `reportScheduler`,
         `reconciler` (+ retention), `backup`, `pacer`, `auditRetention` and `eventRetention` log through it,
-        same prefixes; `[report] email failed` no longer logs the recipient address.
+        same prefixes; `[report] email failed` no longer logs the recipient address. **23 Oct 2026 (QA list):** the rest
+        follow, prefixes unchanged — `[sweeper] executeCampaign threw`, `[send] event write failed mid-send` (logging
+        only; the live send path's behaviour is untouched), the four `[rss]` catches in `poller.ts`, `[ga-reads]`,
+        `[surfaces]`, `[reads-report]` and `[metrics]`. Test `safeErrorLogSites`: a Prisma-like error quoting an
+        address through each reachable path logs the code but no address, and a source scan fails on any new bare
+        `err` / `e` / `error` argument to `console.*` in `src/` (operator CLI scripts in `scripts/` print messages
+        to the operator's terminal and are not scanned).
 11. **Retention and backup.** Nightly fold of EmailEvent into `rolled*` plus `digestSendStats()`, html
     nulled after 30 days, and the new tables added to `backup.ts`.
     *Accept:* counts are identical before and after the fold, and a backup and restore rehearsal
@@ -1147,14 +1153,40 @@ agents.
       kept." `DigestItem` and placements are kept.
     - **Backup v2**: `EmailSuppression`, `DigestTemplate`, `DigestAdImage` (bytes as `{"$base64"}`, ≤ 150 KB each —
       included: a few MB for a few dozen creatives, and a restore can still draw every ad), `DigestAd`, `DigestRun`,
-      `DigestSend`, `DigestItem`, `DigestAdPlacement`, `EmailEvent`, in FK order. The run ledger is included because
-      unique (portal, runDate) is the one-per-day rule (a same-day restore without it could send a second digest),
-      `DigestSend` holds the campaign id, and `DigestItem` is the 90-day dedupe. Restore upserts on natural keys
+      `DigestSend`, `DigestItem`, `DigestAdPlacement`, `EmailEvent`, in FK order. The run ledger is included for
+      history, the campaign ids and `DigestItem`'s 90-day dedupe. ~~It is the one-per-day rule after a restore~~
+      **Corrected 23 Oct 2026 (QA O1):** the 02:20 backup never holds today's run (built 06:30), so the ledger cannot
+      stop a same-day second digest; the provider lookup below does. Restore upserts on natural keys
       (suppression email, event dedupeKey) else id; Json nulls as `DbNull`; failures logged without values.
     - **Rehearsal** (local, no R2): dev → `backup:now --out` → empty `taxscan_push_restore_test` → `migrate deploy`
       → `restore --yes`: all 13 tables identical by count and per-row md5, second restore idempotent; scratch DB
       dropped.
     - Not built: a run row for the sweeper (like the push event sweeper, a failed night is log-only).
+    - **Restore-safe campaign names (owner approved 23 Oct 2026, QA O1).** A database restored mid-day has no run for
+      today, so `ensureRun` makes a fresh one with null markers; with the old `TS-DIGEST-<date>-<AUDIENCE>-<runId>`
+      name `findCampaignByName` could not see the campaign already sent. Now:
+      - Names are `TS-DIGEST-<yyyy-mm-dd>-<AUDIENCE>`, plus `<portal>-` after the prefix for any portal but taxscan
+        (`digestProviderCampaignName` in `runner.ts`, the single definition; unique per portal + date + audience,
+        so the `mcCampaignName` unique constraint holds). Old stored names still link (the webhook matches the
+        stored name; the `TS-DIGEST-` prefix is unchanged).
+      - **The runner always asks the provider before the first create** of a variant when the sender has a lookup
+        (Mailercloud does): one list call per audience per day. Chosen over "only after an ambiguous reply" because
+        our write-ahead marker proves only that THIS database never created the variant; the provider is the only
+        record that survives a restore. A failed lookup creates nothing (retry policy). A sender without a lookup
+        creates as before.
+      - A found campaign is **adopted** (`adoptExisting`) and its status, read at once, decides: SCHEDULED / SENDING /
+        SENT / PARTIALLY_SENT → SCHEDULED and verified immediately (SENT is final), `schedule()` never called;
+        FAILED → `markProviderFailed` (terminal; PARTIALLY_SENT when reach > 0); DRAFT or status unreadable →
+        CREATED with `scheduleAttemptedAt` set, so the schedule step asks `status()` again right before it would
+        schedule, and the cut-off sweep asks before skipping. An adopted campaign that was ahead of us raises
+        `adopted_existing` (email; not blocking). A restored day's DigestItem rows are today's fresh selection, which
+        may differ from what the adopted campaign carried.
+      - Residual risk, covered by the after-restore runbook step in `docs/BACKUPS.md` (keep `DIGEST_ENABLED` /
+        `DIGEST_SEND_LIVE` off until Mailercloud is checked): the list search including drafts is unverified, and a
+        campaign duplicated or renamed by hand in Mailercloud cannot be found by name.
+      - Tests `digestRestoreAdopt` (restore end to end, SENT / SCHEDULED / SENDING / DRAFT / FAILED, status
+        unreadable, one audience present, yesterday's name, no campaign → normal create, failed lookup, old and new
+        names linking through the webhook).
 12. **Documentation and pilot runbook.** Guide section, flag table, the Mailercloud checks in §12.14 as
     a checklist, and the stage 1–4 runbook. Updating `CLAUDE.md`/`NEXT_STEP.md` is the owner's call.
     *Accept:* the owner signs off on the runbook before stage 2.

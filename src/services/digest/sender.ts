@@ -25,7 +25,11 @@ import { env } from '../../lib/env';
 
 /** What a draft is created from. `html` is the FROZEN copy stored on DigestSend. */
 export type DraftInput = {
-  /** Unique, generated: TS-DIGEST-<yyyy-mm-dd>-<AUDIENCE>-<runId>. */
+  /**
+   * Unique, deterministic per portal + IST date + audience:
+   * TS-DIGEST-<yyyy-mm-dd>-<AUDIENCE> (`digestProviderCampaignName` in runner.ts).
+   * Older rows carry TS-DIGEST-<yyyy-mm-dd>-<AUDIENCE>-<runId>.
+   */
   name: string;
   audience: DigestAudience;
   subject: string;

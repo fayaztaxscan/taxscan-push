@@ -626,7 +626,7 @@ describe('runner integration', () => {
         text: expected.text,
         htmlBytes: expected.htmlBytes,
       });
-      expect(s.mcCampaignName).toBe(`TS-DIGEST-2026-10-22-${s.audience}-${run.id}`); // unique provider name unchanged
+      expect(s.mcCampaignName).toBe(`TS-DIGEST-${run.portal}-2026-10-22-${s.audience}`); // unique provider name: portal + date + audience
     }
     const draftHtml = sender.calls.filter((x) => x.method === 'createDraft').map((x) => (x.args[0] as { html: string; preheader: string }));
     expect(draftHtml.map((d) => d.html).sort()).toEqual(sends.map((s) => s.html).sort());

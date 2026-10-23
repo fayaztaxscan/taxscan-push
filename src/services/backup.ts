@@ -83,12 +83,16 @@ export const BACKUP_TABLES = [
   // the price of a restore that can still draw every ad. Must precede DigestAd.
   'DigestAdImage',
   'DigestAd',
-  // The run ledger. Without DigestRun a restored system no longer knows a digest
-  // went out today — unique (portal, runDate) IS the one-per-day rule — so it
-  // could send a second one. DigestSend carries the provider campaign id (a
-  // restored CREATED draft is resumed, never re-created) and the frozen html
-  // (≤ 30 days × 2 × ~50 KB, gzips ~10×). DigestItem is the 90-day articleKey
-  // dedupe and the roll-forward source: without it yesterday's stories come back.
+  // The run ledger: history, each past variant's provider campaign id and the
+  // frozen html (≤ 30 days × 2 × ~50 KB, gzips ~10×). DigestItem is the 90-day
+  // articleKey dedupe and the roll-forward source: without it yesterday's
+  // stories come back. NOTE: the ledger does NOT prevent a same-day second
+  // digest — this 02:20 export never holds today's run (built 06:30). What does
+  // is the provider: campaign names are fixed per portal + date + audience and
+  // the runner looks the name up in Mailercloud before every first create,
+  // adopting what it finds (`lookupThenCreate` in digest/runner.ts). After a
+  // restore keep DIGEST_ENABLED/DIGEST_SEND_LIVE off until someone has checked
+  // Mailercloud for today's campaign (docs/BACKUPS.md).
   'DigestRun',
   'DigestSend',
   'DigestItem',
