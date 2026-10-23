@@ -36,7 +36,12 @@ type ScreenAction = { show: boolean; enabled: boolean; reason: string | null };
 type Status = {
   enabled: boolean;
   config: { sendLive: boolean; approvalRequired: boolean; sendAt: string; buildAt: string | null; cutoff: string };
-  today: null | { runId: string };
+  today: null | {
+    runId: string;
+    builtAt: string | null;
+    /** Task 13: the last Mailercloud health check (06:15 / 07:15, hourly while it is rejected). */
+    health?: { ok: boolean | null; checkedAt: string | null; error: string | null };
+  };
   attention: { code: string; headline: string; action: string } | null;
 };
 type Variant = {
@@ -63,6 +68,8 @@ type Variant = {
   approvedAt?: string | null;
   /** The custom template failed at send time; this copy uses the built-in template. */
   templateFallback?: { fromId: string; reason: string | null } | null;
+  /** Task 13: Mailercloud already had this draft (e.g. after a restore); a person checks it and approves. */
+  adoptedDraft?: boolean;
 };
 type Item = {
   rank: number;
@@ -217,7 +224,9 @@ async function confirmDoor() {
     notice.value =
       st === 'scheduled' || st === 'sent'
         ? 'Handed to Mailercloud. It is sending now.'
-        : `Not sent yet. Today's digest is now: ${st ? runStateLabel(st).toLowerCase() : 'unchanged'}.`;
+        : !sendLive.value && kind === 'retry'
+          ? `Retried in preview mode: the Mailercloud draft is made, nothing is sent. Today's digest is now: ${st ? runStateLabel(st).toLowerCase() : 'unchanged'}.`
+          : `Not sent yet. Today's digest is now: ${st ? runStateLabel(st).toLowerCase() : 'unchanged'}.`;
   } catch (e) {
     const err = e as ApiError;
     error.value = err.outcomeUnknown ? DOOR_UNKNOWN : apiErrorMessage(e);
@@ -257,6 +266,9 @@ const confirmTitle = computed(() => {
 
 /** One plain line per variant about what happens next. */
 function variantNote(v: Variant): string | null {
+  if (v.adoptedDraft && v.approval === 'waiting' && (v.state === 'PENDING' || v.state === 'CREATED')) {
+    return 'Mailercloud already had this draft (it may be from before a database restore). Check it in Mailercloud, then approve — or delete it there and a fresh one is made.';
+  }
   if (v.ownApproval && v.approval === 'waiting' && v.hasPreview && (v.state === 'PENDING' || v.state === 'CREATED')) {
     return 'Waiting for approval: built after today’s approval, so it needs its own.';
   }
@@ -332,7 +344,7 @@ onMounted(load);
           <button v-if="viewingPast && status.today" class="btn btn-mini" @click="backToToday">Back to today</button>
         </div>
 
-        <template v-if="!detail">
+        <template v-if="!detail || (detail.build === 'BUILDING' && detail.variants.length === 0 && !viewingPast && !status.today?.builtAt)">
           <p class="lead-line">No digest has been built today yet.</p>
           <p class="muted">
             The next build is at {{ status.config.buildAt ?? '06:30' }} IST; it goes out at
@@ -355,6 +367,10 @@ onMounted(load);
             <span>{{ approvalLabel(detail.approval, detail.approvedBy, detail.approvedAt) }}.</span>
             <span v-if="detail.readsLine">{{ detail.readsLine }}</span>
             <span v-if="!sendLive">Preview only: nothing is sent to readers while DIGEST_SEND_LIVE is off.</span>
+            <span v-if="!viewingPast && status.today?.health?.checkedAt">
+              Mailercloud check at {{ timeIst(status.today.health.checkedAt) }} IST:
+              {{ status.today.health.ok ? 'answering' : 'failing' }}.
+            </span>
           </p>
 
           <div v-if="anyButton" class="action-row">
@@ -584,7 +600,11 @@ onMounted(load);
       v-if="confirming === 'retry' && detail"
       heading="Retry today's digest now?"
       :title="confirmTitle"
-      detail="Tries again straight away with the same frozen email instead of waiting for the next automatic try. It never creates a second campaign."
+      :detail="
+        sendLive
+          ? 'Tries again straight away with the same frozen email instead of waiting for the next automatic try. It never creates a second campaign.'
+          : 'Preview mode: tries again straight away up to the Mailercloud draft, with the same frozen email. Nothing is sent while DIGEST_SEND_LIVE is off, and it never creates a second campaign.'
+      "
       confirm-label="Retry now"
       :busy="busy === 'retry'"
       @confirm="confirmDoor"

@@ -24,6 +24,7 @@ import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
 import { createMockDigestSender } from './services/digest/mockSender';
 import { mockSendersEnabled } from './lib/mockSenderGuard';
+import { safeErrorLog } from './lib/httpErrors';
 import type { Sender } from './services/send';
 
 // When E2E_MOCK_SENDER=true, swap web-push for an in-memory success sender so
@@ -33,18 +34,21 @@ let useMocks = false;
 try {
   useMocks = mockSendersEnabled(process.env);
 } catch (err) {
+  // Through the shared redactor, like every other error log (no raw message on this path either).
   // eslint-disable-next-line no-console
-  console.error(`FATAL: ${err instanceof Error ? err.message : String(err)}`);
+  console.error('FATAL: mock sender guard refused to start', safeErrorLog(err));
   process.exit(1);
 }
 const mockSender: Sender | undefined = useMocks ? async () => ({ ok: true, statusCode: 201 }) : undefined;
 
-// The same switch gives the digest routes an in-memory Mailercloud stand-in
-// (no network, nobody mailed), so Send now / Retry now / Test send can be
-// exercised locally. Never set in production.
+// The same switch gives the digest routes AND the digest scheduler tick one
+// shared in-memory Mailercloud stand-in (no network, nobody mailed), so the
+// morning run, Send now / Retry now / Test send can be exercised locally.
+// Never set in production.
+const mockDigestSender = mockSender ? createMockDigestSender() : undefined;
 const app = createApp({
   sender: mockSender,
-  ...(mockSender ? { digest: { sender: createMockDigestSender() } } : {}),
+  ...(mockDigestSender ? { digest: { sender: mockDigestSender } } : {}),
 });
 
 app.listen(env.port, () => {
@@ -66,5 +70,5 @@ app.listen(env.port, () => {
   startDigestRetentionSweeper();
   startBackupCron();
   startMetricsWarmer();
-  startDigestScheduler();
+  startDigestScheduler(undefined, undefined, mockDigestSender ? { sender: mockDigestSender } : {});
 });

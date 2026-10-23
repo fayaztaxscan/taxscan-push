@@ -5,7 +5,8 @@ import { isEmailConfigured } from '../../lib/email';
 import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, runDateKey } from './retryPolicy';
 import { validateDigestSchedule } from './scheduler';
-import { BLOCKING_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
+import { BLOCKING_KINDS, INFO_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
+import { complaintCheckOf, isComplaintHeld, type ComplaintCheck } from './holds';
 import { noAddressRecently, webhookHealth, type WebhookHealth } from './webhookLiveness';
 
 /**
@@ -40,6 +41,13 @@ export type AttentionInput = {
      */
     buildFailure?: string | null;
     buildError?: string | null;
+    /** Task 13: the last Mailercloud health check (null = none yet today). Optional for table tests. */
+    healthOk?: boolean | null;
+    healthError?: string | null;
+    /** Task 13: the complaint-rate check taken when the run opened (`holds.ts` ComplaintCheck). */
+    complaintCheck?: unknown;
+    /** Task 13: the daily webhook status read (false = Mailercloud reports it inactive). */
+    webhookActive?: boolean | null;
   } | null;
   sends: ReadonlyArray<{
     /** Optional for table tests; needed to name the audience of a per-variant ad failure. */
@@ -55,6 +63,10 @@ export type AttentionInput = {
     approvedAt?: Date | null;
     /** Owner 2026-10-23: the custom template failed and the built-in one was used. */
     templateFallbackFromId?: string | null;
+    /** Task 13, owner decision A: adopted a Mailercloud draft, so it waits for its own approval. */
+    adoptedDraftAt?: Date | null;
+    /** Task 13: the provider campaign name, for the duplicate-name banner. */
+    mcCampaignName?: string;
   }>;
   /** Task 8: the most recent judgeable send got no campaign webhook (`webhookHealth().alive === false`). */
   webhookSilent?: boolean;
@@ -83,11 +95,26 @@ function attention(code: string, headline: string, action: string): Attention {
  *  7. (task 8) the Mailercloud webhook looks switched off — shown even with no
  *     run today, because it concerns an earlier send;
  *  8. (task 8) opt-out events without a readable address in the last 24 h.
+ *
+ * Task 13 adds, in this order inside the run's checks: an adopted Mailercloud
+ * draft waiting for a person (after "failed"), a failing health check, the
+ * complaint hold (after the sanity hold), two campaigns with the same name
+ * (before "retrying"); then, after the run's checks, the webhook reported
+ * inactive by the daily status read, and — lowest, only while sending is live —
+ * a previous send whose complaint rate is UNKNOWN (no webhook proof), because the
+ * automatic hold cannot protect the next send then.
  */
 export function digestAttention(i: AttentionInput): Attention | null {
   if (!i.enabled) return null;
   const forRun = i.run ? runAttention(i) : null;
   if (forRun) return forRun;
+  if (i.run?.webhookActive === false) {
+    return attention(
+      'webhook_disabled',
+      'Mailercloud reports our webhook as switched off.',
+      'Switch the webhook back on in Mailercloud. Sends are still checked, but unsubscribes and bounces are not being copied meanwhile.',
+    );
+  }
   if (i.webhookSilent) {
     return attention(
       'webhook_silent',
@@ -100,6 +127,15 @@ export function digestAttention(i: AttentionInput): Attention | null {
       'webhook_no_address',
       `${i.webhookNoAddress} unsubscribe/bounce event(s) from Mailercloud arrived without a readable address.`,
       'They were not copied to our suppression list (Mailercloud still honours its own). Ask the developer to check the webhook field names.',
+    );
+  }
+  const check = i.run ? complaintCheckOf(i.run) : null;
+  if (i.cfg.sendLive && check && !check.held && check.sends.some((x) => x.ratePct === null)) {
+    const names = check.sends.filter((x) => x.ratePct === null).map((x) => audienceName(x.audience as DigestAudience)).join(' and ');
+    return attention(
+      'complaint_rate_unknown',
+      `The spam-complaint rate of the last ${names} digest${check.previousRunDate ? ` (${check.previousRunDate})` : ''} is unknown: Mailercloud has not confirmed that send through the webhook.`,
+      `So the automatic hold (above ${check.thresholdPct}%) cannot protect today's digest. Check the Complaints column in Digests and the webhook in Mailercloud.`,
     );
   }
   return null;
@@ -151,11 +187,44 @@ function runAttention(i: AttentionInput): Attention | null {
   }
 
   const unfinished = state === 'building' || state === 'created';
+
+  // Owner decision A: a variant that adopted a Mailercloud draft waits for a person in every mode.
+  const adopted = sends.filter((s) => s.adoptedDraftAt && !s.approvedAt && (s.state === 'PENDING' || s.state === 'CREATED'));
+  if (adopted.length > 0) {
+    const names = adopted.map((s) => audienceName(s.audience)).join(' and ');
+    return attention(
+      'adopted_draft',
+      `Mailercloud already had today's ${names} digest draft, which this system did not see being made (it may be from before a database restore). It is not sent until someone approves it.`,
+      `Open that draft in Mailercloud: delete it if it is not today's content (a fresh one is made by itself), or approve the ${names} digest in Digests before ${cutoff}.`,
+    );
+  }
+
+  if (run.healthOk === false && (unfinished || state === 'scheduled')) {
+    const fatal = Boolean(run.healthError?.startsWith('FATAL'));
+    return attention(
+      'health_failed',
+      fatal ? 'Mailercloud rejected the digest health check (key or account).' : 'Mailercloud is unreachable (the digest health check failed).',
+      fatal
+        ? 'Check the Mailercloud API key and plan in Railway and Mailercloud; the check repeats hourly and picks the digest up again once it passes.'
+        : 'Nothing yet; the check repeats before the send. If it keeps failing, check Mailercloud’s status.',
+    );
+  }
+
   if (unfinished && run.build === 'BUILT' && run.candidateCount > cfg.sanityMaxCandidates && run.approval !== 'APPROVED' && run.approval !== 'HELD') {
     return attention(
       'sanity_hold',
       `Today's digest is held: ${run.candidateCount} candidate stories is unusually many.`,
       `Check the story list, then approve or hold it in Digests before ${cutoff}.`,
+    );
+  }
+
+  const complaint = complaintCheckOf(run);
+  if (unfinished && complaint && isComplaintHeld(run) && run.approval !== 'APPROVED' && run.approval !== 'HELD') {
+    const worst = complaint.sends.filter((x) => x.ratePct !== null).sort((a, b) => (b.ratePct ?? 0) - (a.ratePct ?? 0))[0];
+    return attention(
+      'complaint_hold',
+      `Today's digest is held: the last ${audienceName(worst?.audience as DigestAudience)} digest had a spam-complaint rate of ${worst?.ratePct?.toFixed(2) ?? '?'}% (limit ${complaint.thresholdPct}%).`,
+      `Find out why readers marked it as spam, then approve or hold today's digest in Digests before ${cutoff}.`,
     );
   }
 
@@ -213,6 +282,16 @@ function runAttention(i: AttentionInput): Attention | null {
       'awaiting_approval',
       `The ${names} digest is waiting for approval: it was built after today's approval, so that approval does not cover it.`,
       `Check it and press Approve in Digests before ${cutoff}, or it is skipped.`,
+    );
+  }
+
+  const duplicate = sends.filter((s) => (s.state === 'PENDING' || s.state === 'CREATED') && s.lastError?.startsWith('duplicate_name'));
+  if (duplicate.length > 0) {
+    const names = duplicate.map((s) => (s.mcCampaignName ? `"${s.mcCampaignName}"` : `for the ${audienceName(s.audience)} digest`)).join(' and ');
+    return attention(
+      'duplicate_name',
+      `Two campaigns named ${names} exist in Mailercloud, so the system cannot tell which one is ours.`,
+      `Delete the extra one in Mailercloud (keep the one that was sent, if any). The digest carries on by itself at its next check, until ${cutoff}.`,
     );
   }
 
@@ -274,6 +353,12 @@ export type DigestStatusPayload = {
     /** The current build failure cause (ads_unfillable | build_error) and its detail, while BUILD_FAILED. */
     buildFailure: string | null;
     buildError: string | null;
+    /** Task 13: the last Mailercloud health check. */
+    health: { ok: boolean | null; checkedAt: Date | null; error: string | null };
+    /** Task 13: the previous send's complaint rate, judged when the run opened (null = not yet). */
+    complaintCheck: ComplaintCheck | null;
+    /** Task 13: the daily webhook status read (null = not read today, or no MAILERCLOUD_WEBHOOK_ID). */
+    webhookActive: boolean | null;
     variants: {
       audience: string;
       state: DigestSendState;
@@ -355,6 +440,8 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
           approvedAt: true,
           templateFallbackFromId: true,
           templateFallbackReason: true,
+          adoptedDraftAt: true,
+          mcCampaignName: true,
         },
       },
     },
@@ -373,7 +460,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       kind,
       text: alertCopy(kind, m, cfg).short,
       raisedAt: m.raisedAt ?? null,
-      open: kind !== 'resolved' && !(resolvedAt && BLOCKING_KINDS.has(kind)),
+      open: !INFO_KINDS.has(kind) && !(resolvedAt && BLOCKING_KINDS.has(kind)),
       emailed: Boolean(m.emailedAt),
       emailedAt: m.emailedAt ?? null,
     }))
@@ -395,6 +482,9 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       builtAt: run.builtAt,
       buildFailure: run.buildFailure,
       buildError: run.buildError ? safeDetail(run.buildError, cfg) : null,
+      health: { ok: run.healthOk, checkedAt: run.healthCheckedAt, error: run.healthError ? safeDetail(run.healthError, cfg) : null },
+      complaintCheck: complaintCheckOf(run),
+      webhookActive: run.webhookActive,
       variants: run.sends.map((s) => ({
         ...s,
         lastError: s.lastError ? safeDetail(s.lastError, cfg) : null,

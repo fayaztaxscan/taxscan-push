@@ -203,37 +203,88 @@ describe('metrics.ts', () => {
 });
 
 describe('source scan: no bare error argument to console.* anywhere in src/', () => {
-  /** Every `console.x(...)` call's argument text, with template and quoted strings blanked. */
+  type Frame = { t: 'code'; paren: number; brace: number; tplExpr: boolean } | { t: 'str'; q: string } | { t: 'tpl' };
+
+  /**
+   * Every `console.x(...)` call's argument text. Plain string contents are blanked
+   * (`""`); a template literal's text is blanked too, but each `${…}` expression is
+   * KEPT, between commas, so an error interpolated into a message (`${err}`,
+   * `${err.message}`) is checked like any other argument (task 13, 7c).
+   */
   function consoleCalls(src: string): { line: number; args: string }[] {
     const out: { line: number; args: string }[] = [];
     const re = /console\.(log|warn|error|info|debug)\(/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(src))) {
-      let depth = 1;
-      let i = m.index + m[0].length;
+      const stack: Frame[] = [{ t: 'code', paren: 1, brace: 0, tplExpr: false }];
       let args = '';
-      let quote: string | null = null;
-      for (; i < src.length && depth > 0; i++) {
+      for (let i = m.index + m[0].length; i < src.length && stack.length > 0; i++) {
+        const top = stack[stack.length - 1];
         const ch = src[i];
-        if (quote) {
-          if (ch === '\\') { i++; continue; }
-          if (ch === quote) quote = null;
+        if (top.t === 'str') {
+          if (ch === '\\') i++;
+          else if (ch === top.q) stack.pop();
           continue; // string contents are not code
         }
-        if (ch === '"' || ch === "'" || ch === '`') { quote = ch; args += '""'; continue; }
-        if (ch === '(') depth++;
-        if (ch === ')') depth--;
-        if (depth > 0) args += ch;
+        if (top.t === 'tpl') {
+          if (ch === '\\') i++;
+          else if (ch === '`') stack.pop();
+          else if (ch === '$' && src[i + 1] === '{') {
+            i++;
+            args += ',';
+            stack.push({ t: 'code', paren: 0, brace: 0, tplExpr: true });
+          }
+          continue;
+        }
+        if (ch === '"' || ch === "'") { stack.push({ t: 'str', q: ch }); args += '""'; continue; }
+        if (ch === '`') { stack.push({ t: 'tpl' }); args += '""'; continue; }
+        if (top.tplExpr && ch === '}' && top.brace === 0) { stack.pop(); args += ','; continue; }
+        if (ch === '{') top.brace++;
+        if (ch === '}') top.brace--;
+        if (ch === '(') top.paren++;
+        if (ch === ')') {
+          top.paren--;
+          if (stack.length === 1 && top.paren === 0) break;
+        }
+        args += ch;
       }
       out.push({ line: src.slice(0, m.index).split('\n').length, args });
     }
     return out;
   }
 
-  /** A bare `err` / `e` / `error` / `ex` as a whole argument or a shorthand object field. */
-  const BARE = /(^|[,{(]\s*)(err|e|error|ex)\s*(?=[,})]|$)/;
+  /** The calls that make an error safe to log, removed with their (balanced) arguments. */
+  const SAFE_CALL = /\b(safeErrorLog|redactError|redactText|safeDetail)\(/g;
+  function stripSafe(args: string): string {
+    let out = args;
+    for (let m = SAFE_CALL.exec(out); m; m = SAFE_CALL.exec(out)) {
+      let depth = 1;
+      let j = m.index + m[0].length;
+      for (; j < out.length && depth > 0; j++) {
+        if (out[j] === '(') depth++;
+        if (out[j] === ')') depth--;
+      }
+      out = `${out.slice(0, m.index)}""${out.slice(j)}`;
+      SAFE_CALL.lastIndex = m.index + 2;
+    }
+    SAFE_CALL.lastIndex = 0;
+    return out;
+  }
+
+  const ERR = '(?:err|e|error|ex)';
+  /** A bare `err` / `e` / `error` / `ex` as a whole argument, a shorthand field or a `${err}` interpolation. */
+  const BARE = new RegExp(`(^|[,{(]\\s*)${ERR}\\s*(?=[,})]|$)`);
+  /** An error as a field VALUE: `{ cause: err }`, `{ error: e }` (also the `: err` arm of a ternary). */
+  const FIELD = new RegExp(`:\\s*${ERR}\\s*(?=[,})]|$)`);
+  /** The raw message, unredacted: `err.message`, `e.message` (an argument or inside `${…}`). */
+  const MESSAGE = new RegExp(`\\b${ERR}\\.message\\b`);
+  /** The whole error stringified: `String(err)`, `JSON.stringify(e)`. */
+  const STRINGIFIED = new RegExp(`\\b(String|JSON\\.stringify)\\(\\s*${ERR}\\s*[),]`);
   /** The argument text, minus the calls that make an error safe to log. */
-  const offends = (args: string) => BARE.test(args.replace(/\b(safeErrorLog|redactError|redactText)\([^)]*\)/g, '""'));
+  const offends = (args: string) => {
+    const a = stripSafe(args);
+    return BARE.test(a) || FIELD.test(a) || MESSAGE.test(a) || STRINGIFIED.test(a);
+  };
 
   function walk(dir: string): string[] {
     return fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
@@ -244,12 +295,31 @@ describe('source scan: no bare error argument to console.* anywhere in src/', ()
   }
 
   it('finds the pattern it is meant to find (self-check)', () => {
-    expect(consoleCalls("console.error('[x] failed', e);").some((c) => offends(c.args))).toBe(true);
+    const hit = (code: string) => consoleCalls(code).some((c) => offends(c.args));
+    // Task 13 (7c): a cause field, a raw message and an interpolated error are caught too …
+    expect(hit("console.warn('[x]', { cause: err });")).toBe(true);
+    expect(hit("console.warn('[x]', { id, error: e });")).toBe(true);
+    expect(hit("console.error('[x]', err.message);")).toBe(true);
+    expect(hit("console.error('[x]', { message: e.message });")).toBe(true);
+    expect(hit('console.error(`[x] failed: ${err}`);')).toBe(true);
+    expect(hit('console.error(`[x] failed: ${err.message}`);')).toBe(true);
+    expect(hit('console.error(`FATAL: ${err instanceof Error ? err.message : String(err)}`);')).toBe(true);
+    expect(hit('console.warn(`[x] ${id} ${String(e)}`);')).toBe(true);
+    // … with no false positive on the safe forms or on ordinary values.
+    expect(hit('console.warn(`[x] failed: ${redactError(err)}`);')).toBe(false);
+    expect(hit('console.warn(`[x] failed: ${safeDetail(err instanceof Error ? err.message : err)}`);')).toBe(false);
+    expect(hit("console.error('[x]', safeErrorLog(err, { stack: true }), { id });")).toBe(false);
+    expect(hit('console.error(`[x] failed: ${err instanceof Error ? err.name : "error"}`);')).toBe(false);
+    expect(hit('console.log(`[x] ${items.length} items, ${e2e ? "on" : "off"} error=${errors}`);')).toBe(false);
+    expect(hit("console.log('[x]', { errors: 3, element: el, code: err.code });")).toBe(false);
+    expect(hit('console.log(`[x] {not an expression} ${a}:${b}`);')).toBe(false);
+    expect(hit("console.error('[x] failed', e);")).toBe(true);
     expect(consoleCalls("console.warn('[x]', { id, err });").some((c) => offends(c.args))).toBe(true);
     expect(consoleCalls("console.error('[x]', {\n  id,\n  err,\n});").some((c) => offends(c.args))).toBe(true);
     expect(consoleCalls("console.error('[x]', safeErrorLog(e, { stack: true }));").some((c) => offends(c.args))).toBe(false);
     expect(consoleCalls("console.warn('[x]', { id, err: safeErrorLog(err) });").some((c) => offends(c.args))).toBe(false);
-    expect(consoleCalls('console.error(`FATAL: ${err instanceof Error ? err.message : err}`);').some((c) => offends(c.args))).toBe(false);
+    // Was allowed before task 13 (template contents were not scanned): the raw message is now caught.
+    expect(consoleCalls('console.error(`FATAL: ${err instanceof Error ? err.message : err}`);').some((c) => offends(c.args))).toBe(true);
   });
 
   it('every catch in src/ logs through safeErrorLog / redactError, never the raw object', () => {

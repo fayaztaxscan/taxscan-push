@@ -223,14 +223,20 @@ Applies to a full rebuild and to a partial restore alike.
 1. Before the app starts against the restored database, set **`DIGEST_ENABLED=false`**
    and **`DIGEST_SEND_LIVE=false`** in Railway (keep `DIGEST_WEBHOOKS_ENABLED` as it
    was: webhooks only record opt-outs and never send).
-2. In Mailercloud → Campaigns, search `TS-DIGEST-` and look for **today's** date.
+2. In Mailercloud → Campaigns, search `TS-DIGEST-` and look for **today's** date
+   (or, read-only, `npm run digest:lookup -- --date <today>` in the service).
    Note whether each of `…-FREE` and `…-PREMIUM` exists and its status (Draft,
-   Scheduled, Sending, Finished). Make sure there is at most one of each; delete any
-   spare draft.
+   Scheduled, Sending, Finished). Make sure there is at most one of each.
+   **Delete today's draft in Mailercloud before switching sending back on**: a draft
+   may hold content from before the restore. Leave a scheduled, sending or finished
+   campaign alone.
 3. Only then switch `DIGEST_ENABLED` back on, and `DIGEST_SEND_LIVE` if it was on.
    The runner adopts what you saw in step 2 and never sends a second copy. Admin →
    Digests should show today's variants as sent/scheduled within a minute; an
-   "already in Mailercloud" alert for them is expected.
+   "already in Mailercloud" alert for them is expected. A draft left in place is
+   adopted but **held for an Approve of that version, even with auto-send on** (owner
+   decision, 23 Oct 2026), because nothing can confirm its content matches today's
+   frozen email; deleting it instead lets a fresh draft be made at the next check.
 4. If step 2 shows a campaign renamed or duplicated by hand, leave `DIGEST_SEND_LIVE`
    off for the rest of the day.
 

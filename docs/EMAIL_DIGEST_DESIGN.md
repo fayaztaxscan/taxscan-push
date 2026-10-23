@@ -1,8 +1,8 @@
 # Automatic daily email digest: design (phase 1)
 
-Status (23 Oct 2026): **tasks 1–12 built on `develop`** (the "Built" notes in §13), **not enabled and not yet
-runnable**: the scheduler tick that creates each day's run is not wired (`scheduler.ts` is still the task-1 skeleton),
-nor is `health.ts`. Every behaviour sits behind flags that default OFF. Rollout: `docs/DIGEST_PILOT_RUNBOOK.md`.
+Status (23 Oct 2026): **tasks 1–13 built on `develop`** (the "Built" notes in §13), **not enabled**. Task 13 wired the
+1-minute scheduler tick (`scheduler.ts`) and `health.ts`, so the digest now runs by itself once `DIGEST_ENABLED` is on.
+Every behaviour sits behind flags that default OFF. Rollout: `docs/DIGEST_PILOT_RUNBOOK.md`.
 Written 2026-10-22 for owner review.
 
 Owner rulings this design is bound by (all 2026-10-22):
@@ -396,10 +396,10 @@ ledger — `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` — and 
 | `renderer.ts` | Substitutes into the template's `compiledHtml` and escapes all text. It adds the visible date, the subject (= the lead headline, ≤ 90 chars), the preheader ("Plus N more: <2nd headline>", ≤ 110 chars), the non-removable footer (postal address and Mailercloud's unsubscribe tag) and the plain-text part. `withUtm(url, {campaign, content})` is the single UTM function: `utm_source=taxscan-digest&utm_medium=email&utm_campaign=digest-YYYYMMDD-free&utm_content=item3\|ad-<id>-slot2`. **Size budget:** rendered bytes + (number of links × 150 B for Mailercloud's tracking rewrite) must stay under `DIGEST_MAX_HTML_KB` (90). It warns at 75 KB. Over budget, the lowest-ranked MAIN items are dropped until the email fits, and the drop is logged. |
 | `runner.ts` | `advanceRun()`, the state machine and the only door (§2.1). Each step first claims its row with a conditional update (`updateMany where state = X and (stepClaimedAt is null or older than 10 min)`), the same claim pattern as `Campaign.claimedAt`. |
 | `retryPolicy.ts` | A pure function, `nextAttemptAt(firstFailureAt, attempts, cutoff)`: +1 m, +5 m, +15 m, then +1 h each, returning `null` at or past 17:00 IST. |
-| `scheduler.ts` | node-cron `* * * * *` (tz Asia/Kolkata), guarded by an in-process lock. Creates today's run at T−60, then hands everything to `advanceRun`. Runs the cut-off sweep at 17:00. |
-| `health.ts` | Calls `GET client-details` at T−75 and at T−15, then hourly while a FATAL error is open. Checks the webhook status once a day. |
+| `scheduler.ts` | node-cron `* * * * *` (tz Asia/Kolkata), guarded by an in-process single-flight lock. Creates today's run at T−75 (the first health check; *built task 13: T−60 in the original plan, moved so the 06:15 check has a run to record on*), runs the complaint-rate check once, the health checks, then from T−60 hands the run to `advanceRun` every minute. From 17:00 every tick runs the runner's cut-off sweep; an earlier day left open is swept too. One log line per state change. |
+| `health.ts` | Calls `GET /v1/client/plan` at T−75 and at T−15, then hourly while a FATAL error is open; a pass after a FATAL-failed variant calls `advanceRun(run, 'health')`. Reads the webhook status (`GET /v1/webhooks/detail/{id}`) once a day when `MAILERCLOUD_WEBHOOK_ID` is set. |
 | `webhook.ts` | Verifies the token, normalises the payload, writes EmailEvent (deduped) and upserts EmailSuppression. Answers 200 quickly for any event type it recognises or ignores. |
-| `alerts.ts` | Sends one email per (run, kind) to active ADMIN users through the existing `defaultEmailSender` (ElasticEmail), and sends a matching "recovered" note. Never throws. The banner stays up even if the alert email itself fails. |
+| `alerts.ts` | Sends one email per (run, kind) to active ADMIN users through the existing `defaultEmailSender` (ElasticEmail), and sends a matching "recovered" note. Never throws. The banner stays up even if the alert email itself fails. *Task 13:* "ready for approval" and "not approved yet" go to editors (active ADMIN **and** PUBLISHER users), once per run each, with a link to the Digests screen. |
 | `testSend.ts` | Creates a `TEST-` draft and calls `testSend` for allowed internal addresses only. |
 
 ### 4.1 Selection, ranking, freeze (builder)
@@ -453,7 +453,7 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | Variable | Default | What it does | Who sets it |
 |---|---|---|---|
 | `DIGEST_ENABLED` | `false` | Master switch. Off: the scheduler logs `[digest] disabled (set DIGEST_ENABLED=true to start)` — the line exists only in the new build, so it is the **marker that proves a backend-only deploy** — the Digests screen says "switched off", and every send/retry door answers "not enabled". On: builds, renders, creates **drafts**, previews; still sends nothing to an audience unless the next flag is on. Ads and Templates work whatever its value. | Owner |
-| `DIGEST_SEND_LIVE` | `false` | Allows `schedule()` to the configured audiences. Off: a run stops at CREATED, the history shows "preview only", and Send now / Retry now are greyed out (the doors answer 409 `send_live_off`), so in preview mode nothing — no button, no tick — resumes a FAILED variant that day. **The rollback switch** from stage 2 on. | Owner |
+| `DIGEST_SEND_LIVE` | `false` | Allows `schedule()` to the configured audiences. Off: a run stops at CREATED and the history shows "preview only". Send now is greyed out (409 `send_live_off`); **Retry now still works** (owner decision, 23 Oct 2026), and so does the health-check recovery: they resume a FAILED variant up to and including **creating its draft** (`is_publish "0"`) and never schedule (the runner's `preview_only` gate), so the shadow week can exercise recovery. **The rollback switch** from stage 2 on. | Owner |
 | `DIGEST_APPROVAL_REQUIRED` | `true` | An editor must Approve before the send; unapproved at the cut-off = skipped (`not_approved`). Off = auto-send (owner decides before stage 4). The sanity hold (> `DIGEST_SANITY_MAX_CANDIDATES`) asks for approval whatever this says. | Owner |
 | `DIGEST_WEBHOOKS_ENABLED` | `false` | Off: `POST /api/webhooks/mailercloud/:token` answers 404 and the history's unsubscribe/bounce/complaint columns show "—". Never sends anything. | Owner |
 | `DIGEST_RETENTION_ENABLED` | `false` | Nightly fold of `EmailEvent` > 90 days into `DigestSend.rolled*` and html nulled > 30 days (`docs/DIGEST_RETENTION.md`). Independent of `DIGEST_ENABLED`. Dry run: `npm run digest-retention`. | Owner |
@@ -466,6 +466,7 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | `MAILERCLOUD_WEBHOOK_TOKEN` | — | ≥ 32 characters (64 hex = `openssl rand -hex 32`), the last path segment of the webhook URL. Shorter = treated as unset (404). | Owner (secret) |
 | `MAILERCLOUD_WEBHOOK_TOKEN_PREVIOUS` | — (empty) | Rotation only: the old token, still accepted until Mailercloud's webhook URL is updated; then unset it. | Owner (secret) |
 | `MAILERCLOUD_SENDER_NAME` / `_SENDER_EMAIL` / `_REPLY_EMAIL` | — | From name, From address (must be a verified sender in Mailercloud) and the monitored reply address. A `noreply`-style address is refused at boot and at build. | Platform |
+| `MAILERCLOUD_WEBHOOK_ID` | — (optional) | Task 13. The id of our webhook in Mailercloud. Set: `health.ts` reads its status once a day (`GET /v1/webhooks/detail/{id}`; inactive → `webhook_disabled` alert + banner; an unreadable answer is retried at the next health slot, never taken as "off"). Unset: only the liveness check watches the webhook. Not a secret. | Platform |
 
 **Audiences (fail closed)**
 
@@ -486,6 +487,7 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | `DIGEST_CUTOFF` | `17:00` | IST. After it nothing is scheduled; unsent variants are skipped and roll forward. Owner ruling. | Default |
 | `DIGEST_MAX_ITEMS` / `_MIN_ITEMS` / `_ROLLFORWARD_ITEMS` | `12` / `5` / `3` | Story cap; fewer MAIN stories than the minimum = `too_little_news` skip; ICYMI stories carried from a skipped/partial day. | Default |
 | `DIGEST_SANITY_MAX_CANDIDATES` | `150` | More candidates than this (normal ~25–35) holds the run for an editor even with approval off (the re-platform guard). | Default |
+| `DIGEST_COMPLAINT_HOLD_PCT` | `0.3` | Task 13 (§8 last row). The previous send's spam-complaint rate (complaints ÷ delivered, %, per version) **above** this holds the next day's run for an editor's approval even with approval off. An unknown rate (no webhook proof, or no delivered count) never holds; it shows on the banner while sending is live. | Default |
 | `DIGEST_MAX_HTML_KB` / `_HTML_WARN_KB` | `90` / `75` | Size budget (html + 150 B per link for Mailercloud's tracking rewrite): warn / refuse. Gmail clips at ~102 KB. | Default |
 | `DIGEST_MAX_IMAGE_KB` | `600` | Distinct ad-image weight per email; above it the build logs a warning (never refuses). | Default |
 | `DIGEST_ASSET_BASE_URL` | `https://push.taxscan.in` | Where `/email-assets/<sha>.<ext>` and `/email/…` (logo) are served from. https, no trailing slash. | Default |
@@ -506,11 +508,12 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 
 | Time | What happens |
 |---|---|
-| 06:15 | Health check |
-| 06:30 | Build, freeze, render, create both drafts. In approval mode, editors get a "ready for approval" email. |
-| 07:15 | Health check |
-| 07:30 | Schedule (send now) if approved |
-| +10 m, +30 m, +60 m, then hourly | Verify the send (status poll, or the webhook marks it SENT earlier) |
+| 06:15 (T−75) | Today's run is created; the previous send's complaint rate is checked once (hold above `DIGEST_COMPLAINT_HOLD_PCT`); health check; the daily webhook status read (with `MAILERCLOUD_WEBHOOK_ID`) |
+| 06:30 (T−60) | Build, freeze, render, create both drafts (failures retry +1/+5/+15 min, then hourly). In approval mode (or a sanity/complaint hold), editors get a "ready for approval" email (in preview mode: "ready to review"). |
+| 07:15 (T−15) | Health check; then hourly while a FATAL error is open (a pass resumes a FATAL-failed variant) |
+| 07:30 (T) | Schedule (send now) if approved, or when approval is not required |
+| +10 m, +30 m, +60 m, then hourly | Verify the send (status poll; a `campaign_sent` webhook brings the next poll forward) |
+| 08:30 (T+60) | "Not approved yet" email to editors, once, while sending is live and an approval is still pending |
 | 17:00 | Cut-off sweep: anything not SCHEDULED or SENT is marked SKIPPED, and alerts go out |
 | 03:45 | Nightly retention: fold EmailEvent rows, null old html |
 
@@ -587,7 +590,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
 
 | Failure | Detection | Behaviour | Alert |
 |---|---|---|---|
-| Health check fails at T−75 or T−15 | `health()` error | The run continues; the send attempt decides | Email + banner ("Mailercloud unreachable / key rejected") |
+| Health check fails at T−75 or T−15 | `health()` error | The run continues; the send attempt decides. FATAL (key rejected, plan): re-checked hourly until it passes. *Built task 13.* | Email + banner ("Mailercloud unreachable / key rejected"); a "answering again" note when it passes (only if the failure was emailed) |
 | Build throws (DB blip) | Exception in builder | `BUILD_FAILED`, retry policy, window recomputed on retry | After the 3rd failure |
 | Too little news | MAIN < 5 | SKIPPED `too_little_news`; items roll forward | Banner info only (not an error) |
 | Sanity guard (re-platform) | candidates > 150 | Hold for an editor; at cut-off SKIPPED `sanity_hold_expired` | Email at once |
@@ -598,17 +601,19 @@ All three screens use the existing visual system, `stack` tables on phones and `
 | Schedule fails | RETRYABLE / AMBIGUOUS | Check `status(id)` first; if it is already scheduled or sending, advance. Otherwise re-schedule the **same id**. A second campaign is never created. | Email |
 | Scheduled, but not sent after 3 h | Status poll | FAILED → re-issue schedule on the same id, within the window | Email |
 | Mailercloud stops partway | `campaign_error` webhook or status with `reached < targeted` | PARTIALLY_SENT; no re-send; top 3 go to tomorrow's ICYMI for that audience | Email + banner |
-| Not approved by T | Approval PENDING | Wait; the tick re-checks every minute; at 17:00 SKIPPED `not_approved` | Banner from T; email at T+60 m |
+| Not approved by T | Approval PENDING | Wait; the tick re-checks every minute; at 17:00 SKIPPED `not_approved` | Banner from T; email to editors at T+60 m, once (*built task 13*; live mode only) |
 | Cut-off passes in any non-sent state | 17:00 sweep | SKIPPED `cutoff_passed`; roll forward | Email |
 | Our app down at T | Next tick after restart | It is just a late attempt; same version; before 17:00 | Banner |
 | Two containers during deploy | Step claim (`stepClaimedAt`) | The second container sees the claim and does nothing | — |
-| Webhook deactivated by Mailercloud | Daily webhook status check; or SENT by poll with no `campaign_sent` webhook within 2 h | Polling still verifies sends; suppression copy lags | Email + banner ("re-enable webhook") |
+| Webhook deactivated by Mailercloud | Daily webhook status check (with `MAILERCLOUD_WEBHOOK_ID`, *task 13*); or SENT by poll with no `campaign_sent` webhook within 2 h | Polling still verifies sends; suppression copy lags | Email + banner ("re-enable webhook") |
 | Webhook replay or duplicate | `dedupeKey` unique | Ignored, 200 | — |
 | Opt-out webhook without a readable address | `no_address` count per delivery | 200 (a retry would not help); a daily `NO_ADDRESS` row, no PII; not suppressed in our copy (Mailercloud still honours its own list) | Log warning + banner for 24 h |
 | Reader re-subscribes (CMS Feed 1 consent newer than the suppression) | Feed 1 task | An explicit opt-in dated after `lastSeenAt` deletes the suppression (UNSUBSCRIBE, HARD_BOUNCE or SPAM; never MANUAL), `RESUBSCRIBE` event + audit by hash; stale consent state lifts nothing | — |
 | ElasticEmail itself down | Alert send fails | Logged; the banner is the backstop | Banner |
 | `DIGEST_SEND_AT` set inside quiet hours | Boot validation | Scheduler not started | Boot log + banner `config_invalid` |
-| Complaint rate > 0.3% on a send | Webhook counts / reached | Hold tomorrow's run for approval even if approval is off | Email |
+| Complaint rate > 0.3% on a send | Webhook counts / reached (`digestSendStats`), judged once when the next run opens | Hold tomorrow's run for approval even if approval is off; not approved by 17:00 → SKIPPED `complaint_hold_expired`. An UNKNOWN rate (no webhook proof) never holds. *Built task 13.* | Email naming the rate + banner; an unknown rate shows on the banner while live |
+| Two campaigns with our exact name (copied by hand) | Name lookup finds 2 | Nothing created or sent; retried on the policy, so it carries on once a person deletes the extra one (*task 13*) | Email + banner ("Two campaigns named … exist; delete the extra one") |
+| Adopted a Mailercloud DRAFT (e.g. after a restore) | Name lookup finds a draft this database did not see made | Adopted, never scheduled without a person's approval of that version, in any mode (*owner decision A, task 13*) | Email + banner |
 
 ---
 
@@ -1256,3 +1261,63 @@ agents.
       extras), each with how to check and what to do if wrong; stages 1–4 with what is on, who receives it, how long,
       go/no-go numbers (complaints < 0.1% from §10; unsubscribes < 0.5% and hard bounces < 2% marked as proposals for the
       owner), rollback flag and who signs off; the night rule, one-a-day, the after-restore step and the unverified list.
+13. **Scheduler tick, health checks, holds and the editor emails.** *Built 2026-10-23 (migration
+    `20261023150000_digest_scheduler_health`: `DigestRun.complaintCheck`, `webhookCheckedAt`, `webhookActive`,
+    `DigestSend.adoptedDraftAt` — new nullable columns on the digest tables only; `scheduler.ts`, `health.ts`,
+    `holds.ts`, `lookup.ts`, `scripts/digest-lookup.ts` (`npm run digest:lookup`); tests `digestTick`, `digestLookup`).*
+    - **The tick** (`digestTick`, node-cron `* * * * *` Asia/Kolkata, single-flight like the pacer). Per portal: sweep
+      any earlier day (≤ 7) still open (`advanceRun` on a past day only ever sweeps — never sent late); then today along
+      §5: before T−75 nothing; from T−75 `ensureRun` + the complaint check (once) + `runHealthChecks`; from T−60
+      `advanceRun(run, 'cron')` every minute (the runner's gates decide everything: build backoff, the pending-variant
+      render, approval, quiet hours on a fresh clock, verification polls, the cut-off sweep from 17:00). A day first seen
+      after its cut-off is not created. Before the build, alerts raised at T−75 are mailed by the tick itself. The
+      runner's step lines go to a collector (`AdvanceDeps.log`); the tick prints **one** line when the run's state
+      signature changes (build, approval, skip reason, health, webhook status, each variant's state/attempts/error kind/
+      id/approval), never on an idle minute. Cross-process safety is the runner's (claims, stale takeover after 10 min,
+      write-ahead markers); tests cover two tickers at once, a restart mid-create and mid-schedule.
+    - **Deviation:** the run row is created at T−75, not T−60, so the 06:15 health check has a run to record on and to
+      alert through. Nothing is built before T−60 (the tick gates it; the screen shows "No digest has been built today
+      yet" for a run with no variants).
+    - **`health.ts`:** slots T−75 / T−15, hourly while FATAL is open (the last check failed FATAL, or a variant is FAILED
+      with a non-terminal FATAL error); never at/after the cut-off; one check covers missed slots after a restart; claimed
+      on `healthCheckedAt` (two replicas → one call). Result on `healthOk` / `healthError` ("KIND: redacted"). Failure →
+      `health_failed` (email + banner). Pass → banner clears; `health_recovered` email only if the failure was emailed
+      (the `resolved` rule, generalised as `addRecoveryMarker`); with a FATAL-failed variant open, `advanceRun(run,
+      'health')` before the cut-off — the runner resumes FATAL only, never a provider-FAILED (terminal) campaign. The
+      daily webhook read uses `GET /v1/webhooks/detail/{id}` (in the HTTP fake; the reply shape is UNVERIFIED — `status`
+      Active/1 vs Inactive/0/Disabled, anything else throws and is retried at the next slot).
+    - **Complaint hold** (`holds.ts` is now the one "who must approve" rule for runner, screen and banner): judged once
+      when the run opens, per version of the most recent earlier run that went out (≤ 7 days), rate = complaints
+      (`digestSendStats`, rolled + live) ÷ `reached`. Above `DIGEST_COMPLAINT_HOLD_PCT` (0.3, strictly above) → run
+      approval PENDING, gate `complaint_hold`, cut-off reason `complaint_hold_expired`, alert `complaint_hold` naming the
+      rate. **Unknown is not 0 and never holds** (no webhook proof, webhooks off, or no delivered count): holding on
+      missing data would stop every digest whenever the webhook is down. It is shown instead: `complaint_rate_unknown`,
+      the lowest banner, only while sending is live; with no proof for a send polled SENT ≥ 2 h ago the higher
+      `webhook_silent` banner shows first (the cause).
+    - **Editor emails** (`ready_for_approval` at the build when approval is needed, worded "ready to review" in preview
+      mode; `not_approved_yet` from T+60 to the cut-off, live mode only, while the run's approval is PENDING or a version
+      waits for its own; a HELD run is not nagged): once per run each, to active ADMIN + PUBLISHER users, with a link to
+      `<APP_BASE_URL or DIGEST_ASSET_BASE_URL>/admin/digests`. The design never keeps internal emails out of quiet hours
+      (its 06:30 row is inside them), so they are not held for 07:00.
+    - **Retry now in preview mode** (owner decision): the route no longer refuses it with `send_live_off` (Send now
+      still is); the runner resumes the variant up to the draft and stops at `preview_only`. The screen enables Retry
+      now in preview mode and says so in its confirm text; audit rows carry `previewOnly: true`.
+    - **Adopted drafts (owner decision A):** a lookup that finds today's campaign as a DRAFT (or whose status cannot be
+      read) adopts it with `adoptedDraftAt` + `ownApprovalRequired`: never scheduled until a person approves that
+      version, **in every mode**, and `adopted_existing` is raised for it too ("the Mailercloud draft may hold content
+      from before the restore"). Chosen as the simplest safe rule: neither the lookup nor the status read can show the
+      draft's content, so nothing can confirm it matches our frozen html. It also covers a crash between a create and
+      its persist (the draft is then ours, but unprovably so). The banner `adopted_draft` asks to check it in
+      Mailercloud — delete it there (a fresh one is made at the next check) or approve.
+    - **Duplicate names (7b):** `findCampaignByName` with two exact matches throws RETRYABLE with code
+      `duplicate_name`; the runner stores `duplicate_name: two campaigns named "…" exist in Mailercloud`, raises
+      `duplicate_name` (blocking kind) instead of `retrying`, and keeps retrying on the policy; banner
+      `duplicate_name` names the campaign.
+    - **Read-only lookup CLI:** `npm run digest:lookup -- --date YYYY-MM-DD [--audience FREE|PREMIUM] [--portal …]` builds
+      the Mailercloud client with `readOnly: true` (every write refused in `call()` before any request) and refuses any
+      other client; lists every exact-name campaign (drafts and finished, as far as the search returns them) with id,
+      Mailercloud's status word, our state and reach; never the key or an address. Reads no database.
+    - **Small fixes:** the fatal startup log in `src/index.ts` goes through `safeErrorLog`; the `safeErrorLogSites`
+      source scan now also reads `${…}` expressions inside template literals and flags `{ cause: err }`-style fields,
+      raw `err.message` / `e.message` and `String(err)` (no new hits in `src/`); E2E_MOCK_SENDER's in-memory sender is
+      shared by the routes and the tick.

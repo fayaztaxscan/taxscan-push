@@ -107,12 +107,17 @@ describe('startDigestScheduler boot paths', () => {
     expect(warn.mock.calls[0][0]).toMatch(/\[digest\] not configured/);
   });
 
-  it('enabled + configured → logs the schedule it would run, never the key', () => {
+  it('enabled + configured → starts the 1-minute IST tick and logs the schedule, never the key', () => {
     const key = `mc-secret-${uniq()}`;
+    const started: { expression: string; timezone: string }[] = [];
     const state = startDigestScheduler(
       digestCfg({ DIGEST_ENABLED: 'true', MAILERCLOUD_API_KEY: key, DIGEST_TEST_RECIPIENTS: 'qa@example.com' }),
+      undefined,
+      // Never a real cron in a test: record what would be scheduled.
+      { startCron: (expression, _fn, timezone) => (started.push({ expression, timezone }), { stop: () => undefined }) },
     );
     expect(state).toBe('ready');
+    expect(started).toEqual([{ expression: '* * * * *', timezone: 'Asia/Kolkata' }]);
     const line = log.mock.calls[0][0] as string;
     expect(line).toMatch(/build=06:30 send=07:30 cutoff=17:00 IST/);
     expect(line).toMatch(/approval=required sendLive=off webhooks=off/);
@@ -129,9 +134,13 @@ describe('startDigestScheduler boot paths', () => {
   });
 
   it('a send time inside quiet hours is refused at boot and the scheduler is not started', () => {
+    const started: string[] = [];
     const state = startDigestScheduler(
       digestCfg({ DIGEST_ENABLED: 'true', MAILERCLOUD_API_KEY: 'k', DIGEST_SEND_AT: '06:00' }),
+      undefined,
+      { startCron: (e) => (started.push(e), { stop: () => undefined }) },
     );
+    expect(started).toEqual([]);
     expect(state).toBe('config_invalid');
     expect(error.mock.calls[0][0]).toMatch(/\[digest\] config_invalid .*quiet hours/);
     expect(log).not.toHaveBeenCalled();

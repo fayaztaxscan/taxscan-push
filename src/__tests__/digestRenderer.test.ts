@@ -227,7 +227,11 @@ describe('5. no-reply sender / reply address refused', () => {
     expect(startDigestScheduler(cfg({ MAILERCLOUD_API_KEY: 'k', MAILERCLOUD_SENDER_EMAIL: 'no-reply@news.taxscan.in' }), { start: '23:00', end: '07:00' })).toBe(
       'config_invalid',
     );
-    expect(startDigestScheduler(cfg({ MAILERCLOUD_API_KEY: 'k', MAILERCLOUD_SENDER_EMAIL: 'digest@news.taxscan.in' }), { start: '23:00', end: '07:00' })).toBe('ready');
+    // Never a real cron in a test (task 13: 'ready' now starts the 1-minute tick).
+    const noCron = () => ({ stop: () => undefined });
+    expect(
+      startDigestScheduler(cfg({ MAILERCLOUD_API_KEY: 'k', MAILERCLOUD_SENDER_EMAIL: 'digest@news.taxscan.in' }), { start: '23:00', end: '07:00' }, { startCron: noCron }),
+    ).toBe('ready');
   });
 });
 

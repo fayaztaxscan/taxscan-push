@@ -21,7 +21,7 @@ import {
  * `withLookup: true` gives it the optional `findCampaignByName`.
  */
 
-type Method = 'health' | 'createDraft' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName';
+type Method = 'health' | 'createDraft' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName' | 'webhookStatus';
 
 /** `applied`: the provider DID act, then the reply was lost (the call still throws). */
 type Failure = { kind: SenderErrorKind; code?: string; http?: number; applied?: boolean; notSent?: boolean };
@@ -39,6 +39,8 @@ export class FakeSender implements DigestSender {
   private statusOverride: CampaignStatus | null = null;
   /** Artificial latency per method, to hold a step claim open in concurrency tests. */
   delayMs: Partial<Record<Method, number>> = {};
+  /** What `webhookStatus()` reports (task 13); script a failure with `fail('webhookStatus', …)`. */
+  webhookActive = true;
   findCampaignByName?: (name: string) => Promise<{ campaignId: string } | null>;
 
   constructor(opts: { withLookup?: boolean } = {}) {
@@ -139,5 +141,10 @@ export class FakeSender implements DigestSender {
 
   async testSend(campaignId: string, emails: string[]): Promise<void> {
     await this.enter('testSend', [campaignId, emails.length]);
+  }
+
+  async webhookStatus(webhookId: string): Promise<{ active: boolean }> {
+    await this.enter('webhookStatus', [webhookId]);
+    return { active: this.webhookActive };
   }
 }

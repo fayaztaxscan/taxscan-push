@@ -80,6 +80,14 @@ function intFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+/** Positive finite number from `src[name]` (decimals allowed), else `fallback`. */
+function posNumFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = src[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /**
  * Automatic daily email digest (docs/EMAIL_DIGEST_DESIGN.md §5). Every flag
  * defaults OFF except DIGEST_APPROVAL_REQUIRED, which defaults ON (an editor
@@ -110,6 +118,10 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
     assetBaseUrl: (src.DIGEST_ASSET_BASE_URL ?? 'https://push.taxscan.in').trim().replace(/\/+$/, ''),
     htmlRetentionDays: intFrom(src, 'DIGEST_HTML_RETENTION_DAYS', 30),
     emailEventRetentionDays: intFrom(src, 'EMAIL_EVENT_RETENTION_DAYS', 90),
+    // Task 13 (design §8): a previous send's spam-complaint rate (complaints / delivered, in %)
+    // ABOVE this holds the next day's run for an editor's approval even when approval is off.
+    // An unknown rate (no webhook proof) never holds; it is shown on the banner instead.
+    complaintHoldPct: posNumFrom(src, 'DIGEST_COMPLAINT_HOLD_PCT', 0.3),
     // Required at build time (later task); the build fails closed when empty.
     postalAddress: (src.DIGEST_POSTAL_ADDRESS ?? '').trim(),
     // Internal addresses allowed for test sends, besides active app users. Never logged.
@@ -137,6 +149,9 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
       senderName: src.MAILERCLOUD_SENDER_NAME ?? '',
       senderEmail: src.MAILERCLOUD_SENDER_EMAIL ?? '',
       replyEmail: src.MAILERCLOUD_REPLY_EMAIL ?? '',
+      // Task 13, optional: the id of our webhook in Mailercloud. Set → health.ts reads its status
+      // once a day (GET /v1/webhooks/detail/{id}); unset → only the liveness check watches it.
+      webhookId: (src.MAILERCLOUD_WEBHOOK_ID ?? '').trim(),
     },
   };
 }

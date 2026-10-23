@@ -190,18 +190,27 @@ describe('fresh run, provider already has today\'s campaign', () => {
     expect((await sendOf(run.id, 'PREMIUM')).state).toBe('SCHEDULED');
   });
 
-  it('DRAFT (left by a crashed earlier run) → adopted, not duplicated; scheduled once, after a fresh status check', async () => {
+  it('DRAFT (left by a crashed earlier run) → adopted, not duplicated; held for a person (decision A), then scheduled once after a fresh status check', async () => {
     const { run, sender, ids } = await freshRun('DRAFT');
     await step(run.id, 'cron', ist(6, 30), sender);
     const s = await sendOf(run.id);
     expect(s.state).toBe('CREATED');
     expect(s.mcCampaignId).toBe(ids.FREE);
     expect(s.scheduleAttemptedAt).not.toBeNull(); // the schedule step must ask the provider first
+    expect(s.adoptedDraftAt).not.toBeNull();
+    expect(s.ownApprovalRequired).toBe(true);
     expect(sender.count('createDraft')).toBe(0);
-    expect((await alertsOf(run.id)).adopted_existing).toBeUndefined(); // a draft is not "ahead" of us
+    // Owner decision A (2026-10-23): an adopted draft raises adopted_existing too, naming the draft.
+    expect((await alertsOf(run.id)).adopted_existing).toMatchObject({ providerState: 'DRAFT', draft: true });
 
+    // Approval is OFF in this config, yet the adopted draft is not scheduled without a person.
+    const r = await step(run.id, 'cron', ist(7, 30), sender);
+    expect(r.steps).toContain('FREE:wait:awaiting_variant_approval');
+    expect(sender.count('schedule')).toBe(0);
+
+    await prisma.digestSend.updateMany({ where: { runId: run.id }, data: { approvedAt: ist(7, 31) } });
     const statusBefore = sender.count('status');
-    await step(run.id, 'cron', ist(7, 30), sender);
+    await step(run.id, 'cron', ist(7, 32), sender);
     expect(sender.count('status')).toBeGreaterThan(statusBefore);
     expect(sender.count('schedule')).toBe(2);
     expect(sender.calls.filter((c) => c.method === 'schedule').map((c) => c.args[0]).sort()).toEqual([ids.FREE, ids.PREMIUM].sort());
@@ -213,6 +222,7 @@ describe('fresh run, provider already has today\'s campaign', () => {
     const { run, sender, ids } = await freshRun('DRAFT');
     await step(run.id, 'cron', ist(6, 30), sender);
     sender.campaigns.get(ids.FREE)!.state = 'SCHEDULED';
+    await prisma.digestSend.updateMany({ where: { runId: run.id }, data: { approvedAt: ist(7, 0) } });
     await step(run.id, 'cron', ist(7, 30), sender);
     const calls = sender.calls.filter((c) => c.method === 'schedule').map((c) => c.args[0]);
     expect(calls).toEqual([ids.PREMIUM]);
@@ -244,14 +254,20 @@ describe('fresh run, provider already has today\'s campaign', () => {
     expect(sender.count('schedule')).toBe(0);
   });
 
-  it('status unreadable at adoption → CREATED, and schedule() waits until the provider answers DRAFT', async () => {
+  it('status unreadable at adoption → CREATED, held for a person like a draft; schedule() still asks the provider first', async () => {
     const { run, sender } = await freshRun('SENT');
     sender.fail('status', 'RETRYABLE', 2);
     await step(run.id, 'cron', ist(6, 30), sender);
     const s = await sendOf(run.id);
     expect(s.state).toBe('CREATED');
     expect(s.scheduleAttemptedAt).not.toBeNull();
-    await step(run.id, 'cron', ist(7, 30), sender); // status now answers SENT
+    expect(s.adoptedDraftAt).not.toBeNull(); // content unconfirmed: decision A applies
+    expect((await alertsOf(run.id)).adopted_existing).toMatchObject({ providerState: 'UNKNOWN', draft: true });
+    await step(run.id, 'cron', ist(7, 30), sender);
+    expect(sender.count('schedule')).toBe(0);
+    // Approved: the provider is asked first, says SENT, and nothing is scheduled.
+    await prisma.digestSend.updateMany({ where: { runId: run.id }, data: { approvedAt: ist(7, 40) } });
+    await step(run.id, 'cron', ist(7, 41), sender);
     expect(sender.count('schedule')).toBe(0);
     expect(sender.count('createDraft')).toBe(0);
     expect((await sendOf(run.id)).state).not.toBe('PENDING');

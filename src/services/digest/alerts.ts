@@ -32,6 +32,15 @@ import { digestRunState } from './runState';
  * Never throws. Never puts an API key, a reader address or a full provider
  * error into an email or a log line: every free-text detail is re-redacted and
  * shortened here even though the runner already redacted it.
+ *
+ * Task 13: two kinds go to EDITORS (active ADMIN and PUBLISHER users — the people
+ * who may approve, design §12 "Roles"), not admins only: `ready_for_approval`
+ * (raised at the build in approval mode) and `not_approved_yet` (raised by the
+ * scheduler at the send time + 60 min while approval is still pending). Both are
+ * once per run like every kind, and both carry a link to the Digests screen.
+ * The design does not keep these internal emails out of quiet hours (its 06:30
+ * row sends "ready for approval" inside them), so neither waits for 07:00.
+ * `health_failed` / `health_recovered` are the health check's pair (`health.ts`).
  */
 
 export type AlertKind =
@@ -50,6 +59,13 @@ export type AlertKind =
   | 'sanity_hold'
   | 'webhook_silent'
   | 'template_fallback'
+  | 'duplicate_name'
+  | 'ready_for_approval'
+  | 'not_approved_yet'
+  | 'health_failed'
+  | 'health_recovered'
+  | 'complaint_hold'
+  | 'webhook_disabled'
   | 'resolved';
 
 /**
@@ -65,7 +81,23 @@ export const BLOCKING_KINDS: ReadonlySet<string> = new Set([
   'retrying',
   'build_failed',
   'sanity_hold',
+  'duplicate_name',
 ]);
+
+/** Kinds emailed to editors (active ADMIN + PUBLISHER) instead of admins only. */
+export const EDITOR_KINDS: ReadonlySet<string> = new Set(['ready_for_approval', 'not_approved_yet']);
+
+/** Kinds that report progress, not a problem: never "open" on the status payload. */
+export const INFO_KINDS: ReadonlySet<string> = new Set(['ready_for_approval', 'health_recovered', 'resolved']);
+
+/** The problems a `health_recovered` note follows (only if one of them was emailed). */
+export const HEALTH_PROBLEM_KINDS: ReadonlySet<string> = new Set(['health_failed']);
+
+/** The Digests screen, absolute, for links in editor emails. */
+export function digestsScreenUrl(cfg: Pick<DigestEnv, 'assetBaseUrl'> = env.digest): string {
+  const base = (env.appBaseUrl || cfg.assetBaseUrl || 'https://push.taxscan.in').replace(/\/+$/, '');
+  return `${base}/admin/digests`;
+}
 
 /** Skip reasons that are routine while DIGEST_SEND_LIVE is off (drafts only, nothing is meant to send). */
 const PREVIEW_ROUTINE_SKIPS = new Set(['cutoff_passed', 'not_approved']);
@@ -132,6 +164,7 @@ const SKIP_WORDS: Record<string, string> = {
   held_by_editor: 'an editor held it',
   sanity_hold_expired: 'it was held for unusually many stories and not approved before the cut-off',
   build_failed: 'it could not be built before the cut-off',
+  complaint_hold_expired: 'it was held after a high spam-complaint rate and not approved before the cut-off',
   config_invalid: 'the digest settings are incomplete',
   too_little_news: 'there was too little news',
 };
@@ -201,6 +234,14 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         todo: 'Delete the spare draft in Mailercloud when convenient.',
       };
     case 'adopted_existing':
+      if (m.draft === true) {
+        return {
+          short: 'Digest draft already in Mailercloud — held for approval',
+          what: `${who}: Mailercloud already had today's ${m.providerState === 'UNKNOWN' ? 'campaign (its status could not be read)' : 'draft'}${m.campaignName ? ` "${safeDetail(m.campaignName, cfg)}"` : ''}, which this system did not see being made. The Mailercloud draft may hold content from before a database restore.`,
+          did: 'Adopted it without sending. It is not sent until a person approves it, even with automatic sending on.',
+          todo: 'In Mailercloud, open that draft: if it is not today’s content, delete it (a fresh one is made at the next check). If it is right, approve that version in Admin → Digests.',
+        };
+      }
       return {
         short: 'Digest already in Mailercloud — adopted, not re-sent',
         what: `${who}: Mailercloud already had today's campaign${m.campaignName ? ` "${safeDetail(m.campaignName, cfg)}"` : ''}${typeof m.providerState === 'string' ? ` (${safeDetail(m.providerState.toLowerCase(), cfg)})` : ''} before this system had sent anything. This usually follows a database restore.`,
@@ -285,6 +326,74 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         todo: 'Open Admin → Templates, run the checklist on that template and fix it (or revert to the previous one). Tomorrow uses it again unless it is fixed or replaced.',
       };
     }
+    case 'duplicate_name':
+      return {
+        short: 'Two digest campaigns with the same name in Mailercloud',
+        what: `${who}: Mailercloud has two campaigns named${m.campaignName ? ` "${safeDetail(m.campaignName, cfg)}"` : ' like today’s digest'}, so the system cannot tell which one is ours.`,
+        did: `Paused — nothing is created or sent while there are two. It checks again by itself (+1, +5, +15 minutes, then hourly) until ${cutoff}.`,
+        todo: 'In Mailercloud, delete the extra campaign with that name (keep the one that was sent, if any). The digest carries on by itself at the next check.',
+      };
+    case 'ready_for_approval': {
+      const preview = m.preview === true;
+      const why =
+        m.reason === 'complaint_hold'
+          ? ' It needs an approval today because yesterday’s spam-complaint rate was high.'
+          : m.reason === 'sanity_hold'
+            ? ' It needs an approval today because it found unusually many stories.'
+            : '';
+      const names = Array.isArray(m.audiences) && m.audiences.length
+        ? (m.audiences as string[]).map((a) => (a === 'PREMIUM' ? 'Premium' : 'Free')).join(' and ')
+        : 'Both';
+      return {
+        short: preview ? "Today's digest is ready to review" : "Today's digest is ready for approval",
+        what: `${names} ${Array.isArray(m.audiences) && m.audiences.length === 1 ? 'version is' : 'versions are'} built and frozen.${why}`,
+        did: preview
+          ? 'Preview only: sending is switched off (DIGEST_SEND_LIVE), so nothing goes to readers.'
+          : `Waiting for an editor. It goes out at ${cfg.sendAt} IST once approved; not approved by ${cutoff}, it is skipped.`,
+        todo: `Open the Digests screen (${digestsScreenUrl(cfg)}), read the preview, then ${preview ? 'compare it with the hand-made digest.' : 'press Approve (or Hold).'}`,
+      };
+    }
+    case 'not_approved_yet':
+      return {
+        short: "Today's digest is still waiting for approval",
+        what: `Today's digest was due at ${cfg.sendAt} IST and nobody has approved it yet.`,
+        did: `Waiting — it is not sent without an approval. Not approved by ${cutoff}, it is skipped and its top stories roll into the next digest.`,
+        todo: `Open the Digests screen (${digestsScreenUrl(cfg)}) and press Approve or Hold.`,
+      };
+    case 'health_failed':
+      return {
+        short: m.kind === 'FATAL' ? 'Mailercloud rejected the health check' : 'Mailercloud unreachable',
+        what: `The Mailercloud health check failed${m.error ? ` (${safeDetail(m.error, cfg)})` : ''}.`,
+        did:
+          m.kind === 'FATAL'
+            ? 'The digest carries on, but a send would be refused the same way. The check repeats every hour until it passes.'
+            : 'The digest carries on; the send attempt decides. The check repeats before the send.',
+        todo: m.kind === 'FATAL' ? 'Check the Mailercloud API key and the account (plan, quota) in Railway and Mailercloud.' : 'Nothing yet. If it keeps failing, check Mailercloud’s status.',
+      };
+    case 'health_recovered':
+      return {
+        short: 'Mailercloud answering again',
+        what: 'The Mailercloud health check passes again.',
+        did: m.resumed ? 'A digest version stopped by the earlier error was picked up again with the same frozen email.' : 'Nothing else needed doing.',
+        todo: 'Nothing to do. Admin → Digests shows the current state.',
+      };
+    case 'complaint_hold': {
+      const rate = typeof m.ratePct === 'number' ? `${m.ratePct.toFixed(2)}%` : 'above the limit';
+      const limit = typeof m.thresholdPct === 'number' ? `${m.thresholdPct}%` : `${cfg.complaintHoldPct}%`;
+      return {
+        short: `Digest held — spam-complaint rate ${rate}`,
+        what: `${who === "Today's digest" ? 'The last' : who.replace(/^The /, 'The last ')} digest${m.previousRunDate ? ` (${safeDetail(m.previousRunDate, cfg)})` : ''} had a spam-complaint rate of ${rate}${typeof m.complaints === 'number' && typeof m.delivered === 'number' ? ` (${m.complaints} of ${m.delivered} delivered)` : ''}, above the ${limit} limit.`,
+        did: `Today's digest is held: it is built as usual but sent only after an editor approves it, even with automatic sending on. Not approved by ${cutoff}, it is skipped.`,
+        todo: 'Find out why readers marked it as spam (content, audience, frequency), then approve or hold today’s digest in Admin → Digests.',
+      };
+    }
+    case 'webhook_disabled':
+      return {
+        short: 'Mailercloud webhook is switched off',
+        what: 'Mailercloud reports our webhook as inactive.',
+        did: 'Sends are still verified by polling; unsubscribes, bounces and spam reports are not being copied to our suppression list meanwhile.',
+        todo: 'In Mailercloud, switch the webhook pointing at push.taxscan.in back on.',
+      };
     case 'resolved':
       return {
         short: 'Resolved — digest sent',
@@ -338,9 +447,14 @@ ${rows.map(([h, v]) => `    <p><strong>${esc(h)}:</strong> ${esc(v)}</p>`).join(
   return { subject, html, text };
 }
 
-/** Active ADMIN users — the alert audience. No separate recipient list. Never logged. */
-export async function digestAlertRecipients(): Promise<string[]> {
-  const users = await prisma.user.findMany({ where: { isActive: true, role: 'ADMIN' }, select: { email: true } });
+/**
+ * The alert audience. No separate recipient list. Never logged.
+ * Active ADMIN users; for an EDITOR_KINDS kind (ready / not approved yet), active
+ * ADMIN and PUBLISHER users — everyone who may approve.
+ */
+export async function digestAlertRecipients(kind?: string): Promise<string[]> {
+  const roles: ('ADMIN' | 'PUBLISHER')[] = kind && EDITOR_KINDS.has(kind) ? ['ADMIN', 'PUBLISHER'] : ['ADMIN'];
+  const users = await prisma.user.findMany({ where: { isActive: true, role: { in: roles } }, select: { email: true } });
   return [...new Set(users.map((u) => u.email.trim().toLowerCase()))];
 }
 
@@ -348,7 +462,8 @@ export type AlertDeps = {
   emailSender?: EmailSender;
   /** Default: `isEmailConfigured()` (ElasticEmail key + from-address present). */
   isConfigured?: () => boolean;
-  recipients?: () => Promise<string[]>;
+  /** Default: `digestAlertRecipients(kind)`. Called once per audience group (admins / editors). */
+  recipients?: (kind?: string) => Promise<string[]>;
   now?: Date;
   cfg?: DigestEnv;
 };
@@ -425,19 +540,36 @@ async function claimKind(runId: string, kind: string, token: string, now: Date):
  * never sent.
  */
 async function addResolvedMarker(runId: string, now: Date): Promise<void> {
-  const base = JSON.stringify({ raisedAt: now.toISOString(), emailedAt: null });
+  await addRecoveryMarker(runId, now, 'resolved', BLOCKING_KINDS);
+}
+
+/**
+ * Writes a recovery marker (`kind`) once, born `emailSkipped` unless one of
+ * `problemKinds` was emailed or is mid-email — decided on the LOCKED row, the same
+ * rule as `resolved`. Used by `resolved` and by the health check's
+ * `health_recovered` (task 13). Returns true when THIS call wrote it.
+ */
+export async function addRecoveryMarker(
+  runId: string,
+  now: Date,
+  kind: string,
+  problemKinds: ReadonlySet<string>,
+  detail: Record<string, unknown> = {},
+): Promise<boolean> {
+  const base = JSON.stringify({ raisedAt: now.toISOString(), emailedAt: null, ...detail });
   const skipped = JSON.stringify({ emailSkipped: 'no_problem_email_was_sent' });
-  const kinds = [...BLOCKING_KINDS];
-  await prisma.$executeRaw`
+  const kinds = [...problemKinds];
+  const n = await prisma.$executeRaw`
     UPDATE "DigestRun"
-       SET alerts = alerts || jsonb_build_object('resolved',
+       SET alerts = alerts || jsonb_build_object(${kind}::text,
              ${base}::jsonb || CASE WHEN EXISTS (
                SELECT 1 FROM jsonb_each("DigestRun".alerts) e
                 WHERE e.key = ANY(${kinds}::text[])
                   AND jsonb_typeof(e.value) = 'object'
                   AND ((e.value ->> 'emailedAt') IS NOT NULL OR (e.value ->> 'emailClaim') IS NOT NULL)
              ) THEN '{}'::jsonb ELSE ${skipped}::jsonb END)
-     WHERE id = ${runId} AND alerts -> 'resolved' IS NULL`;
+     WHERE id = ${runId} AND alerts -> ${kind}::text IS NULL`;
+  return n === 1;
 }
 
 /** Writes the outcome while our claim still stands, and releases the claim. */
@@ -489,7 +621,7 @@ export async function sendDigestAlerts(runId: string, deps: AlertDeps = {}): Pro
       alerts = (fresh?.alerts ?? alerts) as AlertMap;
     }
 
-    let recipients: string[] | null = null;
+    const recipientsBy = new Map<string, string[]>();
     for (const kind of orderKinds(Object.keys(alerts))) {
       const m = alerts[kind];
       if (!m || typeof m !== 'object' || m.emailedAt || m.emailSkipped) continue;
@@ -507,10 +639,15 @@ export async function sendDigestAlerts(runId: string, deps: AlertDeps = {}): Pro
         continue;
       }
 
-      recipients ??= await (deps.recipients ?? digestAlertRecipients)();
+      const group = EDITOR_KINDS.has(kind) ? 'editors' : 'admins';
+      let recipients = recipientsBy.get(group);
+      if (!recipients) {
+        recipients = await (deps.recipients ?? digestAlertRecipients)(kind);
+        recipientsBy.set(group, recipients);
+      }
       if (recipients.length === 0) {
         await finishKind(runId, kind, token, { emailSkipped: 'no_recipients' });
-        warn(`run=${runId} ${kind}: no active ADMIN user to email`);
+        warn(`run=${runId} ${kind}: no active ${group === 'editors' ? 'ADMIN or PUBLISHER' : 'ADMIN'} user to email`);
         continue;
       }
 

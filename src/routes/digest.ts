@@ -28,8 +28,11 @@ import type { MjmlCompiler } from '../services/digest/templates';
  *
  * Send now / Retry now add NO send logic: they call `advanceRun`, which
  * enforces every gate (flag, quiet hours, cut-off, approval, one per day,
- * sanity hold, provider-FAILED terminal). The route adds auth, audit, the
- * DIGEST_SEND_LIVE refusal and the provider-configured check.
+ * sanity / complaint hold, provider-FAILED terminal, preview only). The route
+ * adds auth, audit, the provider-configured check and, for Send now only, the
+ * DIGEST_SEND_LIVE refusal. Owner decision (2026-10-23): Retry now works in
+ * preview mode too — the runner then resumes a failed variant up to and
+ * including the Mailercloud draft and never schedules (`preview_only`).
  *
  * No route returns a reader address or an html body; the html is served only
  * by the preview route, under a CSP that blocks scripts, for a sandboxed iframe.
@@ -185,6 +188,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
             contentPendingAt: true,
             ownApprovalRequired: true,
             approvedAt: true,
+            adoptedDraftAt: true,
           },
         },
       },
@@ -295,7 +299,8 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
     if (trigger === 'send_now' && req.body?.confirm !== true) {
       return res.status(400).json({ error: 'confirm_required', message: 'Send now must be confirmed.' });
     }
-    if (!cfg.sendLive) return res.status(409).json({ error: 'send_live_off', message: SEND_LIVE_OFF });
+    // Send now is a send: refused while sending is off. Retry now is allowed (drafts only then).
+    if (trigger === 'send_now' && !cfg.sendLive) return res.status(409).json({ error: 'send_live_off', message: SEND_LIVE_OFF });
     const sender = senderOf(cfg);
     if (!sender) return res.status(409).json({ error: 'provider_not_configured', message: PROVIDER_OFF });
     const exists = await prisma.digestRun.findUnique({ where: { id: req.params.id }, select: { id: true, runDate: true } });
@@ -325,6 +330,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
         outcome: result.outcome,
         state: result.state,
         ...(result.reason ? { reason: result.reason } : {}),
+        ...(cfg.sendLive ? {} : { previewOnly: true }),
         via: req.user ? 'session' : 'bearer',
       },
       ipAddress: req.ip ?? null,

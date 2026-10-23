@@ -20,6 +20,8 @@ import { writeDigestItems, type DigestSelection, type FrozenItem } from './build
 import { sendDigestAlerts } from './alerts';
 import { recordRunAlert } from './runAlerts';
 import { checkWebhookLiveness } from './webhookLiveness';
+import { awaitingOwnApproval as variantAwaitingOwnApproval, isComplaintHeld, runNeedsApproval } from './holds';
+import { isDuplicateNameError } from './sender';
 
 /**
  * The digest state machine and the ONLY door a digest leaves through
@@ -87,6 +89,19 @@ import { checkWebhookLiveness } from './webhookLiveness';
  *  - The run records the CURRENT build failure (`buildFailure`, `buildError`),
  *    which the cut-off reason and the banner read; the once-per-run alert
  *    markers are history, not current state.
+ * TASK 13 (2026-10-23): the scheduler tick (`scheduler.ts`) is the cron door;
+ * health recovery (`health.ts`) the 'health' door. New here:
+ *  - the complaint hold (`holds.ts`): a run whose previous send's spam rate was
+ *    above DIGEST_COMPLAINT_HOLD_PCT waits for an editor's approval in any mode;
+ *  - owner decision A: a variant that ADOPTS a Mailercloud DRAFT (or a campaign
+ *    whose status cannot be read) needs a person's approval of its own before it
+ *    is scheduled, in any mode, and raises `adopted_existing` (the draft may hold
+ *    content from before a database restore);
+ *  - a lookup that finds two campaigns with the exact name is its own problem
+ *    (`duplicate_name: …`, alert `duplicate_name`), retried on the policy so the
+ *    variant carries on once a person deletes the extra campaign;
+ *  - in approval mode the build raises `ready_for_approval` (an email to editors);
+ *  - `deps.log` lets the tick collect the step lines instead of printing each one.
  */
 
 /** The builder as the runner sees it (default none = task-3 behaviour, no items). */
@@ -124,6 +139,12 @@ export type AdvanceDeps = {
   alerts?: ((runId: string) => Promise<unknown>) | false;
   /** Tests: wait for the alert pass before returning (default false: fire-and-forget). */
   awaitAlerts?: boolean;
+  /**
+   * Where each step line goes (default: `console.log`). The scheduler tick passes
+   * a collector so an idle minute prints nothing and a change prints ONE line.
+   * Lines carry ids and states only — never an address, a key or a full URL.
+   */
+  log?: (line: string) => void;
 };
 
 export type AdvanceResult = {
@@ -152,7 +173,15 @@ export type DigestAlertKind =
   | 'build_failed'
   | 'sanity_hold'
   | 'webhook_silent'
-  | 'template_fallback';
+  | 'template_fallback'
+  // Task 13
+  | 'duplicate_name'
+  | 'ready_for_approval'
+  | 'not_approved_yet'
+  | 'health_failed'
+  | 'health_recovered'
+  | 'complaint_hold'
+  | 'webhook_disabled';
 
 /**
  * `lastError` prefixes that end a FAILED variant for the day: no door resumes
@@ -179,6 +208,7 @@ type Ctx = {
   steps: string[];
   refusals: string[];
   buildContent: BuildContent;
+  emit: (line: string) => void;
 };
 
 /* ------------------------------------------------------------------ */
@@ -358,9 +388,11 @@ async function setRunSkipReason(ctx: Ctx, reason: string): Promise<void> {
 function log(ctx: Ctx, audience: DigestAudience | null, what: string): void {
   ctx.steps.push(audience ? `${audience}:${what}` : what);
   // Ids and states only — never an address, a key or a full URL.
-  // eslint-disable-next-line no-console
-  console.log(`[digest] run=${ctx.run.id}${audience ? ` ${audience}` : ''} ${what} (${ctx.trigger})`);
+  ctx.emit(`[digest] run=${ctx.run.id}${audience ? ` ${audience}` : ''} ${what} (${ctx.trigger})`);
 }
+
+// eslint-disable-next-line no-console
+const consoleLog = (line: string): void => console.log(line);
 
 /* ------------------------------------------------------------------ */
 /* The door                                                            */
@@ -430,6 +462,7 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
     steps: [],
     refusals: [],
     buildContent: deps.buildContent ?? renderDigestContent,
+    emit: deps.log ?? consoleLog,
   };
 
   if (isPastCutoff(now, run.runDate, cfg.cutoff)) {
@@ -647,6 +680,17 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
     await raiseAlert(ctx, 'sanity_hold', { candidates: selection.candidateCount, max: ctx.cfg.sanityMaxCandidates });
     log(ctx, null, `build:sanity_hold:${selection.candidateCount}`);
   }
+  // Re-read the run: the freeze transaction set candidateCount (and a sanity hold's approval).
+  if (built) ctx.run = await prisma.digestRun.findUniqueOrThrow({ where: { id: ctx.run.id } });
+  if (built && approvalNeeded(ctx)) {
+    // Task 13 (design §5 06:30 row): editors hear that today's version is ready to approve.
+    await raiseAlert(ctx, 'ready_for_approval', {
+      audiences: contents.map((c) => c.audience),
+      ...(blocked.length ? { pending: blocked.map((b) => b.audience) } : {}),
+      reason: holdReasonOf(ctx, selection),
+      preview: !ctx.cfg.sendLive,
+    });
+  }
   if (built && selection) log(ctx, null, `build:items:${selection.rows.length}:reads=${selection.reads.used ? selection.reads.source : 'off'}`);
   log(ctx, null, built ? 'build:frozen' : 'build:claimed_elsewhere');
   return built;
@@ -819,17 +863,25 @@ async function skipTooLittleNews(ctx: Ctx, sel: DigestSelection): Promise<boolea
   return false;
 }
 
-/** Whether this run needs an editor's approval at all (approval mode, or the sanity hold). */
+/** Whether this run needs an editor's approval at all (approval mode, sanity hold or complaint hold — `holds.ts`). */
 function approvalNeeded(ctx: Ctx): boolean {
-  return ctx.cfg.approvalRequired || ctx.run.candidateCount > ctx.cfg.sanityMaxCandidates;
+  return runNeedsApproval(ctx.cfg, ctx.run);
+}
+
+/** Why the run needs approval, for the "ready for approval" email: the strongest reason. */
+function holdReasonOf(ctx: Ctx, selection: DigestSelection | null): string {
+  if (isComplaintHeld(ctx.run)) return 'complaint_hold';
+  if (selection?.outcome === 'sanity_hold' || ctx.run.candidateCount > ctx.cfg.sanityMaxCandidates) return 'sanity_hold';
+  return 'approval_required';
 }
 
 /**
- * A variant rendered after the build (owner, 2026-10-23) that has not had its own
- * approval yet. Only in approval mode; outside it nothing changes.
+ * A variant whose approval is its own and not given yet (`holds.ts`): rendered
+ * after the build in approval mode (owner, 2026-10-23), or an adopted Mailercloud
+ * draft in any mode (owner decision A, 2026-10-23).
  */
-function awaitingOwnApproval(ctx: Ctx, send: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt'>): boolean {
-  return approvalNeeded(ctx) && send.ownApprovalRequired && send.approvedAt === null;
+function awaitingOwnApproval(ctx: Ctx, send: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt' | 'adoptedDraftAt'>): boolean {
+  return variantAwaitingOwnApproval(ctx.cfg, ctx.run, send);
 }
 
 /** True while a run over the sanity limit has not been approved by an editor. */
@@ -1144,14 +1196,29 @@ async function adoptExisting(ctx: Ctx, s: DigestSend, claimAt: Date, campaignId:
   }
   const ahead = st !== null && st.state !== 'DRAFT';
   const kept = await persistCreated(ctx, s, campaignId, `create:adopted_existing:${st ? st.state.toLowerCase() : 'status_unknown'}`, {
-    extra: { scheduleAttemptedAt: s.scheduleAttemptedAt ?? ctx.now },
+    extra: {
+      scheduleAttemptedAt: s.scheduleAttemptedAt ?? ctx.now,
+      // Owner decision A (2026-10-23): a draft we did not watch being made may hold
+      // other content (e.g. from before a database restore). It is never scheduled
+      // until a person approves it — its own approval, in every mode (`holds.ts`).
+      ...(ahead ? {} : { adoptedDraftAt: ctx.now, ownApprovalRequired: true, approvedAt: null, approvedByUserId: null }),
+    },
     keepClaim: ahead,
   });
   if (!kept) {
     if (ahead) await finishStep(s.id, claimAt, {}); // another runner saved an id first; let go of the claim
     return null;
   }
-  if (!ahead || !st) return kept;
+  if (!ahead || !st) {
+    await raiseAlert(ctx, 'adopted_existing', {
+      audience: a,
+      campaignName: s.mcCampaignName,
+      providerState: st ? st.state : 'UNKNOWN',
+      draft: true,
+    });
+    log(ctx, a, 'create:adopted_draft:needs_approval');
+    return kept;
+  }
   await raiseAlert(ctx, 'adopted_existing', { audience: a, campaignName: s.mcCampaignName, providerState: st.state });
   if (st.state === 'FAILED') {
     await markProviderFailed(ctx, kept, claimAt, st);
@@ -1234,6 +1301,7 @@ function scheduleBlocker(ctx: Ctx, send: DigestSend): string | null {
   if (!ctx.cfg.sendLive) return 'preview_only';
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
   if (sanityHeld(ctx)) return 'sanity_hold';
+  if (isComplaintHeld(ctx.run) && ctx.run.approval !== 'APPROVED') return 'complaint_hold';
   if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'awaiting_approval';
   if (awaitingOwnApproval(ctx, send)) return 'awaiting_variant_approval';
   if (ctx.clock().getTime() < send.sendAfter.getTime()) return 'waiting_send_time';
@@ -1462,12 +1530,15 @@ async function recordFailure(
   const kind = opts.kind ?? errorKind(err);
   const stepAttempts = s.stepAttempts + 1;
   const stepFirstFailureAt = s.stepFirstFailureAt ?? ctx.now;
+  const duplicate = isDuplicateNameError(err);
   const base: Prisma.DigestSendUpdateManyMutationInput = {
     attempts: s.attempts + 1,
     firstFailureAt: s.firstFailureAt ?? ctx.now,
     stepAttempts,
     stepFirstFailureAt,
-    lastError: redactError(err),
+    // A lookup that found two campaigns with our exact name is a problem a person fixes
+    // (delete the extra one in Mailercloud), not "Mailercloud is not answering".
+    lastError: duplicate ? `duplicate_name: two campaigns named "${s.mcCampaignName}" exist in Mailercloud` : redactError(err),
     lastErrorKind: kind,
   };
   const next = nextAttemptAt(stepFirstFailureAt, stepAttempts, ctx.cutoffAt);
@@ -1510,7 +1581,8 @@ async function recordFailure(
     }
     await finishStep(s.id, claimAt, { ...base, state: 'CREATED', nextAttemptAt: next });
   }
-  if (stepAttempts === 1) await raiseAlert(ctx, 'retrying', { audience: a, step });
+  if (duplicate) await raiseAlert(ctx, 'duplicate_name', { audience: a, campaignName: s.mcCampaignName });
+  else if (stepAttempts === 1) await raiseAlert(ctx, 'retrying', { audience: a, step });
   log(ctx, a, `${step}:${kind.toLowerCase()}:retry_at:${(next as Date).toISOString()}`);
 }
 
@@ -1528,9 +1600,10 @@ async function auditSkipped(ctx: Ctx, send: DigestSend, reason: string): Promise
 /* ------------------------------------------------------------------ */
 
 /** Why an unfinished variant is being skipped at the cut-off. */
-function cutoffReason(ctx: Ctx, send?: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt'>): string {
+function cutoffReason(ctx: Ctx, send?: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt' | 'adoptedDraftAt'>): string {
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
   if (sanityHeld(ctx)) return 'sanity_hold_expired';
+  if (isComplaintHeld(ctx.run) && ctx.run.approval !== 'APPROVED') return 'complaint_hold_expired';
   if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'not_approved';
   // A variant rendered after the run was approved that never got its own approval.
   if (send && awaitingOwnApproval(ctx, send)) return 'not_approved';

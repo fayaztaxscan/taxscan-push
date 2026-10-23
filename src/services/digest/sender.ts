@@ -84,6 +84,25 @@ export interface DigestSender {
    * ambiguity to a human ("Retry now" after checking the provider's UI).
    */
   findCampaignByName?(name: string): Promise<{ campaignId: string } | null>;
+  /**
+   * OPTIONAL (task 13): whether the provider-side webhook with this id is
+   * switched on. Read-only. Throws a SenderError when the answer cannot be read
+   * — an unreadable answer is never "inactive".
+   */
+  webhookStatus?(webhookId: string): Promise<{ active: boolean }>;
+}
+
+/**
+ * `SenderError.code` of a name lookup that found MORE than one campaign with the
+ * exact name (one copied by hand in Mailercloud, say). RETRYABLE so the variant
+ * carries on by itself once a person deletes the extra one, but it is shown as
+ * its own problem ("two campaigns named … exist"), never as "not answering".
+ */
+export const DUPLICATE_NAME_CODE = 'duplicate_name';
+
+/** True for a lookup refused because two campaigns share the exact name. */
+export function isDuplicateNameError(err: unknown): boolean {
+  return err instanceof SenderError && err.code === DUPLICATE_NAME_CODE;
 }
 
 /** Typed provider failure. `code` is the provider's own error code when it has one (e.g. "9002"). */

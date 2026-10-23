@@ -1,5 +1,6 @@
 import { env, type DigestEnv } from '../../lib/env';
 import {
+  DUPLICATE_NAME_CODE,
   SenderError,
   redactError,
   type CampaignReport,
@@ -21,6 +22,11 @@ import {
  *   status, report     GET  /v1/campaign/{id}
  *   testSend           POST /v1/campaign/testmail/{id}   (one call per address)
  *   findCampaignByName POST /v1/campaign/list        (search, exact-name match)
+ *   webhookStatus      GET  /v1/webhooks/detail/{id} (task 13; status Active/1 vs Inactive/0)
+ *
+ * Read-only mode (`readOnly: true`, task 13 — the `digest:lookup` CLI): every
+ * write (createDraft, schedule, testSend) is refused inside `call()` before
+ * any request is made, so such a client can only read.
  *
  * Auth is `Authorization: <key>` — the plain key, NO "Bearer " prefix.
  *
@@ -74,10 +80,12 @@ export type MailercloudOptions = {
   /** Injectable so tests do not wait out the backoff. */
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
+  /** Task 13: refuse every write before a request is made (the read-only lookup CLI). */
+  readOnly?: boolean;
 };
 
 type Mode = 'read' | 'write';
-type Op = 'health' | 'createDraft' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName';
+type Op = 'health' | 'createDraft' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName' | 'webhookStatus';
 type Reply = { status: number; body: unknown };
 
 /** Error codes that mean the connection was never made, so no request byte reached the provider. */
@@ -135,7 +143,13 @@ export class MailercloudSender implements DigestSender {
       backoffCapMs: opts.backoffCapMs ?? MC_BACKOFF_CAP_MS,
       sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
       random: opts.random ?? Math.random,
+      readOnly: opts.readOnly ?? false,
     };
+  }
+
+  /** True when this client refuses every write (createDraft, schedule, testSend). */
+  isReadOnly(): boolean {
+    return this.o.readOnly;
   }
 
   async health(): Promise<void> {
@@ -219,7 +233,57 @@ export class MailercloudSender implements DigestSender {
    * than we are willing to walk, throws — it is never read as "not found".
    */
   async findCampaignByName(name: string): Promise<{ campaignId: string } | null> {
+    const hits = await this.scanByName(name, true);
+    // Two campaigns with exactly our name (one copied and renamed by hand, say) prove
+    // nothing about which one is ours: adopting the wrong one could schedule a draft
+    // while its twin was already sent. Inconclusive, never a guess — and said as such
+    // (code duplicate_name), so the banner asks for the extra one to be deleted.
+    if (hits.length > 1) {
+      throw this.err('RETRYABLE', 'findCampaignByName', `lookup inconclusive: ${hits.length} campaigns have this exact name`, {
+        code: DUPLICATE_NAME_CODE,
+      });
+    }
+    return hits[0] ? { campaignId: hits[0].campaignId } : null;
+  }
+
+  /**
+   * EVERY campaign with exactly this name, with its provider status (task 13, the
+   * read-only `digest:lookup` CLI). Walks all pages; an unreadable reply or more
+   * pages than allowed throws, never "none".
+   */
+  async findCampaignsByName(name: string): Promise<{ campaignId: string; status: string | null }[]> {
+    return this.scanByName(name, false);
+  }
+
+  /**
+   * Webhook status (task 13, health.ts's daily check). UNVERIFIED shape (design §12
+   * open question 3): `status` "Active"/1 = on, "Inactive"/"Disabled"/0 = off, at the
+   * top level or under `data` (also `data["0"]`). Anything else throws — an
+   * unreadable answer is never read as "switched off".
+   */
+  async webhookStatus(webhookId: string): Promise<{ active: boolean }> {
+    const reply = await this.call('webhookStatus', 'read', 'GET', `${this.o.baseV1}/webhooks/detail/${encodeURIComponent(webhookId)}`);
+    const r = asRecord(reply.body);
+    const d = asRecord(r?.data);
+    const holder = d && 'status' in d ? d : asRecord(d?.['0']) ?? r;
+    const raw = holder?.status;
+    const v = typeof raw === 'string' ? raw.trim().toLowerCase() : typeof raw === 'number' ? String(raw) : '';
+    if (v === 'active' || v === '1' || v === 'enabled') return { active: true };
+    if (v === 'inactive' || v === '0' || v === 'disabled' || v === 'deactivated') return { active: false };
+    throw this.err('RETRYABLE', 'webhookStatus', 'unreadable webhook status reply');
+  }
+
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Exact-name matches over the campaign list's `search` filter. `stopAtHit`: return
+   * as soon as a page holds a match (the runner's lookup); otherwise walk to the last
+   * page. Null-safe: an unreadable reply, a match without an id, an exhausted time
+   * budget or too many pages throw RETRYABLE — never an empty answer.
+   */
+  private async scanByName(name: string, stopAtHit: boolean): Promise<{ campaignId: string; status: string | null }[]> {
     const startedAt = Date.now();
+    const out: { campaignId: string; status: string | null }[] = [];
     for (let page = 1; page <= LIST_MAX_PAGES; page++) {
       if (Date.now() - startedAt > LIST_DEADLINE_MS) {
         throw this.err('RETRYABLE', 'findCampaignByName', 'lookup inconclusive: time budget exceeded');
@@ -231,25 +295,16 @@ export class MailercloudSender implements DigestSender {
       });
       const items = listItems(reply.body);
       if (!items) throw this.err('RETRYABLE', 'findCampaignByName', 'unreadable campaign list reply');
-      const hits = items.filter((c) => c.name === name);
-      // Two campaigns with exactly our name (one copied and renamed by hand, say) prove
-      // nothing about which one is ours: adopting the wrong one could schedule a draft
-      // while its twin was already sent. Inconclusive, never a guess.
-      if (hits.length > 1) {
-        throw this.err('RETRYABLE', 'findCampaignByName', `lookup inconclusive: ${hits.length} campaigns have this exact name`);
-      }
-      const hit = hits[0];
-      if (hit) {
+      for (const hit of items.filter((c) => c.name === name)) {
         const id = idOf(hit);
         if (!id) throw this.err('RETRYABLE', 'findCampaignByName', 'matching campaign has no id');
-        return { campaignId: id };
+        out.push({ campaignId: id, status: typeof hit.status === 'string' ? hit.status.slice(0, 40) : null });
       }
-      if (items.length < LIST_PAGE_SIZE) return null;
+      if (stopAtHit && out.length > 0) return out;
+      if (items.length < LIST_PAGE_SIZE) return out;
     }
     throw this.err('RETRYABLE', 'findCampaignByName', `lookup inconclusive after ${LIST_MAX_PAGES} pages`);
   }
-
-  /* ---------------------------------------------------------------- */
 
   private async campaign(op: 'status' | 'report', campaignId: string): Promise<Record<string, unknown>> {
     const reply = await this.call(op, 'read', 'GET', `${this.o.baseV1}/campaign/${encodeURIComponent(campaignId)}`);
@@ -261,6 +316,8 @@ export class MailercloudSender implements DigestSender {
   /** One logical call: a single attempt for writes; bounded retries with backoff for reads. */
   private async call(op: Op, mode: Mode, method: 'GET' | 'POST', url: string, body?: unknown): Promise<Reply> {
     if (!this.o.apiKey) throw this.err('FATAL', op, 'not configured (MAILERCLOUD_API_KEY unset)', { notSent: true });
+    // Read-only client: a write never leaves this process (checked before any request).
+    if (mode === 'write' && this.o.readOnly) throw this.err('FATAL', op, 'refused: this client is read-only', { notSent: true });
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.attempt(op, mode, method, url, body);

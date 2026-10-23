@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.0 &nbsp;·&nbsp; Updated 23 October 2026
+    &nbsp;·&nbsp; Version 2.1 &nbsp;·&nbsp; Updated 23 October 2026
   </div>
 </div>
 
@@ -572,6 +572,7 @@ nothing on screen to say why. The notice exists so that can't happen again.</p>
 <!-- 9 -->
 <section class="page-break">
 <h2>9 &nbsp;The email digest — the Digests screen</h2>
+<p><strong>Not switched on yet — it starts with the pilot.</strong></p>
 <p>Besides push notifications, the platform can send Taxscan's <strong>daily email digest</strong> by itself: one
 email each morning with the best new stories, built from the same articles the push side has already approved. It
 replaces the digest that is put together by hand in Mailercloud today. Mailercloud still does the actual sending.</p>
@@ -582,8 +583,10 @@ a day</strong> and is never sent again on a later day.</p>
   <thead><tr><th style="width:22%">When (IST)</th><th>What happens</th></tr></thead>
   <tbody>
     <tr><td><strong>06:30</strong></td><td>The digest is built: up to 12 stories are picked and ranked, the ads are chosen, and both emails are
-        <strong>frozen</strong>. Nothing changes them after this. A draft is created in Mailercloud (a draft cannot send by itself).</td></tr>
-    <tr><td><strong>07:30</strong></td><td>It is sent — once it has been <strong>approved</strong>, while approval is required.</td></tr>
+        <strong>frozen</strong>. Nothing changes them after this. A draft is created in Mailercloud (a draft cannot send by itself).
+        Admins and publishers get a <em>ready for approval</em> email with a link to Digests.</td></tr>
+    <tr><td><strong>07:30</strong></td><td>It is sent — once it has been <strong>approved</strong>, while approval is required.
+        Still not approved at <strong>08:30</strong>: one reminder email.</td></tr>
     <tr><td><strong>17:00</strong></td><td>The cut-off. Anything not sent by now is <strong>skipped</strong> for the day, and its top 2–3 stories go into
         tomorrow's digest under <em>In case you missed it</em>.</td></tr>
     <tr><td><strong>11 pm – 7 am</strong></td><td>Never. Like push, the digest is never sent at night, whatever button is pressed.</td></tr>
@@ -606,7 +609,7 @@ a day</strong> and is never sent again on a later day.</p>
     <tr><td><strong>Approve</strong></td><td>Lets today's digest go out at 07:30. Press it after reading the preview.</td></tr>
     <tr><td><strong>Hold</strong></td><td>Stops it going out. Approve it later to release it; still held at 17:00, it is skipped.</td></tr>
     <tr><td><strong>Send now</strong></td><td>Sends both versions straight away instead of at 07:30. It asks <em>"Send today's digest to everyone now?"</em> first. Never at night, and — while approval is required — not before it is approved.</td></tr>
-    <tr><td><strong>Retry now</strong></td><td>Appears only when something failed, before 17:00. Tries again at once with the <strong>same frozen email</strong>; it never creates a second campaign.</td></tr>
+    <tr><td><strong>Retry now</strong></td><td>Appears only when something failed, before 17:00. Tries again at once with the <strong>same frozen email</strong>; it never creates a second campaign. While sending is still switched off (the pilot's first week) it only re-makes the draft.</td></tr>
     <tr><td><strong>Test send to me</strong></td><td>Sends that version to your own inbox only. It works only if your address is on the test list (<code>DIGEST_TEST_RECIPIENTS</code>); ask an admin.</td></tr>
   </tbody>
 </table>
@@ -637,11 +640,16 @@ dismissed. The common ones:</p>
     <tr><td>…stopped: an ad slot cannot be filled</td><td>An admin opens <strong>Ads</strong>, fixes the slot named in the notice, then presses <strong>Retry now</strong> before 17:00. Only that version waits; the other still goes out.</td></tr>
     <tr><td>Mailercloud rejected today's digest</td><td>Whoever runs the platform checks the Mailercloud key and plan, then <strong>Retry now</strong>.</td></tr>
     <tr><td>Mailercloud did not confirm today's digest</td><td>Look in Mailercloud for today's <code>TS-DIGEST-</code> draft, then <strong>Retry now</strong>. Nothing is ever sent twice.</td></tr>
+    <tr><td>Two campaigns named TS-DIGEST-… exist in Mailercloud</td><td>Someone copied the campaign. An admin deletes the extra one in Mailercloud; the digest carries on by itself.</td></tr>
+    <tr><td>Mailercloud already had today's … draft</td><td>Usually after a database restore. An admin opens that draft in Mailercloud: delete it (a fresh one is made) or, if it is right, <strong>Approve</strong> that version. It never goes out without an Approve.</td></tr>
+    <tr><td>Mailercloud rejected the health check / is unreachable</td><td>Checked at 06:15 and 07:15 (hourly while rejected). Whoever runs the platform checks the key and plan; the digest picks itself up when it passes.</td></tr>
+    <tr><td>Today's digest is held: … spam-complaint rate</td><td>Yesterday's readers marked it as spam unusually often (over 0.3%). Find out why, then <strong>Approve</strong> or <strong>Hold</strong>; it never goes out by itself that day.</td></tr>
     <tr><td>Today's digest settings are incomplete</td><td>A setting on the server is missing (lists, postal address, sender). Pass it to whoever runs the platform.</td></tr>
     <tr><td>Part of today's digest was not delivered</td><td>Not re-sent (people who got it would get it twice). Its top stories go into tomorrow's digest.</td></tr>
     <tr><td>Today's … digest used the built-in template</td><td>Today's email went out on the standard layout instead. An admin fixes the template on <strong>Templates</strong> (or reverts it).</td></tr>
     <tr><td>Only the Free (or Premium) digest went out today</td><td>The other version was skipped; the notice says why. Its top stories roll into the next digest.</td></tr>
-    <tr><td>Mailercloud has stopped calling our webhook</td><td>An admin switches the webhook back on in Mailercloud (see below). Sends are still checked meanwhile.</td></tr>
+    <tr><td>Mailercloud has stopped calling our webhook / reports it switched off</td><td>An admin switches the webhook back on in Mailercloud (see below). Sends are still checked meanwhile.</td></tr>
+    <tr><td>The spam-complaint rate of the last … digest is unknown</td><td>Mailercloud has not confirmed that send through the webhook, so the automatic hold can't protect today's digest. An admin checks the webhook.</td></tr>
     <tr><td>…event(s) from Mailercloud arrived without a readable address</td><td>Mailercloud still honours them on its side. Tell whoever runs the platform: the webhook format needs a look.</td></tr>
   </tbody>
 </table>
@@ -658,7 +666,7 @@ dismissed. The common ones:</p>
       the webhook) that it sent that campaign; before that, and whenever the webhook is off, you see —.</li>
   <li>Admins: register the webhook for <strong>five events only</strong> — unsubscribe, hard bounce, spam, campaign sent and
       campaign error. <strong>Never</strong> opens or clicks: those would be hundreds of thousands of calls a day. (Opens and
-      clicks are read from Mailercloud's report instead, and opens are a trend only.)</li>
+      clicks are not read into this screen yet, so the Clicks column shows —: use the campaign report in Mailercloud.)</li>
   <li>Someone who unsubscribes is only mailed again if they opt in again <em>after</em> unsubscribing. A spam complaint or a
       permanent bounce is lifted only by a new, explicit opt-in. An address an admin blocked by hand is never lifted
       automatically.</li>
@@ -910,7 +918,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.0 · Updated 23 October 2026
+  Taxscan Push · Admin User Guide · Version 2.1 · Updated 23 October 2026
 </p>
 </section>
 

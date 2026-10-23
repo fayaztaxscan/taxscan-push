@@ -14,7 +14,8 @@ import type { AddressInfo } from 'node:net';
  *   'reset'               — read the request, then destroy the socket
  *
  * Routes: 'GET /v1/client/plan', 'POST /v2/campaign/save', 'POST /v1/campaign/schedule',
- * 'GET /v1/campaign', 'POST /v1/campaign/list', 'POST /v1/campaign/testmail'.
+ * 'GET /v1/campaign', 'POST /v1/campaign/list', 'POST /v1/campaign/testmail',
+ * 'GET /v1/webhooks/detail' (task 13; `webhooks` holds id → status word).
  */
 
 export type FakeReply = { status: number; body?: unknown } | 'hang' | 'reset';
@@ -30,6 +31,8 @@ export type FakeCampaign = {
 export class FakeMailercloud {
   readonly requests: FakeRequest[] = [];
   readonly campaigns = new Map<string, FakeCampaign>();
+  /** Webhook id → its status as Mailercloud would show it ("Active" / "Inactive"). */
+  readonly webhooks = new Map<string, string | number>();
   private readonly scripts = new Map<string, FakeReply[]>();
   private server: http.Server | null = null;
   private seq = 0;
@@ -128,6 +131,12 @@ export class FakeMailercloud {
       const data = Object.fromEntries(slice.map((c, i) => [String(i), { id: c.id, name: c.name, status: c.status }]));
       return { status: 200, body: { count: [{ count: all.length }], data } };
     }
+    if (method === 'GET' && (m = /^\/v1\/webhooks\/detail\/([^/]+)$/.exec(path))) {
+      const id = decodeURIComponent(m[1]);
+      const st = this.webhooks.get(id);
+      if (st === undefined) return notFound;
+      return { status: 200, body: { data: { id, url: 'https://push.taxscan.in/api/webhooks/mailercloud/<token>', status: st } } };
+    }
     if (method === 'GET' && (m = /^\/v1\/campaign\/([^/]+)$/.exec(path))) {
       const c = this.campaigns.get(decodeURIComponent(m[1]));
       if (!c) return notFound;
@@ -141,5 +150,6 @@ function routeOf(method: string, path: string): string {
   const m = /^\/v1\/campaign\/(schedule|testmail)\/[^/]+$/.exec(path);
   if (m) return `${method} /v1/campaign/${m[1]}`;
   if (method === 'GET' && /^\/v1\/campaign\/[^/]+$/.test(path)) return 'GET /v1/campaign';
+  if (method === 'GET' && /^\/v1\/webhooks\/detail\/[^/]+$/.test(path)) return 'GET /v1/webhooks/detail';
   return `${method} ${path}`;
 }

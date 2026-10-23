@@ -7,6 +7,7 @@ import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import { advanceRun, awaitDigestAlerts, ensureRun } from '../services/digest/runner';
 import { digestActions, itemReadBasis, readsLine, type ActionsInput } from '../services/digest/screen';
 import { PREVIEW_CSP } from '../routes/digest';
+import { digestStatus } from '../services/digest/status';
 import { MockSenderInProductionError, mockSendersEnabled } from '../lib/mockSenderGuard';
 import { placeholderContent } from './digestPlaceholderContent';
 import { FakeSender } from './digestFakeSender';
@@ -175,19 +176,104 @@ describe('approve and hold', () => {
   });
 });
 
+describe('an adopted Mailercloud draft (owner decision A, 2026-10-23)', () => {
+  it('auto mode: Approve is offered for that variant alone, the approval stamps only it, and only then is it scheduled', async () => {
+    const c = cfg(); // DIGEST_APPROVAL_REQUIRED=false in this file
+    const sender = new FakeSender();
+    const run = await createdRun(c, sender);
+    // As adoptExisting leaves it: Mailercloud already had today's FREE draft.
+    await prisma.digestSend.updateMany({
+      where: { runId: run.id, audience: 'FREE' },
+      data: { adoptedDraftAt: ist(6, 30), ownApprovalRequired: true, approvedAt: null, scheduleAttemptedAt: ist(6, 30) },
+    });
+    const app = appFor(c, sender, run.portal, ist(7, 35));
+    const before = await request(app).get(`/api/digest/runs/${run.id}`).set('Cookie', testerCookie);
+    expect(before.body.actions.approve.show).toBe(true);
+    const free = before.body.variants.find((v: { audience: string }) => v.audience === 'FREE');
+    expect(free).toMatchObject({ adoptedDraft: true, approval: 'waiting' });
+    expect(before.body.variants.find((v: { audience: string }) => v.audience === 'PREMIUM').approval).toBe('not_needed');
+
+    await advanceRun(run.id, 'cron', { sender, now: ist(7, 30), cfg: c, quiet: QUIET, buildContent: placeholderContent, alerts: false });
+    expect(sender.calls.filter((x) => x.method === 'schedule')).toHaveLength(1); // PREMIUM only
+    const banner = (await digestStatus({ portal: run.portal, now: ist(7, 31), cfg: c })).attention;
+    expect(banner).toMatchObject({ code: 'adopted_draft' });
+    expect(banner?.headline).toMatch(/already had today's Free digest draft/);
+
+    const res = await request(app).post(`/api/digest/runs/${run.id}/approve`).set('Cookie', testerCookie).send({ audiences: ['FREE'] });
+    expect(res.status).toBe(200);
+    expect(res.body.variants).toEqual(['FREE']);
+    expect((await prisma.digestRun.findUniqueOrThrow({ where: { id: run.id } })).approval).toBe('NOT_REQUIRED');
+    await advanceRun(run.id, 'cron', { sender, now: ist(7, 36), cfg: c, quiet: QUIET, buildContent: placeholderContent, alerts: false });
+    expect(sender.calls.filter((x) => x.method === 'schedule')).toHaveLength(2);
+  });
+
+  it('digestActions: the adopted draft blocks Send now with its own reason', () => {
+    const i: ActionsInput = {
+      cfg: { enabled: true, sendLive: true, approvalRequired: false, sanityMaxCandidates: 150, cutoff: '17:00' },
+      now: ist(7, 10),
+      quiet: QUIET,
+      providerReady: true,
+      viewerCanTest: true,
+      run: { runDate: new Date(Date.UTC(2026, 9, 23)), build: 'BUILT', approval: 'NOT_REQUIRED', candidateCount: 30 },
+      sends: [
+        { audience: 'FREE', state: 'CREATED', lastError: null, nextAttemptAt: null, mcCampaignId: 'mc-1', hasHtml: true, ownApprovalRequired: true, approvedAt: null, adoptedDraftAt: ist(6, 30) },
+        { audience: 'PREMIUM', state: 'CREATED', lastError: null, nextAttemptAt: null, mcCampaignId: 'mc-2', hasHtml: true },
+      ],
+    };
+    const a = digestActions(i);
+    expect(a.approve.show).toBe(true);
+    expect(a.sendNow.reason).toMatch(/Approve the Free digest first: Mailercloud already had its draft/);
+  });
+
+  it('a complaint hold makes an auto-mode run an approval run on the screen too', () => {
+    const i: ActionsInput = {
+      cfg: { enabled: true, sendLive: true, approvalRequired: false, sanityMaxCandidates: 150, cutoff: '17:00' },
+      now: ist(7, 10),
+      quiet: QUIET,
+      providerReady: true,
+      viewerCanTest: true,
+      run: { runDate: new Date(Date.UTC(2026, 9, 23)), build: 'BUILT', approval: 'PENDING', candidateCount: 30, complaintCheck: { held: true, sends: [] } },
+      sends: [{ audience: 'FREE', state: 'CREATED', lastError: null, nextAttemptAt: null, mcCampaignId: 'mc-1', hasHtml: true }],
+    };
+    const a = digestActions(i);
+    expect(a.approve.show).toBe(true);
+    expect(a.sendNow.reason).toBe('Approve it first.');
+  });
+});
+
 describe('send now and retry', () => {
   it('send now is refused while DIGEST_SEND_LIVE is off; nothing is scheduled', async () => {
     const c = cfg({ DIGEST_SEND_LIVE: 'false' });
     const sender = new FakeSender();
     const run = await createdRun(c, sender);
     const app = appFor(c, sender, run.portal, ist(7, 10));
-    for (const p of ['send-now', 'retry']) {
-      const res = await request(app).post(`/api/digest/runs/${run.id}/${p}`).set('Cookie', testerCookie).send({ confirm: true });
-      expect(res.status).toBe(409);
-      expect(res.body.error).toBe('send_live_off');
-      expect(res.body.message).toMatch(/DIGEST_SEND_LIVE/);
-    }
+    const res = await request(app).post(`/api/digest/runs/${run.id}/send-now`).set('Cookie', testerCookie).send({ confirm: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('send_live_off');
+    expect(res.body.message).toMatch(/DIGEST_SEND_LIVE/);
     expect(sender.count('schedule')).toBe(0);
+  });
+
+  it('retry now works in preview mode (owner, 2026-10-23): a failed variant gets its draft, nothing is scheduled', async () => {
+    const c = cfg({ DIGEST_SEND_LIVE: 'false' });
+    const sender = new FakeSender();
+    sender.fail('createDraft', 'FATAL', 1, { http: 401 });
+    const portal = `${PORTAL_PREFIX}${Date.now()}-${++n}`;
+    portals.push(portal);
+    const run = await ensureRun({ portal, now: ist(6, 0), cfg: c });
+    await advanceRun(run.id, 'cron', { sender, now: ist(6, 30), cfg: c, quiet: QUIET, buildContent: placeholderContent, alerts: false });
+    const failed = await prisma.digestSend.findMany({ where: { runId: run.id, state: 'FAILED' } });
+    expect(failed).toHaveLength(1);
+
+    const res = await request(appFor(c, sender, portal, ist(7, 40))).post(`/api/digest/runs/${run.id}/retry`).set('Cookie', testerCookie).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.result.steps).toContain(`${failed[0].audience}:create:ok`);
+    expect(res.body.result.steps).toContain(`${failed[0].audience}:wait:preview_only`);
+    expect(sender.count('createDraft')).toBe(3);
+    expect(sender.count('schedule')).toBe(0);
+    expect((await prisma.digestSend.findUniqueOrThrow({ where: { id: failed[0].id } })).state).toBe('CREATED');
+    const audit = await auditRows(run.id, 'DIGEST_RETRY');
+    expect(audit.at(-1)?.metadata).toMatchObject({ previewOnly: true });
   });
 
   it('send now needs confirm: true', async () => {
@@ -465,11 +551,13 @@ describe('digestActions (which buttons the screen offers)', () => {
     expect(a.sendNow.enabled).toBe(true);
   });
 
-  it('preview mode: Send now disabled naming DIGEST_SEND_LIVE', () => {
+  it('preview mode: Send now disabled naming DIGEST_SEND_LIVE; Retry now enabled on a failed variant (drafts only)', () => {
     const i = base();
     i.run.approval = 'APPROVED';
     i.cfg.sendLive = false;
     expect(digestActions(i).sendNow.reason).toMatch(/DIGEST_SEND_LIVE/);
+    const failed = patch(i, 0, { state: 'FAILED', lastError: 'create: 401' });
+    expect(digestActions(failed).retry).toEqual({ show: true, enabled: true, reason: null });
   });
 
   it('quiet hours: Send now disabled', () => {

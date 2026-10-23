@@ -4,7 +4,8 @@ For the owner. Plain checklists, one per stage. Tick each box as you go.
 Design: `docs/EMAIL_DIGEST_DESIGN.md` (§10 rollout, §12 open questions).
 Every setting is listed in §5 of the design.
 
-Written 23 Oct 2026. Nothing here is switched on yet.
+Written 23 Oct 2026; section 0 updated the same day for task 13.
+Nothing here is switched on yet.
 
 **Owner sign-off on this runbook (needed before stage 2):**
 
@@ -13,42 +14,64 @@ Written 23 Oct 2026. Nothing here is switched on yet.
 
 ---
 
-## 0. Not built yet: stage 1 cannot start until these exist
+## 0. What is built, and what is not
 
-Read this first. These are development tasks, not settings.
+Read this first. Updated 23 Oct 2026 (task 13). **Nothing here blocks
+stage 1 any more.**
 
-- [ ] **The morning tick.** `src/services/digest/scheduler.ts` is still
-  the task-1 skeleton. It checks the settings and logs one line, nothing
-  more. Today nothing builds the digest at 06:30 or sends it at 07:30.
-  No run exists, so Digests shows "No digest has been built today yet".
-  Stage 1 needs a 1-minute tick that creates today's run and calls
-  `advanceRun` with the real story picker (`selectDigest`).
-  It also needs the 17:00 cut-off sweep.
-- [ ] **Health checks** (`health.ts`). Planned: a Mailercloud check at
-  06:15 and 07:15, hourly while Mailercloud keeps rejecting, and a daily
-  check that the webhook is still switched on. Until it is built, watch
-  the Digests banner and the alert emails instead.
-- [ ] **Complaint-rate hold.** The design holds the next day's digest
-  for approval when a send's spam rate passes 0.3%. Not built. Until it
-  is, check the Complaints column yourself after every send
-  (stages 3 and 4).
-- [ ] **"Not approved by 07:30" email.** Not built. The banner shows it
-  from 07:30, but no email is sent.
-- [ ] **"Ready for approval" email at 06:30** (design §5 timeline). Not
-  built. Editors must open Digests themselves to see the day's version.
-- [ ] **Nothing resumes a failed version while `DIGEST_SEND_LIVE` is off.**
-  Retry now and Send now are greyed out in preview mode ("Sending is
-  switched off"), the tick never resumes a FAILED version, and the
-  health check that would resume a rejected-key failure is not built.
-  So in stage 1 a failed or ad-blocked version simply waits for 17:00
-  and is skipped. Decide whether that is acceptable for the shadow
-  week, or ask for Retry now to work in preview mode (create the draft,
-  never schedule).
-- [ ] **A read-only name lookup for check 2.2.** There is no script for
-  it yet; the developer needs a one-off command that calls
-  `findCampaignByName` and prints only the id and status.
+Built (task 13), so stage 1 can start once section 1 is done:
 
-Ask the developer to tick these off. Then start at section 1.
+- [x] **The morning tick.** Every minute (IST) the system moves the day
+  along by itself: at **06:15** it opens today's run, checks the last
+  send's spam-complaint rate and checks Mailercloud; at **06:30** it
+  builds the digest and makes both drafts; at **07:15** it checks
+  Mailercloud again; at **07:30** it sends once approved (or by itself
+  when approval is off); it checks the send at +10, +30, +60 minutes and
+  then hourly; at **17:00** it skips whatever did not go out. A day the
+  app was down for at 17:00 is tidied up on the next tick, and is never
+  sent late.
+- [x] **Health checks.** Mailercloud is checked at 06:15 and 07:15, and
+  every hour while it keeps rejecting the key or the plan. When it
+  answers again, a version stopped by that error is picked up again by
+  itself (same frozen email), and admins get an "answering again" note.
+  With `MAILERCLOUD_WEBHOOK_ID` set (1.5), the webhook's on/off status is
+  also read once a day.
+- [x] **Complaint-rate hold.** If the last send's spam-complaint rate
+  was **above 0.3%**, the next day's digest is held: it is built as
+  usual but needs an **Approve**, even with auto-send on, and admins get
+  an email naming the rate. If the rate is unknown (Mailercloud has not
+  confirmed that send through the webhook) nothing is held, but the
+  banner says so.
+- [x] **"Ready for approval" email** at 06:30 (in stage 1: "ready to
+  review"), and a **"still waiting for approval" email** at 08:30 if
+  nobody has approved by then. Both go to admins and publishers, once a
+  day each, with a link to Digests.
+- [x] **Retry now works while sending is off.** In stage 1 it re-makes a
+  failed version's draft (and nothing more: it never sends). Send now
+  stays greyed out until `DIGEST_SEND_LIVE` is on.
+- [x] **Read-only name lookup** for check 2.2:
+  `npm run digest:lookup -- --date YYYY-MM-DD`. It only reads; it
+  refuses to run with a client that could write.
+- [x] **Two campaigns with the same name** in Mailercloud now get their
+  own notice ("delete the extra one"), not "Mailercloud is not
+  answering".
+
+Still not built (none of these blocks a stage; each says what to do
+meanwhile):
+
+- [ ] **Opens and clicks** are never read from Mailercloud's report, so
+  the Clicks column on Digests stays "—". Use Mailercloud's own
+  campaign report.
+- [ ] **"Scheduled but not sent after 3 hours → schedule again"**
+  (design §8). Deliberately not built until 2.8 shows a second schedule
+  can never send twice. Meanwhile such a version is checked hourly and,
+  if still not confirmed at 17:00, reported as "not confirmed sent".
+- [ ] **A run record for the nightly retention sweep**: a failed night
+  shows only in the log, not on a screen.
+- [ ] **Test send from the Templates screen**: test a template through a
+  Digests run instead.
+- [ ] Later phases, by design: re-subscribe from the CMS feed, expired
+  members to the Free digest, contact-tag sync, conversions.
 
 ---
 
@@ -60,9 +83,9 @@ Ask the developer to tick these off. Then start at section 1.
 - [ ] Dashboard shows today's backup as fine *before* the deploy.
   The new migrations add tables; a fresh backup is the way back.
 - [ ] Migrations run by themselves at start (`prisma migrate deploy`).
-  In the deploy log, check all nine digest migrations are applied.
+  In the deploy log, check all ten digest migrations are applied.
   They are `20261022124755_email_digest` up to
-  `20261023114942_digest_retention`. They add new tables and
+  `20261023150000_digest_scheduler_health`. They add new tables and
   columns only. Adding the audit values takes a very short lock.
 - [ ] The deploy log shows
   `[digest] disabled (set DIGEST_ENABLED=true to start)`.
@@ -122,6 +145,10 @@ Mailercloud switches a webhook off after about 20 failed calls.
 5. [ ] The webhook covers the whole account, so unsubscribes from the
    hand-made digest arrive too. That is fine: they are added to our
    "do not mail" copy.
+6. [ ] Optional: copy the webhook's id from Mailercloud into
+   `MAILERCLOUD_WEBHOOK_ID` on Railway. The system then reads whether
+   the webhook is still switched on, once a day. Without it, a silent
+   webhook is still noticed, about 2 hours after a send.
 
 ### 1.6 Switch-on order
 
@@ -129,8 +156,12 @@ Mailercloud switches a webhook off after about 20 failed calls.
 2. [ ] Check `DIGEST_SEND_LIVE` is unset or `false`.
 3. [ ] Check `DIGEST_APPROVAL_REQUIRED` is unset or `true`.
 4. [ ] Set `DIGEST_ENABLED=true`. The deploy log should show
-   `[digest] ready … approval=required sendLive=off webhooks=on`.
+   `[digest] ready (tick every minute) … approval=required sendLive=off webhooks=on`
+   (ending `webhookStatus=daily` with `MAILERCLOUD_WEBHOOK_ID`, else
+   `webhookStatus=liveness-only`).
    `config_invalid` means a setting is wrong; the line says which.
+   From then on the log has one `[digest] <date> run=…` line each time
+   the day's digest changes state, and nothing on quiet minutes.
 5. [ ] Later, any time: `DIGEST_RETENTION_ENABLED=true`, after one
    `npm run digest-retention` dry run.
 
@@ -157,12 +188,18 @@ support (design §12). Each one says when it must be done by.
 - The runner looks up today's campaign name before it creates one.
   That lookup is what stops a second digest after a crash or a
   restore.
-- **How:** in stage 1, after the 06:30 build, the developer runs a
-  read-only name lookup for `TS-DIGEST-<today>-FREE`. It must return
-  the same campaign id as "View Free" on Digests.
-- **Then again in stage 2, after a real send:** the same lookup must
+- **How:** in stage 1, after the 06:30 build, run the read-only lookup
+  in the Railway service (`railway ssh`, or wherever
+  `MAILERCLOUD_API_KEY` is set):
+  `npm run digest:lookup -- --date <today> --audience FREE`.
+  It prints `TS-DIGEST-<today>-FREE: id=… list-status=Draft state=DRAFT`.
+  The id must be the same campaign id as "View Free" on Digests.
+  "not found in Mailercloud" means the search does **not** include
+  drafts. "DUPLICATE" means two campaigns have that name: delete the
+  extra one in Mailercloud.
+- **Then again in stage 2, after a real send:** the same command must
   still find that day's campaign once Mailercloud shows it as
-  Finished. This is the case a restore depends on: if the search skips
+  Finished (`list-status=Finished state=SENT reach=…`). This is the case a restore depends on: if the search skips
   sent campaigns, a restored system would create and send a second
   digest.
 - **If wrong:** a crashed create can leave a spare draft. That is
@@ -239,7 +276,12 @@ support (design §12). Each one says when it must be done by.
   refused, or does nothing. It must never send twice. The code never
   does this on purpose; the answer decides whether a FAILED campaign
   could ever be retried.
-- [ ] Whether Mailercloud has a "webhook status" read endpoint.
+- [ ] Whether Mailercloud's webhook status read
+  (`GET /v1/webhooks/detail/{id}`) answers as we expect: with
+  `MAILERCLOUD_WEBHOOK_ID` set, Digests must show no "webhook is
+  switched off" notice while the webhook is on. If it does, unset
+  `MAILERCLOUD_WEBHOOK_ID` and tell the developer (the 2-hour liveness
+  check still watches the webhook).
 
 ---
 
@@ -259,23 +301,25 @@ support (design §12). Each one says when it must be done by.
 - **Once in the week:**
   - [ ] 2.1 (unsubscribe tag) and 2.2 (draft search) done.
   - [ ] Alert test: put a wrong `MAILERCLOUD_API_KEY` on Railway
-    for one build. Expect exactly **one** "Mailercloud rejected the
-    digest" email to admins and the amber banner. Put the right key
-    back. Retry now is greyed out while `DIGEST_SEND_LIVE` is off, so
-    that day's version stays failed and is skipped at 17:00; the next
-    day's build must create its draft normally. (The recovery half,
-    Retry now and the "Resolved" email, can only be tested in stage 2.)
-  - [ ] A version with an empty ad slot: banner names the slot. In
-    stage 1 it cannot be rebuilt the same day (Retry now is greyed
-    out); fixing the slot makes the next day's build whole. The
-    same-day "fix it, Retry now builds it" check moves to stage 2.
+    before 06:15 one day. Expect exactly **one** "Mailercloud rejected
+    the health check" email (06:15) and **one** "Mailercloud rejected the
+    digest" email (06:30) to admins, and the amber banner. Put the right
+    key back (Railway redeploys). At the next hourly check the system
+    says "Mailercloud answering again" (one email) and makes the missing
+    draft by itself — or press **Retry now**, which in stage 1 makes the
+    draft and sends nothing. The banner clears.
+  - [ ] A version with an empty ad slot: banner names the slot. Fix the
+    slot on Ads, press **Retry now**: that version is built and its
+    draft made the same day (nothing is sent).
+  - [ ] The "ready to review" email arrives at about 06:30 each day, to
+    admins and publishers.
 - **Go / no-go:**
   - 7 of 7 days built before 07:00 with no unexplained banner.
   - Size under **75 KB** for both versions every day. Never over
     90 KB: the build refuses above that.
   - Ad coverage green all week.
-  - The alert test raised exactly one alert, and the next day built
-    cleanly.
+  - The alert test raised exactly one email of each kind, the recovery
+    made the draft, and the next day built cleanly.
   - 2.1 and 2.2 (draft) ticked.
 - **Roll back:** `DIGEST_ENABLED=false`. Spare drafts in Mailercloud
   cannot send by themselves; delete them when convenient.
@@ -301,13 +345,17 @@ support (design §12). Each one says when it must be done by.
   - [ ] Gmail shows no "[Message clipped]".
   - [ ] Looks right in: Gmail web, Gmail app, Apple Mail on iPhone,
     Outlook desktop, Outlook web, Yahoo. Light and dark mode.
-  - [ ] Send now once, at about 08:00 on a day not yet sent. It
-    asks first, then sends at once.
+  - [ ] Send now once, **between 07:00 and 07:30** on a day that is
+    approved but not yet sent (after the night rule ends, before the
+    automatic 07:30 send). It asks first, then sends at once; at 07:30
+    nothing more goes out.
   - [ ] Hold once. Leave it held past 17:00. Expect a skip, and its
     top stories in the next day's "In case you missed it".
-  - [ ] The stage-1 recovery checks, now that Retry now works: the
-    wrong-key alert test with Retry now (expect the "Resolved" email
-    once it sends), and an empty ad slot fixed the same day.
+  - [ ] The recovery checks again, now with sending on: the wrong-key
+    test with Retry now (expect the "Resolved — digest sent" email once
+    it sends), and an empty ad slot fixed the same day.
+  - [ ] Leave one day unapproved until 08:30: the "still waiting for
+    approval" email arrives once. Approve it then; it goes out.
   - [ ] 2.2 again, after a real send (the lookup finds the sent
     campaign).
   - [ ] Night rule: between the 06:30 build and 07:00, Send now is
@@ -334,17 +382,21 @@ support (design §12). Each one says when it must be done by.
     Mailercloud**, or they get two digests a day.
 - **Switched on:** same flags; approval stays on.
 - **How long:** 1 to 2 weeks.
-- **After every send, check on Digests (Last 14 days):**
+- **After every send, check on Digests (Last 14 days).** These
+  thresholds are final (owner, 23 Oct 2026):
   - Spam complaints: **under 0.1%** of delivered. That is 1 or fewer
-    per 1,000. *(Design target.)*
-  - Unsubscribes: **under 0.5%** per send. *(Proposed; owner to
-    confirm.)*
+    per 1,000.
+  - Unsubscribes: **under 0.5%** per send.
   - Hard bounces: **under 2%** per send. Recent openers should be
-    far lower. *(Proposed; owner to confirm.)*
+    far lower.
   - Size under 75 KB; delivered close to targeted.
-  - Any single send over **0.3%** complaints: Hold the next day's
-    digest and look at why. The automatic hold is not built
-    (section 0).
+  - Any single send over **0.3%** complaints: the next day's digest
+    is **held automatically** (it needs an Approve, even with auto-send
+    on; admins get an email naming the rate). Look at why before
+    approving it.
+  - A "complaint rate is unknown" notice means Mailercloud has not
+    confirmed that send through the webhook, so the automatic hold
+    cannot work: check the webhook (2.6) the same day.
 - **Go / no-go:** every send inside the numbers above for the whole
   pilot, with no double sends.
 - **Roll back:** `DIGEST_SEND_LIVE=false`, and put the pilot readers
@@ -395,12 +447,17 @@ in `docs/BACKUPS.md` → "After ANY restore". In short:
 
 1. [ ] Before the app starts on the restored database, set
    `DIGEST_ENABLED=false` and `DIGEST_SEND_LIVE=false`.
-2. [ ] In Mailercloud, search `TS-DIGEST-` for **today's date**. Note
-   whether each of `…-FREE` and `…-PREMIUM` exists and its status.
-   Delete any spare draft.
+2. [ ] In Mailercloud, search `TS-DIGEST-` for **today's date** (or
+   run `npm run digest:lookup -- --date <today>`). Note whether each of
+   `…-FREE` and `…-PREMIUM` exists and its status.
+   **Delete today's draft in Mailercloud before switching sending back
+   on**: it may hold content from before the restore. (Leave a
+   scheduled, sending or finished one alone.)
 3. [ ] Switch the flags back on. The system finds today's campaigns
    by name and adopts them. It never sends a second copy. Expect an
-   "already in Mailercloud" alert.
+   "already in Mailercloud" alert. If a draft was left, it is adopted
+   but **held for an Approve** (even with auto-send on): check it in
+   Mailercloud first, or delete it there and a fresh one is made.
 4. [ ] If a campaign was renamed or copied by hand, leave
    `DIGEST_SEND_LIVE` off for the rest of the day.
 
@@ -413,4 +470,6 @@ in `docs/BACKUPS.md` → "After ANY restore". In short:
 - Webhook payload field names (2.6).
 - One-click unsubscribe headers on campaign sends (2.7).
 - Whether a second schedule is refused (2.8).
-- The section-0 items, which are not built yet.
+- The webhook status read's answer format (2.8), used only with
+  `MAILERCLOUD_WEBHOOK_ID`.
+- The items still listed as not built in section 0.

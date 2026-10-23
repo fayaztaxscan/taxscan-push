@@ -8,6 +8,7 @@ import { istDateOf, istInstant, runDateKey } from './retryPolicy';
 import { TERMINAL_ERRORS } from './runner';
 import { safeDetail, skipWords } from './alerts';
 import { digestSendStats } from './stats';
+import { awaitingOwnApproval, runNeedsApproval } from './holds';
 
 /**
  * Payloads for the Digests screen (docs/EMAIL_DIGEST_DESIGN.md §6, §7, task 7):
@@ -50,7 +51,7 @@ export type ActionsInput = {
   providerReady: boolean;
   /** The viewer's own address is in DIGEST_TEST_RECIPIENTS. */
   viewerCanTest: boolean;
-  run: { runDate: Date; build: DigestBuild; approval: DigestApproval; candidateCount: number };
+  run: { runDate: Date; build: DigestBuild; approval: DigestApproval; candidateCount: number; complaintCheck?: unknown };
   sends: ReadonlyArray<{
     audience: DigestAudience;
     state: DigestSendState;
@@ -61,6 +62,8 @@ export type ActionsInput = {
     /** Owner 2026-10-23: rendered after the build — needs its own approval in approval mode. */
     ownApprovalRequired?: boolean;
     approvedAt?: Date | null;
+    /** Task 13, owner decision A: adopted a Mailercloud draft — its own approval in every mode. */
+    adoptedDraftAt?: Date | null;
   }>;
 };
 
@@ -74,24 +77,44 @@ export function isTerminalFailure(s: { state: DigestSendState; lastError: string
 }
 
 /**
- * Variants with content that were rendered after the build and have no approval of their
- * own yet, and could still go out today. The single rule the screen, the route and the
- * banner share (the runner's gate is `awaitingOwnApproval`).
+ * Variants with content whose approval is their own (rendered after the build in approval
+ * mode, or an adopted Mailercloud draft in any mode — `holds.ts`), not given yet, that could
+ * still go out today. The single rule the screen, the route and the banner share (the
+ * runner's gate is the same `awaitingOwnApproval`).
  */
-export function variantsAwaitingOwnApproval<T extends ActionsInput['sends'][number]>(sends: ReadonlyArray<T>): T[] {
+export function variantsAwaitingOwnApproval<T extends ActionsInput['sends'][number]>(
+  cfg: Pick<DigestEnv, 'approvalRequired' | 'sanityMaxCandidates'>,
+  run: ActionsInput['run'],
+  sends: ReadonlyArray<T>,
+): T[] {
   return sends.filter(
     (s) =>
-      s.ownApprovalRequired === true &&
-      !s.approvedAt &&
+      awaitingOwnApproval(cfg, run, {
+        ownApprovalRequired: s.ownApprovalRequired === true,
+        approvedAt: s.approvedAt ?? null,
+        adoptedDraftAt: s.adoptedDraftAt ?? null,
+      }) &&
       s.hasHtml &&
       (s.state === 'PENDING' || s.state === 'CREATED' || (s.state === 'FAILED' && !isTerminalFailure(s))),
   );
 }
 
-/** Why a variant cannot be sent from this screen right now, or null. Shared by Send now and Retry now. */
+const PROVIDER_OFF_REASON = 'Mailercloud is not configured (MAILERCLOUD_API_KEY is not set).';
+
+/** Why a variant cannot be SENT from this screen right now, or null (Send now). */
 function sendBlocker(i: ActionsInput): string | null {
   if (!i.cfg.sendLive) return 'Sending is switched off (preview only). DIGEST_SEND_LIVE must be on to send.';
-  if (!i.providerReady) return 'Mailercloud is not configured (MAILERCLOUD_API_KEY is not set).';
+  if (!i.providerReady) return PROVIDER_OFF_REASON;
+  return null;
+}
+
+/**
+ * Why Retry now cannot be pressed, or null. Owner decision (2026-10-23): with sending
+ * switched off, Retry now still works up to and including the Mailercloud DRAFT (it can
+ * never schedule: the runner's `preview_only` gate), so the shadow week can exercise recovery.
+ */
+function retryBlocker(i: ActionsInput): string | null {
+  if (!i.providerReady) return PROVIDER_OFF_REASON;
   return null;
 }
 
@@ -115,12 +138,13 @@ export function digestActions(i: ActionsInput): DigestActions {
   );
   const open = run.build === 'BUILT' && !pastCutoff && !handedOver && sendable;
 
-  const needsApproval = i.cfg.approvalRequired || run.candidateCount > i.cfg.sanityMaxCandidates;
+  const needsApproval = runNeedsApproval(i.cfg, run);
   // A variant rendered after the run was approved is not covered by that approval (owner,
-  // 2026-10-23): Approve stays on offer for it alone, even once the other variant went out.
-  const waitingOwn = needsApproval && run.build === 'BUILT' && !pastCutoff ? variantsAwaitingOwnApproval(sends) : [];
+  // 2026-10-23), and an adopted Mailercloud draft needs a person in every mode (decision A):
+  // Approve stays on offer for such a variant alone, even once the other variant went out.
+  const waitingOwn = run.build === 'BUILT' && !pastCutoff ? variantsAwaitingOwnApproval(i.cfg, run, sends) : [];
   const runLevelApprove = open && (run.approval === 'PENDING' || run.approval === 'HELD');
-  const approve = runLevelApprove || (run.approval === 'APPROVED' && waitingOwn.length > 0) ? on() : HIDDEN;
+  const approve = runLevelApprove || ((run.approval === 'APPROVED' || run.approval === 'NOT_REQUIRED') && waitingOwn.length > 0) ? on() : HIDDEN;
   const hold = open && run.approval !== 'HELD' ? on() : HIDDEN;
 
   let sendNow: ScreenAction = HIDDEN;
@@ -132,7 +156,7 @@ export function digestActions(i: ActionsInput): DigestActions {
         : needsApproval && run.approval !== 'APPROVED'
           ? 'Approve it first.'
           : waitingOwn.length > 0
-            ? `Approve the ${waitingOwn.map((s) => (s.audience === 'PREMIUM' ? 'Premium' : 'Free')).join(' and ')} digest first: it was built after the approval.`
+            ? `Approve the ${waitingOwn.map((s) => (s.audience === 'PREMIUM' ? 'Premium' : 'Free')).join(' and ')} digest first: ${waitingOwn.some((s) => s.adoptedDraftAt) ? 'Mailercloud already had its draft.' : 'it was built after the approval.'}`
           : isQuietHours(i.now, i.quiet.start, i.quiet.end)
             ? `It is quiet hours (${i.quiet.start}–${i.quiet.end} IST); nothing is sent at night.`
             : null);
@@ -147,7 +171,7 @@ export function digestActions(i: ActionsInput): DigestActions {
       (s) => (s.state === 'PENDING' || s.state === 'CREATED') && s.lastError && s.nextAttemptAt && s.nextAttemptAt > i.now,
     );
   if (!pastCutoff && retryable) {
-    const blocker = sendBlocker(i);
+    const blocker = retryBlocker(i);
     retry = blocker ? off(blocker) : on();
   }
 
@@ -263,6 +287,7 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
           approvedByUserId: true,
           templateFallbackFromId: true,
           templateFallbackReason: true,
+          adoptedDraftAt: true,
           targeted: true,
           reached: true,
           opens: true,
@@ -288,11 +313,14 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       (u) => [u.id, u.email],
     ),
   );
-  const needsApproval = cfg.approvalRequired || run.candidateCount > cfg.sanityMaxCandidates;
-  /** not_needed | waiting | approved — per variant (owner 2026-10-23: a later-rendered one has its own). */
-  const variantApproval = (s: { ownApprovalRequired: boolean; approvedAt: Date | null }): 'not_needed' | 'waiting' | 'approved' => {
+  const needsApproval = runNeedsApproval(cfg, run);
+  /**
+   * not_needed | waiting | approved — per variant (owner 2026-10-23: a later-rendered one has
+   * its own; decision A: so has an adopted Mailercloud draft, in every mode).
+   */
+  const variantApproval = (s: { ownApprovalRequired: boolean; approvedAt: Date | null; adoptedDraftAt: Date | null }): 'not_needed' | 'waiting' | 'approved' => {
+    if (s.ownApprovalRequired && (needsApproval || s.adoptedDraftAt)) return s.approvedAt ? 'approved' : 'waiting';
     if (!needsApproval) return 'not_needed';
-    if (s.ownApprovalRequired) return s.approvedAt ? 'approved' : 'waiting';
     return run.approval === 'APPROVED' ? 'approved' : 'waiting';
   };
 
@@ -362,6 +390,8 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       // Owner 2026-10-23: rendered after the build → its own approval, never the run's.
       approval: variantApproval(s),
       ownApproval: s.ownApprovalRequired,
+      // Task 13, decision A: Mailercloud already had this draft; a person checks it there and approves.
+      adoptedDraft: s.adoptedDraftAt !== null,
       approvedAt: s.ownApprovalRequired ? s.approvedAt : run.approvedAt,
       approvedBy: s.ownApprovalRequired ? (s.approvedByUserId ? (variantApprovers.get(s.approvedByUserId) ?? null) : null) : (approver?.email ?? null),
       // Owner 2026-10-23: the custom template failed; this copy uses the built-in template.

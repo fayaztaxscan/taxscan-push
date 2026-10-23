@@ -475,6 +475,15 @@ model DigestRun {
   // banner read these, never the once-per-run alert markers. Null once built.
   buildFailure        String?
   buildError          String?
+  // Task 13 (scheduler + health): the complaint-rate check of the previous send, taken once
+  // when this run is created ({checkedAt, thresholdPct, held, previousRunDate, sends: [{audience,
+  // complaints, delivered, ratePct}]}; a null count/rate = UNKNOWN, never 0). held = true makes
+  // this run need an editor's approval even when DIGEST_APPROVAL_REQUIRED is off.
+  complaintCheck      Json?
+  // Task 13: the once-a-day Mailercloud webhook status read (GET /v1/webhooks/detail/{id},
+  // only with MAILERCLOUD_WEBHOOK_ID). webhookActive null = not read (or unreadable) today.
+  webhookCheckedAt    DateTime?
+  webhookActive       Boolean?
   createdAt           DateTime       @default(now())
 
   sends DigestSend[]
@@ -543,6 +552,11 @@ model DigestSend {
   webhookProofAt      DateTime?
   // Task 11: when the frozen html/text were nulled (DIGEST_HTML_RETENTION_DAYS). Null = still stored.
   htmlPurgedAt        DateTime?
+  // Task 13, owner decision A (2026-10-23): set when this variant ADOPTED a campaign that
+  // Mailercloud already had as a DRAFT (or whose status could not be read) — e.g. after a
+  // database restore. Its content cannot be confirmed to match our frozen html, so it is
+  // never scheduled without a person's approval (ownApprovalRequired), in any mode.
+  adoptedDraftAt      DateTime?
 
   run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   placements DigestAdPlacement[]
