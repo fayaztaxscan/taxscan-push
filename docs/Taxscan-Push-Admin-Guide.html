@@ -602,7 +602,8 @@ a day</strong> and is never sent again on a later day.</p>
       and <strong>Desktop</strong> width, with the inbox line (subject and preview text) above it and its size.</li>
   <li><strong>Stories</strong> — the stories in order, with the court or authority and why they ranked.</li>
   <li><strong>Last 14 days</strong> — each day's result, delivered, clicks, unsubscribes, bounces and complaints, with a link
-      to the campaign in Mailercloud.</li>
+      to the campaign in Mailercloud. An email is kept 30 days, then its preview says <em>No longer stored</em>
+      (stories, ads and counts stay).</li>
 </ul>
 <table>
   <thead><tr><th style="width:22%">Button</th><th>What it does</th></tr></thead>
@@ -619,15 +620,12 @@ a day</strong> and is never sent again on a later day.</p>
   <strong>Templates</strong> are for <strong>Administrators</strong> only, and appear in their menu only.</div>
 <div class="box tip"><span class="box-t">Failures retry by themselves</span>
   If Mailercloud doesn't answer, or the build fails, the system tries again <strong>1, 5 and 15 minutes</strong> later,
-  then <strong>every hour</strong> until 17:00. You don't need to press anything. <em>Retry now</em> just skips the wait.
-  A few errors are not retried because retrying can't help (a rejected API key, an exhausted plan): those send an
-  alert email to admins straight away.</div>
+  then <strong>every hour</strong> until 17:00; <em>Retry now</em> just skips the wait. Errors a retry can't fix (a
+  rejected API key, an exhausted plan) alert admins by email straight away.</div>
 <div class="box warn"><span class="box-t">A version built later needs its own Approve</span>
   If one version was held back (for example its ad slot couldn't be filled) and is built after you approved the day,
   your earlier approval does <strong>not</strong> cover it. Its preview appears and <strong>Approve</strong> is offered
   again for that version alone. Not approved by 17:00, it is skipped.</div>
-<p>A digest email is kept for <strong>30 days</strong>; after that its preview says <em>No longer stored</em> (the
-stories, ads and counts are kept).</p>
 
 <h3>Get notified on your phone</h3>
 <p>Besides the emails, anyone who can approve can get a <strong>notification</strong> on their own phone or computer:
@@ -644,11 +642,10 @@ stories, ads and counts are kept).</p>
   push.taxscan.in/admin, tap <strong>Share → Add to Home Screen</strong>, open <strong>Taxscan Push</strong> from the Home
   Screen, sign in, and tap <em>Notify me on this device</em> there. In Safari itself the screen shows this instruction
   instead of the button.</div>
-<p class="muted"><em>Blocked in browser settings</em>: site settings (icon left of the address) → Notifications → Allow,
-then reload. On <strong>Users</strong>, admins see who has notifications on and can <strong>Remove devices</strong> (a lost
-phone); deactivating a user removes theirs. If the card says <em>the notification key has changed</em> (after a
-security key change), tap <strong>Notify me on this device</strong> once more on each device. At most 10 devices per
-person: an 11th turns the oldest off, and the card says which.</p>
+<p class="muted"><em>Blocked</em>: site settings → Notifications → Allow, then reload. On <strong>Users</strong>, admins
+can <strong>Remove devices</strong> (a lost phone); deactivating a user removes theirs. <em>The notification key has
+changed</em> (after a security key change): tap <strong>Notify me on this device</strong> again on each device. At most
+10 devices per person: an 11th turns the oldest off, and the card says which.</p>
 
 <h3>If the Digests screen (or the Dashboard) shows an amber notice</h3>
 <p>The digest uses the same amber notice as the rest of the platform. It stays until the cause is gone and can't be
@@ -691,10 +688,9 @@ dismissed. The common ones:</p>
   <li>Someone who unsubscribes is only mailed again if they opt in again <em>after</em> unsubscribing. A spam complaint or a
       permanent bounce is lifted only by a new, explicit opt-in. An address an admin blocked by hand is never lifted
       automatically.</li>
+  <li><strong>Activity</strong> records every approval, hold, Send now, Retry now, test send, ad and template change and
+      notification device turned on, off or removed — with who and when.</li>
 </ul>
-<p><strong>Activity</strong> records every approval, hold, Send now, Retry now and test send, every ad and template
-change (saved, activated, scheduled, archived, reverted) and every notification device turned on, off or removed — with
-who did it and when.</p>
 </section>
 
 <!-- 10 -->

@@ -94,7 +94,10 @@ export function useStaffPush() {
   const state = ref<StaffPushState>('checking');
   const busy = ref(false);
   const error = ref<string | null>(null);
+  /** Success / confirmation — renders as the green banner. */
   const notice = ref<string | null>(null);
+  /** Something the person should act on or know was lost (key changed, device evicted) — amber. */
+  const warning = ref<string | null>(null);
   const status = ref<Status | null>(null);
 
   async function currentSubscription(): Promise<PushSubscription | null> {
@@ -104,6 +107,7 @@ export function useStaffPush() {
 
   async function refresh(): Promise<void> {
     error.value = null;
+    warning.value = null;
     try {
       status.value = await api.get<Status>('/api/staff-push/status');
     } catch {
@@ -132,7 +136,7 @@ export function useStaffPush() {
       const key = status.value?.vapidPublicKey;
       if (key && !keyMatches(sub, urlBase64ToUint8Array(key))) {
         state.value = 'off';
-        notice.value = 'The notification key has changed. Tap Notify me on this device to turn notifications on again.';
+        warning.value = 'The notification key has changed. Tap Notify me on this device to turn notifications on again.';
         return;
       }
       // On only if the server still has it (an admin may have removed this device).
@@ -147,6 +151,7 @@ export function useStaffPush() {
   async function enable(): Promise<void> {
     error.value = null;
     notice.value = null;
+    warning.value = null;
     busy.value = true;
     try {
       // First, inside the tap: Safari asks only from a user gesture.
@@ -176,7 +181,8 @@ export function useStaffPush() {
         ...(replacesEndpoint && replacesEndpoint !== json.endpoint ? { replacesEndpoint } : {}),
       });
       state.value = 'on';
-      notice.value = ['Notifications are on for this device.', evictedNotice(saved)].filter(Boolean).join(' ');
+      notice.value = 'Notifications are on for this device.';
+      warning.value = evictedNotice(saved) || null;
       try {
         status.value = await api.get<Status>('/api/staff-push/status');
       } catch {
@@ -192,6 +198,7 @@ export function useStaffPush() {
   async function disable(): Promise<void> {
     error.value = null;
     notice.value = null;
+    warning.value = null;
     busy.value = true;
     try {
       const sub = await currentSubscription();
@@ -211,6 +218,7 @@ export function useStaffPush() {
   async function sendTest(): Promise<void> {
     error.value = null;
     notice.value = null;
+    warning.value = null;
     busy.value = true;
     try {
       const sub = await currentSubscription();
@@ -229,5 +237,5 @@ export function useStaffPush() {
     }
   }
 
-  return { state, busy, error, notice, status, refresh, enable, disable, sendTest };
+  return { state, busy, error, notice, warning, status, refresh, enable, disable, sendTest };
 }

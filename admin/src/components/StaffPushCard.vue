@@ -7,7 +7,7 @@ import { useStaffPush } from '../composables/useStaffPush';
  * state of THIS browser, and the one control that changes it. The browser's
  * permission prompt appears only after the button tap.
  */
-const { state, busy, error, notice, status, refresh, enable, disable, sendTest } = useStaffPush();
+const { state, busy, error, notice, warning, status, refresh, enable, disable, sendTest } = useStaffPush();
 
 onMounted(refresh);
 </script>
@@ -77,7 +77,10 @@ onMounted(refresh);
       </div>
     </div>
     <div v-if="error" class="banner err sp-msg" role="alert">{{ error }}</div>
-    <div v-else-if="notice" class="banner ok sp-msg" role="status">{{ notice }}</div>
+    <template v-else>
+      <div v-if="notice" class="banner ok sp-msg" role="status">{{ notice }}</div>
+      <div v-if="warning" class="banner warn sp-msg" role="status">{{ warning }}</div>
+    </template>
   </section>
 </template>
 
