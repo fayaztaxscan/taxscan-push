@@ -6,9 +6,12 @@ import { istDateOf } from './retryPolicy';
 import { adUtmContent, forbiddenForAudience } from './adRules';
 
 /**
- * Digest renderer v0 (docs/EMAIL_DIGEST_DESIGN.md §4 renderer, §13 task 5).
+ * Digest renderer (docs/EMAIL_DIGEST_DESIGN.md §4 renderer, §13 tasks 5 and 10).
  *
- * One built-in template in code (task 10 replaces it with stored templates).
+ * Task 10: the layout is a template with {{placeholders}} (`TEMPLATE_PLACEHOLDERS`);
+ * `resolveTemplate()` picks it, and without one the built-in v0 layout
+ * (`BUILTIN_TEMPLATE_HTML`) is used. Every rule below is the renderer's, whatever
+ * the template: it fills the placeholders, a template only arranges them.
  * `renderDigest()` is PURE and deterministic: the same items, audience,
  * runDate and config give byte-identical output — no clock, no randomness,
  * no I/O. The runner calls it once, inside the build step, and freezes the
@@ -52,6 +55,8 @@ export type DigestContent = {
   text: string;
   /** The ads drawn, one per rendered slot (task 9). Absent from stub content. */
   placements?: AdPlacementRecord[];
+  /** Task 10: the template used (null = built-in; absent from stub content). */
+  templateId?: string | null;
 };
 
 /**
@@ -136,7 +141,9 @@ export type AdSlotHook = (slot: AdSlot, ctx: { audience: DigestAudience; utmCamp
 export const noAds: AdSlotHook = () => '';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+// Owner, 2026-10-23: the built-in look stays close to the hand-made Mailercloud digest readers
+// know (Arial, a #3b3543 header bar with the white logo, square yellow buttons).
+const FONT = "Arial,'Helvetica Neue',Helvetica,sans-serif";
 /**
  * On every text cell and text element: a long unbroken word (URL-like slug, a
  * 100-char token) wraps instead of widening the 600 px column. Both properties
@@ -148,13 +155,33 @@ const C = {
   page: '#f2f3f5',
   card: '#ffffff',
   rule: '#e3e5e8',
-  text: '#1b1d21', // never pure black (dark-mode inversion)
-  body: '#3c4043',
+  text: '#111111', // never pure black (dark-mode inversion)
+  body: '#333333',
   muted: '#5f6368',
-  link: '#0b57d0',
-  brand: '#9b1c1c',
+  link: '#1376c8',
+  brand: '#3b3543', // the header bar (as in today's digest); fixed in dark mode too
   brandText: '#ffffff',
+  button: '#FEE620', // square yellow CTA, bold dark text (today's digest)
+  buttonText: '#111111',
 };
+
+/** The Taxscan logo (white on transparent, 440×106 for 2× at 220 px), served from the asset host. */
+export const LOGO_PATH = '/email/taxscan-logo-white-440.png';
+export const LOGO_WIDTH = 220;
+export const LOGO_HEIGHT = 53;
+
+/**
+ * A "bulletproof" button: square corners, yellow, bold dark text; a VML
+ * rectangle for Outlook desktop (which ignores padding on links), the plain
+ * link everywhere else. `href` is already escaped.
+ */
+function button(href: string, label: string, widthPx: number): string {
+  const text = esc(label);
+  return (
+    `<!--[if mso]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${href}" style="height:44px;v-text-anchor:middle;width:${widthPx}px;" stroke="f" fillcolor="${C.button}"><w:anchorlock/><center style="color:${C.buttonText};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${text}</center></v:rect><![endif]-->` +
+    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;min-height:44px;line-height:44px;padding:0 22px;background-color:${C.button};border-radius:0;font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;mso-hide:all;">${text}</a><!--<![endif]-->`
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Errors                                                              */
@@ -357,6 +384,20 @@ export type RenderInput = {
    * (renderer unit tests only; the build always passes them).
    */
   ads?: RenderAd[];
+  /**
+   * Task 10: the template's COMPILED html (`resolveTemplate()` picks it).
+   * Undefined = the built-in template (`BUILTIN_TEMPLATE_HTML`).
+   */
+  template?: { html: string };
+  /**
+   * 'send' (default): any refusal throws. 'check' (template validation and
+   * previews only): a template's own off-allowlist link or image is left in
+   * place for the validator to report, and the size limit is reported
+   * (`overBudget`) instead of thrown. Never used for a digest that is frozen.
+   */
+  mode?: 'send' | 'check';
+  /** Where `/email-assets/` images are served from: template images may live there. */
+  assetBaseUrl?: string;
 };
 
 export type RenderedDigest = {
@@ -374,6 +415,8 @@ export type RenderedDigest = {
   campaignName: string;
   /** Slots drawn (whether or not an ad was given for them). */
   renderedSlots: number[];
+  /** Only in 'check' mode: the budget is above DIGEST_MAX_HTML_KB (in 'send' mode that throws). */
+  overBudget: boolean;
 };
 
 type Prepared = {
@@ -419,8 +462,10 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   const icymi = items.filter((i) => i.section === 'ICYMI');
   if (main.length === 0) throw new RenderError('no_main_items', 'no MAIN item with a headline to lead the digest');
 
-  const logoUrl = input.logoUrl ?? null;
-  if (logoUrl && !isAllowedDigestUrl(logoUrl)) {
+  // The logo: given explicitly, else the committed asset on the digest asset host
+  // (production always passes assetBaseUrl); without either, a text wordmark.
+  const logoUrl = input.logoUrl ?? (input.assetBaseUrl ? `${input.assetBaseUrl}${LOGO_PATH}` : null);
+  if (logoUrl && !isAllowedTemplateImage(logoUrl, input.assetBaseUrl ?? null)) {
     throw new RenderError('link_not_allowed', `logo image is on ${hostOf(logoUrl)}, which is not on ALLOWED_PUSH_HOSTS`);
   }
 
@@ -436,14 +481,19 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   const ad = input.ads ? adHookFor(input.ads, audience, utmCampaign, renderedSlots) : (slot: AdSlot) => (input.adSlot ?? noAds)(slot, { audience, utmCampaign });
   const textAds = input.ads ? textAdsFor(input.ads, utmCampaign) : new Map<number, string>();
 
-  const html = renderHtml({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad });
+  const mode = input.mode ?? 'send';
+  const shell = input.template
+    ? templateLinks(input.template.html, { utmCampaign, mode, assetBaseUrl: input.assetBaseUrl ?? null })
+    : BUILTIN_TEMPLATE_HTML;
+  const html = fillTemplate(shell, templateValues({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad }));
   const text = renderText({ audience, dateText, main, icymi, postal, homeHref, ads: textAds });
 
   const htmlBytes = Buffer.byteLength(html, 'utf8');
   const linkCount = (html.match(/<a\s[^>]*href=/gi) ?? []).length;
   const budgetBytes = htmlBytes + linkCount * TRACKING_BYTES_PER_LINK;
   const limit = cfg.maxHtmlKb * 1024;
-  if (budgetBytes > limit) {
+  const overBudget = budgetBytes > limit;
+  if (overBudget && mode === 'send') {
     throw new RenderError(
       'over_size_limit',
       `${budgetBytes} bytes (html ${htmlBytes} + ${linkCount} links × ${TRACKING_BYTES_PER_LINK}) is over DIGEST_MAX_HTML_KB=${cfg.maxHtmlKb}`,
@@ -451,7 +501,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   }
   const sizeWarning = budgetBytes >= cfg.htmlWarnKb * 1024;
 
-  return { subject, preheader, html, text, htmlBytes, budgetBytes, linkCount, sizeWarning, campaignName, renderedSlots };
+  return { subject, preheader, html, text, htmlBytes, budgetBytes, linkCount, sizeWarning, campaignName, renderedSlots, overBudget };
 }
 
 /** The ad's link with the digest UTM (`utm_content=ad-<id>-slot<N>`). */
@@ -522,9 +572,7 @@ function adRow(a: RenderAd, href: string): string {
     img +
     `<h3 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(clean(a.headline))}</h3>` +
     body +
-    `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.brand}" style="border-radius:6px;background-color:${C.brand};">` +
-    `<a href="${h}" style="display:inline-block;padding:12px 22px;min-height:20px;line-height:20px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.brandText};text-decoration:none;border-radius:6px;">${esc(clean(a.ctaText))}</a>` +
-    `</td></tr></table>` +
+    button(h, clean(a.ctaText), Math.min(AD_IMAGE_DISPLAY_WIDTH, 60 + graphemes(clean(a.ctaText)).length * 10)) +
     `</td></tr>`
   );
 }
@@ -572,7 +620,7 @@ function itemRow(it: Prepared): string {
     label +
     `<h2 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:20px;line-height:26px;font-weight:700;color:${C.text};"><a href="${href}" class="ts-head" style="${WRAP}display:block;padding:9px 0;color:${C.text};text-decoration:none;">${esc(it.title)}</a></h2>` +
     summary +
-    `<a href="${href}" class="ts-link" style="display:inline-block;min-height:44px;line-height:44px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.link};text-decoration:none;">Read more &rarr;</a>` +
+    `<div style="margin:8px 0 0 0;">${button(href, 'Read more', 140)}</div>` +
     `</td></tr>`
   );
 }
@@ -585,25 +633,120 @@ function sectionHeading(text: string, id: string): string {
   );
 }
 
-function renderHtml(p: HtmlParts): string {
+/* ------------------------------------------------------------------ */
+/* Templates (task 10)                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The placeholders a template may use. The renderer fills each one; a template
+ * supplies only the layout around them. Row placeholders expand to table rows
+ * (`<tr>…</tr>`), so they must sit directly inside a `<table>`.
+ *
+ * REQUIRED (exactly once): preheader, stories, icymi, ad_slot_3, footer. The
+ * footer (reason line, unsubscribe tag, postal address) is ALWAYS the
+ * renderer's own markup — a template can place it but never change or drop it.
+ */
+export const TEMPLATE_PLACEHOLDERS = {
+  preheader: 'Hidden inbox preview text (“Plus N more: …”). Put it first in <body>.',
+  stories: 'The stories, with ad slots 1 and 2 after stories 4 and 9 (table rows).',
+  icymi: '“In case you missed it” rows, when there are any (table rows).',
+  ad_slot_3: 'The ad above the footer (a table row).',
+  footer: 'Reason line, unsubscribe link and postal address (a table row; cannot be removed).',
+  subject: 'The subject line (the lead headline), escaped — e.g. inside <title>.',
+  date: 'The digest date, “22 October 2026”.',
+  home_url: 'taxscan.in with the digest UTM, for a header link.',
+  logo: 'The Taxscan wordmark (or logo image).',
+  premium_badge: 'A “Premium” badge in the Premium digest, nothing in the Free one.',
+  audience: '“Free” or “Premium”.',
+} as const;
+export type TemplatePlaceholder = keyof typeof TEMPLATE_PLACEHOLDERS;
+export const REQUIRED_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['preheader', 'stories', 'icymi', 'ad_slot_3', 'footer'];
+/** Placeholders that expand to table rows. */
+export const ROW_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['stories', 'icymi', 'ad_slot_3', 'footer'];
+/** `{{name}}` in a template (the provider's own merge tags use the same braces). */
+export const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
+
+/**
+ * The built-in template: the v0 layout (task 5) as a template. Used whenever
+ * no template is ACTIVE or scheduled for the audience (`resolveTemplate`), and
+ * the seed an admin starts a new template from.
+ */
+export const BUILTIN_TEMPLATE_HTML =
+  `<!DOCTYPE html>\n` +
+  `<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">\n` +
+  `<head>\n` +
+  `<meta charset="utf-8">\n` +
+  `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
+  `<meta http-equiv="X-UA-Compatible" content="IE=edge">\n` +
+  `<meta name="x-apple-disable-message-reformatting">\n` +
+  `<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">\n` +
+  `<meta name="color-scheme" content="light dark">\n` +
+  `<meta name="supported-color-schemes" content="light dark">\n` +
+  `<title>{{subject}}</title>\n` +
+  `<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n` +
+  // Enhancement only: the layout works with this block stripped (Gmail app, Outlook).
+  `<style>\n` +
+  `:root{color-scheme:light dark;supported-color-schemes:light dark}\n` +
+  `@media (prefers-color-scheme:dark){.ts-bg{background-color:#111214!important}.ts-card{background-color:#1c1d20!important;border-color:#2c2e33!important}` +
+  `.ts-head,.ts-text{color:#eceef1!important}.ts-body{color:#c9ccd1!important}.ts-muted{color:#a9adb3!important}.ts-link{color:#8ab4f8!important}.ts-label{color:#cdbfe0!important}` +
+  // The header bar and the yellow buttons keep their colours in dark mode (white logo on #3b3543 stays legible).
+  `.ts-hdr{background-color:${C.brand}!important}.ts-btn{background-color:${C.button}!important;color:${C.buttonText}!important}}\n` +
+  `@media only screen and (max-width:620px){.ts-pad{padding-left:16px!important;padding-right:16px!important}}\n` +
+  `</style>\n` +
+  `</head>\n` +
+  `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
+  `{{preheader}}\n` +
+  `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td align="center" style="padding:16px 8px;">\n` +
+  `<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="600"><![endif]-->\n` +
+  `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;margin:0 auto;border-collapse:collapse;">\n` +
+  `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 24px 18px 24px;background-color:${C.brand};text-align:center;" bgcolor="${C.brand}">` +
+  `<a href="{{home_url}}" style="display:inline-block;min-height:44px;text-decoration:none;color:${C.brandText};">{{logo}}</a>` +
+  `<p style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest &middot; {{date}}{{premium_badge}}</p>` +
+  `</td></tr>\n` +
+  `{{stories}}\n` +
+  `{{icymi}}\n` +
+  `{{ad_slot_3}}\n` +
+  `{{footer}}\n` +
+  `</table>\n` +
+  `<!--[if mso]></td></tr></table><![endif]-->\n` +
+  `</td></tr></table>\n` +
+  `</body>\n` +
+  `</html>\n`;
+
+/**
+ * Fills a template in ONE pass: a value is never re-scanned, so a headline that
+ * happens to contain "{{footer}}" stays text. Unknown names are left as they
+ * are (the validator refuses them before a template can be activated; the
+ * provider's own merge tags, e.g. the unsubscribe tag inside the footer, pass).
+ */
+export function fillTemplate(html: string, values: Partial<Record<string, string>>): string {
+  return html.replace(PLACEHOLDER_RE, (m, name: string) => {
+    const v = values[name];
+    return v === undefined ? m : v;
+  });
+}
+
+/** Every value the renderer puts into a template. */
+function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
   const premium = p.audience === 'PREMIUM';
   const logo = p.logoUrl
-    ? `<img src="${esc(p.logoUrl)}" width="120" alt="Taxscan" style="display:block;width:120px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:22px;font-weight:700;">`
-    : `<span style="font-family:${FONT};font-size:26px;line-height:32px;font-weight:800;letter-spacing:-0.01em;color:${C.brandText};">Taxscan</span>`;
+    ? `<img src="${esc(p.logoUrl)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" alt="Taxscan" style="display:block;margin:0 auto;width:${LOGO_WIDTH}px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:28px;line-height:${LOGO_HEIGHT}px;font-weight:700;letter-spacing:0.08em;">`
+    : `<span style="font-family:${FONT};font-size:28px;line-height:36px;font-weight:700;letter-spacing:0.08em;color:${C.brandText};">TAXSCAN</span>`;
   const badge = premium
-    ? ` <span style="display:inline-block;margin-left:8px;padding:2px 10px;border:1px solid ${C.brandText};border-radius:12px;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${C.brandText};vertical-align:middle;">Premium</span>`
+    ? ` <span style="display:inline-block;margin-left:8px;padding:0 10px;border:1px solid ${C.brandText};border-radius:12px;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${C.brandText};vertical-align:middle;">Premium</span>`
     : '';
 
-  const rows: string[] = [];
+  const stories: string[] = [];
   p.main.forEach((it, i) => {
-    rows.push(itemRow(it));
-    for (const s of AD_SLOTS) if (s.position === 'afterItem' && s.afterItem === i + 1) rows.push(p.ad(s)); // AD SLOT HOOK (task 9)
+    stories.push(itemRow(it));
+    for (const s of AD_SLOTS) if (s.position === 'afterItem' && s.afterItem === i + 1) stories.push(p.ad(s)); // AD SLOT HOOK (task 9)
   });
+  const icymi: string[] = [];
   if (p.icymi.length > 0) {
-    rows.push(sectionHeading('In case you missed it', 'icymi'));
-    for (const it of p.icymi) rows.push(itemRow(it));
+    icymi.push(sectionHeading('In case you missed it', 'icymi'));
+    for (const it of p.icymi) icymi.push(itemRow(it));
   }
-  for (const s of AD_SLOTS) if (s.position === 'beforeFooter') rows.push(p.ad(s)); // AD SLOT HOOK (task 9)
+  const beforeFooter = AD_SLOTS.filter((s) => s.position === 'beforeFooter').map((s) => p.ad(s)); // AD SLOT HOOK (task 9)
 
   const reason = premium ? PREMIUM_REASON : FREE_REASON;
   const footer =
@@ -613,44 +756,55 @@ function renderHtml(p: HtmlParts): string {
     `<p style="${WRAP}margin:0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">Taxscan &middot; ${esc(p.postal)}</p>` +
     `</td></tr>`;
 
-  return (
-    `<!DOCTYPE html>\n` +
-    `<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">\n` +
-    `<head>\n` +
-    `<meta charset="utf-8">\n` +
-    `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
-    `<meta http-equiv="X-UA-Compatible" content="IE=edge">\n` +
-    `<meta name="x-apple-disable-message-reformatting">\n` +
-    `<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">\n` +
-    `<meta name="color-scheme" content="light dark">\n` +
-    `<meta name="supported-color-schemes" content="light dark">\n` +
-    `<title>${esc(p.subject)}</title>\n` +
-    `<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n` +
-    // Enhancement only: the layout works with this block stripped (Gmail app, Outlook).
-    `<style>\n` +
-    `:root{color-scheme:light dark;supported-color-schemes:light dark}\n` +
-    `@media (prefers-color-scheme:dark){.ts-bg{background-color:#111214!important}.ts-card{background-color:#1c1d20!important;border-color:#2c2e33!important}` +
-    `.ts-head,.ts-text{color:#eceef1!important}.ts-body{color:#c9ccd1!important}.ts-muted{color:#a9adb3!important}.ts-link{color:#8ab4f8!important}.ts-label{color:#f28b82!important}}\n` +
-    `@media only screen and (max-width:620px){.ts-pad{padding-left:16px!important;padding-right:16px!important}}\n` +
-    `</style>\n` +
-    `</head>\n` +
-    `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
-    `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">${esc(p.preheader)}${PREVIEW_FILLER}</div>\n` +
-    `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td align="center" style="padding:16px 8px;">\n` +
-    `<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="600"><![endif]-->\n` +
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;margin:0 auto;border-collapse:collapse;">\n` +
-    `<tr><td class="ts-pad" style="${WRAP}padding:20px 24px;background-color:${C.brand};" bgcolor="${C.brand}">` +
-    `<a href="${esc(p.homeHref)}" style="display:inline-block;min-height:44px;line-height:44px;text-decoration:none;color:${C.brandText};vertical-align:middle;">${logo}</a>${badge}` +
-    `<p style="${WRAP}margin:4px 0 0 0;font-family:${FONT};font-size:16px;line-height:22px;color:${C.brandText};">Daily Digest &middot; ${esc(p.dateText)}</p>` +
-    `</td></tr>\n` +
-    rows.filter(Boolean).join('\n') +
-    `\n${footer}\n` +
-    `</table>\n` +
-    `<!--[if mso]></td></tr></table><![endif]-->\n` +
-    `</td></tr></table>\n` +
-    `</body>\n` +
-    `</html>\n`
-  );
+  return {
+    preheader: `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">${esc(p.preheader)}${PREVIEW_FILLER}</div>`,
+    stories: stories.filter(Boolean).join('\n'),
+    icymi: icymi.join('\n'),
+    ad_slot_3: beforeFooter.filter(Boolean).join('\n'),
+    footer,
+    subject: esc(p.subject),
+    date: esc(p.dateText),
+    home_url: esc(p.homeHref),
+    logo,
+    premium_badge: badge,
+    audience: premium ? 'Premium' : 'Free',
+  };
+}
+
+/** An image a template may show: https, on the allowlist or the digest asset host. */
+export function isAllowedTemplateImage(url: string, assetBaseUrl: string | null): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || u.username !== '' || u.password !== '' || u.port !== '') return false;
+    if (assetBaseUrl && u.host === new URL(assetBaseUrl).host) return true;
+  } catch {
+    return false;
+  }
+  return isAllowedDigestUrl(url);
+}
+
+const decodeAttr = (v: string) => v.replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/g, "'");
+
+/**
+ * A custom template's OWN links (not the renderer's): every allowlisted
+ * `href` gets the digest UTM (`utm_content=template`); in 'send' mode an
+ * off-allowlist link or a non-https / off-host image is a refusal (fail
+ * closed), in 'check' mode it is left for the validator to report.
+ * Placeholders and the provider's unsubscribe tag are left alone.
+ */
+function templateLinks(html: string, o: { utmCampaign: string; mode: 'send' | 'check'; assetBaseUrl: string | null }): string {
+  return html.replace(/(\s)(href|src)\s*=\s*(["'])([\s\S]*?)\3/gi, (m, sp: string, attr: string, q: string, raw: string) => {
+    const value = decodeAttr(raw.trim());
+    if (value === UNSUBSCRIBE_TAG || /^\{\{\s*[A-Za-z0-9_.]+\s*\}\}$/.test(value)) return m;
+    if (attr.toLowerCase() === 'src') {
+      if (isAllowedTemplateImage(value, o.assetBaseUrl)) return m;
+      if (o.mode === 'check') return m;
+      throw new RenderError('link_not_allowed', `a template image is on ${hostOf(value)}; template images must be https on ALLOWED_PUSH_HOSTS or the digest asset host`);
+    }
+    if (isAllowedDigestUrl(value)) return `${sp}href=${q}${esc(withUtm(value, { campaign: o.utmCampaign, content: 'template' }))}${q}`;
+    if (o.mode === 'check') return m;
+    throw new RenderError('link_not_allowed', `a template link goes to ${hostOf(value)}, which is not on ALLOWED_PUSH_HOSTS`);
+  });
 }
 
 /* ------------------------------------------------------------------ */

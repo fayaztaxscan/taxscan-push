@@ -1005,6 +1005,72 @@ agents.
     Templates screen.
     *Accept:* a second ACTIVE template per audience is rejected by the DB; an override wins inside its
     window and lapses after it; activation is blocked while validation fails.
+    *Built 2026-10-23 (migration `20261023100821_digest_templates`: `DigestTemplate`, new table only, raw SQL
+    partial unique index `one_active_template_per_audience` ON (portal, audience) WHERE status = 'ACTIVE' plus CHECK
+    constraints on status, format, the override window and compiled html for ACTIVE/SCHEDULED; create-only, no
+    `lock_timeout` (no existing table touched). `templates.ts`, `src/routes/digestTemplates.ts`,
+    `admin/src/views/Templates.vue`, `components/EmailPreviewFrame.vue`; tests `digestTemplates`).*
+    - **MJML: NOT added in this task.** `mjml@5.4.1` would add 234 packages (~57 MB, package-lock 637 → ~871
+      entries, no install scripts) and needs Node ≥ 20.18 (cheerio/undici; cssnano declares ^22.11 || ^24.11): it
+      crashes on load under the Node 18 that this Mac's shell runs jest with. `mjml@4.15.3` (167 packages) runs on
+      Node 18 but carries the unfixable html-minifier ReDoS advisory. Stopped and reported per the brief. The seam is
+      in place: `format` HTML | MJML, `compileTemplate()` lazily `require`s `mjml` at SAVE time only; without it an
+      MJML template fails to compile with a readable message ("MJML is not available in this build yet…"), which
+      blocks activation (fail safe; tested with injected compilers, including an MJML error). Adding it later =
+      `npm i mjml@5.4.1` + nothing else. **Railway branch build verification still required before this ships**
+      (owner's condition for MJML).
+    - **`resolveTemplate(audience, at)` is the single definition** (`content.ts` calls it at the build instant):
+      a SCHEDULED override with startsAt ≤ at < endsAt → else the ACTIVE template → else the **built-in template**
+      (`BUILTIN_TEMPLATE_HTML`, the v0 layout re-expressed with placeholders). So nothing changes until an admin
+      activates a template, and "New template" starts from a copy of the built-in one. The template id is frozen on
+      `DigestSend.templateId` (null = built-in). The renderer always fills a template: the built-in path and a
+      custom one are the same code.
+    - **Built-in look (owner, 23 Oct 2026):** close to today's hand-made digest — a solid #3b3543 header bar (kept
+      in dark mode) with the new white logo centred (220 px, alt "Taxscan", `public/email/taxscan-logo-white-440.png`
+      served at `/email/…` with CORP cross-origin and a one-year immutable cache; a changed asset needs a new file
+      name), Arial throughout, headlines #111111 not underlined, body #333333, links #1376c8, square yellow
+      (#FEE620) buttons with bold dark text and an Outlook VML fallback for "Read more" and ad CTAs. The worst case
+      stays ~48 KB of the 90 KB budget. Without an asset host (unit renders) the header shows a TAXSCAN wordmark.
+    - **Placeholders** (`TEMPLATE_PLACEHOLDERS`): required exactly once — `{{preheader}}`, `{{stories}}` (with ad
+      slots 1–2), `{{icymi}}`, `{{ad_slot_3}}`, `{{footer}}`; optional `{{subject}}`, `{{date}}`, `{{home_url}}`,
+      `{{logo}}`, `{{premium_badge}}`, `{{audience}}`. Row placeholders expand to `<tr>` and must sit directly in a
+      table. Filled in ONE pass (a headline containing "{{footer}}" stays text). The footer markup is always the
+      renderer's own. A template's own allowlisted links get `utm_content=template`; at send time an off-allowlist
+      link or a non-https/off-host image is a refusal (fail closed).
+    - **Deviations from §3:** `portal` (like ads), `format`, `compileError`, `validatedAt`, `activatedAt`,
+      `archivedAt`, `updatedByUserId` added; `layout`, `subjectPattern`, `preheaderPattern` dropped — slot
+      positions stay in code (`AD_SLOTS`, the picker depends on them) and subject/preheader stay the renderer's
+      rules (defects #4/#7 enforced in code). One ACTIVE per (portal, audience) — per audience for the one portal.
+    - **Checklist** (`validateTemplate`, pure; stored at save, re-run at activate/schedule/revert because config such
+      as the allowlist may change): compiles; required placeholders exactly once, no unknown ones, rows inside a
+      table, preheader in body; footer visible (not in a comment / Outlook-only block / hidden element / head, not
+      hidden by a `<style>` rule that could match it — hiding your own class is fine) with the postal address and
+      unsubscribe tag in the rendered email; no scripts, forms/controls, iframes, objects, `<link>`, `@import`,
+      `<svg>`, `on…=` or `javascript:`; every href passes the digest URL check and every image is https on the
+      allowlist or the asset host; every image has alt text; the worst-case fixture (DIGEST_MAX_ITEMS stories, the
+      last DIGEST_ROLLFORWARD_ITEMS as ICYMI, 3 maximal ads) under DIGEST_MAX_HTML_KB with a warning band from
+      DIGEST_HTML_WARN_KB; Premium only: no link to a subscribe/pricing/plans/membership/join page and no
+      "Subscribe now"-type text (heuristic).
+    - **Lifecycle:** DRAFT (only drafts are edited; Copy makes a new draft) → Activate (confirm; the displaced
+      ACTIVE → ARCHIVED and is remembered in `replacesId`) or Schedule [from, until) (no overlap with another
+      override, not in the past). Archive: DRAFT/SCHEDULED only (final). **Revert** (per audience, confirm): the
+      ACTIVE one → DRAFT, the one it replaced → ACTIVE after passing the checklist again (else refused); with
+      nothing to go back to, the built-in template.
+    - **Routes** (`/api/digest/templates…`, ADMIN session or bearer; publisher 403): list (+ in use now, revert
+      target, placeholders, built-in source), get, create, update, validate, preview (`?data=recent|worst`;
+      latest frozen stories + today's ad picks, else the fixture / sample ads), built-in preview, activate,
+      schedule, archive, revert. Previews carry the same sandbox `PREVIEW_CSP` and are shown only in `sandbox=""`
+      iframes. The templates path has its own 600 KB JSON limit (source ≤ 150,000 characters); everything else
+      keeps 64 KB. Audit: `DIGEST_TEMPLATE_SAVED` (created/changed fields, checks), `_ACTIVATED` (mode
+      active|scheduled, replaced name), `_ARCHIVED`, `_REVERTED` — name, audience, status, format, source length,
+      window, failed check ids; never the source or html. Activity renders all four. Test send for templates is
+      not built (there is no `testSend.ts` yet; a template is test-sent through a Digests run).
+    - **Templates screen** (`/templates`, ADMIN nav entry): in use now per audience + Revert; list (`table.stack`);
+      editor with the checklist beside the source — the Activate button stays disabled while any check fails or
+      there are unsaved changes; size meter with the warning tick; preview at 375/768/1024 through the shared
+      `EmailPreviewFrame` (Digests now uses the same component). Verified in headless Chromium at 1280 and 390 px.
+    - **Backup:** `DigestTemplate` is listed for `backup.ts` in §3 and joins it in task 11 (with DigestAd,
+      DigestAdImage, EmailSuppression).
 11. **Retention and backup.** Nightly fold of EmailEvent into `rolled*` plus `digestSendStats()`, html
     nulled after 30 days, and the new tables added to `backup.ts`.
     *Accept:* counts are identical before and after the fold, and a backup and restore rehearsal

@@ -327,7 +327,7 @@ describe('9. responsive, email-safe HTML', () => {
   it('no JS, no external CSS, no web fonts; text never pure black', () => {
     expect(r.html).not.toMatch(/<script|<link\b|@import|@font-face|fonts\.googleapis/i);
     expect(r.html).not.toMatch(/color:#000(000)?\b/i);
-    expect(r.html).toContain('-apple-system');
+    expect(r.html).toContain("font-family:Arial,'Helvetica Neue',Helvetica,sans-serif"); // the look readers know (owner, 2026-10-23)
   });
   it('body text ≥ 16 px, no font under 14 px; every link has a ≥ 44 px tap target', () => {
     const sizes = [...r.html.matchAll(/font-size:(\d+)px/g)].map((m) => Number(m[1])).filter((n) => n !== 1); // 1px = hidden preheader
@@ -618,7 +618,7 @@ describe('runner integration', () => {
       const placed = await prisma.digestAdPlacement.findMany({ where: { sendId: s.id }, orderBy: { slot: 'asc' } });
       expect(placed.map((p) => p.slot)).toEqual([1, 3]);
       const ads = placed.map((p) => toRenderAd({ slot: p.slot, ad: pool.find((a) => a.id === p.adId)!, utmContent: p.utmContent, viaDefault: false }, c.assetBaseUrl));
-      const expected = renderDigest({ items: its, audience: s.audience, runDate: run.runDate, cfg: c, ads });
+      const expected = renderDigest({ items: its, audience: s.audience, runDate: run.runDate, cfg: c, ads, assetBaseUrl: c.assetBaseUrl });
       expect(s).toMatchObject({
         subject: expected.subject,
         preheader: expected.preheader,

@@ -13,6 +13,8 @@ import { redactError, type DigestSender } from '../services/digest/sender';
 import type { BuildContent } from '../services/digest/renderer';
 import { digestActions, digestHistory, digestRunDetail } from '../services/digest/screen';
 import { createDigestAdsRouter } from './digestAds';
+import { createDigestTemplatesRouter } from './digestTemplates';
+import type { MjmlCompiler } from '../services/digest/templates';
 
 /**
  * Email digest routes (docs/EMAIL_DIGEST_DESIGN.md §6), mounted at
@@ -47,6 +49,8 @@ export type DigestRouterOptions = {
   alerts?: false;
   /** Minimum seconds between two test sends by one user (default 20). */
   testSendGapSeconds?: number;
+  /** Templates: an injected MJML compiler (tests); null = "not installed". Default: the installed one, if any. */
+  mjml?: MjmlCompiler | null;
 };
 
 /** The CSP on the frozen preview: no scripts, no fetches, no forms; inline styles and https images only. */
@@ -77,6 +81,10 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
 
   // Ads (task 9): ADMIN only, works with the digest switched off so ads can be prepared first.
   router.use(createDigestAdsRouter({ cfg: cfgOf, clock: nowOf, portal: portalOf }));
+  // Templates (task 10): ADMIN only, raw HTML; previews under the same sandbox CSP as the frozen digest.
+  router.use(
+    createDigestTemplatesRouter({ cfg: cfgOf, clock: nowOf, portal: portalOf, previewCsp: PREVIEW_CSP, ...(opts.mjml !== undefined ? { mjml: opts.mjml } : {}) }),
+  );
 
   const notEnabled = (res: Response) =>
     res.status(409).json({ error: 'digest_disabled', message: 'The email digest is switched off (DIGEST_ENABLED).' });

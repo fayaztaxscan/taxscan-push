@@ -100,3 +100,11 @@ export function dateLabel(runDate: string): string {
 export function kb(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+
+/** The preview widths (design §7: phone 375, tablet 768, desktop 1024), shared by Digests and Templates. */
+export const PREVIEW_WIDTHS = [
+  { key: 'phone', label: 'Phone', px: 375 },
+  { key: 'tablet', label: 'Tablet', px: 768 },
+  { key: 'desktop', label: 'Desktop', px: 1024 },
+] as const;
+export type PreviewWidth = (typeof PREVIEW_WIDTHS)[number];

@@ -576,6 +576,7 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
           htmlBytes: Buffer.byteLength(c.html, 'utf8'),
           mcCampaignName: name(c.audience),
           sendAfter,
+          templateId: c.templateId ?? null,
         })),
         // The broken audience: no content, so nothing can be created for it until
         // its ads are fixed and it is rendered from the stories frozen above.
@@ -669,6 +670,7 @@ type VariantContent = {
   html: string;
   text: string;
   placements?: AdPlacementRecord[];
+  templateId?: string | null;
 };
 
 /**
@@ -881,6 +883,7 @@ async function renderPendingStep(ctx: Ctx, send: DigestSend): Promise<DigestSend
         html: c.html,
         text: c.text,
         htmlBytes: Buffer.byteLength(c.html, 'utf8'),
+        templateId: c.templateId ?? null,
         contentPendingAt: null,
         lastError: null,
         lastErrorKind: null,

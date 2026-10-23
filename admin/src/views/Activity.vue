@@ -154,6 +154,24 @@ function summarize(item: AuditItem): string {
     }
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;
+    case 'DIGEST_TEMPLATE_SAVED': {
+      const who = m.audience === 'PREMIUM' ? 'Premium' : 'Free';
+      const changed = Array.isArray(m.changed) ? (m.changed as string[]) : null;
+      const checks = m.validationOk ? 'all checks pass' : `failing: ${Array.isArray(m.failed) ? (m.failed as string[]).join(', ') : '?'}`;
+      return m.created
+        ? `Added ${who} digest template “${m.name ?? '—'}” (${checks})`
+        : `Edited ${who} digest template “${m.name ?? '—'}”${changed?.length ? `: ${changed.join(', ')}` : ''} (${checks})`;
+    }
+    case 'DIGEST_TEMPLATE_ACTIVATED': {
+      const who = m.audience === 'PREMIUM' ? 'Premium' : 'Free';
+      return m.mode === 'scheduled'
+        ? `Scheduled ${who} digest template “${m.name ?? '—'}” for ${m.startsAt ?? '?'} – ${m.endsAt ?? '?'}`
+        : `Activated ${who} digest template “${m.name ?? '—'}” (replaced ${m.replacedName ?? '—'})`;
+    }
+    case 'DIGEST_TEMPLATE_ARCHIVED':
+      return `Archived digest template “${m.name ?? '—'}”`;
+    case 'DIGEST_TEMPLATE_REVERTED':
+      return `Reverted the ${m.audience === 'PREMIUM' ? 'Premium' : 'Free'} digest from “${m.revertedFromName ?? '—'}” to ${m.restoredName ?? '—'}`;
     default: {
       // Anything without its own case (a newly added action) still reads as
       // something rather than an empty "{}".

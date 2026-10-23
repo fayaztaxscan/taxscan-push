@@ -63,6 +63,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // JSON parser: its parse errors carry the raw body, which the catch-all
   // error handler below would log (reader addresses). No session/cookie use.
   app.use('/api/webhooks', createWebhooksRouter(opts.webhooks));
+  // Digest templates (task 10, ADMIN only) carry a whole email layout: their own,
+  // larger JSON limit, ahead of the global one (which then skips a parsed body).
+  app.use('/api/digest/templates', express.json({ limit: '600kb' }));
   app.use(express.json({ limit: '64kb' }));
   // Signs cookies with SESSION_COOKIE_SECRET. Phase 2's auth router uses the
   // signed-cookie path; the helper reads from req.signedCookies and ignores
@@ -150,6 +153,18 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Digest ad images (task 9): public, immutable, cross-origin; only stored images by sha256 name.
   app.get('/email-assets/:file', emailAssetsHandler);
+
+  // Fixed email assets committed in public/email/ (the digest logo): readable cross-origin by
+  // mail clients and their image proxies, cached for a year. Never overwrite a file here —
+  // a changed asset gets a new file name, or readers keep the old one.
+  app.use(
+    '/email',
+    (_req, res, next) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      next();
+    },
+    express.static(path.join(publicDir, 'email'), { immutable: true, maxAge: '365d', index: false, fallthrough: false }),
+  );
 
   app.use(express.static(publicDir));
 

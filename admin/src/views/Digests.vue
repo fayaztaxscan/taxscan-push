@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { DISPATCH_TIMEOUT_MS, apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import ConfirmPush from '../components/ConfirmPush.vue';
+import EmailPreviewFrame from '../components/EmailPreviewFrame.vue';
 import {
   AUDIENCES,
   AUDIENCE_LABEL,
@@ -18,6 +19,8 @@ import {
   type Audience,
   type RunState,
   type SendState,
+  PREVIEW_WIDTHS,
+  type PreviewWidth,
 } from '../composables/digestView';
 
 /**
@@ -118,13 +121,8 @@ const notice = ref<string | null>(null);
 const confirming = ref<'send_now' | 'retry' | null>(null);
 
 const audience = ref<Audience>('FREE');
-const WIDTHS = [
-  { key: 'phone', label: 'Phone', px: 375 },
-  { key: 'tablet', label: 'Tablet', px: 768 },
-  { key: 'desktop', label: 'Desktop', px: 1024 },
-] as const;
-const width = ref<(typeof WIDTHS)[number]>(WIDTHS[0]);
-const PREVIEW_HEIGHT = 1100;
+const WIDTHS = PREVIEW_WIDTHS;
+const width = ref<PreviewWidth>(WIDTHS[0]);
 
 const sendLive = computed(() => status.value?.config.sendLive ?? false);
 const variant = computed(() => detail.value?.variants.find((v) => v.audience === audience.value) ?? null);
@@ -269,19 +267,9 @@ const anyButton = computed(() => {
   return !!a && (a.approve.show || a.hold.show || a.sendNow.show || a.retry.show);
 });
 
-// --- Preview frame: render at the chosen width, scaled down to fit ----------
-const frameHost = ref<HTMLElement | null>(null);
-const hostWidth = ref(0);
-let ro: ResizeObserver | null = null;
-const scale = computed(() => (hostWidth.value > 0 ? Math.min(1, hostWidth.value / width.value.px) : 1));
-watch(frameHost, (el) => {
-  ro?.disconnect();
-  if (el) {
-    ro = new ResizeObserver(([entry]) => (hostWidth.value = entry.contentRect.width));
-    ro.observe(el);
-  }
-});
-onBeforeUnmount(() => ro?.disconnect());
+// --- Preview frame: render at the chosen width, scaled down to fit (EmailPreviewFrame) ---
+const frame = ref<InstanceType<typeof EmailPreviewFrame> | null>(null);
+const scale = computed(() => frame.value?.scale ?? 1);
 
 function variantFor(row: HistoryRow, a: Audience) {
   return row.variants.find((v) => v.audience === a) ?? null;
@@ -439,22 +427,12 @@ onMounted(load);
             {{ kb(variant.htmlBytes) }}, shown at {{ width.px }} px<span v-if="scale < 1"> (scaled to fit)</span>.
           </p>
 
-          <div ref="frameHost" class="frame-host" :style="{ height: `${Math.round(PREVIEW_HEIGHT * scale)}px` }">
-            <iframe
-              v-if="previewSrc"
-              :key="previewSrc"
-              :src="previewSrc"
-              sandbox=""
-              referrerpolicy="no-referrer"
-              :title="`${AUDIENCE_LABEL[audience]} digest preview`"
-              class="frame"
-              :style="{ width: `${width.px}px`, height: `${PREVIEW_HEIGHT}px`, transform: `scale(${scale})` }"
-            />
-            <p v-else-if="variant?.contentPending" class="muted frame-empty">
+          <EmailPreviewFrame ref="frame" :src="previewSrc" :width-px="width.px" :title="`${AUDIENCE_LABEL[audience]} digest preview`">
+            <template v-if="variant?.contentPending">
               Not built yet: an ad slot could not be filled. Fix it on the Ads screen, then press Retry now.
-            </p>
-            <p v-else class="muted frame-empty">The stored copy of this digest has expired.</p>
-          </div>
+            </template>
+            <template v-else>The stored copy of this digest has expired.</template>
+          </EmailPreviewFrame>
 
           <div class="test-row">
             <button
@@ -733,24 +711,6 @@ onMounted(load);
 }
 .size-line {
   margin: 6px 0 10px;
-}
-.frame-host {
-  position: relative;
-  width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #eef2f7;
-}
-.frame {
-  display: block;
-  border: 0;
-  background: #fff;
-  transform-origin: top left;
-}
-.frame-empty {
-  padding: 24px;
-  text-align: center;
 }
 .test-row {
   display: flex;

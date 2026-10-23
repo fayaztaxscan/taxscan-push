@@ -1,6 +1,7 @@
 import { env } from '../../lib/env';
 import { assetUrl } from './adImages';
 import { loadAdPool, pickAds, type Placement } from './ads';
+import { resolveTemplate } from './templates';
 import {
   RenderError,
   assertReplyAddresses,
@@ -18,6 +19,9 @@ import {
  * runner turns that into `config_invalid`, fail closed), renders the frozen
  * items with them, and returns the placements for the freeze to record.
  *
+ * The layout is `resolveTemplate(audience, at)` (task 10); its id is frozen
+ * with the send (`DigestSend.templateId`, null = the built-in template).
+ *
  * Refuses (throws) without items — the build then fails loud (BUILD_FAILED +
  * alert) rather than freezing an empty digest. Logs size and image-weight
  * warnings (bytes only; never an address or a full URL).
@@ -32,7 +36,10 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
   const placements = pickAds({ slots, audience, items, at: at ?? new Date(), pool });
   const ads = placements.map((p) => toRenderAd(p, c.assetBaseUrl));
 
-  const r = renderDigest({ items, audience, runDate, cfg: c, ads });
+  // Task 10: the layout comes from resolveTemplate() — an override in its window, else the
+  // ACTIVE template, else the built-in one — judged at the build instant like the ads.
+  const template = await resolveTemplate(audience, at ?? new Date(), { portal: portal ?? env.rss.portal });
+  const r = renderDigest({ items, audience, runDate, cfg: c, ads, template: { html: template.html }, assetBaseUrl: c.assetBaseUrl });
   if (r.sizeWarning) {
     // eslint-disable-next-line no-console
     console.warn(`[digest] ${audience} html is ${r.budgetBytes} bytes incl. tracking allowance (warn at ${c.htmlWarnKb} KB, limit ${c.maxHtmlKb} KB)`);
@@ -50,6 +57,7 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
     html: r.html,
     text: r.text,
     placements: drawn.map((p) => ({ adId: p.ad.id, slot: p.slot, utmContent: p.utmContent })),
+    templateId: template.id,
   };
 };
 

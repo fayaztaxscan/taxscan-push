@@ -601,6 +601,37 @@ model EmailSuppression {
 /// single eligibility rule; `kind = SUBSCRIPTION` is NEVER placed in a PREMIUM send whatever
 /// `audience` says (checked at pick, at render and again at freeze). `portal` scopes the pool
 /// (portal-agnostic like DigestRun; also isolates test pools).
+/// Task 10: the email layouts (docs/EMAIL_DIGEST_DESIGN.md §3, §13 task 10). DRAFT → ACTIVE →
+/// ARCHIVED, plus SCHEDULED = a dated override that wins inside [startsAt, endsAt). The DATABASE
+/// enforces "one ACTIVE per audience": a partial unique index in raw SQL in the migration
+/// (`one_active_template_per_audience` ON (portal, audience) WHERE status = 'ACTIVE'), plus CHECK
+/// constraints on status/format and the override window. Prisma does not model either: never
+/// accept a generated migration that drops them. No template row = the built-in template.
+model DigestTemplate {
+  id              String         @id @default(cuid())
+  portal          String         @default("taxscan")
+  name            String
+  audience        DigestAudience
+  status          String         @default("DRAFT") // DRAFT | ACTIVE | SCHEDULED | ARCHIVED
+  format          String         @default("HTML") // HTML | MJML (MJML compiles at save time only)
+  source          String
+  compiledHtml    String? // compiled at SAVE time; the send path never compiles. Null when it failed
+  compileError    String? // the compiler's readable message; blocks activation
+  validation      Json           @default("{}") // the last checklist result (validateTemplate)
+  validatedAt     DateTime?
+  startsAt        DateTime? // SCHEDULED overrides only (e.g. Budget week); inclusive
+  endsAt          DateTime? // exclusive
+  replacesId      String? // the ACTIVE template this one displaced; Revert restores it
+  activatedAt     DateTime?
+  archivedAt      DateTime?
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([portal, audience, status])
+}
+
 model DigestAd {
   id              String    @id @default(cuid())
   portal          String    @default("taxscan")
