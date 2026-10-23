@@ -6,7 +6,7 @@ import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, runDateKey } from './retryPolicy';
 import { validateDigestSchedule } from './scheduler';
 import { BLOCKING_KINDS, INFO_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
-import { complaintCheckOf, isComplaintHeld, type ComplaintCheck } from './holds';
+import { complaintCheckOf, isComplaintHeld, runNeedsApproval, type ComplaintCheck } from './holds';
 import { noAddressRecently, webhookHealth, type WebhookHealth } from './webhookLiveness';
 
 /**
@@ -272,7 +272,9 @@ function runAttention(i: AttentionInput): Attention | null {
   }
 
   // A variant rendered after the run was approved waits for its OWN approval (owner, 2026-10-23).
-  const approvalNeeded = cfg.approvalRequired || run.candidateCount > cfg.sanityMaxCandidates;
+  // The same "who must approve" rule as the runner and the screen (holds.ts), so a complaint-held
+  // auto-mode day is covered too (QA of task 13: it was approval mode / sanity hold only here).
+  const approvalNeeded = runNeedsApproval(cfg, run);
   const waitingOwn = sends.filter(
     (s) => s.ownApprovalRequired && !s.approvedAt && (s.state === 'PENDING' || s.state === 'CREATED') && !s.contentPendingAt,
   );

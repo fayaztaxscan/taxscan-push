@@ -331,6 +331,12 @@ function buildConfigProblems(cfg: DigestEnv): string[] {
  * the row lock, not on a snapshot. `extra` is written in the SAME update (the
  * write-ahead marker). Returns the claim instant, which fences the step's
  * final write, or null when the claim was not won.
+ *
+ * The claim is stamped from the LIVE clock (`ctx.clock()`), not the tick's
+ * instant (QA of task 13): a step reached late in a slow tick (the name lookup
+ * alone may take ~8 min with its retries) must not look minutes old — and so
+ * "abandoned" after 10 — to another process the moment it is taken. Tests that
+ * pin `now` without a clock get `now`, as before.
  */
 async function claimStep(
   sendId: string,
@@ -338,13 +344,13 @@ async function claimStep(
   ctx: Ctx,
   extra: Prisma.DigestSendUpdateManyMutationInput = {},
 ): Promise<Date | null> {
-  const claimAt = ctx.now;
+  const claimAt = ctx.clock();
   const r = await prisma.digestSend.updateMany({
     where: {
       AND: [
         { id: sendId },
         where,
-        { OR: [{ stepClaimedAt: null }, { stepClaimedAt: { lt: new Date(ctx.now.getTime() - ctx.staleMs) } }] },
+        { OR: [{ stepClaimedAt: null }, { stepClaimedAt: { lt: new Date(claimAt.getTime() - ctx.staleMs) } }] },
       ],
     },
     data: { ...extra, stepClaimedAt: claimAt },
