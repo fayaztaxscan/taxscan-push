@@ -257,7 +257,9 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
 `NEXT_STEP.md` current when shipping.
 
 ## Stack (do not change without asking)
-- Backend: Node.js 24 LTS (pinned via `engines`; Railway builds from it) + TypeScript + Express
+- Backend: Node.js 24 LTS + TypeScript + Express. The exact runtime is the `FROM node:24.x.y`
+  tag in `Dockerfile` (24.22.1 since 2026-10-23, the 2026-10-21 security release); `engines` keeps
+  the major line. Bump the Dockerfile tag for each Node security release.
 - DB: PostgreSQL via Prisma ORM, hosted on Railway (see section 0.6)
 - Push: the `web-push` library (VAPID)
 - Scheduling: `node-cron` for RSS polling (NO Redis/BullMQ in Phase 1 — keep it simple)
@@ -276,10 +278,11 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
 - All work happens on the `develop` branch. NEVER commit directly to `main`.
 - Ship by opening a PR `develop` → `main` (`gh`) and merging it; Railway auto-deploys `main`.
   Behaviour-changing features land behind a flag (default off) and are enabled deliberately.
-- Build/deploy settings (Nixpacks builder, the `--include=dev` build command, start command,
-  `/healthz` healthcheck, restart on-failure ×5) live in the Railway **service settings**, not in
-  the repo — `railway.json` was removed 2026-10-07 ahead of Railway's 2026-12-01 Config-as-Code
-  cutoff. **Never `railway config apply` a generated IaC file**: its plan showed it would delete
+- The image is built from the repo's `Dockerfile` (Railway builder = **Dockerfile** since
+  2026-10-23; it was Nixpacks, whose pinned nixpkgs held Node at 24.10.0). The remaining deploy
+  settings (`/healthz` healthcheck, restart on-failure ×5) live in the Railway **service
+  settings**, not in the repo — `railway.json` was removed 2026-10-07 ahead of Railway's
+  2026-12-01 Config-as-Code cutoff. Rollback for a bad image: set the builder back to Nixpacks. **Never `railway config apply` a generated IaC file**: its plan showed it would delete
   all 65 service variables (incl. VAPID keys) and disconnect GitHub.
 - **Agents + machine resources (owner's standing rule, 2026-10-21):** at most **two** agents or
   background programs in parallel, together using **no more than half this Mac** (4 cores / 8 GB) —
