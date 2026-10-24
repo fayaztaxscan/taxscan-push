@@ -286,7 +286,8 @@ writes rows that changed (normally tens). Before task 5 ships, measure one full 
 ### 5.1 Webhook: `POST /api/integrations/cms/events`
 
 > **As built (task 4, 24 Oct) — supersedes the numbered list below where they differ.** Order: flag → IP fence →
-> raw body (`Buffer.isBuffer`) → headers → signature → `X-CMS-Event-Id` = body `event_id` → replay
+> raw body (`Buffer.isBuffer`; `inflate: false`, so any `Content-Encoding` but identity is refused — the HMAC covers the
+> bytes as sent) → headers → signature → `X-CMS-Event-Id` = body `event_id` → replay
 > (`classifyWebhookReplay`) → parse → apply. **Answer codes follow contract v1.2 §3/§9, not this section:** every
 > failure of the flag, the fence, the body, the headers, the signature, the event id or an exact replay gets the
 > **same `401 {"code":"UNAUTHORISED"}`** (this section said 404 for the flag/fence and 400 for an id mismatch); a
@@ -787,7 +788,7 @@ An **Audience card on Digests**. All of it comes from Postgres.
     `unknownStatus`; a first sighting with an unknown status grants nothing.
   - **Consent lift:** `true` dated after `lastSeenAt` and ≤ now + 5 min, reasons UNSUBSCRIBE/HARD_BOUNCE/SPAM only,
     matched by hash or account id; deletes the row, writes `EmailEvent RESUBSCRIBE` (provider `cms`, hash only)
-    and an `AUDIENCE_RESUBSCRIBED` audit row (hash). ≤ 20 per IST day; a deferred lift is retried by the next
+    and an `AUDIENCE_RESUBSCRIBED` audit row (hash). ≤ 20 per IST day (counted over [00:00, 24:00) IST); a deferred lift is retried by the next
     snapshot or the nightly list's equal-seq re-apply.
   - **Account-keyed suppression:** when exactly one live account holds an address, its suppression rows get that
     `accountId` (here and in the Mailercloud webhook), and a member is suppressed by hash OR any live linked

@@ -20,7 +20,7 @@ import { applyAccountSnapshot } from '../services/audience/ingest';
  *  1. AUDIENCE_SYNC_ENABLED (and a valid audience config with a webhook secret);
  *  2. the IP fence: the client (`cmsClientIp`: CF-Connecting-IP only from a Cloudflare peer) must be
  *     on CMS_FEED_ALLOWED_IPS — empty rejects everything;
- *  3. the raw body (express.raw; `Buffer.isBuffer`, ≤ 64 KB) — HMAC needs the exact bytes;
+ *  3. the raw body (express.raw; `Buffer.isBuffer`, ≤ 64 KB, no Content-Encoding) — HMAC needs the exact bytes;
  *  4. the three headers;
  *  5. the signature (`verifyCmsWebhook`: ±300 s, current or previous secret, the CONSTANT path);
  *  6. `X-CMS-Event-Id` must equal the body's `event_id` (which the signature covers);
@@ -91,7 +91,10 @@ export function createIntegrationsRouter(opts: CmsEventsRouterOptions = {}): Rou
   router.post(
     '/cms/events',
     gate,
-    express.raw({ type: () => true, limit: BODY_LIMIT }),
+    // inflate: false — the HMAC covers the body bytes AS SENT (contract v1.2 §2), so a
+    // Content-Encoding other than identity is refused (body-parser 415 → the same 401), never
+    // inflated and verified against bytes the CMS did not send.
+    express.raw({ type: () => true, limit: BODY_LIMIT, inflate: false }),
     async (req: Request, res: Response) => {
       const started = Date.now();
       const cfg = cfgOf();

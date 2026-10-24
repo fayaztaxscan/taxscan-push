@@ -246,7 +246,11 @@ async function liftOnConsent(tx: Tx, snap: AccountSnapshot, hash: string | null,
     (r) => LIFTABLE_REASONS.includes(r.reason) && snap.consentAt!.getTime() > r.lastSeenAt.getTime(),
   );
   if (due.length === 0) return { lifted: 0, deferred: 0 };
-  const today = await tx.emailEvent.count({ where: { type: 'RESUBSCRIBE', receivedAt: { gte: istDayStart(now) } } });
+  // This IST day only: [00:00, 24:00) — an open upper bound would also count rows stamped later than `now`.
+  const dayStart = istDayStart(now);
+  const today = await tx.emailEvent.count({
+    where: { type: 'RESUBSCRIBE', receivedAt: { gte: dayStart, lt: new Date(dayStart.getTime() + 24 * 3_600_000) } },
+  });
   const room = Math.max(0, MAX_LIFTS_PER_DAY - today);
   const lift = due.slice(0, room);
   for (const row of lift) {
