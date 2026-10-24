@@ -704,8 +704,11 @@ An **Audience card on Digests**. All of it comes from Postgres.
   newer timestamp = the CMS's retry → 2xx, not re-applied); `AudienceMember.email` nullable (§6.3 erasure);
   `CMS_FEED_ALLOWED_HOSTS` default `api.taxscan.in` (the contract's door L host, not `www`). Not done here, for
   task 3: backfilling `EmailSuppression.emailHash` and writing it on new suppressions.
-- **Task 2 — built 2026-10-24.** `src/lib/cmsSignature.ts`, pinned to the CMS's A.6 vectors; our outbound
-  vectors for the CMS are in `docs/cms-signature-vectors.md`. Contract v1.1 supersedes §5.2 on our GET: headers
+- **Task 2 — built 2026-10-24.** `src/lib/cmsSignature.ts`, pinned to the CMS's A.6 vectors from **contract v1.2**
+  (fixtures `src/__tests__/fixtures/cms-feed-v1.2/`: all ten A.5 bodies byte for byte, the A.7 list page, the A.6
+  vectors; v1.1's POST vector `58e4dc92…` is withdrawn and asserted NOT to verify). Our outbound vectors for the CMS
+  are in `docs/cms-signature-vectors.md`. v1.2's `erasure` key and withheld email/name are task 3's (a
+  `CmsAccount.erasedAt`-style column, if needed, is a further additive migration). Contract v1.1 supersedes §5.2 on our GET: headers
   `X-Push-Timestamp` / `X-Push-Signature` and a **signed `nonce` query parameter** (32 lower-case hex), not
   `X-CMS-Event-Id`; the payload is the canonical query, not `path?query`.
 
