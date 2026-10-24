@@ -66,7 +66,10 @@ We keep two things.
 
 Three inputs feed one function, `applyAccountSnapshot()`: signed CMS webhooks, an hourly incremental pull, and a
 nightly full pull. Every event and every row carries the account's complete state plus a per-account `seq`, so the
-rule is simply **higher seq wins**, whichever door it came through.
+rule is simply **higher seq wins**, whichever door it came through. **Exact rule (CMS, 24 Oct):** a webhook event
+applies only if `seq` > stored (equal or lower = duplicate/stale, ignored); a nightly/incremental LIST row applies if
+`seq` ≥ stored (an equal-seq row re-applies idempotently and repairs drift from a missed or half-applied event; a lower
+seq is skipped so the list never rolls an account back).
 
 A single background writer turns the projection into **Mailercloud tags**. It is paced, idempotent and fail-closed,
 and it never re-subscribes anyone. The digest targets those tags. A **send guard** refuses the Premium send when the
