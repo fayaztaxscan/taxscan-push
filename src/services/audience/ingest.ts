@@ -22,9 +22,14 @@ import { isLive, memberRole, type MemberRole } from './rules';
  *  - the account row (hashes only — never an address or a name);
  *  - suppressions, by account id (design §6.2 rule 4): a deactivation adds an `ACCOUNT_DELETED`
  *    row (weakest reason) that a revival lifts; an erasure nulls the address on every matching row
- *    and keeps the hash; the consent LIFT deletes UNSUBSCRIBE / HARD_BOUNCE / SPAM rows when the
- *    account's explicit opt-in is dated after them (MANUAL never; ≤ 20 a day);
+ *    no other live account still uses, and keeps the hash; the consent LIFT deletes UNSUBSCRIBE /
+ *    HARD_BOUNCE / SPAM rows on the account's CURRENT address when its explicit opt-in is dated
+ *    after them (MANUAL never; never by an account-id match alone; ≤ 20 a day);
  *  - `recomputeMembers()` for the old and the new address.
+ *
+ * Erasure (owner, 24 Oct; contract v1.3): the CMS deletes the Mailercloud contact itself and sends
+ * no address. We erase OUR records keyed by `account_id` — at ingest, in this transaction — and
+ * never call a Mailercloud delete. An address another live account still holds is left alone.
  *
  * Lock order (prevents deadlocks with the Mailercloud webhook): CmsAccount → EmailSuppression →
  * AudienceMember, members in hash order. Never logs; returns counts and flags only.
@@ -54,10 +59,10 @@ export type ApplyResult = {
   seqConflict: boolean;
   revived: boolean;
   deactivated: boolean;
-  /** An erasure was queued now (first `erasure: true` for this account). */
-  erasureQueued: boolean;
-  /** An erasure for an address we never held: nothing to erase in Mailercloud. */
-  erasureWithoutAddress: boolean;
+  /** This snapshot erased the account (its first `erasure: true`). */
+  erased: boolean;
+  /** The erasure nulled a stored member address (false: we never held it, or a live account still uses it). */
+  addressNulled: boolean;
   /** Suppressions lifted by the consent rule. */
   lifted: number;
   /** Lifts due but held back by the daily cap (retried by the next snapshot / nightly list). */
@@ -66,6 +71,8 @@ export type ApplyResult = {
   memberChanges: number;
   /** Members whose role changed (the task-5 breaker counts these). */
   roleChanges: number;
+  /** Members that stopped being PREMIUM (the 24 h removal breaker counts these). */
+  premiumRemovals: number;
 };
 
 export type ApplyOptions = {
@@ -124,12 +131,13 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
     seqConflict: false,
     revived: false,
     deactivated: false,
-    erasureQueued: false,
-    erasureWithoutAddress: false,
+    erased: false,
+    addressNulled: false,
     lifted: 0,
     liftsDeferred: 0,
     memberChanges: 0,
     roleChanges: 0,
+    premiumRemovals: 0,
   };
 
   // 1. Lock the account row (if any) for the whole transaction.
@@ -199,9 +207,12 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
   }
   const erasureNow = next.erasedAt !== null && !prev?.erasedAt;
   if (next.erasedAt !== null) {
-    // Every opt-out of this person loses its address and keeps its hash, so it still matches.
+    // Every opt-out of this person loses its address and keeps its hash, so it still matches —
+    // unless another LIVE account still uses that address (then it is that reader's address too).
     for (const row of await findSuppressions(tx, { emailHash: next.emailHash, accountIds: [snap.accountId] })) {
-      if (row.email !== null) await tx.emailSuppression.update({ where: { id: row.id }, data: { email: null } });
+      if (row.email === null) continue;
+      if (row.emailHash && (await otherLiveHolders(tx, row.emailHash, snap.accountId)) > 0) continue;
+      await tx.emailSuppression.update({ where: { id: row.id }, data: { email: null } });
     }
   }
   if (!snap.deleted) {
@@ -215,16 +226,17 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
     now,
     cfg,
     emailFor: snap.email && next.emailHash ? { [next.emailHash]: snap.email } : {},
-    eraseHash: erasureNow ? next.emailHash : null,
+    eraseHash: next.erasedAt !== null ? next.emailHash : null,
   });
   result.memberChanges = members.changes;
   result.roleChanges = members.roleChanges;
+  result.premiumRemovals = members.premiumRemovals;
 
   if (erasureNow) {
-    result.erasureQueued = true;
-    result.erasureWithoutAddress = !members.erasureMarked;
+    result.erased = true;
+    result.addressNulled = members.addressNulled;
     await tx.auditLog.create({
-      data: { action: 'AUDIENCE_ERASURE', resourceType: 'cms_account', metadata: { source, count: 1, address_held: members.erasureMarked } },
+      data: { action: 'AUDIENCE_ERASURE', resourceType: 'cms_account', metadata: { source, count: 1, address_nulled: members.addressNulled } },
     });
     await tripErasureBreaker(tx, portal, cfg, now);
   }
@@ -238,12 +250,17 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
  * most MAX_LIFTS_PER_DAY a day; a deferred lift is retried by the next snapshot (the nightly list
  * re-applies every row at its seq). Mailercloud's own unsubscribe is NOT touched here: only the
  * writer, with AUDIENCE_RESUBSCRIBE_WRITES, ever sends `contact_type` (task 6).
+ *
+ * Only suppressions on the account's CURRENT address are lifted (QA M2, owner-delegated 24 Oct):
+ * the opt-in is about the address the reader uses now. A row matched only by the account id — an
+ * opt-out, bounce or spam report from an address the account has since left — stays: an
+ * account-id match alone never lifts anything. A withheld address (no hash) lifts nothing.
  */
 async function liftOnConsent(tx: Tx, snap: AccountSnapshot, hash: string | null, now: Date): Promise<{ lifted: number; deferred: number }> {
-  if (snap.consentValue !== true || !snap.consentAt) return { lifted: 0, deferred: 0 };
+  if (snap.consentValue !== true || !snap.consentAt || !hash) return { lifted: 0, deferred: 0 };
   if (snap.consentAt.getTime() > now.getTime() + CONSENT_FUTURE_TOLERANCE_MS) return { lifted: 0, deferred: 0 };
-  const due = (await findSuppressions(tx, { emailHash: hash, accountIds: [snap.accountId] })).filter(
-    (r) => LIFTABLE_REASONS.includes(r.reason) && snap.consentAt!.getTime() > r.lastSeenAt.getTime(),
+  const due = (await findSuppressions(tx, { emailHash: hash })).filter(
+    (r) => r.emailHash === hash && LIFTABLE_REASONS.includes(r.reason) && snap.consentAt!.getTime() > r.lastSeenAt.getTime(),
   );
   if (due.length === 0) return { lifted: 0, deferred: 0 };
   // This IST day only: [00:00, 24:00) — an open upper bound would also count rows stamped later than `now`.
@@ -272,6 +289,11 @@ async function liftOnConsent(tx: Tx, snap: AccountSnapshot, hash: string | null,
   return { lifted: lift.length, deferred: due.length - lift.length };
 }
 
+/** Live accounts other than `accountId` that hold this address. */
+async function otherLiveHolders(tx: Tx, hash: string, accountId: string): Promise<number> {
+  return tx.cmsAccount.count({ where: { emailHash: hash, deletedAt: null, NOT: { accountId } } });
+}
+
 /** Over AUDIENCE_MAX_ERASURES_PER_DAY erasures today → the breaker opens (writes pause; ingest continues). */
 async function tripErasureBreaker(tx: Tx, portal: string, cfg: AudienceEnv, now: Date): Promise<void> {
   const today = await tx.cmsAccount.count({ where: { erasedAt: { gte: istDayStart(now) } } });
@@ -290,19 +312,26 @@ export type RecomputeOptions = {
   cfg?: AudienceEnv;
   /** Fresh addresses from the snapshot being applied, by hash (the only way an address arrives). */
   emailFor?: Readonly<Record<string, string>>;
-  /** This address is being erased: queue the Mailercloud erase on its member row. */
+  /**
+   * The address of an ERASED account: its stored address is nulled here unless a live account still
+   * holds it. The row keeps its hash and (held only by deleted accounts) its No-marketing flag.
+   */
   eraseHash?: string | null;
 };
 
-export type RecomputeResult = { changes: number; roleChanges: number; erasureMarked: boolean };
+export type RecomputeResult = { changes: number; roleChanges: number; premiumRemovals: number; addressNulled: boolean };
 
 /**
  * Bring the `AudienceMember` rows of these addresses in line with the accounts that hold them.
  * Phase 1 (all hashes): stamp the single live account onto account-less suppression rows.
  * Phase 2 (hash order): role + noMarketing (`memberRole`), suppressed (by hash OR any linked live
  * account id), then create / update / delete the row:
- *  - a row exists only while it has a role, noMarketing, a pending erasure, or tags still applied
- *    in Mailercloud (then the writer removes them before it goes);
+ *  - a row exists only while it has a role, noMarketing, or tags still applied in Mailercloud (then
+ *    the writer removes them before it goes);
+ *  - an erased address no live account holds loses its address at once (owner, 24 Oct): the row
+ *    keeps the hash + No-marketing, and `appliedTags` = [] / `mcState` = ABSENT, because the CMS has
+ *    deleted the contact in Mailercloud (contract v1.3 — precondition: the CMS's Mailercloud key is
+ *    our account). A live account sharing the address keeps its row untouched;
  *  - an address is stored only when one arrives with a snapshot; a row is never created without one;
  *  - any change of desired state makes the row due for the writer (`nextAttemptAt = now`).
  */
@@ -310,7 +339,7 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
   const now = opts.now ?? new Date();
   const cfg = opts.cfg ?? env.audience;
   const list = [...new Set(hashes)].sort();
-  const out: RecomputeResult = { changes: 0, roleChanges: 0, erasureMarked: false };
+  const out: RecomputeResult = { changes: 0, roleChanges: 0, premiumRemovals: 0, addressNulled: false };
   if (list.length === 0) return out;
 
   const accounts = await tx.cmsAccount.findMany({ where: { emailHash: { in: list } } });
@@ -332,17 +361,19 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
     const suppressed = await isSuppressed(tx, { emailHash: h, accountIds: liveIds });
     await tx.$queryRaw`SELECT 1 FROM "AudienceMember" WHERE "emailHash" = ${h} FOR UPDATE`;
     const existing = await tx.audienceMember.findUnique({ where: { emailHash: h } });
-    const erase = opts.eraseHash === h;
-    const address = opts.emailFor?.[h] ?? existing?.email ?? null;
-    const eraseRequestedAt = existing?.eraseRequestedAt ?? (erase && address ? now : null);
-    if (erase && address) out.erasureMarked = true;
+    // Erased and no live account still uses the address: nothing of it stays but the hash.
+    const erase = opts.eraseHash === h && liveIds.length === 0;
+    const address = erase ? null : (opts.emailFor?.[h] ?? existing?.email ?? null);
+    if (erase && existing?.email) out.addressNulled = true;
+    const appliedTags = erase ? [] : (existing?.appliedTags ?? []);
 
-    const needed = role !== 'NONE' || noMarketing || eraseRequestedAt !== null || (existing?.appliedTags.length ?? 0) > 0;
+    const needed = role !== 'NONE' || noMarketing || appliedTags.length > 0;
     if (!needed) {
       if (existing) {
         await tx.audienceMember.delete({ where: { emailHash: h } });
         out.changes += 1;
         if (existing.desiredRole !== 'NONE') out.roleChanges += 1;
+        if (existing.desiredRole === 'PREMIUM') out.premiumRemovals += 1;
       }
       continue;
     }
@@ -352,9 +383,8 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
       desiredRole: role as MemberRole,
       noMarketing,
       suppressed,
-      // While an erasure is pending the writer still needs the address; it nulls it afterwards.
       email: address,
-      eraseRequestedAt,
+      ...(erase ? { appliedTags: [], mcState: 'ABSENT' } : {}),
     };
     if (!existing) {
       await tx.audienceMember.create({ data: { emailHash: h, ...data, nextAttemptAt: now } });
@@ -363,9 +393,10 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
       continue;
     }
     if (memberUnchanged(existing, data)) continue;
-    await tx.audienceMember.update({ where: { emailHash: h }, data: { ...data, nextAttemptAt: now } });
+    await tx.audienceMember.update({ where: { emailHash: h }, data: { ...data, nextAttemptAt: erase ? null : now } });
     out.changes += 1;
     if (existing.desiredRole !== role) out.roleChanges += 1;
+    if (existing.desiredRole === 'PREMIUM' && role !== 'PREMIUM') out.premiumRemovals += 1;
   }
   return out;
 }
@@ -377,13 +408,13 @@ export async function recomputeMember(tx: Tx, hash: string, opts: RecomputeOptio
 
 function memberUnchanged(
   m: AudienceMember,
-  d: { desiredRole: string; noMarketing: boolean; suppressed: boolean; email: string | null; eraseRequestedAt: Date | null },
+  d: { desiredRole: string; noMarketing: boolean; suppressed: boolean; email: string | null; appliedTags?: string[] },
 ): boolean {
   return (
     m.desiredRole === d.desiredRole &&
     m.noMarketing === d.noMarketing &&
     m.suppressed === d.suppressed &&
     m.email === d.email &&
-    sameDate(m.eraseRequestedAt, d.eraseRequestedAt)
+    (d.appliedTags === undefined || (d.appliedTags.length === 0 && m.appliedTags.length === 0))
   );
 }

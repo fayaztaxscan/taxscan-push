@@ -16,7 +16,7 @@ import { parseAudienceEnv, type AudienceEnv } from '../lib/env';
 import { CMS_WEBHOOK_PATH, signCmsWebhook } from '../lib/cmsSignature';
 import { createIntegrationsRouter } from '../routes/cmsEvents';
 import { createApp } from '../app';
-import { CMS_EVENT_BODIES } from './fixtures/cms-feed-v1.2/payloads';
+import { CMS_EVENT_BODIES } from './fixtures/cms-feed-v1.3/payloads';
 import { parseCmsEvent, parseCmsListRow, type AccountSnapshot } from '../services/audience/snapshot';
 import { memberRole, type RuleAccount } from '../services/audience/rules';
 import { applyAccountSnapshot, MAX_LIFTS_PER_DAY, type ApplyOptions, type SnapshotSource } from '../services/audience/ingest';
@@ -139,7 +139,7 @@ describe('erasure is final', () => {
     await apply(snapOf(live));
     await prisma.emailSuppression.create({ data: { email: addr, reason: 'UNSUBSCRIBE', source: 'mailercloud_webhook' } });
     const erased = ev('account.deleted_900002_seq7', { seq: 4 }, id);
-    expect((await apply(snapOf(erased))).erasureQueued).toBe(true);
+    expect((await apply(snapOf(erased))).erased).toBe(true);
 
     // The address is gone from every suppression row; the hash stays.
     const sup = await prisma.emailSuppression.findMany({ where: { emailHash: sha(addr) } });
@@ -155,10 +155,9 @@ describe('erasure is final', () => {
       const acc = await account(id);
       expect([name, acc!.erasedAt !== null, acc!.deletedAt !== null, acc!.seq]).toEqual([name, true, true, 4n]);
     }
-    // The member is held only for the pending erase: never Premium again.
+    // Hash-only from the erasure on: never Premium again, never an address again.
     const m = await member(addr);
-    expect(m).toMatchObject({ desiredRole: 'NONE', noMarketing: true });
-    expect(m!.eraseRequestedAt).not.toBeNull();
+    expect(m).toMatchObject({ desiredRole: 'NONE', noMarketing: true, email: null, appliedTags: [] });
     // Still no address back on the suppression.
     expect((await prisma.emailSuppression.findMany({ where: { emailHash: sha(addr) } })).map((s) => s.email)).toEqual([null]);
   });

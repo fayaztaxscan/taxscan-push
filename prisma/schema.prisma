@@ -814,7 +814,7 @@ model AudienceMember {
   nextAttemptAt DateTime?
   lastErrorKind String? // RETRYABLE | FATAL — never a provider message
   syncedAt      DateTime?
-  eraseRequestedAt DateTime? // a CMS erasure: the writer erases (or tags) in Mailercloud, THEN nulls `email`
+  eraseRequestedAt DateTime? // UNUSED since 24 Oct (owner: the CMS erases in Mailercloud; we null `email` at ingest). Kept: migrations are additive-only
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

@@ -13,7 +13,7 @@ import { parseAudienceEnv, type AudienceEnv } from '../lib/env';
 import { CMS_WEBHOOK_PATH, signCmsWebhook } from '../lib/cmsSignature';
 import { cmsClientIp, isCloudflareIp } from '../lib/clientIp';
 import { createIntegrationsRouter, type CmsEventsRouterOptions } from '../routes/cmsEvents';
-import { CMS_EVENT_BODIES } from './fixtures/cms-feed-v1.2/payloads';
+import { CMS_EVENT_BODIES } from './fixtures/cms-feed-v1.3/payloads';
 import * as ingest from '../services/audience/ingest';
 
 const logs: string[] = [];

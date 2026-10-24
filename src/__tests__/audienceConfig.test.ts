@@ -19,7 +19,10 @@ describe('parseAudienceEnv — defaults', () => {
     expect(cfg.writeMailercloud).toBe(false);
     expect(cfg.digestFromCms).toBe(false);
     expect(cfg.resubscribeWrites).toBe(false);
-    expect(cfg.eraseInMailercloud).toBe(false);
+    // AUDIENCE_ERASE_IN_MAILERCLOUD was removed (owner 24 Oct: the CMS erases in Mailercloud).
+    expect('eraseInMailercloud' in cfg).toBe(false);
+    expect(cfg.erasePathRemovedButSet).toBe(false);
+    expect(parseAudienceEnv({ AUDIENCE_ERASE_IN_MAILERCLOUD: 'true' }).erasePathRemovedButSet).toBe(true);
   });
 
   it('owner settings: Former → Free on (Q1), consent rule exclude_false (Q2)', () => {
@@ -52,10 +55,10 @@ describe('parseAudienceEnv — defaults', () => {
   });
 
   it('only the literal "true" switches a flag on', () => {
-    const c = parseAudienceEnv({ AUDIENCE_SYNC_ENABLED: 'TRUE', AUDIENCE_SYNC_WRITE_MAILERCLOUD: '1', AUDIENCE_ERASE_IN_MAILERCLOUD: 'yes' });
+    const c = parseAudienceEnv({ AUDIENCE_SYNC_ENABLED: 'TRUE', AUDIENCE_SYNC_WRITE_MAILERCLOUD: '1', AUDIENCE_RESUBSCRIBE_WRITES: 'yes' });
     expect(c.enabled).toBe(false);
     expect(c.writeMailercloud).toBe(false);
-    expect(c.eraseInMailercloud).toBe(false);
+    expect(c.resubscribeWrites).toBe(false);
   });
 });
 

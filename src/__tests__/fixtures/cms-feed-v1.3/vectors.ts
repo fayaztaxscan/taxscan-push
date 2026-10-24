@@ -1,7 +1,7 @@
 /**
- * CMS push-feed contract v1.2 — signature test vectors (FAKE secret `test-secret`).
+ * CMS push-feed contract v1.3 (signing unchanged since v1.2) — signature test vectors (FAKE secret `test-secret`).
  *
- * Source: /Users/bestdoc/Documents/cms-platform/docs/design/push-feed-contract-v1.2-artefacts-2026-10-24.md
+ * Source: /Users/bestdoc/Documents/cms-platform/docs/design/push-feed-contract-v1.3-artefacts-2026-10-24.md
  * §8 (= their Appendix A.6; supersedes v1.1, whose POST vector 58e4dc92… is withdrawn), computed by the CMS on 2026-10-24 with Node createHmac and cross-checked
  * with `openssl dgst -sha256 -hmac test-secret`. Hex values copied verbatim; the signed strings are
  * the ones the CMS prints. Never use `test-secret` anywhere but tests.

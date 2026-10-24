@@ -1,7 +1,7 @@
 import { normaliseEmail } from '../digest/webhook';
 
 /**
- * CMS Feed 1 payloads → one `AccountSnapshot` (push-feed contract v1.2 §6, §7, §11; design §2, §5).
+ * CMS Feed 1 payloads → one `AccountSnapshot` (push-feed contract v1.3 = the v1.2 wire, §6, §7, §11; design §2, §5).
  *
  * Every event and every list row is a FULL snapshot of one account, so both doors parse to the
  * same shape and go through the one `applyAccountSnapshot()`. Strict on purpose: a payload that
@@ -9,8 +9,9 @@ import { normaliseEmail } from '../digest/webhook';
  * refusal names the FIELD, never its value.
  *
  * v1.2 rules carried here:
- *  - `erasure` is a boolean on every event and row (never null), and may be true ONLY on a
- *    deletion — an erasure is irreversible, so `erasure: true` on a live account is refused;
+ *  - `erasure` is a boolean on every event and row (never null), and may be true ONLY on an
+ *    `account.deleted` event or a tombstone list row (`deleted_at` set) — an erasure is
+ *    irreversible, so `erasure: true` anywhere else is refused;
  *  - `email` / `name` may be null (withheld: consent false + free/ended; or a deletion);
  *  - `reactivated` is on events only (absent on list rows → false).
  * `name` is validated and then DROPPED: we never store a reader's name.
@@ -94,7 +95,10 @@ function nullableString(v: unknown, max: number): string | null | undefined {
 }
 
 /** The fields events and list rows share. `deletedAtHint` = the row's `deleted_at` or the event's `occurred_at`. */
-function parseCommon(o: Obj, opts: { deletedAtHint: Date | null; forcedDeleted: boolean; reactivated: boolean }): AccountSnapshot | ParseFailure {
+function parseCommon(
+  o: Obj,
+  opts: { deletedAtHint: Date | null; forcedDeleted: boolean; reactivated: boolean; erasureAllowed: boolean },
+): AccountSnapshot | ParseFailure {
   const fail = (field: string): ParseFailure => ({ ok: false, reason: `bad_${field}` });
 
   if (typeof o.account_id !== 'string' || !ACCOUNT_ID_RE.test(o.account_id)) return fail('account_id');
@@ -125,8 +129,10 @@ function parseCommon(o: Obj, opts: { deletedAtHint: Date | null; forcedDeleted: 
   if (typeof o.erasure !== 'boolean') return fail('erasure');
 
   const deleted = opts.forcedDeleted || o.status === 'deleted';
-  // Irreversible: an erasure must be a deletion (contract §11.2: true only on account.deleted).
-  if (o.erasure && !deleted) return fail('erasure');
+  // Irreversible: contract §11.2 — `erasure` is true ONLY on `account.deleted` (an event) or on its
+  // list-row equivalent, a tombstone with `deleted_at` (QA L5: `status: "deleted"` on any other
+  // event type is not enough).
+  if (o.erasure && (!deleted || !opts.erasureAllowed)) return fail('erasure');
 
   return {
     accountId: o.account_id,
@@ -169,6 +175,7 @@ export function parseCmsEvent(body: unknown): ParsedCmsEvent {
     deletedAtHint: occurredAt,
     forcedDeleted: event === 'account.deleted',
     reactivated: body.reactivated,
+    erasureAllowed: event === 'account.deleted',
   });
   if ('ok' in snap) return { ...snap, eventId, event };
   return { ok: true, eventId, event: event as CmsEventType, occurredAt, snapshot: snap };
@@ -179,7 +186,7 @@ export function parseCmsListRow(row: unknown): { ok: true; snapshot: AccountSnap
   if (!isObj(row)) return { ok: false, reason: 'not_an_object' };
   const deletedAt = instant(row.deleted_at);
   if (!has(row, 'deleted_at') || deletedAt === undefined) return { ok: false, reason: 'bad_deleted_at' };
-  const snap = parseCommon(row, { deletedAtHint: deletedAt, forcedDeleted: deletedAt !== null, reactivated: false });
+  const snap = parseCommon(row, { deletedAtHint: deletedAt, forcedDeleted: deletedAt !== null, reactivated: false, erasureAllowed: deletedAt !== null });
   if ('ok' in snap) return snap;
   return { ok: true, snapshot: snap };
 }

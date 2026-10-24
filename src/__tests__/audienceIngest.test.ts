@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { prisma } from '../lib/prisma';
 import { parseAudienceEnv, parseDigestEnv, type AudienceEnv } from '../lib/env';
-import { CMS_EVENT_BODIES, CMS_LIST_PAGE_1 } from './fixtures/cms-feed-v1.2/payloads';
+import { CMS_EVENT_BODIES, CMS_LIST_PAGE_1 } from './fixtures/cms-feed-v1.3/payloads';
 import { parseCmsEvent, parseCmsListRow, type AccountSnapshot } from '../services/audience/snapshot';
 import { memberRole } from '../services/audience/rules';
 import { applyAccountSnapshot, istDayStart, MAX_LIFTS_PER_DAY, type ApplyOptions, type SnapshotSource } from '../services/audience/ingest';
@@ -274,14 +274,14 @@ describe('reader 900002: monthly, said no → renews → cancels → ends (withh
 
   it('seq 6 deleted, erasure false: removed from every audience, suppressed by account id, record kept', async () => {
     const r = await applyEv(ev('account.deleted_900002_seq6'));
-    expect(r).toMatchObject({ outcome: 'applied', deactivated: true, erasureQueued: false });
+    expect(r).toMatchObject({ outcome: 'applied', deactivated: true, erased: false });
     const acc = await account(id);
     expect(acc).toMatchObject({ status: 'deleted', erasedAt: null, emailHash: sha(addr) });
     expect(acc!.deletedAt!.toISOString()).toBe('2027-01-10T09:50:00.000Z');
     const sup = await prisma.emailSuppression.findMany({ where: { accountId: id } });
     expect(sup).toHaveLength(1);
     expect(sup[0]).toMatchObject({ reason: 'ACCOUNT_DELETED', email: null, emailHash: null, source: 'cms_feed' });
-    expect(await member(addr)).toMatchObject({ desiredRole: 'NONE', noMarketing: true, eraseRequestedAt: null });
+    expect(await member(addr)).toMatchObject({ desiredRole: 'NONE', noMarketing: true, email: addr });
   });
 
   it('the tombstone list row at seq 6 re-applies idempotently (still one suppression row)', async () => {
@@ -296,12 +296,12 @@ describe('reader 900002: monthly, said no → renews → cancels → ends (withh
     expect((await account(id))!.status).toBe('deleted');
   });
 
-  it('seq 7 deleted, erasure TRUE: erased, addresses nulled in suppressions, the Mailercloud erase queued, audited', async () => {
+  it('seq 7 deleted, erasure TRUE: erased here at ingest — addresses nulled (member + suppressions), hash + No-marketing kept, audited', async () => {
     // An opt-out this person had by address must lose the address and keep the hash.
     await prisma.emailSuppression.create({ data: { email: addr, reason: 'UNSUBSCRIBE', source: 'mailercloud_webhook' } });
     const before = await prisma.auditLog.count({ where: { action: 'AUDIENCE_ERASURE' } });
     const r = await applyEv(ev('account.deleted_900002_seq7'));
-    expect(r).toMatchObject({ outcome: 'applied', erasureQueued: true, erasureWithoutAddress: false });
+    expect(r).toMatchObject({ outcome: 'applied', erased: true, addressNulled: true });
     const acc = await account(id);
     expect(acc!.erasedAt).not.toBeNull();
     const rows = await prisma.emailSuppression.findMany({ where: { OR: [{ accountId: id }, { emailHash: sha(addr) }] } });
@@ -309,8 +309,8 @@ describe('reader 900002: monthly, said no → renews → cancels → ends (withh
     for (const row of rows) expect(row.email).toBeNull();
     expect(rows.find((x) => x.reason === 'UNSUBSCRIBE')!.emailHash).toBe(sha(addr));
     const m = await member(addr);
-    expect(m!.eraseRequestedAt).not.toBeNull();
-    expect(m!.noMarketing).toBe(true);
+    // Owner 24 Oct: no erase queue — the address is gone now; the CMS deleted the Mailercloud contact.
+    expect(m).toMatchObject({ email: null, desiredRole: 'NONE', noMarketing: true, appliedTags: [], mcState: 'ABSENT', eraseRequestedAt: null, nextAttemptAt: null });
     const audits = await prisma.auditLog.findMany({ where: { action: 'AUDIENCE_ERASURE' }, orderBy: { createdAt: 'desc' }, take: 1 });
     expect(await prisma.auditLog.count({ where: { action: 'AUDIENCE_ERASURE' } })).toBe(before + 1);
     expect(JSON.stringify(audits[0])).not.toContain('@');
@@ -425,11 +425,11 @@ describe('deactivation and reactivation (contract v1.2 §10)', () => {
     expect(await member(addr)).toMatchObject({ desiredRole: 'PREMIUM', noMarketing: false, suppressed: false });
   });
 
-  it('an erasure for an address we never held queues nothing to Mailercloud (no address) but is still final', async () => {
+  it('an erasure for an address we never held nulls nothing (none stored) but is still final', async () => {
     const id = `${P}erase-free`;
     await applyEv(ev('account.created_900001_seq1', { email: email('erase-free') }, id));
     const r = await applyEv(ev('account.deleted_900002_seq7', { seq: 2 }, id));
-    expect(r).toMatchObject({ erasureQueued: true, erasureWithoutAddress: true });
+    expect(r).toMatchObject({ erased: true, addressNulled: false });
     expect((await account(id))!.erasedAt).not.toBeNull();
     expect(await member(email('erase-free'))).toBeNull();
   });
@@ -452,7 +452,7 @@ describe('the erasure cap trips the breaker', () => {
       const id = `${P}cap${n}`;
       await apply(snapOf(ev('account.created_900001_seq1', { email: email(`cap${n}`) }, id)), 'webhook', { cfg: tight, now, portal });
       const r = await apply(snapOf(ev('account.deleted_900002_seq7', { seq: 2 }, id)), 'webhook', { cfg: tight, now, portal });
-      expect(r.erasureQueued).toBe(true);
+      expect(r.erased).toBe(true);
       const st = await prisma.audienceSyncState.findUnique({ where: { portal } });
       if (n === 1) expect(st?.breakerOpenAt ?? null).toBeNull();
       else expect(st).toMatchObject({ breakerReason: 'erasure_cap', pendingReview: { erasuresToday: 2 } });
@@ -559,14 +559,14 @@ describe('the consent lift (re-subscribe rule)', () => {
     expect(await prisma.emailSuppression.count({ where: { emailHash: sha(addr) } })).toBe(1);
   });
 
-  it('the lift follows the account: an opt-out keyed by account id is lifted at the new address too', async () => {
+  it('QA M2: an opt-out keyed by account id on an address the account has LEFT is not lifted by an opt-in at the new one', async () => {
     const id = `${P}lift-acct`;
     const oldA = email('lift-acct-old');
     const newA = email('lift-acct-new');
     await prisma.emailSuppression.create({ data: { email: oldA, accountId: id, reason: 'UNSUBSCRIBE', source: 'mailercloud_webhook', lastSeenAt: t(-60) } });
     const r = await apply(snapOf(ev('account.updated_900001_seq2', { email: newA, ...consent(t(-5)) }, id)), 'webhook', { now });
-    expect(r.lifted).toBe(1);
-    expect(await prisma.emailSuppression.count({ where: { accountId: id } })).toBe(0);
+    expect(r.lifted).toBe(0);
+    expect(await prisma.emailSuppression.count({ where: { accountId: id } })).toBe(1);
   });
 
   it(`at most ${MAX_LIFTS_PER_DAY} a day: the rest are deferred, and a later re-apply (next day) lifts them`, async () => {

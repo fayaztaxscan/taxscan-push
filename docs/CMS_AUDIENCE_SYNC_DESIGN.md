@@ -1,6 +1,6 @@
 # CMS audience sync: design
 
-Status (24 Oct 2026): **tasks 1–4 built, flags off** (see §11 Built notes). For owner review, then Developer → QA, one task at a time (§11).
+Status (24 Oct 2026): **tasks 1–4 + QA follow-ups built, flags off** (see §11 Built notes). For owner review, then Developer → QA, one task at a time (§11).
 Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
@@ -611,7 +611,7 @@ premium exclude cannot be trusted, and paid members would be shown the subscript
 | `AUDIENCE_SYNC_WRITE_MAILERCLOUD` | Writer on. Off: the writer runs **dry**, logging `would_add= would_remove=` (counts only) |
 | `DIGEST_AUDIENCE_FROM_CMS` | Derived digest targets + the send guard |
 | `AUDIENCE_RESUBSCRIBE_WRITES` | The §6.3 `contact_type=active` path |
-| `AUDIENCE_ERASE_IN_MAILERCLOUD` | DELETE on erasure (Q4) |
+| ~~`AUDIENCE_ERASE_IN_MAILERCLOUD`~~ | **Removed 24 Oct** (owner): the CMS deletes the contact itself; we never call a Mailercloud delete. Ignored, with a boot warning, if set |
 
 **Settings:**
 
@@ -802,6 +802,29 @@ An **Audience card on Digests**. All of it comes from Postgres.
   (60/min per `req.ip`); one log line per accepted request: `[audience] event=<type> id=<event_id>
   outcome=<…> ms=<n>`; a refusal logs `webhook refused (step=<step>)`. `AudienceSyncState.lastWebhookAt` is
   written in the apply transaction. No migration.
+
+- **QA follow-ups on 381fb25 — built 2026-10-24** (flags off). Contract **v1.3 FINAL** fixtures
+  (`src/__tests__/fixtures/cms-feed-v1.3/`, + `account.deleted_900003_seq3`: `erasure: true`, email null).
+  - **M1, erasure (owner 24 Oct).** At ingest, in the apply transaction: the erased account's member row loses its
+    address **unless another live account still holds it**; the row keeps its hash and (held only by deleted
+    accounts) its No-marketing flag; `appliedTags` = [] and `mcState` = ABSENT (the CMS deleted the contact —
+    precondition: the CMS's Mailercloud key is our account), no writer work queued. Suppression rows lose their
+    address on the same condition. **Shared address:** A erased while B (same address) is live leaves B's member
+    row, tags, schedule and the address on B's opt-outs untouched (if the CMS's DELETE of that contact also removed
+    B's, the nightly drift read-back finds it — task 6; CMS question 12.2 #8 is still open). The erase queue is
+    gone: `AudienceMember.eraseRequestedAt` stays as an **unused column** (additive-only), `AUDIENCE_ERASE_IN_MAILERCLOUD`
+    is **removed** (ignored with a boot warning if set). `ApplyResult.erasureQueued/erasureWithoutAddress` →
+    `erased/addressNulled`; audit metadata `address_nulled`. The erasure cap breaker stays (blast-radius signal).
+  - **M2, consent lift (owner-delegated).** Only suppressions on the account's **current** address hash are
+    lifted. A row matched by account id alone (an opt-out, bounce or spam report from an address the account has
+    left) is never lifted, and keeps suppressing the account at its new address. A withheld address lifts nothing.
+  - **L3.** Migration `20261024150000_email_suppression_hash_normalise`: the trigger function now stores and hashes
+    the address normalised like `normaliseEmail` (JS `trim()` whitespace set, then `lower()`), refuses control
+    characters, and **refuses a non-ASCII address that `lower()` would change** (Postgres and JS disagree on some
+    capitals, e.g. U+0130); the app always writes the normalised form, which passes unchanged. Residual: a capital
+    the database locale does not know as one (U+1E9E under macOS libc; glibc maps it) is hashed as given. Re-backfill
+    of mismatched rows, skipping (with a count, never an address) any that would collide or be refused.
+  - **L5.** `erasure: true` is accepted only on `account.deleted` or a tombstone list row (`deleted_at` set).
 
 **Needs the CMS or Mailercloud:**
 

@@ -25,6 +25,9 @@ export function audienceIngestReady(cfg: AudienceEnv = env.audience): boolean {
 
 export function startAudienceSync(cfg: AudienceEnv = env.audience): AudienceBootState {
   /* eslint-disable no-console */
+  if (cfg.erasePathRemovedButSet) {
+    console.warn('[audience] AUDIENCE_ERASE_IN_MAILERCLOUD is set but was removed (the CMS erases in Mailercloud) — ignored; unset it');
+  }
   if (!cfg.enabled) {
     console.log('[audience] disabled (set AUDIENCE_SYNC_ENABLED=true to start)');
     // Shown while off too, so a bad variable is fixed BEFORE the flag goes on (names only).

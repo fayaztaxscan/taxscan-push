@@ -1,6 +1,6 @@
 /**
  * CMS audience sync, task 2: src/lib/cmsSignature.ts against the CMS's own A.6 vectors
- * (contract v1.2, fixtures in ./fixtures/cms-feed-v1.2) plus the negative cases.
+ * (contract v1.2, fixtures in ./fixtures/cms-feed-v1.3) plus the negative cases.
  */
 import {
   CMS_WEBHOOK_PATH,
@@ -24,8 +24,8 @@ import {
   TEST_SECRET,
   WEBHOOK_POST,
   WITHDRAWN_V11_POST_SIGNATURE,
-} from './fixtures/cms-feed-v1.2/vectors';
-import { CMS_EVENT_BODIES, CMS_LIST_PAGE_1 } from './fixtures/cms-feed-v1.2/payloads';
+} from './fixtures/cms-feed-v1.3/vectors';
+import { CMS_EVENT_BODIES, CMS_LIST_PAGE_1 } from './fixtures/cms-feed-v1.3/payloads';
 
 const at = (ts: string | number, deltaS = 0) => new Date((Number(ts) + deltaS) * 1000);
 const OTHER = 'other-secret-for-rotation-tests-xxxxxxxxxxxxxxxx';
@@ -99,12 +99,12 @@ describe('the CMS A.6 vectors (byte for byte)', () => {
     expect(signatureHeader(TEST_SECRET, '1799613300', 'GET', '/api/v1/push-feed/subscribers', '')).toBe(`sha256=${CHECK_VECTORS[1].signature}`);
   });
 
-  it('every A.5 fixture body is one line with an erasure key (v1.2)', () => {
+  it('every A.5 fixture body is one line with an erasure key (v1.2 wire; v1.3 adds 900003 seq 3)', () => {
     for (const body of Object.values(CMS_EVENT_BODIES)) {
       expect(body).not.toMatch(/\n/);
       expect(typeof JSON.parse(body).erasure).toBe('boolean');
     }
-    expect(Object.keys(CMS_EVENT_BODIES)).toHaveLength(10);
+    expect(Object.keys(CMS_EVENT_BODIES)).toHaveLength(11);
     expect(JSON.parse(CMS_LIST_PAGE_1).data).toHaveLength(3);
   });
 });

@@ -273,8 +273,10 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
     digestFromCms,
     // The §6.3 contact_type=active lift path.
     resubscribeWrites: src.AUDIENCE_RESUBSCRIBE_WRITES === 'true',
-    // DELETE the Mailercloud contact on a CMS erasure (owner Q4).
-    eraseInMailercloud: src.AUDIENCE_ERASE_IN_MAILERCLOUD === 'true',
+    // AUDIENCE_ERASE_IN_MAILERCLOUD was REMOVED (owner, 24 Oct; contract v1.3): the CMS deletes the
+    // Mailercloud contact itself on an erasure and we never call a Mailercloud delete. The variable
+    // is ignored if set (a boot warning says so).
+    erasePathRemovedButSet: src.AUDIENCE_ERASE_IN_MAILERCLOUD !== undefined && src.AUDIENCE_ERASE_IN_MAILERCLOUD.trim() !== '',
     // Settings (not behaviour switches): owner Q1 / Q2 defaults.
     formerToFree: src.AUDIENCE_FORMER_TO_FREE !== 'false',
     consentRule: 'exclude_false' as const,

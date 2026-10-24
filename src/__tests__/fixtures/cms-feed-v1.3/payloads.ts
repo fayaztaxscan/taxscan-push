@@ -1,9 +1,11 @@
 /**
- * CMS push-feed contract v1.2 — sample payloads (FAKE values only).
+ * CMS push-feed contract v1.3 FINAL — sample payloads (FAKE values only).
  *
- * Source: /Users/bestdoc/Documents/cms-platform/docs/design/push-feed-contract-v1.2-artefacts-2026-10-24.md
- * (the CMS's authoritative artefacts, 2026-10-24, superseding v1.1 the same day; §6 = their Appendix
- * A.5 events, §7 = the A.7 list page). Copied byte for byte by script: every event body is exactly as
+ * Source: /Users/bestdoc/Documents/cms-platform/docs/design/push-feed-contract-v1.3-artefacts-2026-10-24.md
+ * (the CMS's authoritative artefacts, 2026-10-24, superseding v1.2 and v1.1; §6 = their Appendix
+ * A.5 events, §7 = the A.7 list page). The wire is v1.2's; v1.3 adds one fixture,
+ * `account.deleted_900003_seq3` (`erasure: true`, email null: the CMS deletes the Mailercloud
+ * contact itself and sends no address). Copied byte for byte by script: every event body is exactly as
  * sent (one line, UTF-8, no trailing newline). v1.2 adds `erasure` (never null) to every event and
  * row, and withholds `email`/`name` when consent is false and status is free/ended. Fake readers
  * 900001 / 900002 / 900003, example.com addresses. Never use these values in production. If the CMS
@@ -21,6 +23,7 @@ export const CMS_EVENT_BODIES = {
   "account.updated_900003_seq2": "{\"event_id\":\"evt_01JG5R6S7T8V9W0X1Y2Z3A4B5C\",\"event\":\"account.updated\",\"seq\":2,\"occurred_at\":\"2026-12-21T08:10:00+05:30\",\"account_id\":\"900003\",\"email\":null,\"name\":null,\"plan\":null,\"status\":\"free\",\"period_start\":null,\"period_end\":null,\"marketing_consent\":{\"value\":false,\"at\":\"2026-12-21T08:10:00+05:30\"},\"reactivated\":false,\"erasure\":false}",
   "account.deleted_900002_seq6": "{\"event_id\":\"evt_01JH2X3Y4Z5A6B7C8D9E0F1G2H\",\"event\":\"account.deleted\",\"seq\":6,\"occurred_at\":\"2027-01-10T15:20:00+05:30\",\"account_id\":\"900002\",\"email\":null,\"name\":null,\"plan\":null,\"status\":\"deleted\",\"period_start\":null,\"period_end\":null,\"marketing_consent\":{\"value\":null,\"at\":null},\"reactivated\":false,\"erasure\":false}",
   "account.deleted_900002_seq7": "{\"event_id\":\"evt_01JJ9K0M1N2P3Q4R5S6T7V8W9X\",\"event\":\"account.deleted\",\"seq\":7,\"occurred_at\":\"2027-01-15T11:05:00+05:30\",\"account_id\":\"900002\",\"email\":null,\"name\":null,\"plan\":null,\"status\":\"deleted\",\"period_start\":null,\"period_end\":null,\"marketing_consent\":{\"value\":null,\"at\":null},\"reactivated\":false,\"erasure\":true}",
+  "account.deleted_900003_seq3": "{\"event_id\":\"evt_01JK4M5N6P7Q8R9S0T1V2W3X4Y\",\"event\":\"account.deleted\",\"seq\":3,\"occurred_at\":\"2027-01-20T16:40:00+05:30\",\"account_id\":\"900003\",\"email\":null,\"name\":null,\"plan\":null,\"status\":\"deleted\",\"period_start\":null,\"period_end\":null,\"marketing_consent\":{\"value\":null,\"at\":null},\"reactivated\":false,\"erasure\":true}",
 } as const;
 
 /** The first page of a full pull (limit=3, 2027-01-11 02:05 IST): a withheld row, a tombstone, next_cursor, as_of. */
