@@ -1,6 +1,6 @@
 # CMS audience sync: design
 
-Status (24 Oct 2026): **design only, nothing built.** For owner review, then Developer → QA, one task at a time (§11).
+Status (24 Oct 2026): **tasks 1–3 built, flags off** (see §11 Built notes). For owner review, then Developer → QA, one task at a time (§11).
 Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
@@ -726,6 +726,42 @@ An **Audience card on Digests**. All of it comes from Postgres.
   never brings back an erased address). Config: problems print at boot while off; raw short secrets are in
   `logSecrets()`; `CMS_FEED_ALLOWED_IPS` compares canonical forms (`src/lib/clientIp.ts`); a non-default port
   on `CMS_FEED_BASE_URL` needs `CMS_FEED_ALLOW_CUSTOM_PORT=true`.
+
+- **Task 3 — built 2026-10-24** (flags off; nothing calls it yet but tests — task 4 wires the webhook).
+  Migration `20261024132634_cms_audience_ingest`: `CmsAccount.erasedAt`, `CmsAccount.unknownStatus`,
+  `AudienceMember.eraseRequestedAt`. Code: `audience/snapshot.ts` (strict v1.2 parse of events and list rows; `name`
+  validated then dropped), `audience/rules.ts` (`memberRole`, the single rule), `audience/ingest.ts`
+  (`applyAccountSnapshot`, `recomputeMembers`). Seq: events `>`, list rows `≥`, lower skipped. Lock order
+  CmsAccount → EmailSuppression → AudienceMember (hash order). Decisions and deviations from §4–§6:
+  - **Withheld rows (v1.2 §11.1).** A null `email` never changes the account's linked hash: a withheld or deleted
+    account keeps the last hash we saw. Its role becomes NONE (Premium/Former removed) and, where we already hold
+    the address (an ex-Premium member), the row stays as a **No-marketing exclusion** — the owner's "explicit no
+    excludes Free" rule. A free reader whose address we never stored has nothing to exclude.
+  - **`account.deleted`, `erasure: false`.** Tombstone (`deletedAt`), plus an `EmailSuppression` row
+    `{accountId, reason: ACCOUNT_DELETED, email/hash null, source: cms_feed}`. `ACCOUNT_DELETED` is a new reason
+    with rank 0 (any real opt-out replaces it). An address held only by deleted accounts is No-marketing. Any
+    higher-seq live snapshot (`account.created` + `reactivated: true`, or a list row) revives the account and
+    deletes only its `ACCOUNT_DELETED` rows; UNSUBSCRIBE/HARD_BOUNCE/SPAM/MANUAL stay.
+  - **`erasure: true`.** `erasedAt` set (final: a later live snapshot returns `erased`, whatever its seq);
+    every matching `EmailSuppression` row loses its address and keeps its hash; the member row gets
+    `eraseRequestedAt` and **keeps its address until the writer has erased the contact (or, with
+    `AUDIENCE_ERASE_IN_MAILERCLOUD` off, tagged it No-marketing) — task 6 nulls it then**, because the DELETE
+    needs the address (deviation from §6.3 "null the address" at ingest). An `AUDIENCE_ERASURE` audit row (no id,
+    no address). More than `AUDIENCE_MAX_ERASURES_PER_DAY` erasures in an IST day opens the breaker
+    (`erasure_cap`). **Gap for the CMS/owner:** an erasure for an account whose address we never stored (any free
+    reader) cannot be erased in Mailercloud by us — the event carries no email. `erasure: true` on a non-deletion
+    is refused as invalid (irreversible).
+  - **Equal-seq list row with different content:** re-applied (the CMS's 24 Oct "repair" rule) and flagged
+    `seqConflict` — supersedes §5.4's "keep what we have".
+  - **Unknown status:** `status` keeps the last known one (role unchanged), the verbatim value goes to
+    `unknownStatus`; a first sighting with an unknown status grants nothing.
+  - **Consent lift:** `true` dated after `lastSeenAt` and ≤ now + 5 min, reasons UNSUBSCRIBE/HARD_BOUNCE/SPAM only,
+    matched by hash or account id; deletes the row, writes `EmailEvent RESUBSCRIBE` (provider `cms`, hash only)
+    and an `AUDIENCE_RESUBSCRIBED` audit row (hash). ≤ 20 per IST day; a deferred lift is retried by the next
+    snapshot or the nightly list's equal-seq re-apply.
+  - **Account-keyed suppression:** when exactly one live account holds an address, its suppression rows get that
+    `accountId` (here and in the Mailercloud webhook), and a member is suppressed by hash OR any live linked
+    account id — an opt-out follows an email change.
 
 **Needs the CMS or Mailercloud:**
 

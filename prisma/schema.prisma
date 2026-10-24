@@ -790,6 +790,8 @@ model CmsAccount {
   consentAt    DateTime?
   emailHash    String? // sha256(normalised email); null once deleted, or when the CMS withholds the email (Q10)
   deletedAt    DateTime? // tombstone: blocks late lower-seq events
+  erasedAt     DateTime? // contract v1.2 `account.deleted` + `erasure: true`: never reactivated
+  unknownStatus String? // the last snapshot's status when not a known one (`status` keeps the last KNOWN)
   lastSource   String // webhook|pull_incr|pull_full
   updatedAt    DateTime  @updatedAt
 
@@ -812,6 +814,7 @@ model AudienceMember {
   nextAttemptAt DateTime?
   lastErrorKind String? // RETRYABLE | FATAL — never a provider message
   syncedAt      DateTime?
+  eraseRequestedAt DateTime? // a CMS erasure: the writer erases (or tags) in Mailercloud, THEN nulls `email`
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

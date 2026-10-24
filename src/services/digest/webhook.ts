@@ -341,6 +341,10 @@ function byKey(a: string, b: string): number {
  * The single definition: the SQL rank in `storeChunk` is generated from this.
  */
 export const SUPPRESSION_RANK: Readonly<Record<string, number>> = Object.freeze({
+  // CMS audience sync (design §6.3; contract v1.2 §10): a deactivated account, suppressed by its
+  // account id. The weakest reason: any real opt-out replaces it, and only it is lifted when the
+  // account is reactivated.
+  ACCOUNT_DELETED: 0,
   UNSUBSCRIBE: 1,
   HARD_BOUNCE: 2,
   SPAM: 3,
