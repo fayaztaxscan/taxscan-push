@@ -170,6 +170,20 @@ describe('door W verification — negative cases', () => {
     expect(verifyCmsWebhook({ ...ok, secrets: [OTHER, TEST_SECRET] })).toMatchObject({ ok: true, matched: 'previous' });
     expect(verifyCmsWebhook({ ...ok, secrets: [TEST_SECRET, OTHER] })).toMatchObject({ ok: true, matched: 'current' });
     expect(verifyCmsWebhook({ ...ok, secrets: ['', TEST_SECRET] })).toMatchObject({ ok: true, matched: 'previous' });
+    // QA: BOTH slots really match (same value in each) → reported as current, never previous.
+    expect(verifyCmsWebhook({ ...ok, secrets: [TEST_SECRET, TEST_SECRET] })).toMatchObject({ ok: true, matched: 'current' });
+  });
+
+  it('rotation finished: once the previous secret is unset, a delivery signed with it is refused', () => {
+    // Signed with the OLD secret (TEST_SECRET); the slot that held it is now empty.
+    expect(verifyCmsWebhook({ ...ok, secrets: [OTHER, ''] })).toEqual({ ok: false, reason: 'bad_signature' });
+    expect(verifyCmsWebhook({ ...ok, secrets: [OTHER] })).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('an unset secret never verifies an HMAC made with the empty key', () => {
+    const emptyKeySig = signatureHeader('', WEBHOOK_POST.ts, 'POST', CMS_WEBHOOK_PATH, body);
+    expect(verifyCmsWebhook({ ...ok, signatureHeader: emptyKeySig, secrets: ['', ''] })).toEqual({ ok: false, reason: 'no_secret' });
+    expect(verifyCmsWebhook({ ...ok, signatureHeader: emptyKeySig, secrets: [OTHER, ''] })).toEqual({ ok: false, reason: 'bad_signature' });
   });
 
   it('skew edges: ±300 s accepted, ±301 s refused', () => {
@@ -301,6 +315,16 @@ describe('door L GET — our signer and the CMS-side checks', () => {
     // The same canonical string signed as a POST is not a GET signature.
     const asPost = signatureHeader(TEST_SECRET, s.ts, 'POST', path, s.canonicalQuery);
     expect(v({ signatureHeader: asPost })).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('the path is never normalised: trailing slash, case, %2F, double slash all fail to verify', () => {
+    const s = signPushGet({ secret: TEST_SECRET, path, params: { limit: '3' }, now });
+    const rawQuery = s.pathAndQuery.split('?')[1];
+    for (const other of [`${path}/`, path.toUpperCase(), '/api/v1/push-feed%2Fsubscribers', '/api/v1//push-feed/subscribers', '/api/v1/push-feed/./subscribers']) {
+      expect(
+        verifyPushGet({ secrets: [TEST_SECRET], path: other, rawQuery, timestampHeader: s.ts, signatureHeader: s.headers['X-Push-Signature'], now }),
+      ).toEqual({ ok: false, reason: 'bad_signature' });
+    }
   });
 
   it('a correctly signed GET without a nonce is refused (the §8.4 empty-query string is not a door-L request)', () => {

@@ -80,6 +80,18 @@ describe('parseAudienceEnv — secrets', () => {
     },
   );
 
+  it('the boundary is the literal 32 (pinned without the constant): 31 → unset, 32 → kept', () => {
+    // QA: the test above derives its short value from AUDIENCE_SECRET_MIN_LENGTH, so lowering the
+    // constant moved the test with it (a mutation to 31 survived). Pin the number itself.
+    expect(AUDIENCE_SECRET_MIN_LENGTH).toBe(32);
+    const c31 = parseAudienceEnv({ CMS_FEED_INBOUND_SECRET: 'k'.repeat(31) });
+    expect(c31.cms.inboundSecret).toBe('');
+    expect(c31.problems.join()).toMatch(/CMS_FEED_INBOUND_SECRET/);
+    // Surrounding whitespace does not count toward the length.
+    expect(parseAudienceEnv({ CMS_FEED_INBOUND_SECRET: ` ${'k'.repeat(31)}\n` }).cms.inboundSecret).toBe('');
+    expect(parseAudienceEnv({ CMS_FEED_INBOUND_SECRET: 'k'.repeat(32) }).cms.inboundSecret).toHaveLength(32);
+  });
+
   it('exactly 32 characters is accepted', () => {
     const c = parseAudienceEnv({ CMS_FEED_INBOUND_SECRET: 'k'.repeat(32) });
     expect(c.cms.inboundSecret).toHaveLength(32);
