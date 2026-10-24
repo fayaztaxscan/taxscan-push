@@ -5,6 +5,16 @@ Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
 
+- **2026-10-24 (later; supersedes the "9 hand lists" ruling below wherever they differ).** The Free digest goes to
+  **one list only: `TaxscanNewsletterSubscribers`** (~14.8k), which the CMS fills **automatically from marketing
+  consent**. The other 8 lists stay on the hand-made Mailercloud digest for now. A reader who no longer wants it
+  uses the **unsubscribe link** (one-click; Mailercloud unsubscribes them account-wide and our webhook copies it to
+  `EmailSuppression`) — the list itself does not remove people when consent changes, and the CMS account page has no
+  email-preference switch. Consequences for this design: `DIGEST_FREE_LIST_IDS` = that one list (+ the Former tag,
+  Q1); the "consent=false propagation into the hand lists" job shrinks to keeping our suppression copy current; and
+  the CMS's **Q10 (v1.2: withhold the email for free/ended readers with consent=false, send account_id only)** no
+  longer costs us anything — recommended YES, awaiting the owner's explicit answer. Read every "9 hand lists"
+  below as "the newsletter list".
 - **2026-10-24.** Paid-member data comes **only from the CMS**. The Premium digest always reflects active
   subscriptions: members who lapse stop getting it, new members start getting it, and nobody keeps Mailercloud
   lists by hand. This is a **hard prerequisite before any real reader gets the new digest** (runbook stage 3).
