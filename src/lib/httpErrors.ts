@@ -62,7 +62,7 @@ export function clientErrorBody(status: number, err: unknown): { error: string }
 }
 
 /** Secrets a log line must never repeat verbatim (each ≥ 8 chars is masked by `redactText`). */
-function logSecrets(): string[] {
+export function logSecrets(): string[] {
   return [
     env.adminToken,
     env.sessionCookieSecret,
@@ -70,6 +70,11 @@ function logSecrets(): string[] {
     env.digest.mailercloud.apiKey,
     env.digest.mailercloud.webhookToken,
     env.digest.mailercloud.webhookTokenPrevious,
+    // CMS audience sync (design §8.2: `redactText` gets every secret).
+    env.audience.cms.inboundSecret,
+    env.audience.cms.inboundSecretPrevious,
+    env.audience.cms.pullSecret,
+    env.audience.mailercloud.syncApiKey,
   ].filter((x): x is string => typeof x === 'string' && x !== '');
 }
 

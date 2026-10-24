@@ -22,6 +22,7 @@ import { startDigestRetentionSweeper } from './sweepers/digestRetention';
 import { startBackupCron } from './services/backup';
 import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
+import { startAudienceSync } from './services/audience/boot';
 import { createMockDigestSender } from './services/digest/mockSender';
 import { mockSendersEnabled } from './lib/mockSenderGuard';
 import { setStaffPushTransport } from './services/staffPush';
@@ -74,4 +75,5 @@ app.listen(env.port, () => {
   startBackupCron();
   startMetricsWarmer();
   startDigestScheduler(undefined, undefined, mockDigestSender ? { sender: mockDigestSender } : {});
+  startAudienceSync();
 });

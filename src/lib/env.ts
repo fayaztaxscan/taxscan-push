@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -157,6 +158,159 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
 }
 
 export type DigestEnv = ReturnType<typeof parseDigestEnv>;
+
+/** A shared secret shorter than this is treated as UNSET (design §10.1; the CMS issues 64 hex chars). */
+export const AUDIENCE_SECRET_MIN_LENGTH = 32;
+
+/**
+ * A secret from `src[name]`: trimmed; shorter than AUDIENCE_SECRET_MIN_LENGTH → '' and a
+ * problem naming the variable (never its value or length).
+ */
+function secretFrom(src: NodeJS.ProcessEnv, name: string, problems: string[]): string {
+  const v = (src[name] ?? '').trim();
+  if (v === '') return '';
+  if (v.length < AUDIENCE_SECRET_MIN_LENGTH) {
+    problems.push(`${name} is shorter than ${AUDIENCE_SECRET_MIN_LENGTH} characters (treated as unset)`);
+    return '';
+  }
+  return v;
+}
+
+/**
+ * The CMS list base URL: https only, no credentials / query / fragment, host on the allow-list.
+ * Anything else → '' and a problem (the URL is not secret, but it is still not echoed).
+ */
+function cmsBaseUrlFrom(src: NodeJS.ProcessEnv, allowedHosts: string[], problems: string[]): string {
+  const raw = (src.CMS_FEED_BASE_URL ?? 'https://api.taxscan.in').trim();
+  if (raw === '') return '';
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    problems.push('CMS_FEED_BASE_URL is not a valid URL');
+    return '';
+  }
+  if (u.protocol !== 'https:') {
+    problems.push('CMS_FEED_BASE_URL must be https');
+    return '';
+  }
+  if (u.username || u.password || u.search || u.hash) {
+    problems.push('CMS_FEED_BASE_URL must not carry credentials, a query or a fragment');
+    return '';
+  }
+  if (!allowedHosts.includes(u.hostname.toLowerCase())) {
+    problems.push('CMS_FEED_BASE_URL host is not in CMS_FEED_ALLOWED_HOSTS');
+    return '';
+  }
+  return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+}
+
+/** Valid IP literals from CMS_FEED_ALLOWED_IPS (lower-cased); invalid entries are dropped + reported. */
+function cmsAllowedIpsFrom(src: NodeJS.ProcessEnv, problems: string[]): string[] {
+  const out: string[] = [];
+  let bad = 0;
+  for (const entry of listEnv(src.CMS_FEED_ALLOWED_IPS)) {
+    if (isIP(entry) === 0) bad += 1;
+    else out.push(entry.toLowerCase());
+  }
+  if (bad > 0) problems.push(`CMS_FEED_ALLOWED_IPS has ${bad} invalid entr${bad === 1 ? 'y' : 'ies'} (ignored; plain IPs only, no ranges)`);
+  return out;
+}
+
+/** Percent (0 < p ≤ 100) from `src[name]`, else `fallback`. */
+function pctFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const n = posNumFrom(src, name, fallback);
+  return n <= 100 ? n : fallback;
+}
+
+/**
+ * CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5, §8, §10.1; CMS push-feed contract v1.1).
+ * Every behaviour flag defaults OFF. `problems` lists config faults by variable NAME only — never
+ * a value — and the boot line prints them; a fault never crashes the app.
+ *
+ * Fail-closed rules pinned here:
+ *  - a secret under 32 characters counts as unset;
+ *  - CMS_FEED_BASE_URL must be https and on CMS_FEED_ALLOWED_HOSTS (default api.taxscan.in, the
+ *    contract's door L host);
+ *  - an EMPTY CMS_FEED_ALLOWED_IPS rejects every webhook (it never means "allow all");
+ *  - the webhook (door W) and list (door L) secrets must differ: one secret per door.
+ */
+export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
+  const problems: string[] = [];
+  const allowedHosts = listEnv(src.CMS_FEED_ALLOWED_HOSTS ?? 'api.taxscan.in').map((h) => h.toLowerCase());
+  const inboundSecret = secretFrom(src, 'CMS_FEED_INBOUND_SECRET', problems);
+  const inboundSecretPrevious = secretFrom(src, 'CMS_FEED_INBOUND_SECRET_PREVIOUS', problems);
+  const pullSecret = secretFrom(src, 'CMS_FEED_PULL_SECRET', problems);
+  if (pullSecret && (pullSecret === inboundSecret || pullSecret === inboundSecretPrevious)) {
+    problems.push('CMS_FEED_PULL_SECRET must differ from the webhook secrets (one secret per door)');
+  }
+  const consentRaw = (src.AUDIENCE_CONSENT_RULE ?? 'exclude_false').trim();
+  if (consentRaw !== 'exclude_false') problems.push('AUDIENCE_CONSENT_RULE must be exclude_false (the only rule built)');
+  const digestFromCms = src.DIGEST_AUDIENCE_FROM_CMS === 'true';
+  // Design §7.1: two constants for one fact is how PR #50 happened — set one, not both.
+  if (digestFromCms && (listEnv(src.DIGEST_PREMIUM_TAG_IDS).length > 0 || listEnv(src.DIGEST_FREE_EXCLUDE_TAG_IDS).length > 0)) {
+    problems.push('DIGEST_AUDIENCE_FROM_CMS derives the tag ids: unset DIGEST_PREMIUM_TAG_IDS / DIGEST_FREE_EXCLUDE_TAG_IDS (set one, not both)');
+  }
+  const allowedIps = cmsAllowedIpsFrom(src, problems);
+  const baseUrl = cmsBaseUrlFrom(src, allowedHosts, problems);
+  return {
+    // Webhook route + pulls write Postgres only. Off: the route 404s and boot logs `[audience] disabled …`.
+    enabled: src.AUDIENCE_SYNC_ENABLED === 'true',
+    // Off: the Mailercloud writer runs dry (counts only).
+    writeMailercloud: src.AUDIENCE_SYNC_WRITE_MAILERCLOUD === 'true',
+    // Derived digest targets + the send guard.
+    digestFromCms,
+    // The §6.3 contact_type=active lift path.
+    resubscribeWrites: src.AUDIENCE_RESUBSCRIBE_WRITES === 'true',
+    // DELETE the Mailercloud contact on a CMS erasure (owner Q4).
+    eraseInMailercloud: src.AUDIENCE_ERASE_IN_MAILERCLOUD === 'true',
+    // Settings (not behaviour switches): owner Q1 / Q2 defaults.
+    formerToFree: src.AUDIENCE_FORMER_TO_FREE !== 'false',
+    consentRule: 'exclude_false' as const,
+    thresholds: {
+      maxStaleHours: intFrom(src, 'AUDIENCE_MAX_STALE_HOURS', 26),
+      premiumDeviationPct: pctFrom(src, 'AUDIENCE_PREMIUM_DEVIATION_PCT', 2),
+      maxChangePct: pctFrom(src, 'AUDIENCE_MAX_CHANGE_PCT', 5),
+      maxErasuresPerDay: intFrom(src, 'AUDIENCE_MAX_ERASURES_PER_DAY', 20),
+      writeRps: intFrom(src, 'AUDIENCE_WRITE_RPS', 5),
+    },
+    cms: {
+      // Door W (CMS → us). Two active during a rotation: current, then the previous one.
+      inboundSecret,
+      inboundSecretPrevious,
+      // Door L (us → CMS). We sign with one secret; the CMS accepts two during its rotation.
+      pullSecret,
+      baseUrl,
+      allowedHosts,
+      // Empty = REJECT every webhook (fail closed), never allow-all.
+      allowedIps,
+    },
+    mailercloud: {
+      // A separate key from MAILERCLOUD_API_KEY, used only by the contact client (design §8.2).
+      syncApiKey: secretFrom(src, 'MAILERCLOUD_SYNC_API_KEY', problems),
+      listId: (src.AUDIENCE_MC_LIST_ID ?? '').trim(),
+      tagPremium: (src.AUDIENCE_MC_TAG_PREMIUM ?? '').trim(),
+      tagFormer: (src.AUDIENCE_MC_TAG_FORMER ?? '').trim(),
+      tagNoMarketing: (src.AUDIENCE_MC_TAG_NO_MARKETING ?? '').trim(),
+    },
+    problems,
+  };
+}
+
+export type AudienceEnv = ReturnType<typeof parseAudienceEnv>;
+
+/**
+ * The webhook IP fence (design §5.1 step 2). Exact match on a normalised literal; an IPv4-mapped
+ * IPv6 address (`::ffff:1.2.3.4`, as Node reports some IPv4 peers) matches its IPv4 form. An EMPTY
+ * allow-list, or no IP at all, is a rejection.
+ */
+export function isCmsIpAllowed(ip: string | undefined | null, allowedIps: readonly string[]): boolean {
+  if (!ip || allowedIps.length === 0) return false;
+  const norm = ip.trim().toLowerCase();
+  const v4 = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(norm);
+  const candidate = v4 ? v4[1] : norm;
+  return allowedIps.includes(candidate) || allowedIps.includes(norm);
+}
 
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
@@ -382,6 +536,8 @@ export const env = {
   },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
+  // CMS audience sync — see parseAudienceEnv above. Every flag default off.
+  audience: parseAudienceEnv(process.env),
   // Digest task 14: staff push notifications for digest approval. A KILL-SWITCH,
   // default ON: nothing is ever sent unless DIGEST_ENABLED is on too (the push rides
   // on the digest's own editor alerts) AND a staff member tapped "Notify me on this

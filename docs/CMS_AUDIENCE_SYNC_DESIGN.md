@@ -690,6 +690,25 @@ An **Audience card on Digests**. All of it comes from Postgres.
 10. **Docs:** this file's "Built" notes, the runbook (stages S0–S4, the stage-3 prerequisite), `BACKUPS.md`, and the
     Guide.
 
+**Built notes.**
+
+- **Task 1 — built 2026-10-24** (flags off). Migration `20261024100000_cms_audience_sync`: the four §4 tables, the
+  four §10.2 `AuditAction` values, and on `EmailSuppression` nullable `emailHash` (unique) + `accountId` (indexed)
+  with `email` made nullable. `parseAudienceEnv()` in `src/lib/env.ts` (`env.audience`): every §10.1 flag default
+  off; secrets < 32 chars count as unset; the webhook and list secrets must differ; `CMS_FEED_BASE_URL` https only,
+  no credentials/query, host on `CMS_FEED_ALLOWED_HOSTS`; `CMS_FEED_ALLOWED_IPS` plain IP literals, **empty =
+  reject** (`isCmsIpAllowed`); `DIGEST_AUDIENCE_FROM_CMS` + explicit digest tag ids = "set one, not both".
+  Problems name variables, never values. Boot: `src/services/audience/boot.ts` prints `[audience] disabled …`
+  (or `config_invalid — not started: <names>`). The four secrets are in `logSecrets()`. Deviations from §4,
+  driven by contract v1.1: `CmsEventReceipt.signedTs` (door W replay rule: same `event_id` + same timestamp = 401,
+  newer timestamp = the CMS's retry → 2xx, not re-applied); `AudienceMember.email` nullable (§6.3 erasure);
+  `CMS_FEED_ALLOWED_HOSTS` default `api.taxscan.in` (the contract's door L host, not `www`). Not done here, for
+  task 3: backfilling `EmailSuppression.emailHash` and writing it on new suppressions.
+- **Task 2 — built 2026-10-24.** `src/lib/cmsSignature.ts`, pinned to the CMS's A.6 vectors; our outbound
+  vectors for the CMS are in `docs/cms-signature-vectors.md`. Contract v1.1 supersedes §5.2 on our GET: headers
+  `X-Push-Timestamp` / `X-Push-Signature` and a **signed `nonce` query parameter** (32 lower-case hex), not
+  `X-CMS-Event-Id`; the payload is the canonical query, not `path?query`.
+
 **Needs the CMS or Mailercloud:**
 
 - the signature cross-check with real vectors (task 2);

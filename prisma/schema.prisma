@@ -80,6 +80,11 @@ enum AuditAction {
   STAFF_PUSH_SUBSCRIBED
   STAFF_PUSH_UNSUBSCRIBED
   STAFF_PUSH_REMOVED
+  // CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §10.2). Counts / a hash only — never an address
+  AUDIENCE_SYNC_RESUMED
+  AUDIENCE_FULL_LOAD
+  AUDIENCE_ERASURE
+  AUDIENCE_RESUBSCRIBED
 }
 
 model Subscriber {
@@ -655,13 +660,21 @@ model EmailEvent {
 /// Our copy of who must not be mailed (task 8). Mailercloud enforces its own list for campaigns;
 /// this copy is what future lifecycle sends check and what restores opt-outs after a disaster.
 /// Never deleted automatically. `email` is NEVER logged and is shown as a count only.
+///
+/// CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §4, §6.3): `email` is NULLABLE so an erasure
+/// (`account.deleted`) can drop the address while `emailHash` + `accountId` keep the opt-out
+/// matching. Until audience task 3 writes them, both new columns are null on every row.
 model EmailSuppression {
   id          String   @id @default(cuid())
-  email       String   @unique // normalised: trimmed, lowercase
+  email       String?  @unique // normalised: trimmed, lowercase; null only after a CMS erasure
+  emailHash   String?  @unique // sha256(normalised address); kept after erasure
+  accountId   String? // CMS account_id the opt-out also follows (email change, erasure)
   reason      String // UNSUBSCRIBE | HARD_BOUNCE | SPAM | MANUAL — escalates SPAM > HARD_BOUNCE > UNSUBSCRIBE, never down; MANUAL is never rewritten
   source      String // mailercloud_webhook | manual
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
+
+  @@index([accountId])
 }
 
 /// House ads for the digest (task 9; docs/EMAIL_DIGEST_DESIGN.md §3, §4 ads.ts, §7, §9). Only
@@ -758,4 +771,78 @@ model DigestAdPlacement {
 
   @@unique([sendId, slot])
   @@index([adId, createdAt])
+}
+
+// ─── CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §4; CMS push-feed contract v1.1) ───
+// Every flag defaults OFF (AUDIENCE_SYNC_ENABLED …). Nothing reads or writes these tables until
+// audience task 3; this migration only creates them.
+
+/// Mirror of the CMS reader accounts. NO address, NO name: `emailHash` finds the member row.
+/// `applyAccountSnapshot()` (task 3) is the only writer; higher `seq` wins.
+model CmsAccount {
+  accountId    String    @id // CMS account_id (a string)
+  portal       String    @default("taxscan")
+  seq          BigInt // last applied
+  status       String // free|active|cancelled|ended|deleted|<unknown kept verbatim>
+  plan         String?
+  periodEnd    DateTime? @db.Date
+  consentValue Boolean? // raw tri-state marketing_consent.value
+  consentAt    DateTime?
+  emailHash    String? // sha256(normalised email); null once deleted, or when the CMS withholds the email (Q10)
+  deletedAt    DateTime? // tombstone: blocks late lower-seq events
+  lastSource   String // webhook|pull_incr|pull_full
+  updatedAt    DateTime  @updatedAt
+
+  @@index([emailHash])
+  @@index([status])
+}
+
+/// One row per ADDRESS in a mailed role (PREMIUM / FORMER / noMarketing / mid clean-up), the only
+/// place an address lives. Deleted once desiredRole = NONE and appliedTags = []. `email` is never
+/// logged and is stripped from backups; null after an erasure.
+model AudienceMember {
+  emailHash     String    @id
+  email         String? // normalised; NEVER logged; not in backups
+  desiredRole   String // PREMIUM | FORMER | NONE (memberRole(), the single definition)
+  noMarketing   Boolean   @default(false) // any linked account said consent=false
+  suppressed    Boolean   @default(false) // EmailSuppression by address OR by any linked accountId
+  appliedTags   String[]  @default([]) // what Mailercloud has acknowledged; [] = nothing of ours
+  mcState       String    @default("UNKNOWN") // UNKNOWN | ABSENT | PRESENT (from our own GET)
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  lastErrorKind String? // RETRYABLE | FATAL — never a provider message
+  syncedAt      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([nextAttemptAt])
+  @@index([desiredRole])
+}
+
+/// Door W replay/dedupe (contract v1.1 §3): `eventId` (= X-CMS-Event-Id = body event_id) →
+/// the signed timestamp. Same id + same ts = an exact replay (401); same id + newer ts = the CMS's
+/// own retry (2xx, not applied again). Written only after the signature verifies. 30 days.
+model CmsEventReceipt {
+  eventId    String   @id
+  event      String
+  signedTs   BigInt // X-CMS-Timestamp of the first accepted delivery (unix seconds)
+  outcome    String // applied | stale_seq | unknown_type | invalid
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
+}
+
+/// One row per portal; read by the send guard, the Audience card and alerts.
+model AudienceSyncState {
+  portal        String    @id
+  lastFullAsOf  DateTime?
+  lastFullOkAt  DateTime?
+  lastIncrAsOf  DateTime?
+  lastIncrOkAt  DateTime?
+  lastWebhookAt DateTime?
+  cmsCounts     Json      @default("{}") // from the last COMPLETE full load: {active,cancelled,free,ended}
+  breakerOpenAt DateTime? // Mailercloud writes paused
+  breakerReason String? // change_too_large | truncated_load | erasure_cap | ...
+  pendingReview Json? // counts only, shown to the ADMIN who resumes
+  updatedAt     DateTime  @updatedAt
 }
