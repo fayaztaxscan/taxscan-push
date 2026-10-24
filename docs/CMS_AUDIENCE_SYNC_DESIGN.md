@@ -9,6 +9,11 @@ Every behaviour sits behind flags that default OFF.
   Q3 Premium = service email, unsubscribe wins; Q4 CMS deletion → Mailercloud erase capped 20/day once the CMS confirms
   deletion = erasure; Q5 email change: Premium follows, old address keeps hand-list membership; Q6 CMS builds Feed 1
   first; Q7 guard numbers as proposed, tune after the first clean week) **and CMS Q10 (v1.2) = YES**.
+- **2026-10-24 — `account.deleted` ≠ erasure** (CMS: it fires whenever an account leaves the feed's scope — deleted,
+  deactivated (reversible), turned staff, or a future DPDP erasure). Owner: **YES to CMS v1.2 `"erasure": true|false`**.
+  `erasure: true` → erase in Mailercloud (cap 20/day); `false` → remove from every audience + suppress by account_id,
+  keep the record; `account.created` with `reactivated: true` restores eligibility (unsubscribes/complaints never
+  lifted automatically). This replaces Q4's "once the CMS confirms deletion = erasure" condition.
 
 - **2026-10-24 (later; supersedes the "9 hand lists" ruling below wherever they differ).** The Free digest goes to
   **one list only: `TaxscanNewsletterSubscribers`** (~14.8k), which the CMS fills **automatically from marketing
