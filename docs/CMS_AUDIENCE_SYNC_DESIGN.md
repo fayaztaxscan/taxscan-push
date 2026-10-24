@@ -592,6 +592,7 @@ premium exclude cannot be trusted, and paid members would be shown the subscript
 
 - `CMS_FEED_INBOUND_SECRET` (+ `_PREVIOUS`), `CMS_FEED_PULL_SECRET`, `MAILERCLOUD_SYNC_API_KEY`;
 - `CMS_FEED_BASE_URL`, `CMS_FEED_ALLOWED_HOSTS`, `CMS_FEED_ALLOWED_IPS`;
+- `CMS_FEED_ALLOW_CUSTOM_PORT` (default off): a non-default port on `CMS_FEED_BASE_URL` is refused without it;
 - `AUDIENCE_MC_LIST_ID`, `AUDIENCE_MC_TAG_*`.
 
 Secrets must be at least 32 characters, or they are treated as unset.
@@ -714,6 +715,17 @@ An **Audience card on Digests**. All of it comes from Postgres.
   `CmsAccount.erasedAt`-style column, if needed, is a further additive migration). Contract v1.1 supersedes §5.2 on our GET: headers
   `X-Push-Timestamp` / `X-Push-Signature` and a **signed `nonce` query parameter** (32 lower-case hex), not
   `X-CMS-Event-Id`; the payload is the canonical query, not `path?query`.
+
+- **Prep for task 3 — built 2026-10-24** (QA findings on tasks 1–2). Migration `20261024120000_email_suppression_hash`:
+  a `BEFORE INSERT/UPDATE` trigger sets `EmailSuppression.emailHash = sha256(email)` whenever `email` is set (nulling
+  the address keeps the hash), plus a backfill. The Mailercloud webhook now upserts on `emailHash` (a hash-only
+  row is escalated, never duplicated, and keeps `email` null), writes suppressions **only for newly inserted
+  `EmailEvent` rows** (§6.3: a replay cannot re-create a lifted suppression), stamps the one live `CmsAccount`
+  onto the row and marks the `AudienceMember` suppressed (`afterSuppressionWrite`). `src/services/suppression.ts`
+  is the single matcher (email OR hash OR accountId) and `restoreSuppressionRow` (address → hash → id; a restore
+  never brings back an erased address). Config: problems print at boot while off; raw short secrets are in
+  `logSecrets()`; `CMS_FEED_ALLOWED_IPS` compares canonical forms (`src/lib/clientIp.ts`); a non-default port
+  on `CMS_FEED_BASE_URL` needs `CMS_FEED_ALLOW_CUSTOM_PORT=true`.
 
 **Needs the CMS or Mailercloud:**
 

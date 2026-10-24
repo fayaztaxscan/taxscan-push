@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { env } from './env';
+import { AUDIENCE_SECRET_NAMES, env } from './env';
 import { redactText } from './redact';
 
 /**
@@ -75,7 +75,9 @@ export function logSecrets(): string[] {
     env.audience.cms.inboundSecretPrevious,
     env.audience.cms.pullSecret,
     env.audience.mailercloud.syncApiKey,
-  ].filter((x): x is string => typeof x === 'string' && x !== '');
+    // The RAW values as well: one under 32 characters counts as unset above, yet is still a secret.
+    ...AUDIENCE_SECRET_NAMES.map((name) => (process.env[name] ?? '').trim()),
+  ].filter((x, i, all): x is string => typeof x === 'string' && x !== '' && all.indexOf(x) === i);
 }
 
 /**

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env, type DigestEnv } from '../../lib/env';
 import { redactError } from './sender';
+import { afterSuppressionWrite } from '../suppression';
 
 /**
  * Mailercloud campaign webhooks (docs/EMAIL_DIGEST_DESIGN.md §2, §4
@@ -14,8 +15,9 @@ import { redactError } from './sender';
  *    dropped, never stored;
  *  - write one `EmailEvent` per event, deduped on a stable `dedupeKey` (unique
  *    index + `skipDuplicates`), so a provider retry or a replay counts once;
- *  - upsert `EmailSuppression` for UNSUBSCRIBE / HARD_BOUNCE / SPAM in the same
- *    transaction as the event rows (an opt-out is never lost between the two),
+ *  - upsert `EmailSuppression` (keyed on `emailHash`) for NEWLY stored UNSUBSCRIBE /
+ *    HARD_BOUNCE / SPAM events, in the same transaction as the event rows (an opt-out is never
+ *    lost between the two, and a replay never re-creates a lifted one),
  *    in chunks of CHUNK_SIZE events, a constant number of statements each; the
  *    recorded reason escalates SPAM > HARD_BOUNCE > UNSUBSCRIBE, never down;
  *  - count what was dropped and why; a recognised opt-out with no readable
@@ -378,19 +380,23 @@ function rankSql(col: string): Prisma.Sql {
 }
 
 /**
- * Stores one chunk in ONE transaction, two statements however many events it
+ * Stores one chunk in ONE transaction, a constant number of statements however many events it
  * holds:
  *  1. insert the events, skipping existing dedupe keys, returning the new keys;
- *  2. ONE upsert of the chunk's opt-out addresses (one row per address, the
- *     batch's highest-ranked reason): a new address is inserted; an existing
- *     row's reason is upgraded if the incoming one ranks higher (never
- *     downgraded), and its `lastSeenAt` moves only if one of the address's
- *     events was NEW in this delivery (a replay re-asserts the row and its
- *     reason but does not move it).
- * Rows are written in key order, so two concurrent deliveries that share
- * addresses take their row locks in the same order and wait instead of
- * deadlocking. The event row and its suppression commit together: an opt-out
- * is never lost between the two. Returns the dedupe keys that were new.
+ *  2. ONE upsert of the opt-out addresses whose events were NEW in this delivery (one row per
+ *     address, the batch's highest-ranked reason), keyed on `emailHash` (written here, and by
+ *     the table's trigger): a new address is inserted; an existing row's reason is upgraded if
+ *     the incoming one ranks higher (never downgraded) and its `lastSeenAt` moves forward. A
+ *     row that is hash-only (an erased address) keeps `email` null;
+ *  3. `afterSuppressionWrite`: stamp the CMS account onto the row, mark the audience member
+ *     suppressed.
+ * ONLY newly inserted events touch `EmailSuppression` (CMS audience design §6.3): a provider
+ * replay of an old opt-out is a duplicate event, so it can never re-create a suppression that a
+ * later explicit opt-in lifted. That is safe because an event row and its suppression always
+ * commit together — a duplicate event's suppression is already written (or was lifted since).
+ * Rows are written in hash order, so two concurrent deliveries that share addresses take their
+ * row locks in the same order and wait instead of deadlocking. Returns the dedupe keys that
+ * were new.
  */
 async function storeChunk(chunk: { e: Kept; sendId: string | null; meta: Prisma.InputJsonObject }[], now: Date): Promise<Set<string>> {
   return prisma.$transaction(
@@ -411,39 +417,31 @@ async function storeChunk(chunk: { e: Kept; sendId: string | null; meta: Prisma.
       });
       const fresh = new Set(created.map((r) => r.dedupeKey));
       // One row per address: ON CONFLICT DO UPDATE cannot touch the same row twice in one statement.
-      const byEmail = new Map<string, { reason: string; bump: boolean }>();
+      const byHash = new Map<string, { email: string; reason: string }>();
       for (const { e } of chunk) {
-        if (!SUPPRESSING.has(e.type) || !e.email) continue;
-        const cur = byEmail.get(e.email);
-        const isNew = fresh.has(e.dedupeKey);
-        if (!cur) byEmail.set(e.email, { reason: e.type, bump: isNew });
-        else byEmail.set(e.email, { reason: escalateReason(cur.reason, e.type), bump: cur.bump || isNew });
+        if (!SUPPRESSING.has(e.type) || !e.email || !e.emailHash || !fresh.has(e.dedupeKey)) continue;
+        const cur = byHash.get(e.emailHash);
+        byHash.set(e.emailHash, { email: e.email, reason: cur ? escalateReason(cur.reason, e.type) : e.type });
       }
-      if (byEmail.size > 0) {
-        const sorted = [...byEmail].sort(([a], [b]) => byKey(a, b));
+      if (byHash.size > 0) {
+        const sorted = [...byHash].sort(([a], [b]) => byKey(a, b));
         const ids = sorted.map(() => randomUUID());
-        const emails = sorted.map(([email]) => email);
+        const hashes = sorted.map(([h]) => h);
+        const emails = sorted.map(([, v]) => v.email);
         const reasons = sorted.map(([, v]) => v.reason);
-        const bumps = sorted.map(([, v]) => v.bump);
         // `firstSeenAt`/`lastSeenAt` are timestamp (no zone): bind ISO + AT TIME ZONE 'UTC'
         // (a raw JS Date bind is read in the session TimeZone; see recordNoAddress).
         await tx.$executeRaw`
-          WITH input AS (
-            SELECT * FROM unnest(${ids}::text[], ${emails}::text[], ${reasons}::text[], ${bumps}::boolean[])
-              AS u(id, email, reason, bump)
-          )
-          INSERT INTO "EmailSuppression" AS s (id, email, reason, source, "firstSeenAt", "lastSeenAt")
-          SELECT id, email, reason, 'mailercloud_webhook',
+          INSERT INTO "EmailSuppression" AS s (id, email, "emailHash", reason, source, "firstSeenAt", "lastSeenAt")
+          SELECT id, email, hash, reason, 'mailercloud_webhook',
                  (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC'),
                  (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC')
-          FROM input
-          ORDER BY email
-          ON CONFLICT (email) DO UPDATE SET
+          FROM unnest(${ids}::text[], ${emails}::text[], ${hashes}::text[], ${reasons}::text[]) AS u(id, email, hash, reason)
+          ORDER BY hash
+          ON CONFLICT ("emailHash") DO UPDATE SET
             reason = CASE WHEN ${rankSql('EXCLUDED.reason')} > ${rankSql('s.reason')} THEN EXCLUDED.reason ELSE s.reason END,
-            "lastSeenAt" = CASE
-              WHEN (SELECT i.bump FROM input i WHERE i.email = EXCLUDED.email)
-              THEN GREATEST(s."lastSeenAt", EXCLUDED."lastSeenAt")
-              ELSE s."lastSeenAt" END`;
+            "lastSeenAt" = GREATEST(s."lastSeenAt", EXCLUDED."lastSeenAt")`;
+        await afterSuppressionWrite(tx, hashes, now);
       }
       return fresh;
     },

@@ -1,5 +1,5 @@
-import { isIP } from 'node:net';
 import dotenv from 'dotenv';
+import { canonicalIp } from './clientIp';
 
 dotenv.config();
 
@@ -198,6 +198,12 @@ function cmsBaseUrlFrom(src: NodeJS.ProcessEnv, allowedHosts: string[], problems
     problems.push('CMS_FEED_BASE_URL must not carry credentials, a query or a fragment');
     return '';
   }
+  // `new URL` drops the scheme's default port, so `u.port` is set only for a NON-default one.
+  // A signed request to an odd port is refused unless explicitly allowed (fail closed).
+  if (u.port !== '' && src.CMS_FEED_ALLOW_CUSTOM_PORT !== 'true') {
+    problems.push('CMS_FEED_BASE_URL has a non-default port (set CMS_FEED_ALLOW_CUSTOM_PORT=true to allow it)');
+    return '';
+  }
   if (!allowedHosts.includes(u.hostname.toLowerCase())) {
     problems.push('CMS_FEED_BASE_URL host is not in CMS_FEED_ALLOWED_HOSTS');
     return '';
@@ -205,13 +211,17 @@ function cmsBaseUrlFrom(src: NodeJS.ProcessEnv, allowedHosts: string[], problems
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
 }
 
-/** Valid IP literals from CMS_FEED_ALLOWED_IPS (lower-cased); invalid entries are dropped + reported. */
+/**
+ * Valid IP literals from CMS_FEED_ALLOWED_IPS in CANONICAL form (`canonicalIp`: IPv6 compressed +
+ * lower-case, IPv4-mapped → IPv4); invalid entries (ranges, zone ids, names) are dropped + reported.
+ */
 function cmsAllowedIpsFrom(src: NodeJS.ProcessEnv, problems: string[]): string[] {
   const out: string[] = [];
   let bad = 0;
   for (const entry of listEnv(src.CMS_FEED_ALLOWED_IPS)) {
-    if (isIP(entry) === 0) bad += 1;
-    else out.push(entry.toLowerCase());
+    const ip = canonicalIp(entry);
+    if (ip === null) bad += 1;
+    else if (!out.includes(ip)) out.push(ip);
   }
   if (bad > 0) problems.push(`CMS_FEED_ALLOWED_IPS has ${bad} invalid entr${bad === 1 ? 'y' : 'ies'} (ignored; plain IPs only, no ranges)`);
   return out;
@@ -224,14 +234,15 @@ function pctFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number
 }
 
 /**
- * CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5, §8, §10.1; CMS push-feed contract v1.1).
+ * CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5, §8, §10.1; CMS push-feed contract v1.2).
  * Every behaviour flag defaults OFF. `problems` lists config faults by variable NAME only — never
  * a value — and the boot line prints them; a fault never crashes the app.
  *
  * Fail-closed rules pinned here:
  *  - a secret under 32 characters counts as unset;
- *  - CMS_FEED_BASE_URL must be https and on CMS_FEED_ALLOWED_HOSTS (default api.taxscan.in, the
- *    contract's door L host);
+ *  - CMS_FEED_BASE_URL must be https, on CMS_FEED_ALLOWED_HOSTS (default api.taxscan.in, the
+ *    contract's door L host), on the default port unless CMS_FEED_ALLOW_CUSTOM_PORT=true;
+ *  - CMS_FEED_ALLOWED_IPS entries are compared in canonical form (`canonicalIp`);
  *  - an EMPTY CMS_FEED_ALLOWED_IPS rejects every webhook (it never means "allow all");
  *  - the webhook (door W) and list (door L) secrets must differ: one secret per door.
  */
@@ -300,17 +311,27 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
 export type AudienceEnv = ReturnType<typeof parseAudienceEnv>;
 
 /**
- * The webhook IP fence (design §5.1 step 2). Exact match on a normalised literal; an IPv4-mapped
- * IPv6 address (`::ffff:1.2.3.4`, as Node reports some IPv4 peers) matches its IPv4 form. An EMPTY
- * allow-list, or no IP at all, is a rejection.
+ * The webhook IP fence (design §5.1 step 2). Both sides in canonical form (`canonicalIp`), so
+ * `::ffff:1.2.3.4` matches `1.2.3.4` and `2001:DB8::0:1` matches `2001:db8::1`. An EMPTY
+ * allow-list, no IP, or an IP that does not parse is a rejection (fail closed).
  */
 export function isCmsIpAllowed(ip: string | undefined | null, allowedIps: readonly string[]): boolean {
-  if (!ip || allowedIps.length === 0) return false;
-  const norm = ip.trim().toLowerCase();
-  const v4 = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(norm);
-  const candidate = v4 ? v4[1] : norm;
-  return allowedIps.includes(candidate) || allowedIps.includes(norm);
+  if (allowedIps.length === 0) return false;
+  const candidate = canonicalIp(ip);
+  if (candidate === null) return false;
+  return allowedIps.some((entry) => canonicalIp(entry) === candidate);
 }
+
+/**
+ * The audience secrets, by variable name. `logSecrets()` masks their RAW values too, including a
+ * value too short to be accepted (it counts as unset, but it is still somebody's secret).
+ */
+export const AUDIENCE_SECRET_NAMES = [
+  'CMS_FEED_INBOUND_SECRET',
+  'CMS_FEED_INBOUND_SECRET_PREVIOUS',
+  'CMS_FEED_PULL_SECRET',
+  'MAILERCLOUD_SYNC_API_KEY',
+] as const;
 
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,

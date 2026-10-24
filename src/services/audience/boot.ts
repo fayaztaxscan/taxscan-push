@@ -8,7 +8,8 @@ import { env, type AudienceEnv } from '../../lib/env';
  * flag is off. Nothing is started yet — ingest, pulls and the writer arrive in tasks 3–6.
  *
  * Never throws (a bad audience config must not take push down) and never prints a value:
- * problems name variables only. An empty CMS_FEED_ALLOWED_IPS is warned about, because it
+ * problems name variables only — and they are printed while the sync is OFF too, so a bad
+ * variable is seen before the flag is switched on. An empty CMS_FEED_ALLOWED_IPS is warned about, because it
  * rejects every webhook by design.
  */
 export type AudienceBootState = 'disabled' | 'config_invalid' | 'enabled';
@@ -17,6 +18,8 @@ export function startAudienceSync(cfg: AudienceEnv = env.audience): AudienceBoot
   /* eslint-disable no-console */
   if (!cfg.enabled) {
     console.log('[audience] disabled (set AUDIENCE_SYNC_ENABLED=true to start)');
+    // Shown while off too, so a bad variable is fixed BEFORE the flag goes on (names only).
+    if (cfg.problems.length > 0) console.warn(`[audience] config problems (sync is off): ${cfg.problems.join('; ')}`);
     return 'disabled';
   }
   const problems = [...cfg.problems];
