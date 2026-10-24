@@ -265,7 +265,7 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
   const allowedIps = cmsAllowedIpsFrom(src, problems);
   const baseUrl = cmsBaseUrlFrom(src, allowedHosts, problems);
   return {
-    // Webhook route + pulls write Postgres only. Off: the route 404s and boot logs `[audience] disabled …`.
+    // Webhook route + pulls write Postgres only. Off: the route answers 401 (contract v1.2) and boot logs `[audience] disabled …`.
     enabled: src.AUDIENCE_SYNC_ENABLED === 'true',
     // Off: the Mailercloud writer runs dry (counts only).
     writeMailercloud: src.AUDIENCE_SYNC_WRITE_MAILERCLOUD === 'true',

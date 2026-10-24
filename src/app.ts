@@ -11,6 +11,7 @@ import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
+import { createIntegrationsRouter, type CmsEventsRouterOptions } from './routes/cmsEvents';
 import { createStaffPushRouter, type StaffPushRouterOptions } from './routes/staffPush';
 import { emailAssetsHandler } from './routes/digestAds';
 import { env } from './lib/env';
@@ -39,6 +40,8 @@ export type CreateAppOptions = {
   webhooks?: WebhookRouterOptions;
   // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
   staffPush?: StaffPushRouterOptions;
+  // CMS account events (audience sync task 4) — tests inject config, clock, rate limit.
+  cmsEvents?: CmsEventsRouterOptions;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -67,6 +70,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // JSON parser: its parse errors carry the raw body, which the catch-all
   // error handler below would log (reader addresses). No session/cookie use.
   app.use('/api/webhooks', createWebhooksRouter(opts.webhooks));
+  // CMS account events (door W): HMAC over the RAW body, so ahead of every JSON parser too.
+  // Always mounted; answers 401 to everything while AUDIENCE_SYNC_ENABLED is off (contract v1.2 §3).
+  app.use('/api/integrations', createIntegrationsRouter(opts.cmsEvents));
   // Digest templates (task 10, ADMIN only) carry a whole email layout: their own,
   // larger JSON limit, ahead of the global one (which then skips a parsed body).
   // Authenticated FIRST (2026-10-23): an anonymous caller gets 401 before a byte of

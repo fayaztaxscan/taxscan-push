@@ -14,6 +14,15 @@ import { env, type AudienceEnv } from '../../lib/env';
  */
 export type AudienceBootState = 'disabled' | 'config_invalid' | 'enabled';
 
+/**
+ * Whether the CMS webhook may accept anything: the flag on, no config problem, a webhook secret
+ * set. The route answers 401 to everything otherwise (contract v1.2 §3), the same as a bad
+ * signature. One definition, shared by the boot line and the route.
+ */
+export function audienceIngestReady(cfg: AudienceEnv = env.audience): boolean {
+  return cfg.enabled && cfg.problems.length === 0 && cfg.cms.inboundSecret !== '';
+}
+
 export function startAudienceSync(cfg: AudienceEnv = env.audience): AudienceBootState {
   /* eslint-disable no-console */
   if (!cfg.enabled) {
@@ -31,8 +40,9 @@ export function startAudienceSync(cfg: AudienceEnv = env.audience): AudienceBoot
   if (cfg.cms.allowedIps.length === 0) {
     console.warn('[audience] CMS_FEED_ALLOWED_IPS is empty — every CMS webhook will be rejected (fail closed)');
   }
-  // Ingest is not built yet (tasks 3–5); the flag being on starts nothing in this release.
-  console.log('[audience] enabled — ingest not built in this release; nothing started');
+  // Task 4: the webhook (POST /api/integrations/cms/events) writes Postgres only. Pulls (task 5)
+  // and the Mailercloud writer (task 6) are not built yet.
+  console.log('[audience] enabled — CMS webhook ingest on (Postgres only); pulls and the Mailercloud writer are not built yet');
   return 'enabled';
   /* eslint-enable no-console */
 }

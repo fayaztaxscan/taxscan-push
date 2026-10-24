@@ -225,7 +225,7 @@ describe('config (QA finding 4)', () => {
     process.env.CMS_FEED_INBOUND_SECRET = short;
     try {
       jest.isolateModules(() => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
         const { logSecrets } = require('../lib/httpErrors') as typeof import('../lib/httpErrors');
         expect(logSecrets()).toContain(short);
         expect(redactText(`boom ${short} boom`, logSecrets())).toBe('boom [secret] boom');

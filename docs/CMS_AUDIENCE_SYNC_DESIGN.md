@@ -1,6 +1,6 @@
 # CMS audience sync: design
 
-Status (24 Oct 2026): **tasks 1–3 built, flags off** (see §11 Built notes). For owner review, then Developer → QA, one task at a time (§11).
+Status (24 Oct 2026): **tasks 1–4 built, flags off** (see §11 Built notes). For owner review, then Developer → QA, one task at a time (§11).
 Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
@@ -278,6 +278,29 @@ writes rows that changed (normally tens). Before task 5 ships, measure one full 
 
 ### 5.1 Webhook: `POST /api/integrations/cms/events`
 
+> **As built (task 4, 24 Oct) — supersedes the numbered list below where they differ.** Order: flag → IP fence →
+> raw body (`Buffer.isBuffer`) → headers → signature → `X-CMS-Event-Id` = body `event_id` → replay
+> (`classifyWebhookReplay`) → parse → apply. **Answer codes follow contract v1.2 §3/§9, not this section:** every
+> failure of the flag, the fence, the body, the headers, the signature, the event id or an exact replay gets the
+> **same `401 {"code":"UNAUTHORISED"}`** (this section said 404 for the flag/fence and 400 for an id mismatch); a
+> retry or a racing duplicate gets **200 `{ok, duplicate: true}`**, decided from the receipt BEFORE applying, not
+> from an insert conflict; a signed body that breaks the schema gets **422** (the CMS marks it dead; the nightly
+> list carries the account); an unknown event type 200 `unknown_type`; a storage failure 500. The route is always
+> mounted and answers 401 while `AUDIENCE_SYNC_ENABLED` is off. The **receipt is inserted in the same transaction as
+> the apply**, so a failed apply leaves no receipt and the CMS's retry is processed. The receipt keeps the
+> **latest** signed timestamp, so a verbatim copy of a retried delivery is an exact replay too.
+>
+> **The IP fence behind Cloudflare.** `push.taxscan.in` is proxied by Cloudflare, so under `trust proxy 1`
+> `req.ip` (the `X-Forwarded-For` entry Railway's proxy appends) is a Cloudflare edge — and the Railway origin
+> `taxscan-push-production.up.railway.app` also answers directly, so a bare `CF-Connecting-IP` is forgeable. Rule
+> (`src/lib/clientIp.ts → cmsClientIp`): `CF-Connecting-IP` is believed **only** when `req.ip` is inside
+> Cloudflare's published ranges (`src/lib/cloudflareIps.ts`, source URLs + fetch date in the file, refreshed by
+> `npm run cloudflare:ips`, never fetched at runtime); otherwise the client is `req.ip` itself (the CMS calling the
+> origin directly). That address, in canonical form, must be on `CMS_FEED_ALLOWED_IPS`; empty rejects everything.
+> **The signature stays the primary control; the fence is defence in depth.** Optional extra hardening (owner /
+> devops, not code): a Cloudflare WAF rule that blocks `/api/integrations/*` unless the source IP is the CMS's
+> egress, and/or closing the Railway origin to non-Cloudflare traffic.
+
 This is the URL already given to the CMS. It is mounted under `/api/integrations` **before** the global
 `express.json`, with `express.raw({type: '*/*', limit: '64kb'})`. HMAC needs the exact bytes, and body-parser errors
 must never log a body. Checks run in this order, and each stops at the first failure:
@@ -527,7 +550,7 @@ premium exclude cannot be trusted, and paid members would be shown the subscript
 
 | Threat | What could happen | Control |
 |---|---|---|
-| **Spoofed webhook** | A forged event grants Premium or removes members | HMAC over `ts.METHOD.path.body`. IP fence (an empty allowlist rejects everything). The path is pinned to our constant. 404 for the fence, 401 for the signature, no detail in either |
+| **Spoofed webhook** | A forged event grants Premium or removes members | HMAC over `ts.METHOD.path.body`. IP fence (an empty allowlist rejects everything; `CF-Connecting-IP` trusted only from a Cloudflare peer, §5.1). The path is pinned to our constant. The same 401 for every failure (contract v1.2), no detail |
 | **Replayed webhook** | A captured real event is re-sent | ±300 s skew; the `X-CMS-Event-Id` nonce is stored for 30 days (well beyond the window); body `event_id` must equal the header; and `seq` makes any old snapshot a no-op |
 | **Spoofed pull response** | Someone answers our GET pretending to be the CMS | https only, the host allowlisted, `redirect: 'error'`, and TLS verification never disabled **[A-3: ask whether responses are signed too]** |
 | **Stolen secrets** | Forging events, or reading the reader list | There are **three distinct secrets**: inbound (+ previous), outbound pull, and the Mailercloud sync key. They live **only in Railway** (owner pastes them; never in chat, a file, a URL, an audit row, an error or a log line; `redactText` gets every secret). Rotation: the CMS adds the new secret, we set `…_PREVIOUS` = old and the main var = new, and unset the old one after 24 h. The outbound secret rotates the other way round (the CMS accepts two). **Prerequisite:** the pending Postgres password window (Railway breach, 21 Oct) is completed **before the first full load** puts reader data in the database |
@@ -576,7 +599,7 @@ premium exclude cannot be trusted, and paid members would be shown the subscript
 
 | Variable | Effect |
 |---|---|
-| `AUDIENCE_SYNC_ENABLED` | Webhook route + pulls write **Postgres only**. Off: the route 404s, and boot logs `[audience] disabled (set AUDIENCE_SYNC_ENABLED=true to start)`. That line is the **marker for a backend-only deploy** |
+| `AUDIENCE_SYNC_ENABLED` | Webhook route + pulls write **Postgres only**. Off: the route answers 401 (contract v1.2), and boot logs `[audience] disabled (set AUDIENCE_SYNC_ENABLED=true to start)`. That line is the **marker for a backend-only deploy** |
 | `AUDIENCE_SYNC_WRITE_MAILERCLOUD` | Writer on. Off: the writer runs **dry**, logging `would_add= would_remove=` (counts only) |
 | `DIGEST_AUDIENCE_FROM_CMS` | Derived digest targets + the send guard |
 | `AUDIENCE_RESUBSCRIBE_WRITES` | The §6.3 `contact_type=active` path |
@@ -649,7 +672,7 @@ An **Audience card on Digests**. All of it comes from Postgres.
 | Skew | 301 s → 401 | 299 s → applied |
 | Nonce | second delivery → duplicate, nothing applied | first → applied |
 | Seq | lower/equal seq → no change | higher seq → applied; a gap is fine |
-| IP fence | non-listed or empty list → 404 | listed → continues |
+| IP fence | non-listed or empty list → 401; a forged `CF-Connecting-IP` from a non-Cloudflare peer → 401 | listed (directly, or via a Cloudflare peer) → continues |
 | Tombstone | late lower-seq event after a delete → ignored | higher-seq re-create → revived |
 | Absence | truncated load → nobody removed | complete load → absent account loses its tags |
 | Breaker | 6% change → writes paused | 4% → written |
@@ -762,6 +785,15 @@ An **Audience card on Digests**. All of it comes from Postgres.
   - **Account-keyed suppression:** when exactly one live account holds an address, its suppression rows get that
     `accountId` (here and in the Mailercloud webhook), and a member is suppressed by hash OR any live linked
     account id — an opt-out follows an email change.
+
+- **Task 4 — built 2026-10-24** (flag off → 401). `src/routes/cmsEvents.ts → createIntegrationsRouter`, mounted at
+  `/api/integrations` ahead of every JSON parser; `src/lib/clientIp.ts` (`canonicalIp`, `isCloudflareIp`,
+  `cmsClientIp`) + `src/lib/cloudflareIps.ts` + `scripts/refresh-cloudflare-ips.ts` (`npm run cloudflare:ips`).
+  Behaviour and the deviations from this section's original text (401 everywhere, 422, receipt-first duplicate
+  detection, latest timestamp) are in the "As built" box at the top of §5.1. Failures only are rate-limited
+  (60/min per `req.ip`); one log line per accepted request: `[audience] event=<type> id=<event_id>
+  outcome=<…> ms=<n>`; a refusal logs `webhook refused (step=<step>)`. `AudienceSyncState.lastWebhookAt` is
+  written in the apply transaction. No migration.
 
 **Needs the CMS or Mailercloud:**
 
