@@ -5,6 +5,13 @@ Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
 
+- **2026-10-24 (latest; supersedes the erasure parts below and the v1.3 email-on-erasure idea).** On
+  `erasure: true` the **CMS deletes the contact from Mailercloud itself** (whole account, idempotent, CMS alarms on
+  failure) and **sends us no email**. We only erase our own records keyed by `account_id` (hash kept so we never mail
+  them) and **never call a Mailercloud delete**: drop the erase queue / `AUDIENCE_ERASE_IN_MAILERCLOUD` path from
+  task 6. Precondition: the CMS's Mailercloud key is the SAME account as ours (to be confirmed by the owner's
+  newsletter sign-up test).
+
 - **2026-10-24 — owner accepted every recommendation in §12.1** (Q1 ended → Former tag; Q2 null consent stays in Free;
   Q3 Premium = service email, unsubscribe wins; Q4 CMS deletion → Mailercloud erase capped 20/day once the CMS confirms
   deletion = erasure; Q5 email change: Premium follows, old address keeps hand-list membership; Q6 CMS builds Feed 1
