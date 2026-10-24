@@ -5,6 +5,11 @@ Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
 
+- **2026-10-24 — owner accepted every recommendation in §12.1** (Q1 ended → Former tag; Q2 null consent stays in Free;
+  Q3 Premium = service email, unsubscribe wins; Q4 CMS deletion → Mailercloud erase capped 20/day once the CMS confirms
+  deletion = erasure; Q5 email change: Premium follows, old address keeps hand-list membership; Q6 CMS builds Feed 1
+  first; Q7 guard numbers as proposed, tune after the first clean week) **and CMS Q10 (v1.2) = YES**.
+
 - **2026-10-24 (later; supersedes the "9 hand lists" ruling below wherever they differ).** The Free digest goes to
   **one list only: `TaxscanNewsletterSubscribers`** (~14.8k), which the CMS fills **automatically from marketing
   consent**. The other 8 lists stay on the hand-made Mailercloud digest for now. A reader who no longer wants it
