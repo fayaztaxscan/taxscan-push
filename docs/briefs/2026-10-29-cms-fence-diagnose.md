@@ -49,3 +49,13 @@ peer still being refused.
 ## Constraints
 Urgent but small: one commit. No flag, no migration, no env. The CMS retries automatically with backoff, so after
 deploy the next retry produces the log line.
+
+## Deadline and a hint (CMS, 29 Oct)
+- The CMS retries `evt_01M63XFAWNANZ9ZA7F9J06M3C6` at +1/+5/+30 min, then hourly, and marks it **dead at
+  2026-10-30T13:28Z** (18:58 IST). The fix must be live before then, or planning asks them to re-queue it.
+- CMS suggestion: "derive the client from CF-Connecting-IP only when the immediate peer is a Cloudflare address,
+  rather than counting X-Forwarded-For hops (Railway's hop count can change)." That's our intended rule already.
+  The open question is *which* X-Forwarded-For entry is Cloudflare's address once Railway's edge adds its own
+  hop(s). A robust option: walk X-Forwarded-For from the right, skipping Railway's own and internal addresses, and
+  take the first non-Railway entry as "the immediate peer". Only if it's Cloudflare, trust CF-Connecting-IP. Use the
+  detail log to confirm the shape before relying on it.
