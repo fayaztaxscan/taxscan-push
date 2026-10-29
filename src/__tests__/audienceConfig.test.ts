@@ -222,7 +222,7 @@ describe('redactor knows the audience secrets', () => {
     Object.assign(process.env, vals);
     try {
       jest.isolateModules(() => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { safeErrorLog } = require('../lib/httpErrors') as typeof import('../lib/httpErrors');
         const out = JSON.stringify(safeErrorLog(new Error(`boom ${Object.values(vals).join(' ')}`), { stack: true }));
         for (const v of Object.values(vals)) expect(out).not.toContain(v);

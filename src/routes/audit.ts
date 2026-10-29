@@ -1,9 +1,9 @@
 /**
- * Phase 4 — GET /api/audit. Any logged-in user (ADMIN or PUBLISHER) can
- * read the audit log. The plan deliberately picks transparency over
- * secrecy: anyone on the team can see who did what. If a future op-sec
- * call wants this restricted to ADMINs, flip the middleware to
- * requireUser(['ADMIN']).
+ * Phase 4 — GET /api/audit. ADMIN only (owner, 29 Oct 2026: "Publisher role
+ * need not have access to activity log"). Until then every logged-in user could
+ * read it (transparency over secrecy); that is now restricted, and a PUBLISHER
+ * gets 403. Writing audit rows is unchanged: publishers' actions are still
+ * recorded, and an admin reads them here.
  *
  * Query params:
  *   action?         — exact match on AuditAction (every value the schema
@@ -59,7 +59,7 @@ function shapeItem(row: WithUser) {
 export function createAuditRouter(): Router {
   const router = Router();
 
-  router.get('/', requireUser(), async (req, res, next) => {
+  router.get('/', requireUser(['ADMIN']), async (req, res, next) => {
     try {
       const parsed = QuerySchema.safeParse(req.query);
       if (!parsed.success) {

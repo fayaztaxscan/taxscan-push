@@ -51,7 +51,8 @@ export const router = createRouter({
       component: Users,
       meta: { roles: ['ADMIN'] },
     },
-    { path: '/activity', name: 'activity', component: Activity },
+    // The audit log: ADMIN only (owner, 29 Oct), like the API behind it. A PUBLISHER is bounced to the dashboard, as for /users.
+    { path: '/activity', name: 'activity', component: Activity, meta: { roles: ['ADMIN'] } },
     { path: '/guide', name: 'guide', component: Guide },
   ],
 });

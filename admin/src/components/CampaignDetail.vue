@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useApi } from '../composables/useApi';
+import { useAuth } from '../composables/useAuth';
 import type { ApiError } from '../composables/useApi';
 
 type CampaignCreator = {
@@ -40,6 +41,9 @@ const props = defineProps<{ campaignId: string }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const api = useApi();
+// The audit log is ADMIN-only (owner, 29 Oct): a publisher's detail shows the campaign without it.
+const { user } = useAuth();
+const canSeeAudit = computed(() => user.value?.role === 'ADMIN');
 
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -71,9 +75,9 @@ async function load(): Promise<void> {
     // single-id lookup we just paginate and filter client-side.
     const [campaignsRes, auditRes] = await Promise.all([
       api.get<{ campaigns: Campaign[] }>('/api/campaigns?limit=200'),
-      api.get<{ items: AuditItem[]; total: number }>(
-        `/api/audit?limit=50&offset=0`,
-      ),
+      canSeeAudit.value
+        ? api.get<{ items: AuditItem[]; total: number }>(`/api/audit?limit=50&offset=0`)
+        : Promise.resolve({ items: [] as AuditItem[], total: 0 }),
     ]);
     const match = campaignsRes.campaigns.find((c) => c.id === props.campaignId);
     if (!match) {
@@ -160,8 +164,8 @@ onMounted(load);
             </div>
           </div>
 
-          <h3 style="margin: 16px 0 8px; font-size: 14px">Audit log for this campaign</h3>
-          <div class="audit-list">
+          <h3 v-if="canSeeAudit" style="margin: 16px 0 8px; font-size: 14px">Audit log for this campaign</h3>
+          <div v-if="canSeeAudit" class="audit-list">
             <div v-if="audit.length === 0" class="muted" style="font-size: 12px">
               No audit rows yet for this campaign.
             </div>
