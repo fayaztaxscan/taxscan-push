@@ -4,7 +4,7 @@ import { env, isCmsIpAllowed, type AudienceEnv } from '../lib/env';
 import { prisma } from '../lib/prisma';
 import { makePublicLimiter } from '../lib/rateLimit';
 import { safeErrorLog } from '../lib/httpErrors';
-import { cmsClientIp } from '../lib/clientIp';
+import { cmsClientIp, isCloudflareIp } from '../lib/clientIp';
 import { CMS_HEADERS, classifyWebhookReplay, verifyCmsWebhook } from '../lib/cmsSignature';
 import { audienceIngestReady } from '../services/audience/boot';
 import { eventIdOf, parseCmsEvent } from '../services/audience/snapshot';
@@ -55,6 +55,8 @@ export type CmsEventsRouterOptions = {
 const BODY_LIMIT = '64kb';
 const TXN_TIMEOUT_MS = 20_000;
 const DEFAULT_FAILURES_PER_MIN = 60;
+/** Fence-detail lines per hour (the diagnostic below); more are dropped, not queued. */
+const FENCE_DETAIL_PER_HOUR = 20;
 
 type Step = 'off' | 'fence' | 'body' | 'headers' | 'signature' | 'event_id' | 'replay';
 
@@ -62,6 +64,9 @@ function log(msg: string): void {
   // eslint-disable-next-line no-console
   console.log(`[audience] ${msg}`);
 }
+
+/** A header value for one log line: printable ASCII only (no line breaks to forge a log line), at most 200 chars. */
+const flat = (v: string | undefined): string => (v === undefined || v === '' ? 'none' : v.replace(/[^\x20-\x7e]/g, '?').slice(0, 200));
 
 function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
@@ -72,6 +77,24 @@ export function createIntegrationsRouter(opts: CmsEventsRouterOptions = {}): Rou
   const failLimiter = makePublicLimiter(opts.failuresPerMin ?? DEFAULT_FAILURES_PER_MIN);
   const cfgOf = () => opts.cfg ?? env.audience;
   const portal = opts.portal ?? 'taxscan';
+  /** Times of the fence-detail lines written in the last hour. */
+  const fenceLogged: number[] = [];
+
+  /**
+   * Fence refusals only (brief 2026-10-29-cms-fence-diagnose): exactly what the fence saw, so one retry from the
+   * CMS shows which address it derived and why. Server / network addresses and proxy headers only (no body, no
+   * secret, no signature); at most FENCE_DETAIL_PER_HOUR lines an hour, so a scanner can't fill the log.
+   */
+  const logFenceDetail = (req: Request): void => {
+    const now = (opts.clock?.() ?? new Date()).getTime();
+    while (fenceLogged.length > 0 && now - fenceLogged[0] >= 3_600_000) fenceLogged.shift();
+    if (fenceLogged.length >= FENCE_DETAIL_PER_HOUR) return;
+    fenceLogged.push(now);
+    log(
+      `fence detail peer=${flat(req.ip)} peerIsCloudflare=${isCloudflareIp(req.ip)} cfConnectingIp=${flat(req.header('cf-connecting-ip'))} ` +
+        `xff=${flat(req.header('x-forwarded-for'))} xRealIp=${flat(req.header('x-real-ip'))} remote=${flat(req.socket.remoteAddress)}`,
+    );
+  };
 
   const refuse = (req: Request, res: Response, step: Step): void => {
     void failLimiter(req, res, () => {
@@ -85,7 +108,10 @@ export function createIntegrationsRouter(opts: CmsEventsRouterOptions = {}): Rou
     const cfg = cfgOf();
     if (!audienceIngestReady(cfg)) return refuse(req, res, 'off');
     const client = cmsClientIp(req.ip, req.header('cf-connecting-ip'));
-    if (!isCmsIpAllowed(client, cfg.cms.allowedIps)) return refuse(req, res, 'fence');
+    if (!isCmsIpAllowed(client, cfg.cms.allowedIps)) {
+      logFenceDetail(req);
+      return refuse(req, res, 'fence');
+    }
     next();
   };
 

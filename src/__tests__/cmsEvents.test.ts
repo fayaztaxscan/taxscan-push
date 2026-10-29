@@ -152,6 +152,64 @@ describe('step 2 — the IP fence', () => {
   });
 });
 
+describe('the fence refusal logs what the fence saw (brief 2026-10-29-cms-fence-diagnose)', () => {
+  const lines = () => logs.filter((l) => l.includes('fence detail'));
+  const reset = () => void logs.splice(0);
+  const proxied = (over: Partial<CmsEventsRouterOptions> = {}) => {
+    const a = express();
+    a.set('trust proxy', 1);
+    a.use('/api/integrations', createIntegrationsRouter({ cfg: cfgWith({ CMS_FEED_ALLOWED_IPS: '198.51.100.7' }), failuresPerMin: 100_000, portal: PORTAL, ...over }));
+    return a;
+  };
+  const send = (a: express.Express, headers: Record<string, string>) => {
+    const b = body('account.created_900001_seq1');
+    return post(a, b.raw, b.eventId, { headers });
+  };
+
+  it('one line with the six fields, on a refusal', async () => {
+    reset();
+    const res = await send(proxied(), { 'X-Forwarded-For': '203.0.113.9, 10.1.2.3', 'CF-Connecting-IP': '148.113.0.114', 'X-Real-IP': '10.9.9.9' });
+    expect(res.status).toBe(401);
+    const l = lines();
+    expect(l).toHaveLength(1);
+    expect(l[0]).toBe('[audience] fence detail peer=10.1.2.3 peerIsCloudflare=false cfConnectingIp=148.113.0.114 xff=203.0.113.9, 10.1.2.3 xRealIp=10.9.9.9 remote=::ffff:127.0.0.1');
+  });
+
+  it('absent headers read "none"; a Cloudflare peer reads true; control characters are flattened', async () => {
+    reset();
+    await send(proxied(), { 'X-Forwarded-For': '173.245.48.5', 'X-Real-IP': 'a\tb' });
+    const l = lines();
+    expect(l).toHaveLength(1);
+    expect(l[0]).toContain('peer=173.245.48.5 peerIsCloudflare=true cfConnectingIp=none xff=173.245.48.5 xRealIp=a?b');
+  });
+
+  it('a request that passes the fence logs no detail line', async () => {
+    reset();
+    const res = await send(proxied(), { 'X-Forwarded-For': '173.245.48.5', 'CF-Connecting-IP': '198.51.100.7' });
+    expect(res.status).toBe(200);
+    expect(lines()).toHaveLength(0);
+  });
+
+  it('other refusals (signature, off) log no detail line', async () => {
+    reset();
+    const b = body('account.created_900001_seq1');
+    await post(proxied(), b.raw, b.eventId, { secret: 'wrong-secret', headers: { 'X-Forwarded-For': '173.245.48.5', 'CF-Connecting-IP': '198.51.100.7' } });
+    await send(proxied({ cfg: cfgWith({ AUDIENCE_SYNC_ENABLED: 'false' }) }), { 'X-Forwarded-For': '203.0.113.9' });
+    expect(lines()).toHaveLength(0);
+  });
+
+  it('at most 20 an hour; the window then reopens', async () => {
+    reset();
+    let t = Date.parse('2026-10-29T14:00:00Z');
+    const a = proxied({ clock: () => new Date(t) });
+    for (let i = 0; i < 25; i++) await send(a, { 'X-Forwarded-For': '203.0.113.9' });
+    expect(lines()).toHaveLength(20);
+    t += 3_600_000;
+    await send(a, { 'X-Forwarded-For': '203.0.113.9' });
+    expect(lines()).toHaveLength(21);
+  });
+});
+
 describe('Cloudflare-aware client IP (behind trust proxy 1, as in production)', () => {
   const CMS_IP = '198.51.100.7';
   const CF_EDGE = '173.245.48.5';
