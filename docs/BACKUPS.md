@@ -10,6 +10,7 @@ The database is ~1.4 GB, but almost none of that matters:
 |---|---|---|
 | `Event` | 1,208 MB (86%) | Yes — delivery history. Losing it costs reporting depth, nothing operational. |
 | `ArticleReadStat`, `ArticleSurfaceStat` | 170 MB | Yes — mirrors of GA and Search Console; both syncs backfill. |
+| `CmsArticleView` | new (29 Oct 2026; ~1–4 MB/day once on) | Yes — mirror of the CMS's Feed 2 views; **not in the R2 backup**; `npm run cms-views:backfill -- --from 2026-09-28 --yes` reloads it (the CMS keeps history). |
 | `Campaign`, `FeedItem` | ~4 MB | Mostly — but `FeedItem` is the GUID dedupe ledger (see below). |
 | **`Subscriber`** | **10 MB, ~2,954 active** | **No. Never.** |
 
