@@ -5,7 +5,34 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ---
 
-## ▶️ NEXT STEPS / open items (as of 2026-10-23)
+## ▶️ NEXT STEPS / open items (as of 2026-10-29)
+
+**2026-10-29 — one long day, six releases (PRs #77–#82, all LIVE) + the digest trial started:**
+- **Two-session workflow** (owner): a planning session writes `docs/briefs/<date>-<name>.md`, a build session follows
+  `docs/briefs/BUILD-SESSION.md` and reports in `.REPORT.md`; planning merges and ships on the owner's yes.
+- **#77** publishers may use **Ads + Templates**; **Templates → Preview built-in**; guide HTML-only (stored PDF +
+  `build:guide` removed, `/api/guide` → 302 `/admin/guide`); **CMS audience importer tasks 1–6** (webhook, pull,
+  Mailercloud writer, drift; every flag OFF; 6 additive migrations).
+- **#78** built-in digest **looks like the old Mailercloud newsletter** (og:image picture per story at the 06:30
+  build, `documents.taxscan.in` only, fail-open; banner-only ads; social row; no headline labels;
+  `DigestItem.imageUrl`); **Activity (audit) log ADMIN-only**; lint 0 errors.
+- **#79** every notification's **badge** = the designer's white "T" (`/brand/taxscan-badge-96.png`).
+- **#80** digest footer: "Questions or feedback? Write to info@taxscan.in" (`mailto:` allowed exactly).
+- **#81** Digests Retry/Send-now message reports each version's real outcome (it used to say "draft is made" on failure).
+- **#82** **reads from the CMS (Feed 2)** behind flags: `CmsArticleView`, `src/services/cmsViews/`, one reads module
+  `src/services/reads.ts`; `CMS_VIEWS_ENABLED` off, `READS_SOURCE=ga`, `READS_CMS_FROM=2026-09-29`. Switch-on order
+  after the CMS door V is live: secret → `CMS_VIEWS_ENABLED=true` → `npm run cms-views:backfill -- --from 2026-09-28 --yes`
+  (in the container) → first `[cms-views] synced` → `READS_SOURCE=cms`.
+- **Digest stage 1 (preview) switched ON ~14:15 IST:** `DIGEST_ENABLED` + `DIGEST_WEBHOOKS_ENABLED` true, send-live
+  OFF, approval required. Sender `newsletter@hello.taxscan.in` ("noreply" is refused by design), reply-to
+  `info@hello.taxscan.in` (Mailercloud is restricted to @hello.taxscan.in; a reply-to must be on Mailercloud's
+  **Reply IDs** list), Free + Premium → staff list `hgvfXF` (Anagha, Abdullah, Fayaz), Free exclude `HwEWai`
+  (Mailercloud refuses an exclude list with no active contacts). Mailercloud webhook registered (5 events,
+  payload signing ON; we don't verify the signature yet). 4 ads live, coverage green. **First drafts made
+  29 Oct 15:50 IST.**
+- **CMS:** owner said go for one CMS brief, Feed 1 then Feed 2 (CMS estimates: allowlist ~1–2 Nov, door V ~4–5
+  Nov). CMS planning session = the one to message; secrets + egress IP come to the owner via a password manager.
+
 
 `main` = PR #75 (Node 24.22.1 via Dockerfile). `develop` carries the **email digest** (tasks 1–14) + the
 push-side fixes below, ready for the `develop` → `main` PR with **every digest flag OFF**. Suite **1,147**

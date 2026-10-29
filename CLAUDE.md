@@ -5,7 +5,7 @@ A self-hosted web push notification service. Phase 1 target is taxscan.in only.
 Architecture must stay portal-agnostic so academy.taxscan.in (WooCommerce) and
 shop.taxscan.in (Shopify) can be added later without rework.
 
-## Current state (updated 2026-10-23) — LIVE in production
+## Current state (updated 2026-10-29) — LIVE in production
 Deployed on Railway; admin SPA at `push.taxscan.in/admin`. Live since 2026-06-09,
 ~3,080 active subscribers (delivery ~99%, unsub ~0.02%). **iZooto has STOPPED (confirmed 2026-10-15)**
 — taxscan's iZooto account access is disabled and it no longer sends. Its ~3M base is unreachable
@@ -215,7 +215,9 @@ history gets the token rejected**. The payload now states `compare: {current, ba
 modes order columns differently and the client's own inference silently INVERTED every range delta.
 Guide → v1.3. Suite **382**.
 
-**Open next steps (2026-10-23; board in `NEXT_STEP.md`; suite 1,147):** deploy the digest PR (all digest flags off)
+**2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
+
+**Open next steps (2026-10-29):** digest stage-1 week (daily 06:30 drafts, Anagha reviews; owner signs off after 7 clean days); CMS Feed 1 allowlist (~1–2 Nov: set CMS egress IP + W/L secrets, then AUDIENCE_SYNC_ENABLED) and Feed 2 (~4–5 Nov: cms-reads switch-on order in NEXT_STEP); real-Android white-T check; retention rule for CmsArticleView; verify Mailercloud's webhook signature (later). Older list: **Open next steps (2026-10-23; board in `NEXT_STEP.md`; suite 1,147):** deploy the digest PR (all digest flags off)
 and run its post-deploy checks (runbook §1.1: 12 migrations, `[digest] disabled …` boot line, push
 unchanged, the new icon on a real notification); then runbook stage 1 prerequisites + the Mailercloud tick
 list; a real-device staff-push test (Android + iPhone Home Screen); the designer's single-"T" Android badge
