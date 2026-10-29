@@ -93,7 +93,7 @@ export async function afterSuppressionWrite(tx: Prisma.TransactionClient, hashes
     UPDATE "EmailSuppression" s SET "accountId" = a."accountId"
     FROM (
       SELECT "emailHash", min("accountId") AS "accountId" FROM "CmsAccount"
-      WHERE "emailHash" = ANY(${list}::text[]) AND "deletedAt" IS NULL
+      WHERE "emailHash" = ANY(${list}::text[]) AND "deletedAt" IS NULL AND "outOfScopeAt" IS NULL
       GROUP BY "emailHash" HAVING count(*) = 1
     ) a
     WHERE s."emailHash" = a."emailHash" AND s."accountId" IS NULL`;

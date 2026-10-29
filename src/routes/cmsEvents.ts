@@ -9,6 +9,7 @@ import { CMS_HEADERS, classifyWebhookReplay, verifyCmsWebhook } from '../lib/cms
 import { audienceIngestReady } from '../services/audience/boot';
 import { eventIdOf, parseCmsEvent } from '../services/audience/snapshot';
 import { applyAccountSnapshot } from '../services/audience/ingest';
+import { checkRemovalBreaker, recordSyncActivity } from '../services/audience/breaker';
 
 /**
  * Door W — CMS account events (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5.1, §8; push-feed contract v1.2
@@ -174,11 +175,14 @@ export function createIntegrationsRouter(opts: CmsEventsRouterOptions = {}): Rou
               ON CONFLICT (portal) DO UPDATE SET
                 "lastWebhookAt" = GREATEST(COALESCE("AudienceSyncState"."lastWebhookAt", EXCLUDED."lastWebhookAt"), EXCLUDED."lastWebhookAt"),
                 "updatedAt" = EXCLUDED."updatedAt"`;
+            // Task 5: daily unknown-status count + Premium removals for the 24 h breaker (counts only).
+            await recordSyncActivity(tx, portal, { unknownStatus: r.unknownStatus ? 1 : 0, premiumRemovals: r.premiumRemovals }, now);
             return r;
           },
           { timeout: TXN_TIMEOUT_MS },
         );
         log(`event=${parsed.event} id=${eventId} outcome=${result.outcome} ms=${Date.now() - started}`);
+        if (result.premiumRemovals > 0) void checkRemovalBreaker(portal, now).catch(() => undefined);
         res.status(200).json({ ok: true, outcome: result.outcome });
       } catch (err) {
         // Two deliveries of one event raced: the loser's receipt insert hit the key. Answer as a known event.

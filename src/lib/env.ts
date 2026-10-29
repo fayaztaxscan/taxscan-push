@@ -305,6 +305,9 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
       tagPremium: (src.AUDIENCE_MC_TAG_PREMIUM ?? '').trim(),
       tagFormer: (src.AUDIENCE_MC_TAG_FORMER ?? '').trim(),
       tagNoMarketing: (src.AUDIENCE_MC_TAG_NO_MARKETING ?? '').trim(),
+      // Optional (M-5 fallback): a Mailercloud segment "tag = TS Premium (auto)" whose active_count the
+      // nightly drift check compares with our applied Premium count. Unset → the tag's own count, if any.
+      premiumSegmentId: (src.AUDIENCE_MC_PREMIUM_SEGMENT_ID ?? '').trim(),
     },
     problems,
   };
