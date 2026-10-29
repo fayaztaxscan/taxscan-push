@@ -325,7 +325,8 @@ describe('checklist: every rule, red and green', () => {
   it('size: the worst-case email over the budget → red; under it → green with the figure; near it → a warning note', () => {
     const big = BUILTIN_TEMPLATE_HTML.replace('</body>', `<p style="display:none">${'x'.repeat(60_000)}</p></body>`);
     expect(checkOf(big, 'size').problems.join(' ')).toMatch(/worst-case email is \d+\.\d KB .* the limit is 90 KB/);
-    const near = BUILTIN_TEMPLATE_HTML.replace('</body>', `<p style="display:none">${'x'.repeat(30_000)}</p></body>`);
+    // The built-in worst case (12 stories with pictures, 3 image ads, the social row) is ~72 KB; +12 KB is near the 90 KB limit, not over it.
+    const near = BUILTIN_TEMPLATE_HTML.replace('</body>', `<p style="display:none">${'x'.repeat(12_000)}</p></body>`);
     const n2 = checkOf(near, 'size');
     expect(n2.ok).toBe(true);
     expect(n2.note).toMatch(/close to the 90 KB limit/);

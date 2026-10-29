@@ -969,6 +969,7 @@ async function renderPendingStep(ctx: Ctx, send: DigestSend): Promise<DigestSend
     excerpt: r.excerpt,
     capturedAt: r.capturedAt,
     readRate: r.readRate,
+    imageUrl: r.imageUrl,
   }));
   let c: VariantContent;
   try {
