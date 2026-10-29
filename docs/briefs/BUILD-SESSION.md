@@ -37,13 +37,15 @@ Write a **minimal** `.env` in the worktree (it's gitignored). No real provider k
 
 ```
 NODE_ENV=development
-DATABASE_URL=postgresql://localhost:5432/taxscan_push_build_<name>
-SHADOW_DATABASE_URL=postgresql://localhost:5432/taxscan_push_build_<name>_shadow
+DATABASE_URL=postgresql://bestdoc@localhost:5432/taxscan_push_build_<name>
+SHADOW_DATABASE_URL=postgresql://bestdoc@localhost:5432/taxscan_push_build_<name>_shadow
 ADMIN_TOKEN=test-admin-token
 SESSION_COOKIE_SECRET=test-session-cookie-secret-must-be-at-least-32-chars-long
 VAPID_SUBJECT=mailto:dev@example.com
 SEND_MODE=dry
 ```
+
+(The DB user must be in the URL on this Mac; without it `prisma migrate dev` fails with P1010.)
 
 Then add fresh dev VAPID keys (`npm run gen:vapid`, paste the two lines in), and:
 
