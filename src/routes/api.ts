@@ -632,9 +632,10 @@ export function createApiRouter(
     }
   });
 
-  // Admin user guide (PDF). Auth-gated so it is NOT public — the SPA's session
-  // cookie satisfies requireBearerOrUser on a same-origin navigation. The file
-  // is committed under <repo>/docs and ships with the deploy.
+  // Admin user guide. Auth-gated so it is NOT public — the SPA's session cookie
+  // satisfies requireBearerOrUser on a same-origin navigation. One copy only: the
+  // HTML under <repo>/docs (a PDF is made on the spot from the Guide screen's
+  // "Print / Save as PDF"; the stored PDF was removed 29 Oct 2026).
   // HTML version — the SPA's /guide route embeds this in an iframe so the guide
   // reads inline (the authored doc is self-contained with its own styles).
   router.get('/guide.html', requireBearerOrUser(), (_req, res) => {
@@ -644,14 +645,9 @@ export function createApiRouter(
     });
   });
 
-  // PDF version — opens inline by default, or forces a download with ?download.
-  router.get('/guide', requireBearerOrUser(), (req, res) => {
-    const pdfPath = path.resolve(__dirname, '..', '..', 'docs', 'Taxscan-Push-Admin-Guide.pdf');
-    const disposition = req.query.download !== undefined ? 'attachment' : 'inline';
-    res.setHeader('Content-Disposition', `${disposition}; filename="Taxscan-Push-Admin-Guide.pdf"`);
-    res.sendFile(pdfPath, (err) => {
-      if (err && !res.headersSent) res.status(404).json({ error: 'guide_not_found' });
-    });
+  // The old PDF address (bookmarks, links in sent mail, ?download=1) lands on the Guide screen.
+  router.get('/guide', requireBearerOrUser(), (_req, res) => {
+    res.redirect(302, '/admin/guide');
   });
 
   router.get('/campaigns', requireBearerOrUser(), async (req, res, next) => {

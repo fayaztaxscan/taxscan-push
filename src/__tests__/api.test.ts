@@ -382,27 +382,29 @@ describe('POST /api/send — one-time clientRequestId (Compose double-send guard
   });
 });
 
-describe('GET /api/guide (auth-gated admin guide PDF)', () => {
+describe('GET /api/guide (auth-gated; the stored PDF is gone, it redirects to the Guide screen)', () => {
   it('rejects an unauthenticated request', async () => {
     const res = await request(app).get('/api/guide');
     expect(res.status).toBe(401);
   });
 
-  it('serves the PDF inline to an authenticated request', async () => {
+  it('302 to /admin/guide for an authenticated request (bearer here; a session cookie is the same gate)', async () => {
     const res = await request(app)
       .get('/api/guide')
       .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('application/pdf');
-    expect(res.headers['content-disposition']).toContain('inline');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/admin/guide');
   });
 
-  it('forces a download with ?download', async () => {
+  it('?download=1 behaves the same: a redirect, never a file', async () => {
+    const noAuth = await request(app).get('/api/guide?download=1');
+    expect(noAuth.status).toBe(401);
     const res = await request(app)
       .get('/api/guide?download=1')
       .set('Authorization', `Bearer ${process.env.ADMIN_TOKEN}`);
-    expect(res.status).toBe(200);
-    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/admin/guide');
+    expect(res.headers['content-disposition']).toBeUndefined();
   });
 
   it('serves the HTML version (auth-gated)', async () => {
