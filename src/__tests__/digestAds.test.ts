@@ -535,15 +535,27 @@ describe('renderer: ad markup, size and image weight', () => {
     image: { url: `https://push.taxscan.in/email-assets/${'a'.repeat(64)}.jpg`, width: 1200, height: 600 },
     ...o,
   });
-  it('live-text headline, a real CTA button, image alt text, UTM, all escaped', () => {
+  const slotRow = (html: string, slot: number) => new RegExp(`<td [^>]*data-ad-slot="${slot}"[\\s\\S]*?</td></tr>`).exec(html)![0];
+  it('an ad WITH a picture is the linked banner only: alt text, width, UTM — no label, headline, body or button', () => {
     const r = renderDigest({ items: items(5), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads: [ra(1, { headline: 'A & B <x>' }), ra(3)] });
-    expect(r.html).toContain('A &amp; B &lt;x&gt;');
-    expect(r.html).toContain('>Enrol now</a>');
-    expect(r.html).toMatch(/<img [^>]*alt="GST appeals course"/);
-    expect(r.html).toMatch(/width="552" height="276"/);
-    expect(r.html).toContain('utm_content=ad-ad1-slot1');
-    expect(r.html).toContain('ref=x');
-    expect(r.text).toContain('Master GST appeals in 6 weeks');
+    const row = slotRow(r.html, 1);
+    expect(row).toMatch(/<a href="[^"]*utm_content=ad-ad1-slot1[^"]*"[^>]*><img [^>]*alt="GST appeals course"/);
+    expect(row).toMatch(/width="552" height="276"/);
+    expect(row).toContain('ref=x');
+    expect(row).toContain('data-ad-image="1"');
+    expect(row).not.toMatch(/From Taxscan|A &amp; B|Enrol now|<h3|ts-btn|<p /);
+    expect((row.match(/<a /g) ?? []).length).toBe(1);
+    expect(r.text).toContain('Master GST appeals in 6 weeks'); // the plain-text part still names the offer
+  });
+  it('an ad WITHOUT a picture keeps the label, live-text headline (escaped), body and a real CTA button', () => {
+    const r = renderDigest({ items: items(5), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads: [ra(1, { headline: 'A & B <x>', image: null }), ra(3)] });
+    const row = slotRow(r.html, 1);
+    expect(row).toContain('From Taxscan');
+    expect(row).toContain('A &amp; B &lt;x&gt;');
+    expect(row).toContain('>Enrol now</a>');
+    expect(row).toContain('Live classes by practising advocates.');
+    expect(row).not.toContain('<img');
+    expect(row).toContain('utm_content=ad-ad1-slot1');
   });
   it('a drawn slot without an ad is refused (never an empty slot)', () => {
     expect(() => renderDigest({ items: items(5), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads: [ra(1)] })).toThrow(/no ad for slot 3/);

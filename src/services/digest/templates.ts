@@ -16,6 +16,7 @@ import {
   esc,
   isAllowedDigestUrl,
   isAllowedTemplateImage,
+  isSocialUrl,
   renderDigest,
   scanStartTags,
   srcsetUrls,
@@ -175,6 +176,7 @@ export function worstCaseFixture(cfg: Pick<DigestEnv, 'maxItems' | 'rollforwardI
     excerpt: LONG_EXCERPT(i),
     capturedAt: new Date('2026-10-22T04:00:00Z'),
     readRate: null,
+    imageUrl: `https://documents.taxscan.in/cms/media/supreme-court-bombay-high-court-section-148a-notice-income-tax-act-quashed-addition-bogus-purchases-${i}-${400000 + i}.jpg`,
   }));
   const ads: RenderAd[] = [1, 2, 3].map((slot) => ({
     slot,
@@ -460,7 +462,7 @@ export function validateTemplate(
   const al: string[] = [];
   if (rendered) {
     for (const href of attrValues(rendered.html, LINK_ATTRS)) {
-      if (href === UNSUBSCRIBE_TAG) continue;
+      if (href === UNSUBSCRIBE_TAG || isSocialUrl(href)) continue;
       if (!isAllowedDigestUrl(href)) ln.push(`Link ${shortUrl(href)} is not allowed (only https/http links to ALLOWED_PUSH_HOSTS).`);
     }
     const images = [

@@ -627,6 +627,8 @@ model DigestItem {
   /// Organic reads per hour since capture used for within-tier ranking; null when the
   /// item was too fresh to judge, reads were not used, or it is a roll-forward item.
   readRate   Float?
+  /// The story's picture (the article page's og:image, read at the build; documents.taxscan.in .jpg/.jpeg/.png only). null = text-only.
+  imageUrl   String?
 
   run      DigestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
