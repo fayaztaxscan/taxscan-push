@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AuditAction" ADD VALUE 'CMS_VIEWS_BACKFILL_STARTED';

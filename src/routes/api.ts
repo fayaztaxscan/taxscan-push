@@ -25,6 +25,8 @@ import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
 import { recordAudit } from '../lib/audit';
+import { backfillConfigProblem, getBackfillRun, startBackfill, validateBackfillRange } from '../services/cmsViews/backfill';
+import { isViewsSyncRunning } from '../services/cmsViews/sync';
 
 function base64urlByteLength(s: string): number {
   const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
@@ -919,6 +921,41 @@ export function createApiRouter(
     } catch (err) {
       return next(err);
     }
+  });
+
+  // One-off CMS views history backfill (Feed 2), run inside the app because the CMS fences door V on our
+  // static egress IPs and the shell can't reach the service. In-memory run state; see services/cmsViews/backfill.ts.
+  router.post('/admin/cms-views/backfill', requireBearerOrUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const body = (req.body ?? {}) as { from?: unknown; to?: unknown; dryRun?: unknown };
+      const range = validateBackfillRange(body.from, body.to);
+      if ('error' in range) return res.status(400).json({ error: 'invalid_range', message: range.error });
+      if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') return res.status(400).json({ error: 'invalid_dry_run' });
+      const dryRun = body.dryRun === true;
+      const problem = backfillConfigProblem();
+      if (problem) return res.status(409).json({ error: problem });
+      if (!dryRun && isViewsSyncRunning()) return res.status(409).json({ error: 'sync_running' });
+      const started = startBackfill({ ...range, dryRun });
+      if (!started) return res.status(409).json({ error: 'sync_running' });
+      await recordAudit({
+        userId: req.user?.id ?? null,
+        action: 'CMS_VIEWS_BACKFILL_STARTED',
+        resourceType: 'CmsArticleView',
+        resourceId: started.run.id,
+        metadata: { from: range.from, to: range.to, dryRun },
+        ipAddress: req.ip ?? null,
+      });
+      return res.status(202).json(started.run);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/admin/cms-views/backfill/:id', requireBearerOrUser(['ADMIN']), (req, res) => {
+    const run = getBackfillRun(req.params.id);
+    // In memory: after an app restart the id is gone — rerun the same range (idempotent).
+    if (!run) return res.status(404).json({ error: 'backfill_not_found' });
+    return res.json(run);
   });
 
   router.post('/admin/subscribers/:id/test-segment', requireBearerOrUser(['ADMIN']), async (req, res, next) => {

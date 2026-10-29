@@ -61,6 +61,7 @@ const ACTIONS = [
   'AUDIENCE_FULL_LOAD',
   'AUDIENCE_ERASURE',
   'AUDIENCE_RESUBSCRIBED',
+  'CMS_VIEWS_BACKFILL_STARTED',
 ] as const;
 
 const api = useApi();
