@@ -50,6 +50,8 @@ export type ViewsSyncDeps = {
   alertDeps?: AudienceAlertDeps;
   cfg?: ReadsEnv;
   log?: (line: string) => void;
+  /** The caller already holds the lock (`acquireViewsLock`, the backfill's chunk loop): skip the busy check and don't release. */
+  lockHeld?: boolean;
 };
 
 /** The routine window (IST): `today − 2` … `today`. */
@@ -74,6 +76,18 @@ export function chunkRanges(from: string, to: string, maxSpanDays = 30): { from:
 }
 
 let running = false;
+
+/** True while a sync pass or a backfill holds the one-at-a-time lock. */
+export const isViewsSyncRunning = (): boolean => running;
+/** Takes the lock for a multi-chunk run (the backfill); false if it is taken. Pair with `releaseViewsLock`. */
+export function acquireViewsLock(): boolean {
+  if (running) return false;
+  running = true;
+  return true;
+}
+export function releaseViewsLock(): void {
+  running = false;
+}
 
 /** Upserts the rows in ONE transaction (all or nothing). Returns how many were new. */
 export async function writeViews(rows: ViewRow[], portal: string, now: Date): Promise<number> {
@@ -114,8 +128,10 @@ export async function runViewsSync(deps: ViewsSyncDeps = {}): Promise<ViewsSyncR
   const cfg = deps.cfg ?? env.cmsViews;
   const log = deps.log ?? ((line: string) => console.log(line)); // eslint-disable-line no-console
   const base = { rows: 0, pages: 0, inserted: 0, from: win.from, to: win.to, asOf: null as string | null };
-  if (running) return { ...base, ok: false, ms: 0, error: 'busy' };
-  running = true;
+  if (!deps.lockHeld) {
+    if (running) return { ...base, ok: false, ms: 0, error: 'busy' };
+    running = true;
+  }
   try {
     const client = deps.client ?? createViewsClient();
     const { rows, pages, asOf } = await client.fetchRange(win);
@@ -134,7 +150,7 @@ export async function runViewsSync(deps: ViewsSyncDeps = {}): Promise<ViewsSyncR
     }
     return result;
   } finally {
-    running = false;
+    if (!deps.lockHeld) running = false;
   }
 }
 
