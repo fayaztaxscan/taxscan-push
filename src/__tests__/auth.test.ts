@@ -238,7 +238,8 @@ describe('passwordResetRequired server-side enforcement (M2)', () => {
     expect(me.status).toBe(200);
 
     // A normal requireUser route (any role) is blocked server-side.
-    const blocked = await request(app).get('/api/audit').set('Cookie', cookie);
+    // (/api/campaigns: every signed-in user may read it; /api/audit is ADMIN-only since 29 Oct, so it no longer shows this.)
+    const blocked = await request(app).get('/api/campaigns').set('Cookie', cookie);
     expect(blocked.status).toBe(403);
     expect(blocked.body.error).toBe('password_change_required');
 
@@ -249,7 +250,7 @@ describe('passwordResetRequired server-side enforcement (M2)', () => {
       .send({ currentPassword: 'TempPassword12345', newPassword: 'BrandNewPass67890' });
     expect(change.status).toBe(204);
 
-    const after = await request(app).get('/api/audit').set('Cookie', cookie);
+    const after = await request(app).get('/api/campaigns').set('Cookie', cookie);
     expect(after.status).toBe(200);
   });
 });

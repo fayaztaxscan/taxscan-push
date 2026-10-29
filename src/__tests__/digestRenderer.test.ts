@@ -356,8 +356,8 @@ describe('10. escaping', () => {
     expect(r.html).not.toContain('<script>');
     expect(r.html).not.toContain('<img src=x');
     expect(r.html).not.toContain('<b>High Court</b>');
+    expect(r.html).not.toContain('High Court&lt;'); // the authority label is no longer drawn (owner, 29 Oct)
     expect(r.html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; Tax &amp; &quot;duty&quot; on ₹5 lakh — O&#39;Brien');
-    expect(r.html).toContain('&lt;b&gt;High Court&lt;/b&gt;');
     expect(r.html).toContain('&amp; &#39;quoted&#39; ₹');
     expect(r.subject).toBe(`<script>alert("x")</script> Tax & "duty" on ₹5 lakh — O'Brien`); // plain header text
     expect(r.html).toContain('<title>&lt;script&gt;');
@@ -423,18 +423,19 @@ describe('14. ad slots (no ads in v0)', () => {
 });
 
 describe('15. item content', () => {
-  it('headline link, authority label, 1–2 line summary; nothing else', () => {
+  it('headline link, 1–2 line summary, Read more; no label above the headline; nothing else', () => {
     const long = 'word '.repeat(100);
     const r = render({ items: [item({ excerpt: long, authority: null, category: 'GST' }), ...items(4)] });
     const first = /<td [^>]*data-item="1"[\s\S]*?<\/td><\/tr>/.exec(r.html)![0];
-    expect(first).toContain('>GST<'); // category stands in when there is no authority
+    expect(first).not.toContain('>GST<'); // no category / authority label above the headline (owner, 29 Oct)
+    expect(first).not.toContain('ts-label');
     const summary = /class="ts-body">([^<]*)</.exec(first)![1];
     expect(summary.length).toBeLessThanOrEqual(180);
     expect(summary.endsWith('…')).toBe(true);
     expect((first.match(/<a /g) ?? []).length).toBe(2); // headline + "Read more", same href
     expect(first).not.toMatch(/<img|capturedAt|readRate|article:/);
     const second = /<td [^>]*data-item="2"[\s\S]*?<\/td><\/tr>/.exec(r.html)![0];
-    expect(second).toContain('>Supreme Court<');
+    expect(second).not.toContain('>Supreme Court<');
   });
 });
 
@@ -510,7 +511,7 @@ describe('QA follow-ups', () => {
     its[0] = { ...its[0], title: `Lead${zw} ruling` };
     its[1] = { ...its[1], title: `Second${zw} ruling` };
     const r = render({ items: its, cfg: cfg({ DIGEST_POSTAL_ADDRESS: `Kochi${zw} 682001` }) });
-    const bad = /[​-‍⁠﻿‪-‮⁦-⁩]/;
+    const bad = /[\u200b-\u200d\u2060\ufeff\u202a-\u202e\u2066-\u2069]/; // zero-width and bidi controls (as escapes: the literal characters are invisible)
     expect(r.subject).toBe('Lead ruling');
     expect(r.preheader).toContain('Second ruling');
     expect(r.subject + r.preheader + r.text).not.toMatch(bad);

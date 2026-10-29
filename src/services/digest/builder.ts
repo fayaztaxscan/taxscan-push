@@ -7,6 +7,7 @@ import { readsPath } from '../metrics';
 import { isUrlDeadDefault } from '../pacer';
 import { istDateOf } from './retryPolicy';
 import { resolveReadsSource, type ReadsSource } from './readsSource';
+import { fetchArticleImages, isAllowedArticleImage } from './articleImage';
 
 /**
  * Digest builder: selection, ranking, freeze (docs/EMAIL_DIGEST_DESIGN.md §4.1,
@@ -67,6 +68,8 @@ export type FrozenItem = {
   excerpt: string | null;
   capturedAt: Date;
   readRate: number | null;
+  /** The story's picture (og:image read at the build; documents.taxscan.in only). null/absent = text-only. */
+  imageUrl?: string | null;
 };
 
 /** A DigestItem row to write: `audience` null = identical in both variants. */
@@ -94,6 +97,8 @@ export type SelectDeps = {
   linkCheck?: boolean;
   isUrlDead?: (url: string) => Promise<boolean>;
   readsSource?: ReadsSource;
+  /** The picture step (design: brief 2026-10-29-digest-lookalike). Default: the real, fail-open og:image fetch. */
+  articleImages?: (articleUrls: string[]) => Promise<Map<string, string | null>>;
 };
 
 /* ------------------------------------------------------------------ */
@@ -475,6 +480,7 @@ export async function selectDigest(
         excerpt: it.excerpt,
         capturedAt: it.capturedAt,
         readRate: null,
+        imageUrl: it.imageUrl,
       }));
     }
 
@@ -496,6 +502,9 @@ export async function selectDigest(
     mainCounts[a] = main.length;
   }
 
+  // 6b. The pictures: once per distinct article page, fail-open (a story without one stays text-only).
+  await attachImages(perAudience, deps.articleImages ?? defaultArticleImages);
+
   // 7. Guards. The minimum applies to every variant: no digest goes out short.
   const short = AUDIENCES.some((a) => mainCounts[a] < cfg.minItems);
   const outcome: DigestSelection['outcome'] = short
@@ -515,6 +524,34 @@ export async function selectDigest(
     reads: { used: reads.fresh, source: source.name, note: reads.fresh ? null : (reads.reason ?? 'unavailable') },
     droppedDead: dead.size,
   };
+}
+
+/** The real picture step. Tests never touch the network: they pass their own, or get none. */
+async function defaultArticleImages(urls: string[]): Promise<Map<string, string | null>> {
+  if (process.env.NODE_ENV === 'test') return new Map();
+  return fetchArticleImages(urls);
+}
+
+/** Fills `imageUrl` on every frozen item that has none yet. Never throws; never adds more than the 30 s cap. */
+export async function attachImages(
+  perAudience: Record<DigestAudience, FrozenItem[]>,
+  fetchImages: (urls: string[]) => Promise<Map<string, string | null>>,
+): Promise<void> {
+  const need = new Set<string>();
+  for (const a of AUDIENCES) for (const it of perAudience[a]) if (!it.imageUrl) need.add(it.url);
+  if (need.size === 0) return;
+  let found = new Map<string, string | null>();
+  try {
+    found = await fetchImages([...need]);
+  } catch {
+    // fail-open: text-only
+  }
+  for (const a of AUDIENCES) {
+    for (const it of perAudience[a]) {
+      const url = it.imageUrl || found.get(it.url) || null;
+      it.imageUrl = isAllowedArticleImage(url) ? url : null;
+    }
+  }
 }
 
 /** One row per item when both variants agree on it (same section and rank); else one per audience. */
@@ -553,6 +590,7 @@ export async function writeDigestItems(tx: Prisma.TransactionClient, runId: stri
       excerpt: r.excerpt,
       capturedAt: r.capturedAt,
       readRate: r.readRate,
+      imageUrl: r.imageUrl ?? null,
     })),
   });
 }

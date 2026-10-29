@@ -4,6 +4,7 @@ import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import type { FrozenItem } from './builder';
 import { istDateOf } from './retryPolicy';
 import { adUtmContent, forbiddenForAudience } from './adRules';
+import { isAllowedArticleImage } from './articleImage';
 
 /**
  * Digest renderer (docs/EMAIL_DIGEST_DESIGN.md §4 renderer, §13 tasks 5 and 10).
@@ -169,6 +170,25 @@ const C = {
   button: '#FEE620', // square yellow CTA, bold dark text (today's digest)
   buttonText: '#111111',
 };
+
+/**
+ * The five fixed footer links (owner, 29 Oct 2026). They are NOT story or ad links: no UTM, and the
+ * link checks permit exactly these URLs (string-equal) and nothing broader — any other social URL in a
+ * template is still refused. Icons are small PNGs in public/email/, served from the asset host.
+ */
+export const SOCIAL_LINKS = [
+  { key: 'facebook', label: 'Facebook', href: 'https://www.facebook.com/taxscan/' },
+  { key: 'x', label: 'X', href: 'https://twitter.com/tax_scan' },
+  { key: 'instagram', label: 'Instagram', href: 'https://www.instagram.com/taxscan/' },
+  { key: 'linkedin', label: 'LinkedIn', href: 'https://www.linkedin.com/company/tax-scan-9aa530129/' },
+  { key: 'website', label: 'Taxscan website', href: 'https://www.taxscan.in/' },
+] as const;
+export const SOCIAL_ICON_SIZE = 28;
+const SOCIAL_HREFS: ReadonlySet<string> = new Set(SOCIAL_LINKS.map((l) => l.href));
+/** One of the five fixed social links, exactly. */
+export function isSocialUrl(url: string): boolean {
+  return SOCIAL_HREFS.has(url);
+}
 
 /** The Taxscan logo (white on transparent, 440×106 for 2× at 220 px), served from the asset host. */
 export const LOGO_PATH = '/email/taxscan-logo-white-440.png';
@@ -455,6 +475,8 @@ type Prepared = {
   label: string;
   summary: string | null;
   href: string;
+  /** Story picture: only a documents.taxscan.in .jpg/.jpeg/.png passes (anything else → text-only). */
+  imageUrl: string | null;
 };
 
 function prepare(items: FrozenItem[], utmCampaign: string): Prepared[] {
@@ -471,6 +493,7 @@ function prepare(items: FrozenItem[], utmCampaign: string): Prepared[] {
       label,
       summary: summary || null,
       href: withUtm(it.url, { campaign: utmCampaign, content: `item${i + 1}` }),
+      imageUrl: isAllowedArticleImage(it.imageUrl) ? (it.imageUrl as string) : null,
     };
   });
 }
@@ -515,7 +538,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   const shell = input.template
     ? templateLinks(input.template.html, { utmCampaign, mode, assetBaseUrl: input.assetBaseUrl ?? null })
     : BUILTIN_TEMPLATE_HTML;
-  const html = fillTemplate(shell, templateValues({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad }));
+  const html = fillTemplate(shell, templateValues({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad, assetBaseUrl: input.assetBaseUrl ?? null }));
   const text = renderText({ audience, dateText, main, icymi, postal, homeHref, ads: textAds });
 
   const htmlBytes = Buffer.byteLength(html, 'utf8');
@@ -582,17 +605,23 @@ function textAdsFor(ads: RenderAd[], utmCampaign: string): Map<number, string> {
 /** Width the creative is drawn at inside the 600 px column (24 px padding each side). */
 export const AD_IMAGE_DISPLAY_WIDTH = 552;
 
-/** One house ad: optional image (linked, alt text), live-text headline, body, a real CTA button. */
+/**
+ * One house ad. WITH a picture it is the banner only, like the old newsletter's: full width, the
+ * whole image linked, its alt text — no label, headline, body or button (owner, 29 Oct 2026).
+ * WITHOUT one: the "From Taxscan" label, live-text headline, body and a real CTA button.
+ */
 function adRow(a: RenderAd, href: string): string {
   const h = esc(href);
-  let img = '';
   if (a.image) {
     const w = Math.min(a.image.width, AD_IMAGE_DISPLAY_WIDTH);
     const hgt = Math.max(1, Math.round((a.image.height * w) / a.image.width));
-    img =
-      `<a href="${h}" style="display:block;margin:0 0 12px 0;text-decoration:none;">` +
+    return (
+      `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" data-ad-image="1" style="${WRAP}padding:16px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+      `<a href="${h}" style="display:block;margin:0;text-decoration:none;">` +
       `<img src="${esc(a.image.url)}" width="${w}" height="${hgt}" alt="${esc(clean(a.altText))}" style="display:block;width:100%;max-width:${w}px;height:auto;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:16px;color:${C.text};">` +
-      `</a>`;
+      `</a>` +
+      `</td></tr>`
+    );
   }
   const body = a.body
     ? `<p style="${WRAP}margin:0 0 12px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(clean(a.body))}</p>`
@@ -600,7 +629,6 @@ function adRow(a: RenderAd, href: string): string {
   return (
     `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
     `<p style="${WRAP}margin:0 0 8px 0;font-family:${FONT};font-size:12px;line-height:16px;letter-spacing:0.06em;text-transform:uppercase;color:${C.muted};" class="ts-muted">From Taxscan</p>` +
-    img +
     `<h3 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(clean(a.headline))}</h3>` +
     body +
     button(h, clean(a.ctaText), Math.min(AD_IMAGE_DISPLAY_WIDTH, 60 + graphemes(clean(a.ctaText)).length * 10)) +
@@ -633,25 +661,48 @@ type HtmlParts = {
   logoUrl: string | null;
   homeHref: string;
   ad: (slot: AdSlot) => string;
+  /** The digest asset host, where the social icons are served (none → no icons row). */
+  assetBaseUrl: string | null;
 };
 
 /** Zero-width filler after the preheader so clients don't pull body text into the preview. */
 const PREVIEW_FILLER = '&#847;&zwnj;&nbsp;'.repeat(40);
 
+/** The story picture's display width, and the text column beside it (552 px inside the 600 px card). */
+export const STORY_IMAGE_WIDTH = 240;
+export const STORY_TEXT_WIDTH = 552 - STORY_IMAGE_WIDTH;
+
+/**
+ * One story: headline, summary, "Read more". No label above the headline (owner, 29 Oct 2026). With a
+ * picture it is a two-column row like the old newsletter's — picture left (240 px), text right — built
+ * with the fluid/hybrid technique: two inline-blocks that sit side by side while 552 px is there and
+ * stack (picture first) when it is not, with no media query needed; Outlook gets a ghost table. A
+ * story without a picture is the plain single column. Alt text = the headline.
+ */
 function itemRow(it: Prepared): string {
-  const label = it.label
-    ? `<p style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:${C.brand};" class="ts-label">${esc(it.label)}</p>`
-    : '';
   const summary = it.summary
     ? `<p style="${WRAP}margin:0 0 4px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
     : '';
   const href = esc(it.href);
-  return (
-    `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
-    label +
+  const text =
     `<h2 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:20px;line-height:26px;font-weight:700;color:${C.text};"><a href="${href}" class="ts-head" style="${WRAP}display:block;padding:9px 0;color:${C.text};text-decoration:none;">${esc(it.title)}</a></h2>` +
     summary +
-    `<div style="margin:8px 0 0 0;">${button(href, 'Read more', 140)}</div>` +
+    `<div style="margin:8px 0 0 0;">${button(href, 'Read more', 140)}</div>`;
+  const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}"`;
+  if (!it.imageUrl) return `${open} style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">${text}</td></tr>`;
+  const W = STORY_IMAGE_WIDTH;
+  const T = STORY_TEXT_WIDTH;
+  return (
+    `${open} data-image="1" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};font-size:0;line-height:0;">` +
+    `<!--[if mso]><table role="presentation" width="552" cellpadding="0" cellspacing="0" border="0"><tr><td width="${W}" valign="top"><![endif]-->` +
+    `<div class="ts-col" style="display:inline-block;width:100%;max-width:${W}px;vertical-align:top;">` +
+    `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic" src="${esc(it.imageUrl)}" width="${W}" alt="${esc(it.title)}" style="display:block;width:100%;max-width:${W}px;height:auto;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:14px;line-height:20px;color:${C.text};"></a>` +
+    `</div>` +
+    `<!--[if mso]></td><td width="${T}" valign="top"><![endif]-->` +
+    `<div class="ts-col" style="display:inline-block;width:100%;max-width:${T}px;vertical-align:top;box-sizing:border-box;">` +
+    `<div class="ts-textpad" style="padding:0 0 0 16px;">${text}</div>` +
+    `</div>` +
+    `<!--[if mso]></td></tr></table><![endif]-->` +
     `</td></tr>`
   );
 }
@@ -683,6 +734,7 @@ export const TEMPLATE_PLACEHOLDERS = {
   icymi: '“In case you missed it” rows, when there are any (table rows).',
   ad_slot_3: 'The ad above the footer (a table row).',
   footer: 'Reason line, unsubscribe link and postal address (a table row; cannot be removed).',
+  social: 'Optional: a centred row of five small social icons (Facebook, X, Instagram, LinkedIn, the website). Put it above the footer.',
   subject: 'The subject line (the lead headline), escaped — e.g. inside <title>.',
   date: 'The digest date, “22 October 2026”.',
   home_url: 'taxscan.in with the digest UTM, for a header link.',
@@ -693,7 +745,7 @@ export const TEMPLATE_PLACEHOLDERS = {
 export type TemplatePlaceholder = keyof typeof TEMPLATE_PLACEHOLDERS;
 export const REQUIRED_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['preheader', 'stories', 'icymi', 'ad_slot_3', 'footer'];
 /** Placeholders that expand to table rows. */
-export const ROW_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['stories', 'icymi', 'ad_slot_3', 'footer'];
+export const ROW_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['stories', 'icymi', 'ad_slot_3', 'social', 'footer'];
 /** `{{name}}` in a template (the provider's own merge tags use the same braces). */
 export const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
 
@@ -723,6 +775,8 @@ export const BUILTIN_TEMPLATE_HTML =
   // The header bar and the yellow buttons keep their colours in dark mode (white logo on #3b3543 stays legible).
   `.ts-hdr{background-color:${C.brand}!important}.ts-btn{background-color:${C.button}!important;color:${C.buttonText}!important}}\n` +
   `@media only screen and (max-width:620px){.ts-pad{padding-left:16px!important;padding-right:16px!important}}\n` +
+  // Phones: a story's picture sits above its text, full width (stacking itself needs no media query).
+  `@media only screen and (max-width:480px){.ts-col,.ts-pic{max-width:100%!important}.ts-textpad{padding-left:0!important;padding-top:12px!important}}\n` +
   `</style>\n` +
   `</head>\n` +
   `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
@@ -737,6 +791,7 @@ export const BUILTIN_TEMPLATE_HTML =
   `{{stories}}\n` +
   `{{icymi}}\n` +
   `{{ad_slot_3}}\n` +
+  `{{social}}\n` +
   `{{footer}}\n` +
   `</table>\n` +
   `<!--[if mso]></td></tr></table><![endif]-->\n` +
@@ -779,6 +834,16 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
   }
   const beforeFooter = AD_SLOTS.filter((s) => s.position === 'beforeFooter').map((s) => p.ad(s)); // AD SLOT HOOK (task 9)
 
+  // Five fixed links, centred, small, each icon with alt text; no UTM. Needs the asset host for the icons.
+  const social = p.assetBaseUrl
+    ? `<tr><td class="ts-card ts-pad" data-social="1" align="center" style="${WRAP}padding:20px 24px 4px 24px;background-color:${C.card};border-top:1px solid ${C.rule};text-align:center;">` +
+      SOCIAL_LINKS.map(
+        (l) =>
+          `<a href="${esc(l.href)}" style="display:inline-block;margin:0 5px;text-decoration:none;"><img src="${esc(`${p.assetBaseUrl}/email/social-${l.key}.png`)}" width="${SOCIAL_ICON_SIZE}" height="${SOCIAL_ICON_SIZE}" alt="${esc(l.label)}" style="display:block;width:${SOCIAL_ICON_SIZE}px;height:${SOCIAL_ICON_SIZE}px;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:12px;color:${C.muted};"></a>`,
+      ).join('') +
+      `</td></tr>`
+    : '';
+
   const reason = premium ? PREMIUM_REASON : FREE_REASON;
   const footer =
     `<tr><td class="ts-pad" data-footer="1" style="${WRAP}padding:24px 24px 32px 24px;font-family:${FONT};font-size:14px;line-height:21px;color:${C.muted};" align="left">` +
@@ -793,6 +858,7 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
     icymi: icymi.join('\n'),
     ad_slot_3: beforeFooter.filter(Boolean).join('\n'),
     footer,
+    social,
     subject: esc(p.subject),
     date: esc(p.dateText),
     home_url: esc(p.homeHref),
@@ -808,6 +874,8 @@ export function isAllowedTemplateImage(url: string, assetBaseUrl: string | null)
     const u = new URL(url);
     if (u.protocol !== 'https:' || u.username !== '' || u.password !== '' || u.port !== '') return false;
     if (assetBaseUrl && u.host === new URL(assetBaseUrl).host) return true;
+    // The story pictures: exactly documents.taxscan.in, an original .jpg/.jpeg/.png (never a general allowance).
+    if (isAllowedArticleImage(url)) return true;
   } catch {
     return false;
   }
@@ -952,6 +1020,7 @@ function templateLinks(html: string, o: { utmCampaign: string; mode: 'send' | 'c
         continue;
       }
       if (!LINK_ATTRS.has(a.name) || isPlaceholder(value)) continue;
+      if (isSocialUrl(value)) continue; // a fixed footer link: allowed exactly, and no UTM
       if (isAllowedDigestUrl(value)) {
         // Rewritten in the canonical quoted form whatever form it was written in.
         edits.push({ start: a.start, end: a.end, text: `href="${esc(withUtm(value, { campaign: o.utmCampaign, content: 'template' }))}"` });

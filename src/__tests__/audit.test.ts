@@ -8,7 +8,7 @@
  *
  *   GET /api/audit:
  *     - 401 without a session
- *     - 200 for any logged-in role (ADMIN + PUBLISHER), joined user object,
+ *     - 200 for an ADMIN (403 for a PUBLISHER: owner, 29 Oct 2026), joined user object,
  *       respects action/userId/since/until/limit/offset filters, pagination
  *       reports total separately from items.length
  */
@@ -163,15 +163,16 @@ describe('GET /api/audit', () => {
     });
   });
 
-  it('returns 200 for a PUBLISHER too (read is for everyone on the team)', async () => {
+  it('returns 403 for a PUBLISHER (the Activity log is admin-only, owner 29 Oct 2026)', async () => {
     const pub = await makeUser('list-pub', 'AuditPubPw1Aa', 'PUBLISHER');
     const cookie = await loginAs(pub, 'AuditPubPw1Aa');
     const res = await request(app).get('/api/audit?limit=1').set('Cookie', cookie);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect(res.body.items).toBeUndefined();
   });
 
   it('action filter narrows results', async () => {
-    const u = await makeUser('filter-action', 'FilterActPw1Aa', 'PUBLISHER');
+    const u = await makeUser('filter-action', 'FilterActPw1Aa', 'ADMIN');
     const cookie = await loginAs(u, 'FilterActPw1Aa');
 
     const res = await request(app)
@@ -185,7 +186,7 @@ describe('GET /api/audit', () => {
   });
 
   it('since / until bounds the createdAt window', async () => {
-    const u = await makeUser('filter-window', 'WindowPw1Aa', 'PUBLISHER');
+    const u = await makeUser('filter-window', 'WindowPw1Aa', 'ADMIN');
     const cookie = await loginAs(u, 'WindowPw1Aa');
     // The login above happened well within the last hour.
     const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
@@ -215,7 +216,7 @@ describe('GET /api/audit', () => {
     // drifted from prisma/schema.prisma, so the five REVIEW_*/invite actions —
     // ~35% of the live log — 400'd. Driving this off the Prisma enum means a
     // newly added action is covered the moment it exists.
-    const u = await makeUser('all-actions', 'AllActPw1Aa', 'PUBLISHER');
+    const u = await makeUser('all-actions', 'AllActPw1Aa', 'ADMIN');
     const cookie = await loginAs(u, 'AllActPw1Aa');
 
     for (const action of Object.values(AuditAction)) {
@@ -230,7 +231,7 @@ describe('GET /api/audit', () => {
   });
 
   it('returns 400 for an unknown action value', async () => {
-    const u = await makeUser('bad-action', 'BadActPw1Aa', 'PUBLISHER');
+    const u = await makeUser('bad-action', 'BadActPw1Aa', 'ADMIN');
     const cookie = await loginAs(u, 'BadActPw1Aa');
     const res = await request(app)
       .get('/api/audit?action=NOT_A_REAL_ACTION')
@@ -239,7 +240,7 @@ describe('GET /api/audit', () => {
   });
 
   it('paginates: limit + offset return different windows; total >= window', async () => {
-    const u = await makeUser('paginate', 'PagePw1Aa', 'PUBLISHER');
+    const u = await makeUser('paginate', 'PagePw1Aa', 'ADMIN');
     const cookie = await loginAs(u, 'PagePw1Aa');
     // Make a few additional rows attributed to this user.
     for (let i = 0; i < 4; i++) {

@@ -450,5 +450,6 @@ async function recentItems(portal: string, audience: DigestAudience): Promise<Fr
     excerpt: r.excerpt,
     capturedAt: r.capturedAt,
     readRate: r.readRate,
+    imageUrl: r.imageUrl,
   }));
 }
