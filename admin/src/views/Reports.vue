@@ -38,6 +38,8 @@ type ReadsReport = {
   windows?: { label: string; days: number; siteViews: number; articleViews: number; articlesRead: number }[];
   categories?: ReadsRow[];
   benches?: ReadsRow[];
+  /** Only with READS_SOURCE=cms: where the numbers came from (absent = GA4). */
+  source?: { mode: 'cms'; note: string; cmsFrom: string; usedGa: boolean };
 };
 
 // The "Surfaces" report — how much traffic Google Discover and Google News sent
@@ -272,6 +274,8 @@ function fmtViews(n: number): string {
 function sharePct(share: number): string {
   return (share * 100).toFixed(1) + '%';
 }
+/** The source note shown with the reads (the server states the CMS wording; GA4's caveat is the default). */
+const readsNoteText = computed(() => readsReport.value?.source?.note ?? 'Reads: GA4 (≈1 in 10 readers since 29 Sep)');
 const readsAsOf = computed(() => {
   const g = readsReport.value?.generatedAt;
   return g ? new Date(g).toLocaleString() : '';
@@ -685,7 +689,7 @@ const shareCard = computed<CardModel | null>(() => {
         { title: 'Most-read courts & benches', rows: top(r.benches) },
         { title: 'Most-read categories', rows: top(r.categories) },
       ].filter((x) => x.rows.length),
-      footer: 'Taxscan Push · Google Analytics · all traffic, not just push',
+      footer: `Taxscan Push · ${readsNoteText.value} · all traffic, not just push`,
     };
   }
   const r = report.value;
@@ -1185,7 +1189,8 @@ onMounted(() => {
       </div>
 
       <div class="report-foot">
-        Reads = pageviews from all traffic (Google Analytics), classified from the headline with the
+        {{ readsNoteText }}. Reads = pageviews from all traffic<template v-if="readsReport.source"> (human readers; robots and staff excluded)</template>,
+        classified from the headline (the CMS's stories, from the address) with the
         coverage report's rules. Windows are trailing and cumulative — 1 month includes the week.
         Deeper blue = larger share of that window's reads.
       </div>

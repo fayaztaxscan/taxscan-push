@@ -62,6 +62,12 @@ export type CmsClientOptions = {
   baseUrl: string;
   secret: string;
   allowedHosts: readonly string[];
+  /** The route this client calls (default: the subscriber list, door L). Door V (article views) passes its own. */
+  path?: string;
+  /** The env variable named in the "unset" error (default CMS_FEED_PULL_SECRET); never the value. */
+  secretName?: string;
+  /** Error-message prefix (default "cms list"). */
+  label?: string;
   timeoutMs?: number;
   maxRetries?: number;
   backoffBaseMs?: number;
@@ -80,12 +86,16 @@ export type PageQuery = { updatedSince?: Date | null; cursor?: string | null; li
 
 export class CmsListClient {
   private readonly o: Required<Omit<CmsClientOptions, 'allowLoopbackHttpForTests'>> & { loopback: boolean };
+  private readonly label: string;
 
   constructor(opts: CmsClientOptions) {
     this.o = {
       baseUrl: opts.baseUrl,
       secret: opts.secret,
       allowedHosts: opts.allowedHosts.map((h) => h.toLowerCase()),
+      path: opts.path ?? LIST_PATH,
+      secretName: opts.secretName ?? 'CMS_FEED_PULL_SECRET',
+      label: opts.label ?? 'cms list',
       timeoutMs: opts.timeoutMs ?? CMS_TIMEOUT_MS,
       maxRetries: opts.maxRetries ?? CMS_MAX_RETRIES,
       backoffBaseMs: opts.backoffBaseMs ?? CMS_BACKOFF_BASE_MS,
@@ -95,33 +105,46 @@ export class CmsListClient {
       now: opts.now ?? (() => new Date()),
       loopback: opts.allowLoopbackHttpForTests === true && process.env.NODE_ENV === 'test',
     };
+    this.label = this.o.label;
   }
 
   /** The list URL (no query), validated: https (or loopback http in tests), allowed host. Throws FATAL. */
   listUrl(): URL {
-    if (!this.o.secret) throw new CmsPullError('FATAL', 'cms list: CMS_FEED_PULL_SECRET is unset');
+    if (!this.o.secret) throw new CmsPullError('FATAL', `${this.label}: ${this.o.secretName} is unset`);
     let u: URL;
     try {
-      u = new URL(`${this.o.baseUrl.replace(/\/+$/, '')}${LIST_PATH}`);
+      u = new URL(`${this.o.baseUrl.replace(/\/+$/, '')}${this.o.path}`);
     } catch {
-      throw new CmsPullError('FATAL', 'cms list: CMS_FEED_BASE_URL is not a valid URL');
+      throw new CmsPullError('FATAL', `${this.label}: CMS_FEED_BASE_URL is not a valid URL`);
     }
     const loopbackHost = u.hostname === '127.0.0.1' || u.hostname === '[::1]';
     const httpsOk = u.protocol === 'https:' || (this.o.loopback && u.protocol === 'http:' && loopbackHost);
-    if (!httpsOk) throw new CmsPullError('FATAL', 'cms list: only https is allowed');
-    if (u.username || u.password || u.search || u.hash) throw new CmsPullError('FATAL', 'cms list: the base URL must be a plain origin + path');
-    if (!this.o.allowedHosts.includes(u.hostname.toLowerCase())) throw new CmsPullError('FATAL', 'cms list: host is not in CMS_FEED_ALLOWED_HOSTS');
+    if (!httpsOk) throw new CmsPullError('FATAL', `${this.label}: only https is allowed`);
+    if (u.username || u.password || u.search || u.hash) throw new CmsPullError('FATAL', `${this.label}: the base URL must be a plain origin + path`);
+    if (!this.o.allowedHosts.includes(u.hostname.toLowerCase())) throw new CmsPullError('FATAL', `${this.label}: host is not in CMS_FEED_ALLOWED_HOSTS`);
     return u;
   }
 
   /** One page, with bounded retries for 429 / 5xx / network. Every attempt is signed afresh. */
   async fetchPage(q: PageQuery): Promise<CmsPage> {
     const limit = Math.min(Math.max(1, Math.floor(q.limit ?? CMS_PAGE_LIMIT)), CMS_PAGE_LIMIT);
+    const params: Record<string, string> = { limit: String(limit) };
+    if (q.cursor) params.cursor = q.cursor;
+    if (q.updatedSince) params.updated_since = q.updatedSince.toISOString();
+    return parsePage(await this.getText(params), limit);
+  }
+
+  /**
+   * One signed GET of this client's route with these query parameters, returning the 2xx body text.
+   * Bounded retries for 429 / 5xx / network (each attempt signed afresh: new timestamp, new nonce);
+   * any other answer is FATAL. The caller parses the body in the shape of ITS route.
+   */
+  async getText(params: Record<string, string>): Promise<string> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.attempt(q, limit);
+        return await this.attempt(params);
       } catch (err) {
-        const e = err instanceof CmsPullError ? err : new CmsPullError('RETRYABLE', 'cms list: request failed');
+        const e = err instanceof CmsPullError ? err : new CmsPullError('RETRYABLE', `${this.label}: request failed`);
         if (e.kind !== 'RETRYABLE' || attempt >= this.o.maxRetries) throw e;
         await this.o.sleep(this.backoff(attempt));
       }
@@ -133,16 +156,13 @@ export class CmsListClient {
     return Math.round(step / 2 + this.o.random() * (step / 2));
   }
 
-  private async attempt(q: PageQuery, limit: number): Promise<CmsPage> {
+  private async attempt(params: Record<string, string>): Promise<string> {
     const base = this.listUrl();
-    const params: Record<string, string> = { limit: String(limit) };
-    if (q.cursor) params.cursor = q.cursor;
-    if (q.updatedSince) params.updated_since = q.updatedSince.toISOString();
     // Sign the path WHATWG URL will send (`base.pathname`), then prove the URL we send carries exactly it.
     const signed = signPushGet({ secret: this.o.secret, path: base.pathname, params, now: this.o.now() });
     const target = new URL(`${base.origin}${signed.pathAndQuery}`);
     if (target.pathname !== base.pathname || target.search !== `?${signed.canonicalQuery}`) {
-      throw new CmsPullError('FATAL', 'cms list: the URL would not carry the signed path and query');
+      throw new CmsPullError('FATAL', `${this.label}: the URL would not carry the signed path and query`);
     }
 
     const ac = new AbortController();
@@ -160,14 +180,14 @@ export class CmsListClient {
       text = await res.text();
     } catch {
       // Timeout, connection failure, or a redirect (refused by redirect: 'error'): never the cause text.
-      throw new CmsPullError('RETRYABLE', ac.signal.aborted ? `cms list: no reply within ${this.o.timeoutMs} ms` : 'cms list: connection failed or redirected');
+      throw new CmsPullError('RETRYABLE', ac.signal.aborted ? `${this.label}: no reply within ${this.o.timeoutMs} ms` : `${this.label}: connection failed or redirected`);
     } finally {
       clearTimeout(timer);
     }
-    if (status === 429 || status >= 500 || status === 408) throw new CmsPullError('RETRYABLE', `cms list: HTTP ${status}`, status);
-    if (status < 200 || status >= 300) throw new CmsPullError('FATAL', `cms list: HTTP ${status}`, status);
-    if (text.length > MAX_BODY_CHARS) throw new CmsPullError('FATAL', 'cms list: reply too large');
-    return parsePage(text, limit);
+    if (status === 429 || status >= 500 || status === 408) throw new CmsPullError('RETRYABLE', `${this.label}: HTTP ${status}`, status);
+    if (status < 200 || status >= 300) throw new CmsPullError('FATAL', `${this.label}: HTTP ${status}`, status);
+    if (text.length > MAX_BODY_CHARS) throw new CmsPullError('FATAL', `${this.label}: reply too large`);
+    return text;
   }
 }
 

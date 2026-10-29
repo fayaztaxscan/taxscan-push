@@ -25,7 +25,7 @@ type Campaign = {
   scheduledAt: string | null;
   createdByUserId: string | null;
   createdBy: CampaignCreator;
-  /** Article reads (GA, all traffic); null = no data for this URL yet. */
+  /** Article reads (all traffic: the CMS from its cut-over date, GA4 before; see the note under the title); null = no data for this URL yet. */
   reads: number | null;
   /** Reads from sessions that arrived via our push notification. */
   pushReads: number | null;
@@ -126,6 +126,10 @@ const sortedCampaigns = computed(() => {
   });
 });
 
+/** The source note under the title (the screen's muted style). GA4's caveat is the default; the server sends the CMS wording. */
+const GA_READS_NOTE = 'Reads: GA4 (≈1 in 10 readers since 29 Sep)';
+const readsNote = ref<string>(GA_READS_NOTE);
+
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
@@ -134,10 +138,12 @@ async function load(): Promise<void> {
     if (showOnlyMine.value && meUser.value) {
       qs.set('createdByUserId', meUser.value.id);
     }
-    const data = await api.get<{ campaigns: Campaign[] }>(
+    const data = await api.get<{ campaigns: Campaign[]; readsSource?: { mode: string; note: string } }>(
       `/api/campaigns?${qs.toString()}`,
     );
     campaigns.value = data.campaigns;
+    // The server states the source only with READS_SOURCE=cms; otherwise the numbers are GA4's, with its caveat.
+    readsNote.value = data.readsSource?.note ?? GA_READS_NOTE;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -209,6 +215,7 @@ onMounted(load);
       </div>
     </div>
 
+    <p class="muted reads-note" style="font-size: 12px; margin: 4px 0 10px">{{ readsNote }}</p>
     <div v-if="error" class="banner err">{{ error }}</div>
 
     <div class="card">
@@ -287,7 +294,13 @@ onMounted(load);
             <td :class="c.reads === null ? 'muted' : ''" data-label="Reads" :title="c.reads === null ? 'No read data for this URL yet' : ''">
               {{ fmtReads(c.reads) }}
             </td>
-            <td :class="c.pushReads === null ? 'muted' : ''" data-label="via Push">{{ fmtReads(c.pushReads) }}</td>
+            <td
+              :class="c.pushReads === null ? 'muted' : ''"
+              data-label="via Push"
+              :title="c.pushReads === null && c.reads !== null ? 'Not recorded for these days (the CMS records the source from 15 Oct)' : ''"
+            >
+              {{ fmtReads(c.pushReads) }}
+            </td>
             <td data-label="Failed">{{ c.failed }}</td>
             <td data-label="Delivery">
               <span

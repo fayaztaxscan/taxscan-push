@@ -315,6 +315,40 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
 
 export type AudienceEnv = ReturnType<typeof parseAudienceEnv>;
 
+/** Where READS_CMS_FROM starts when unset: the first FULL day on the new CMS (28 Sep is partial). */
+export const READS_CMS_FROM_DEFAULT = '2026-09-29';
+
+/**
+ * Reads from the CMS (Feed 2, brief 2026-10-29-cms-reads). All default to today's behaviour:
+ *  - CMS_VIEWS_ENABLED   the sync cron (+ the backfill script) may run;
+ *  - READS_SOURCE        `ga` (today) | `cms`: which source every reader uses;
+ *  - READS_CMS_FROM      the first date read from the CMS (GA before it), `YYYY-MM-DD`;
+ *  - CMS_FEED_VIEWS_SECRET  door V's own HMAC secret (≥ 32 chars, never the pull / webhook secret).
+ * The views path rides the existing CMS_FEED_BASE_URL host rules. Problems name variables, never values.
+ */
+export function parseReadsEnv(src: NodeJS.ProcessEnv) {
+  const problems: string[] = [];
+  const secret = secretFrom(src, 'CMS_FEED_VIEWS_SECRET', problems);
+  const others = [src.CMS_FEED_PULL_SECRET, src.CMS_FEED_INBOUND_SECRET, src.CMS_FEED_INBOUND_SECRET_PREVIOUS].map((v) => (v ?? '').trim()).filter(Boolean);
+  if (secret && others.includes(secret)) problems.push('CMS_FEED_VIEWS_SECRET must differ from the other door secrets (one secret per door)');
+  const sourceRaw = (src.READS_SOURCE ?? 'ga').trim().toLowerCase();
+  if (sourceRaw !== 'ga' && sourceRaw !== 'cms') problems.push('READS_SOURCE must be ga or cms (using ga)');
+  let from = (src.READS_CMS_FROM ?? '').trim();
+  const valid = /^\d{4}-\d{2}-\d{2}$/.test(from) && new Date(`${from}T00:00:00Z`).toISOString().slice(0, 10) === from;
+  if (from !== '' && !valid) problems.push(`READS_CMS_FROM must be YYYY-MM-DD (using ${READS_CMS_FROM_DEFAULT})`);
+  if (!valid) from = READS_CMS_FROM_DEFAULT;
+  return {
+    enabled: src.CMS_VIEWS_ENABLED === 'true',
+    secret,
+    cron: (src.CMS_VIEWS_CRON ?? '17 */2 * * *').trim(),
+    source: (sourceRaw === 'cms' ? 'cms' : 'ga') as 'ga' | 'cms',
+    /** First date (IST day key) read from the CMS; dates before it come from GA. */
+    cmsFrom: from,
+    problems,
+  };
+}
+export type ReadsEnv = ReturnType<typeof parseReadsEnv>;
+
 /**
  * The webhook IP fence (design §5.1 step 2). Both sides in canonical form (`canonicalIp`), so
  * `::ffff:1.2.3.4` matches `1.2.3.4` and `2001:DB8::0:1` matches `2001:db8::1`. An EMPTY
@@ -335,6 +369,7 @@ export const AUDIENCE_SECRET_NAMES = [
   'CMS_FEED_INBOUND_SECRET',
   'CMS_FEED_INBOUND_SECRET_PREVIOUS',
   'CMS_FEED_PULL_SECRET',
+  'CMS_FEED_VIEWS_SECRET',
   'MAILERCLOUD_SYNC_API_KEY',
 ] as const;
 
@@ -445,6 +480,8 @@ export const env = {
     weeklyCron: process.env.REPORT_WEEKLY_CRON ?? '0 7 * * 1',
     monthlyCron: process.env.REPORT_MONTHLY_CRON ?? '0 7 1 * *',
   },
+  // Reads from the CMS (Feed 2): the sync flag, READS_SOURCE, READS_CMS_FROM, door V's secret. See parseReadsEnv.
+  cmsViews: parseReadsEnv(process.env),
   // Per-article read counts synced from the GA4 Data API into ArticleReadStat
   // (src/services/gaReads.ts). Default off. Credentials: GA_SERVICE_ACCOUNT_JSON
   // holds the service-account key JSON inline (Railway), else the key is read

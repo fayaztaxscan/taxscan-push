@@ -3,6 +3,8 @@ import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { safeErrorLog } from '../lib/httpErrors';
 import { benchRowKey, categoryRowKey, benchRank, istDateKey } from './reports';
+import { Prisma } from '@prisma/client';
+import { readsEnabled, readsSourceNote, readsWindowByPath, splitRange } from './reads';
 import {
   loadGaCredentials,
   getGaAccessToken,
@@ -40,6 +42,8 @@ export type ReadsPayload = {
   windows: { label: string; days: number; siteViews: number; articleViews: number; articlesRead: number }[];
   categories: ReadsRow[];
   benches: ReadsRow[];
+  /** Only with READS_SOURCE=cms (absent = GA, the payload exactly as before): where the numbers came from. */
+  source?: { mode: 'cms'; note: string; cmsFrom: string; usedGa: boolean };
 };
 
 /** GA pageTitle carries the site suffix ("… - Taxscan") — strip before classifying. */
@@ -151,14 +155,132 @@ export async function buildReadsReport(opts: {
   return { windows, categories, benches };
 }
 
-/** Build from GA and upsert the per-portal cache row. */
+/**
+ * The CMS-mode build (READS_SOURCE=cms): per trailing window, GA for the days before READS_CMS_FROM (the Data API,
+ * from this cron — never a request) and the CMS's rows from Postgres from that day on, merged per article path. The
+ * CMS feed carries no headlines, so a story the GA part never saw is classified from its slug (`titleFromPath`, as the
+ * email's reads section is): coarser content-type detection, same bench / category rules. A CMS row IS an article,
+ * so the numeric-id test used for GA's whole-site rows does not apply to it (stories born on the new CMS have no id).
+ * There is no site-wide total from the CMS, so `siteViews` here is the GA part's site total plus the CMS article views.
+ * Without GA credentials the GA part is skipped and the note says "Reads: CMS".
+ */
+export async function buildReadsReportCms(opts: {
+  creds?: GaCredentials | null;
+  fetchImpl?: FetchLike;
+  now?: Date;
+  portal?: string;
+  cmsFrom?: string;
+}): Promise<ReadsPayload> {
+  const now = opts.now ?? new Date();
+  const portal = opts.portal ?? env.rss.portal;
+  const cmsFrom = opts.cmsFrom ?? env.cmsViews.cmsFrom;
+  const today = istDateKey(now);
+  const fetchImpl = opts.fetchImpl ?? (fetch as FetchLike);
+  const token = opts.creds ? await getGaAccessToken(opts.creds, fetchImpl, now) : null;
+
+  const byBench: Agg = new Map();
+  const byCategory: Agg = new Map();
+  const windows: ReadsPayload['windows'] = [];
+  let usedGa = false;
+
+  for (let wi = 0; wi < READ_WINDOWS.length; wi += 1) {
+    const w = READ_WINDOWS[wi];
+    const startKey = istDateKey(new Date(now.getTime() - w.days * 86_400_000));
+    const split = splitRange({ from: startKey, to: today }, 'cms', cmsFrom);
+    const merged = new Map<string, { views: number; title: string | null }>();
+    let siteViews = 0;
+    let cmsViews = 0;
+
+    if (split.ga && token) {
+      const base = {
+        dateRanges: [{ startDate: split.ga.from ?? startKey, endDate: split.ga.to ?? today }],
+        metrics: [{ name: 'screenPageViews' }],
+      };
+      const total = await runReport(fetchImpl, token, base);
+      siteViews += Number(total.rows?.[0]?.metricValues[0].value ?? 0);
+      let offset = 0;
+      let rowCount = Infinity;
+      while (offset < rowCount) {
+        const page = await runReport(fetchImpl, token, {
+          ...base,
+          dimensions: [{ name: 'pagePath' }, { name: 'pageTitle' }],
+          dimensionFilter: {
+            filter: { fieldName: 'pagePath', stringFilter: { matchType: 'PARTIAL_REGEXP', value: ARTICLE_PATH_RE } },
+          },
+          limit: 100000,
+          offset,
+        });
+        rowCount = page.rowCount ?? 0;
+        const rows = page.rows ?? [];
+        if (rows.length === 0) break;
+        offset += rows.length;
+        usedGa = true;
+        for (const r of rows) {
+          const path = r.dimensionValues[0].value.replace(/\/+$/, '');
+          const e = merged.get(path) ?? { views: 0, title: null };
+          e.views += Number(r.metricValues[0].value) || 0;
+          e.title ??= cleanPageTitle(r.dimensionValues[1].value);
+          merged.set(path, e);
+        }
+      }
+    }
+
+    if (split.cms) {
+      const lo = split.cms.from ? Prisma.sql`AND date >= ${split.cms.from}::date` : Prisma.empty;
+      const hi = split.cms.to ? Prisma.sql`AND date <= ${split.cms.to}::date` : Prisma.empty;
+      const rows = await prisma.$queryRaw<{ canonicalPath: string; views: bigint }[]>`
+        SELECT "canonicalPath", SUM(views)::bigint AS views FROM "CmsArticleView"
+         WHERE portal = ${portal} ${lo} ${hi} GROUP BY "canonicalPath"`;
+      for (const r of rows) {
+        const e = merged.get(r.canonicalPath) ?? { views: 0, title: null };
+        e.views += Number(r.views);
+        cmsViews += Number(r.views);
+        merged.set(r.canonicalPath, e);
+      }
+    }
+
+    let articleViews = 0;
+    for (const [path, e] of merged) {
+      articleViews += e.views;
+      const title = e.title ?? titleFromPath(path);
+      bump(byBench, benchRowKey(title), wi, e.views);
+      bump(byCategory, categoryRowKey({ title, categories: [] }), wi, e.views);
+    }
+    windows.push({ label: w.label, days: w.days, siteViews: siteViews + cmsViews, articleViews, articlesRead: merged.size });
+  }
+
+  const payload = finishReadsPayload(windows, byBench, byCategory);
+  return { ...payload, source: { mode: 'cms', note: readsSourceNote('cms', { ga: usedGa, cms: true }, cmsFrom), cmsFrom, usedGa } };
+}
+
+/** Rows for the two tables from the aggregates (shared by both builds' shape). */
+function finishReadsPayload(windows: ReadsPayload['windows'], byBench: Agg, byCategory: Agg): ReadsPayload {
+  const toRows = (agg: Agg): ReadsRow[] =>
+    [...agg.entries()].map(([label, arr]) => ({
+      label,
+      cells: arr.map((c, wi) => {
+        if (c.views === 0 && c.articles === 0) return null;
+        const total = windows[wi].articleViews;
+        return { views: c.views, articles: c.articles, share: total > 0 ? Number((c.views / total).toFixed(4)) : 0 };
+      }),
+    }));
+  const last = READ_WINDOWS.length - 1;
+  const categories = toRows(byCategory).sort((a, b) => (b.cells[last]?.views ?? 0) - (a.cells[last]?.views ?? 0));
+  const benches = toRows(byBench).sort((a, b) => benchRank(a.label) - benchRank(b.label));
+  return { windows, categories, benches };
+}
+
+/** Build (from GA, or from GA + the CMS with READS_SOURCE=cms) and upsert the per-portal cache row. */
 export async function refreshReadsReport(
   deps: { fetchImpl?: FetchLike; now?: Date; creds?: GaCredentials; portal?: string } = {},
 ): Promise<{ windows: number; categories: number; benches: number }> {
-  const creds = deps.creds ?? loadGaCredentials();
-  if (!creds) throw new Error('GA credentials not configured (GA_SERVICE_ACCOUNT_JSON or key file)');
   const portal = deps.portal ?? env.rss.portal;
-  const payload = await buildReadsReport({ creds, fetchImpl: deps.fetchImpl, now: deps.now });
+  const creds = deps.creds ?? loadGaCredentials();
+  if (!creds && env.cmsViews.source !== 'cms') throw new Error('GA credentials not configured (GA_SERVICE_ACCOUNT_JSON or key file)');
+  const payload =
+    env.cmsViews.source === 'cms'
+      ? await buildReadsReportCms({ creds, fetchImpl: deps.fetchImpl, now: deps.now, portal })
+      : await buildReadsReport({ creds: creds as GaCredentials, fetchImpl: deps.fetchImpl, now: deps.now });
   await prisma.gaReadsReport.upsert({
     where: { portal },
     create: { portal, payload: payload as object },
@@ -185,6 +307,8 @@ export type ReadsEmailSummary = {
   pushReads: number;
   byCategory: { label: string; reads: number }[];
   topArticles: { title: string; reads: number; pushReads: number }[];
+  /** Only with READS_SOURCE=cms: the source note for the email ("Reads: CMS from 29 Sep, GA4 before"). */
+  sourceNote?: string;
 };
 
 /**
@@ -223,26 +347,21 @@ export async function readsSummaryForWindow(opts: {
 }): Promise<ReadsEmailSummary | null> {
   const portal = opts.portal ?? env.rss.portal;
   const topN = opts.topN ?? 10;
-  // ArticleReadStat.date is the UTC-midnight key of the GA (IST) calendar day;
-  // the report window is IST midnights — compare by day key.
-  const grouped = await prisma.articleReadStat.groupBy({
-    by: ['pagePath'],
-    where: {
-      portal,
-      date: { gte: new Date(istDateKey(opts.start)), lt: new Date(istDateKey(opts.end)) },
-    },
-    _sum: { totalViews: true, pushViews: true },
-  });
+  // The one reads module: GA for dates before READS_CMS_FROM (all dates with READS_SOURCE=ga), the CMS from it.
+  // ArticleReadStat.date is the UTC-midnight key of the GA (IST) calendar day; the report window is IST
+  // midnights — compare by day key.
+  const win = await readsWindowByPath(istDateKey(opts.start), istDateKey(opts.end), { portal });
 
-  // Fold trailing-slash spellings onto one key and keep article pages only.
+  // Keep article pages only: GA's rows are every page of the site (a story's slug ends in its numeric id), while a CMS
+  // row IS an article — and a story born on the new CMS has no numeric id in its URL.
   const byPath = new Map<string, { reads: number; pushReads: number }>();
-  for (const g of grouped) {
-    const path = g.pagePath.replace(/\/+$/, '');
-    if (!ARTICLE_PATH_JS_RE.test(path)) continue;
-    const e = byPath.get(path) ?? { reads: 0, pushReads: 0 };
-    e.reads += g._sum.totalViews ?? 0;
-    e.pushReads += g._sum.pushViews ?? 0;
-    byPath.set(path, e);
+  let usedGa = false;
+  let usedCms = false;
+  for (const [path, e] of win) {
+    if (!e.usedCms && !ARTICLE_PATH_JS_RE.test(path)) continue;
+    byPath.set(path, { reads: e.views, pushReads: e.pushViews ?? 0 });
+    usedGa ||= e.usedGa;
+    usedCms ||= e.usedCms;
   }
   if (byPath.size === 0) return null;
 
@@ -284,7 +403,13 @@ export async function readsSummaryForWindow(opts: {
     pushReads: e.pushReads,
   }));
 
-  return { totalReads, pushReads, byCategory, topArticles };
+  return {
+    totalReads,
+    pushReads,
+    byCategory,
+    topArticles,
+    ...(env.cmsViews.source === 'cms' ? { sourceNote: readsSourceNote('cms', { ga: usedGa, cms: usedCms }) } : {}),
+  };
 }
 
 const STALE_MS = 12 * 60 * 60 * 1000;
@@ -292,12 +417,13 @@ const STALE_MS = 12 * 60 * 60 * 1000;
 let started = false;
 
 export function startReadsReportCron(): void {
-  if (!env.gaReads.enabled) {
+  if (!readsEnabled()) {
     // eslint-disable-next-line no-console
     console.log('[reads-report] disabled (set GA_READS_ENABLED=true to start)');
     return;
   }
-  if (!loadGaCredentials()) {
+  // GA credentials are required for the GA build; with READS_SOURCE=cms they only add the pre-cut-over days.
+  if (!loadGaCredentials() && env.cmsViews.source !== 'cms') {
     // eslint-disable-next-line no-console
     console.warn('[reads-report] no GA credentials — cron not started');
     return;
@@ -325,7 +451,9 @@ export function startReadsReportCron(): void {
   setTimeout(() => {
     void (async () => {
       const row = await getReadsReport(env.rss.portal).catch(() => null);
-      if (!row || Date.now() - row.generatedAt.getTime() > STALE_MS) await run();
+      // Also rebuild when the cached build is of the OTHER source (READS_SOURCE was flipped).
+      const cachedMode = (row?.payload as ReadsPayload | undefined)?.source?.mode ?? 'ga';
+      if (!row || Date.now() - row.generatedAt.getTime() > STALE_MS || cachedMode !== env.cmsViews.source) await run();
     })();
   }, 30_000).unref();
   // eslint-disable-next-line no-console
