@@ -16,7 +16,7 @@ import {
   ARTICLE_FETCH_TIMEOUT_MS,
   type FetchLike,
 } from '../services/digest/articleImage';
-import { renderDigest, isAllowedTemplateImage, isSocialUrl, SOCIAL_LINKS, scanStartTags, BUILTIN_TEMPLATE_HTML, type RenderAd } from '../services/digest/renderer';
+import { renderDigest, isAllowedTemplateImage, isSocialUrl, isContactMailto, SOCIAL_LINKS, scanStartTags, BUILTIN_TEMPLATE_HTML, FREE_REASON, PREMIUM_REASON, RenderError, type RenderAd } from '../services/digest/renderer';
 import { validateTemplate, worstCaseFixture } from '../services/digest/templates';
 
 const RUN_DATE = new Date(Date.UTC(2026, 9, 29));
@@ -312,7 +312,7 @@ describe('the social icons row: exactly the five fixed links', () => {
     const r = render(stories(5, () => null));
     expect(r.html).toContain('href="{{unsubscribe_link}}"');
     expect(r.html).toContain('Kochi, Kerala 682001');
-    expect(r.html).toContain('Just reply to this email.');
+    expect(r.html).not.toContain('Just reply'); // replaced 29 Oct: replies land at Mailercloud, readers are sent to a real mailbox
     expect(r.html.toLowerCase()).not.toContain('noreply');
   });
 
@@ -367,6 +367,66 @@ describe('size: the worst case (max items, every picture, three image ads, socia
     const recent = renderDigest({ items: stories(c.maxItems, () => PIC), audience: 'FREE', runDate: RUN_DATE, cfg: c, ads: [ad(1), ad(2), ad(3)], assetBaseUrl: ASSET, mode: 'check' });
     out.push(`recent (12 pictured short stories, 3 image ads): html ${recent.htmlBytes} B, budget ${recent.budgetBytes} B`);
     expect(recent.sizeWarning).toBe(false);
+    // eslint-disable-next-line no-console
+    console.info(out.join('\n'));
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Brief 2026-10-29-digest-footer-contact                               */
+/* ------------------------------------------------------------------ */
+
+describe('the footer says "Questions or feedback? Write to info@taxscan.in" (a real mailbox: replies to Mailercloud go nowhere)', () => {
+  const link = '<a href="mailto:info@taxscan.in" class="ts-link" style="color:#1376c8;text-decoration:underline;padding:9px 0;">info@taxscan.in</a>'; // padding: a >= 44 px tap area without changing the sentence's line height
+
+  it.each([
+    ['FREE', FREE_REASON],
+    ['PREMIUM', PREMIUM_REASON],
+  ] as const)('%s: the HTML has the sentence and a mailto link; the text has the plain sentence; no "Just reply"; the reason line is unchanged', (audience, reason) => {
+    const r = render(stories(5, () => null), { audience });
+    const footer = new RegExp('<td [^>]*data-footer="1"[\\s\\S]*?</td></tr>').exec(r.html)![0];
+    expect(footer).toContain(`${reason.replace(/'/g, '&#39;')} Questions or feedback? Write to ${link}</p>`); // the reason line is the same text as before, HTML-escaped
+    expect(footer).toContain('href="{{unsubscribe_link}}"'); // unsubscribe untouched
+    expect(footer).toContain('Kochi, Kerala 682001'); // postal address untouched
+    expect(r.html).not.toContain('Just reply');
+    expect((r.html.match(/href="mailto:/g) ?? []).length).toBe(1);
+    expect(r.html).not.toMatch(/mailto:[^"]*utm_/); // no UTM on it
+    expect(r.text).toContain(`${reason} Questions or feedback? Write to info@taxscan.in`);
+    expect(r.text).not.toContain('Just reply');
+    expect(r.html.toLowerCase()).not.toContain('noreply');
+  });
+
+  it('the link checks accept exactly mailto:info@taxscan.in and still refuse any other mailto in a template', () => {
+    for (const ok of ['mailto:info@taxscan.in']) expect(isContactMailto(ok)).toBe(true);
+    for (const bad of ['mailto:other@taxscan.in', 'mailto:info@taxscan.in?subject=x', 'MAILTO:info@taxscan.in', 'mailto:info@hello.taxscan.in', 'mailto:info@taxscan.in ', 'mailto:', 'info@taxscan.in']) {
+      expect([bad, isContactMailto(bad)]).toEqual([bad, false]);
+    }
+    const c = cfg();
+    const links = (html: string) => validateTemplate({ audience: 'FREE', compiledHtml: html, compileError: null }, { cfg: c, now: RUN_DATE }).checks.find((x) => x.id === 'links')!;
+    // The built-in (which now carries the mailto in its footer) passes; so does a template with exactly that mailto.
+    expect(links(BUILTIN_TEMPLATE_HTML)).toMatchObject({ ok: true });
+    expect(links(BUILTIN_TEMPLATE_HTML.replace('</body>', '<p><a href="mailto:info@taxscan.in">Write to us</a></p></body>'))).toMatchObject({ ok: true });
+    // Any other mailto is refused by the checklist…
+    for (const bad of ['mailto:other@taxscan.in', 'mailto:info@taxscan.in?subject=x', 'mailto:someone@example.com']) {
+      const l = links(BUILTIN_TEMPLATE_HTML.replace('</body>', `<p><a href="${bad}">x</a></p></body>`));
+      expect([bad, l.ok]).toEqual([bad, false]);
+    }
+    // …and a send with such a template is refused outright (fail closed); the exact one is left as written, no UTM.
+    const withTemplate = (href: string) => renderDigest({ items: stories(5, () => null), audience: 'FREE', runDate: RUN_DATE, cfg: c, assetBaseUrl: ASSET, template: { html: BUILTIN_TEMPLATE_HTML.replace('</body>', `<p><a href="${href}">x</a></p></body>`) } });
+    expect(() => withTemplate('mailto:other@taxscan.in')).toThrow(RenderError);
+    expect(withTemplate('mailto:info@taxscan.in').html).toContain('<a href="mailto:info@taxscan.in">x</a>');
+  });
+
+  it('the worst case stays under the 75 KB warning with the new line (the figures)', () => {
+    const c = cfg();
+    const f = worstCaseFixture(c);
+    const out: string[] = [];
+    for (const audience of ['FREE', 'PREMIUM'] as const) {
+      const r = renderDigest({ items: f.items, audience, runDate: RUN_DATE, cfg: c, ads: f.ads, assetBaseUrl: ASSET, mode: 'check' });
+      out.push(`${audience}: html ${r.htmlBytes} B, budget ${r.budgetBytes} B (warn ${c.htmlWarnKb * 1024} B, max ${c.maxHtmlKb * 1024} B)`);
+      expect(r.sizeWarning).toBe(false);
+      expect(r.budgetBytes).toBeLessThan(c.htmlWarnKb * 1024);
+    }
     // eslint-disable-next-line no-console
     console.info(out.join('\n'));
   });

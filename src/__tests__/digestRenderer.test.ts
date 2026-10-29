@@ -256,7 +256,9 @@ describe('7. links: allowlist + digest UTM', () => {
   it('every href is allowlisted and carries the digest UTM (except the exact unsubscribe tag)', () => {
     for (const audience of ['FREE', 'PREMIUM'] as const) {
       const r = renderDigest({ items: worstCase(), audience, runDate: RUN_DATE, cfg: cfg() });
-      const links = hrefs(r.html).filter((h) => h !== UNSUBSCRIBE_TAG);
+      // The two fixed footer hrefs that are not story/ad links: the unsubscribe tag and the contact mailto (exactly one).
+      expect(hrefs(r.html).filter((h) => h === 'mailto:info@taxscan.in')).toHaveLength(1);
+      const links = hrefs(r.html).filter((h) => h !== UNSUBSCRIBE_TAG && h !== 'mailto:info@taxscan.in');
       expect(links.length).toBeGreaterThan(15);
       for (const h of links) {
         const u = new URL(h);
