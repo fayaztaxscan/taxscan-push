@@ -115,7 +115,7 @@ browsers after endpoint rotation, so it barely grows the base.
 - **Push-side changes in the digest PR (2026-10-23):** notifications use our own icon + badge
   `push.taxscan.in/brand/taxscan-icon-192.png` (the designer's 2026-10-23 mark; taxscan.in's old PWA icon
   has 404'd since the CMS move); body-parser errors answer **413/400/415** and never log the body
-  (`src/lib/httpErrors.ts`); every `console.*` of an error goes through **`safeErrorLog`** (`src/lib/redact.ts`;
+  (`src/lib/httpErrors.ts`); every `console.*` of an error goes through **`safeErrorLog`** (`src/lib/httpErrors.ts`; redaction in `src/lib/redact.ts`;
   never a Prisma message, which quotes query values — a source-scan test fails on a bare `err`); the R2
   backup is **format v2** (adds the digest tables + `EmailSuppression`; v1 files still restore).
 - **Email digest (Mailercloud, "Option B") — BUILT, shipped DARK (every digest flag OFF).** Replaces the
@@ -350,6 +350,13 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
   at a time. Project roles live in `.claude/agents/` (software-architect, product-manager,
   backend-developer, ui-developer, qa-verifier, devops-engineer, record-keeper, authz-sweeper,
   audience-strategist); default pipeline Architect → Developer → QA. Agents never push or merge.
+- **Two-session workflow (owner, 2026-10-29).** A **planning** session talks with the owner, reads code + prod
+  read-only, writes one brief per change (`docs/briefs/<date>-<name>.md`, from `docs/briefs/TEMPLATE.md`),
+  reviews each build's `.REPORT.md`, merges `build/<name>` → `develop`, and moves to `main` only on the owner's
+  explicit yes. It is the ONLY session that edits the record (this file, `NEXT_STEP.md`, `KNOWN_ISSUES.md`,
+  memory) and it runs no full suite. A **build** session follows `docs/briefs/BUILD-SESSION.md`: its own
+  worktree off `origin/develop` + its own `taxscan_push_build_<name>` DB + a minimal `.env` with no live keys,
+  one code commit + one report commit, pushes only its branch, never touches `main`/`develop`/Railway/the stash.
 - Work one numbered task at a time. After each, run the acceptance check, then stop and summarize.
 - Commit to `develop` after each task with a clear message (e.g. "Task 3: VAPID config").
 - Write tests as you go. Keep functions small and documented.
