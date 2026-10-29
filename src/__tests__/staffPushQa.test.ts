@@ -120,6 +120,20 @@ describe('the staff worker only ever opens its own /admin/ pages', () => {
     return { safe: (ctx as unknown as { safeAdminUrl: (u: unknown) => string }).safeAdminUrl, handlers, shown };
   }
 
+  it('a push shows the payload\'s badge, and without one the white T (never the colour logo)', async () => {
+    const run = async (payload: Record<string, unknown>) => {
+      const { handlers, shown } = load();
+      let done: Promise<unknown> = Promise.resolve();
+      handlers.push({ data: { json: () => payload, text: () => '' }, waitUntil: (p: Promise<unknown>) => (done = p) });
+      await done;
+      return shown[0].options as unknown as { icon: string; badge: string };
+    };
+    const bare = await run({ title: 't', body: 'b' });
+    expect(bare.icon).toBe('https://push.taxscan.in/brand/taxscan-icon-192.png');
+    expect(bare.badge).toBe('https://push.taxscan.in/brand/taxscan-badge-96.png');
+    expect((await run({ title: 't', badge: 'https://push.taxscan.in/brand/taxscan-badge-96.png' })).badge).toBe('https://push.taxscan.in/brand/taxscan-badge-96.png');
+  });
+
   it.each([
     ['https://evil.example/admin/digests', 'https://push.taxscan.in/admin/digests'], // another host: own origin forced
     ['https://evil.example/phish', 'https://push.taxscan.in/admin/digests'],
