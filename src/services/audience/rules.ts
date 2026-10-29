@@ -14,6 +14,10 @@
  *               only by deleted accounts (contract v1.2: a deleted account is removed from every
  *               audience, incl. the hand list — the No-marketing tag is the only way to do that).
  *
+ * An account OUT OF SCOPE (`outOfScopeAt`: missing from a complete full load, task 5) is ignored
+ * entirely — as if the address did not hold it — so the absence rule removes our tags without adding
+ * a No-marketing exclusion (absence is inferred, not a CMS statement).
+ *
  * An unknown status grants nothing (and `CmsAccount.status` keeps the last KNOWN status, so an
  * unknown one never changes a role it already had). Pure.
  */
@@ -24,15 +28,21 @@ export type RuleAccount = {
   status: string;
   consentValue: boolean | null;
   deletedAt: Date | null;
+  outOfScopeAt?: Date | null;
 };
 
 export type RuleOptions = { formerToFree: boolean };
 
-export function isLive(a: RuleAccount): boolean {
-  return a.deletedAt === null && a.status !== 'deleted';
+export function inScope(a: RuleAccount): boolean {
+  return a.outOfScopeAt === undefined || a.outOfScopeAt === null;
 }
 
-export function memberRole(accounts: readonly RuleAccount[], opts: RuleOptions): { role: MemberRole; noMarketing: boolean } {
+export function isLive(a: RuleAccount): boolean {
+  return a.deletedAt === null && a.status !== 'deleted' && inScope(a);
+}
+
+export function memberRole(all: readonly RuleAccount[], opts: RuleOptions): { role: MemberRole; noMarketing: boolean } {
+  const accounts = all.filter(inScope);
   const live = accounts.filter(isLive);
   let role: MemberRole = 'NONE';
   if (live.some((a) => a.status === 'active' || a.status === 'cancelled')) role = 'PREMIUM';

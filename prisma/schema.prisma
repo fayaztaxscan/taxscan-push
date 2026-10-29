@@ -792,6 +792,7 @@ model CmsAccount {
   deletedAt    DateTime? // tombstone: blocks late lower-seq events
   erasedAt     DateTime? // contract v1.2 `account.deleted` + `erasure: true`: never reactivated
   unknownStatus String? // the last snapshot's status when not a known one (`status` keeps the last KNOWN)
+  outOfScopeAt DateTime? // task 5 absence rule: missing from a COMPLETE full load → ignored by memberRole until any snapshot names it again
   lastSource   String // webhook|pull_incr|pull_full
   updatedAt    DateTime  @updatedAt
 
@@ -814,6 +815,7 @@ model AudienceMember {
   nextAttemptAt DateTime?
   lastErrorKind String? // RETRYABLE | FATAL — never a provider message
   syncedAt      DateTime?
+  resubscribePending Boolean @default(false) // ingest lifted a suppression on this address; held (with the address) until the writer has handled the lift
   eraseRequestedAt DateTime? // UNUSED since 24 Oct (owner: the CMS erases in Mailercloud; we null `email` at ingest). Kept: migrations are additive-only
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -847,5 +849,9 @@ model AudienceSyncState {
   breakerOpenAt DateTime? // Mailercloud writes paused
   breakerReason String? // change_too_large | truncated_load | erasure_cap | ...
   pendingReview Json? // counts only, shown to the ADMIN who resumes
+  lastFullRowCount Int? // rows in the last COMPLETE full load (the 90% acceptance rule and the scope-change check)
+  counters      Json      @default("{}") // {day, seqConflict, unknownStatus, removals:[{at,n}]} — daily alerts + the 24 h Premium-removal breaker
+  drift         Json? // last nightly drift check: {at, sampled, mismatched, premiumOurs, premiumMailercloud}
+  alerts        Json      @default("{}") // {kind: {raisedAt, day, emailedAt, emailAttempts, …counts}} — audience alerts, once per kind per IST day
   updatedAt     DateTime  @updatedAt
 }

@@ -826,6 +826,62 @@ An **Audience card on Digests**. All of it comes from Postgres.
     of mismatched rows, skipping (with a count, never an address) any that would collide or be refused.
   - **L5.** `erasure: true` is accepted only on `account.deleted` or a tombstone list row (`deleted_at` set).
 
+- **Task 5 — built 2026-10-29** (flags off; resumed from the 24 Oct stash). Migrations `20261024170000_audience_pull`
+  (`CmsAccount.outOfScopeAt`; `AudienceSyncState.lastFullRowCount`, `counters`, `alerts`) and
+  `20261029061342_audience_writer_columns` (see task 6). Code: `audience/cmsClient.ts` (signed GET per **contract v1.1+**:
+  `X-Push-Timestamp` / `X-Push-Signature`, a signed `nonce` query parameter, canonical query — this supersedes §5.2's
+  `X-CMS-Event-Id` text; https only, host on `CMS_FEED_ALLOWED_HOSTS`, `redirect: 'error'`, 30 s timeout, 429/5xx/network
+  retried ×3 with jitter and a fresh nonce each attempt), `audience/pull.ts` (incremental hourly at :10 IST — not 04:10 —
+  and full at 04:30 IST, single-flight; `updated_since = max(lastIncrAsOf, lastFullAsOf) − 10 min`; `as_of` taken from the
+  FIRST page), `audience/breaker.ts` (`first_load`, `scope_change`, `change_too_large` = max(`AUDIENCE_MAX_CHANGE_PCT` %,
+  100), `premium_removals` = max(3 %, 50) in 24 h, `erasure_cap`, `truncated_load`; only `truncated_load` closes by itself),
+  `audience/alerts.ts` (markers on `AudienceSyncState.alerts`, once per kind per IST day, emailed through the digest's alert
+  copy). Decisions and deviations:
+  - **Complete full load** = every page 200, a last page with no `next_cursor`, every row parsed and applied, and rows ≥ 90 %
+    of `lastFullRowCount`. A cursor that repeats (a feed that never ends) is `cursor_loop`; more than 400 pages is
+    `too_many_pages`. Anything else applies the rows it read, sets **no** `outOfScopeAt`, opens `truncated_load` and raises
+    `audience_full_incomplete`; a later complete load closes it. The first load always goes to review (`first_load`).
+  - **Absence** (`outOfScopeAt`, complete loads only, and only for an account nothing touched during the run) takes the
+    member to role NONE with no suppression and no No-marketing exclusion; any later snapshot that names the account clears
+    it. Absences count in `roleChanges`, so a complete load that drops more than the cap opens the breaker.
+  - **Equal-seq rows** are skipped without a transaction when the content is unchanged — except a pending consent lift and
+    a member whose address was stripped by a restore (the full load refills it).
+  - Tests: `audiencePull.test.ts` (fake CMS that verifies OUR signature) and `audiencePullAcceptance.test.ts` (a feed that
+    never ends, absences against the cap, the cap as a percentage, 429, the timeout).
+- **Task 6 — built 2026-10-29** (flags off; writes off by default = DRY RUN). `audience/mcContacts.ts` (the contact client:
+  get, single create, PUT `{tags}` only, tag remove, tag/segment reads, and `resubscribe()` — the only `contact_type`, refused
+  unless built with `AUDIENCE_RESUBSCRIBE_WRITES`; **no DELETE exists**, a source-scan test pins it) and `audience/writer.ts`
+  (`flushPending`, `driftCheck`). Boot registers the writer tick (every minute) and the drift check (05:30 IST, after the
+  04:30 full load); both do nothing unless `AUDIENCE_SYNC_ENABLED`, and the writer sends nothing unless
+  `AUDIENCE_SYNC_WRITE_MAILERCLOUD` (off: it logs `[audience] writer dry-run members= would_add= would_remove=`, counts only).
+  Migration `20261029061342_audience_writer_columns` (additive): `AudienceMember.resubscribePending` (ingest's consent lift marks the
+  member; the writer clears it) and `AudienceSyncState.drift` (the last nightly check). Decisions:
+  - **Desired state, not an outbox.** ≤ 200 due members a tick (`nextAttemptAt ≤ now`); the diff is computed from
+    `desiredRole` / `noMarketing` against `appliedTags`; `appliedTags` is written only from what a 2xx acknowledged (a partial
+    failure keeps the part that landed). A second tick sends nothing; a flapping member collapses into one write.
+  - **Gates, in order:** a pull running (wait) · the send window [`DIGEST_SEND_AT` − 20 min, + 30 min) IST (default 07:10–08:00)
+    · no complete full load yet · the breaker open · writes off (dry run) · configuration (key, list id, three tag ids).
+  - **Writes:** a contact is created only after our own GET answered 404 (single create into `AUDIENCE_MC_LIST_ID`, never
+    upsert or batch); an "already exists" answer (M-1 race) switches to the existing-contact path; an existing contact gets
+    one PUT with `tags` = the union of what it carries and what we add (safe whether PUT appends or replaces — M-3); removals
+    use `tag/remove` by id; names are resolved from the tag catalogue (M-9, unverified). Paced at `AUDIENCE_WRITE_RPS` (5).
+  - **Suppressed members:** no add. Exception: the No-marketing tag (an exclusion) is still written — **unless Mailercloud
+    already refuses this address** (an UNSUBSCRIBE / HARD_BOUNCE / SPAM row on this hash): then nothing is added at all, because
+    until M-2 is proven a PUT is the one write that could re-activate an unsubscribed contact. Removals are always allowed.
+  - **Errors:** RETRYABLE (429, 408, 5xx, network) +1, +5, +15 min, then hourly with no end; FATAL (401/403/400/quota) stops
+    that member only and raises `audience_writer_fatal` (once per IST day); nine failures (≈ 6 h 21 min) raise
+    `audience_writer_failing`. `lastErrorKind` stores a kind, never a message. No address is ever logged.
+  - **Drift** (nightly): our applied Premium count against the segment's `active_count` (`AUDIENCE_MC_PREMIUM_SEGMENT_ID`) or
+    the tag's own count, tolerance max(`AUDIENCE_PREMIUM_DEVIATION_PCT` %, 25); 50 random members read back and compared tag
+    by tag. A mismatch takes Mailercloud's truth into `appliedTags` and makes the member due; `audience_drift` is raised.
+  - **Query plans** (85,000 `AudienceMember` + 85,000 `CmsAccount` rows): the writer's selection, every per-member read and
+    lock, the suppression lookup, the pull's account upsert path and the recompute lookups all use index scans. The every-
+    minute "failing" count gained a `nextAttemptAt IS NOT NULL` condition so it uses the `nextAttemptAt` index (a retrying
+    member always has one) instead of scanning the table. The nightly drift sample (`ORDER BY random()`) and the pull's
+    start-of-run mailed count read the whole table or index by design (≈ 26 ms and ≈ 15 ms).
+  - Tests: `audienceWriter.test.ts` (both behaviours of M-1 … M-3 and the read-back shape; `contact_type` and DELETE asserted on
+    every recorded request).
+
 **Needs the CMS or Mailercloud:**
 
 - the signature cross-check with real vectors (task 2);

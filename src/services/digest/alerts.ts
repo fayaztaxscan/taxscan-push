@@ -401,6 +401,60 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         did: 'Sends are still verified by polling; unsubscribes, bounces and spam reports are not being copied to our suppression list meanwhile.',
         todo: 'In Mailercloud, switch the webhook pointing at push.taxscan.in back on.',
       };
+    // ── CMS audience sync (docs/CMS_AUDIENCE_SYNC_DESIGN.md §10.2): stored on AudienceSyncState.alerts,
+    //    emailed by services/audience/alerts.ts with this same copy. Counts and reason codes only.
+    case 'audience_full_incomplete':
+      return {
+        short: 'Audience sync: the nightly CMS load was incomplete',
+        what: `The nightly full load of reader accounts from the CMS did not complete (${safeDetail(m.reason, cfg) || 'unknown reason'}; ${Number(m.rows ?? 0)} rows read).`,
+        did: 'The rows it did read were applied. Nobody was removed for being missing, and Mailercloud writes are paused until a complete load.',
+        todo: 'Nothing if tomorrow night’s load completes (it resumes by itself). If it repeats, check the CMS feed with the CMS team.',
+      };
+    case 'audience_breaker_open':
+      return {
+        short: 'Audience sync paused — needs review',
+        what: `The audience sync stopped writing to Mailercloud (${safeDetail(m.reason, cfg) || 'unknown reason'}). The data still lands in Postgres.`,
+        did: 'Paused Mailercloud writes. The Premium digest is held while the audience cannot be trusted.',
+        todo:
+          m.reason === 'truncated_load'
+            ? 'Nothing if the next full load completes; it resumes by itself.'
+            : 'An ADMIN reviews the counts on Admin → Digests (Audience card) and presses Resume if they look right.',
+      };
+    case 'seq_conflict':
+      return {
+        short: 'Audience sync: the CMS sent conflicting data',
+        what: `${Number(m.count ?? 0)} reader account(s) arrived today with the same sequence number but different content (the CMS broke its own contract).`,
+        did: 'Applied the list row (the CMS’s repair rule) and counted it.',
+        todo: 'Tell the CMS team the count and the date; no reader data is in this email.',
+      };
+    case 'unknown_status':
+      return {
+        short: 'Audience sync: unknown account status from the CMS',
+        what: `${Number(m.count ?? 0)} reader account(s) arrived today with a status we do not know.`,
+        did: 'Kept their previous role (an unknown status never grants Premium).',
+        todo: 'Ask the CMS team what the new status means, so the rule can be extended.',
+      };
+    case 'audience_writer_fatal':
+      return {
+        short: 'Audience sync: Mailercloud refused a contact write',
+        what: `Mailercloud refused ${Number(m.count ?? 1)} contact write(s) with an error that retrying will not fix (${safeDetail(m.reason, cfg) || 'see Admin'}).`,
+        did: 'Stopped writing those contacts; everything else carries on.',
+        todo: 'Check the sync key (MAILERCLOUD_SYNC_API_KEY), the tag/list ids and the contact quota in Mailercloud.',
+      };
+    case 'audience_writer_failing':
+      return {
+        short: 'Audience sync: Mailercloud writes failing for 6 hours',
+        what: 'Contact writes to Mailercloud have been failing for more than 6 hours.',
+        did: 'Kept retrying (hourly). Nothing is lost; the Premium digest is held if its audience falls too far behind.',
+        todo: 'Check Mailercloud’s status and the sync key.',
+      };
+    case 'audience_drift':
+      return {
+        short: 'Audience sync: Mailercloud does not match our audience',
+        what: `The nightly check found ${Number(m.mismatched ?? 0)} of ${Number(m.sampled ?? 0)} sampled contacts with the wrong tags${m.premiumOurs !== undefined ? ` (Premium: ours ${Number(m.premiumOurs)}, Mailercloud ${m.premiumMailercloud === null || m.premiumMailercloud === undefined ? 'unknown' : Number(m.premiumMailercloud)})` : ''}.`,
+        did: 'Marked the mismatched contacts for re-sync.',
+        todo: 'Nothing if it clears tomorrow. If it repeats, someone may be editing those tags by hand in Mailercloud.',
+      };
     case 'resolved':
       return {
         short: 'Resolved — digest sent',

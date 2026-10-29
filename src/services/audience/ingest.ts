@@ -101,8 +101,14 @@ function sameDate(a: Date | null, b: Date | null): boolean {
   return (a?.getTime() ?? null) === (b?.getTime() ?? null);
 }
 
-/** The stored content a list row at an equal seq must match (else `seqConflict`). */
-function sameContent(row: CmsAccount, next: Omit<CmsAccount, 'updatedAt' | 'portal' | 'lastSource'>): boolean {
+/** The account columns a snapshot sets (everything but portal / lastSource / updatedAt). */
+export type AccountState = Omit<CmsAccount, 'updatedAt' | 'portal' | 'lastSource'>;
+
+/**
+ * The stored content a list row at an equal seq must match (else `seqConflict`). `outOfScopeAt` is
+ * not CMS content (our absence marker), so it is not compared here.
+ */
+export function sameAccountContent(row: AccountState, next: AccountState): boolean {
   return (
     row.status === next.status &&
     row.unknownStatus === next.unknownStatus &&
@@ -114,6 +120,31 @@ function sameContent(row: CmsAccount, next: Omit<CmsAccount, 'updatedAt' | 'port
     (row.deletedAt === null) === (next.deletedAt === null) &&
     (row.erasedAt === null) === (next.erasedAt === null)
   );
+}
+
+/**
+ * Pure: the row a snapshot produces over the stored one (`prev`; null = first sighting). A null email
+ * never changes the linked address: withheld (consent false + free/ended) and deletions keep the last
+ * known hash, so the address stays excluded. An unknown status keeps the last known one. Any snapshot
+ * proves the account is in scope again (`outOfScopeAt` cleared). The task-5 pull uses this to skip an
+ * equal-seq list row whose content already matches, without a transaction.
+ */
+export function nextAccountState(prev: AccountState | null, snap: AccountSnapshot, now: Date): AccountState {
+  const known = isKnownStatus(snap.status);
+  return {
+    accountId: snap.accountId,
+    seq: snap.seq,
+    status: known ? snap.status : (prev?.status ?? snap.status),
+    unknownStatus: known ? null : snap.status,
+    plan: snap.plan,
+    periodEnd: snap.periodEnd,
+    consentValue: snap.consentValue,
+    consentAt: snap.consentAt,
+    emailHash: snap.email ? emailHash(snap.email) : (prev?.emailHash ?? null),
+    deletedAt: snap.deleted ? (prev?.deletedAt ?? snap.deletedAt ?? now) : null,
+    erasedAt: prev?.erasedAt ?? (snap.deleted && snap.erasure ? now : null),
+    outOfScopeAt: null,
+  };
 }
 
 /**
@@ -156,29 +187,15 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
   }
   const equalSeq = prev !== null && snap.seq === prev.seq;
 
-  // 4. The next row. A null email never changes the linked address: withheld (consent false +
-  //    free/ended) and deletions keep the last known hash, so the address stays excluded.
-  const known = isKnownStatus(snap.status);
-  const next = {
-    accountId: snap.accountId,
-    seq: snap.seq,
-    status: known ? snap.status : (prev?.status ?? snap.status),
-    unknownStatus: known ? null : snap.status,
-    plan: snap.plan,
-    periodEnd: snap.periodEnd,
-    consentValue: snap.consentValue,
-    consentAt: snap.consentAt,
-    emailHash: snap.email ? emailHash(snap.email) : (prev?.emailHash ?? null),
-    deletedAt: snap.deleted ? (prev?.deletedAt ?? snap.deletedAt ?? now) : null,
-    erasedAt: prev?.erasedAt ?? (snap.deleted && snap.erasure ? now : null),
-  };
+  // 4. The next row (`nextAccountState`, pure).
+  const next = nextAccountState(prev, snap, now);
   if (equalSeq && prev) {
-    result.seqConflict = !sameContent(prev, next);
+    result.seqConflict = !sameAccountContent(prev, next);
     result.outcome = 'repaired';
   } else {
     result.outcome = 'applied';
   }
-  result.changed = !prev || !sameContent(prev, next) || prev.seq !== next.seq;
+  result.changed = !prev || !sameAccountContent(prev, next) || prev.seq !== next.seq || prev.outOfScopeAt !== null;
 
   if (prev) {
     await tx.cmsAccount.update({ where: { accountId: snap.accountId }, data: { ...next, lastSource: source } });
@@ -227,6 +244,8 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
     cfg,
     emailFor: snap.email && next.emailHash ? { [next.emailHash]: snap.email } : {},
     eraseHash: next.erasedAt !== null ? next.emailHash : null,
+    // A lift happened on the CURRENT address (M2): the writer may re-subscribe it (task 6, flag-gated).
+    resubscribeHash: result.lifted > 0 ? next.emailHash : null,
   });
   result.memberChanges = members.changes;
   result.roleChanges = members.roleChanges;
@@ -291,7 +310,7 @@ async function liftOnConsent(tx: Tx, snap: AccountSnapshot, hash: string | null,
 
 /** Live accounts other than `accountId` that hold this address. */
 async function otherLiveHolders(tx: Tx, hash: string, accountId: string): Promise<number> {
-  return tx.cmsAccount.count({ where: { emailHash: hash, deletedAt: null, NOT: { accountId } } });
+  return tx.cmsAccount.count({ where: { emailHash: hash, deletedAt: null, outOfScopeAt: null, NOT: { accountId } } });
 }
 
 /** Over AUDIENCE_MAX_ERASURES_PER_DAY erasures today → the breaker opens (writes pause; ingest continues). */
@@ -317,6 +336,11 @@ export type RecomputeOptions = {
    * holds it. The row keeps its hash and (held only by deleted accounts) its No-marketing flag.
    */
   eraseHash?: string | null;
+  /**
+   * Ingest lifted a suppression on this address (the account's CURRENT one, QA M2): mark the member
+   * `resubscribePending` (kept, with its address, until the writer has handled it — task 6).
+   */
+  resubscribeHash?: string | null;
 };
 
 export type RecomputeResult = { changes: number; roleChanges: number; premiumRemovals: number; addressNulled: boolean };
@@ -357,17 +381,21 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
     const linked = byHash.get(h)!;
     const { role, noMarketing } = memberRole(linked, { formerToFree: cfg.formerToFree });
     const liveIds = linked.filter(isLive).map((a) => a.accountId);
-    // By address OR by any live account holding it (an opt-out follows an email change).
-    const suppressed = await isSuppressed(tx, { emailHash: h, accountIds: liveIds });
     await tx.$queryRaw`SELECT 1 FROM "AudienceMember" WHERE "emailHash" = ${h} FOR UPDATE`;
     const existing = await tx.audienceMember.findUnique({ where: { emailHash: h } });
-    // Erased and no live account still uses the address: nothing of it stays but the hash.
     const erase = opts.eraseHash === h && liveIds.length === 0;
+    const resubscribePending = !erase && (opts.resubscribeHash === h || (existing?.resubscribePending ?? false));
+    // Fast path (most of a first full load: plain free readers): nothing held, nothing to hold.
+    if (!existing && role === 'NONE' && !noMarketing && !resubscribePending) continue;
+    // By address OR by any live account holding it (an opt-out follows an email change). A plain
+    // read: the lock order stays EmailSuppression (writers) → AudienceMember.
+    const suppressed = await isSuppressed(tx, { emailHash: h, accountIds: liveIds });
+    // Erased and no live account still uses the address: nothing of it stays but the hash.
     const address = erase ? null : (opts.emailFor?.[h] ?? existing?.email ?? null);
     if (erase && existing?.email) out.addressNulled = true;
     const appliedTags = erase ? [] : (existing?.appliedTags ?? []);
 
-    const needed = role !== 'NONE' || noMarketing || appliedTags.length > 0;
+    const needed = role !== 'NONE' || noMarketing || appliedTags.length > 0 || resubscribePending;
     if (!needed) {
       if (existing) {
         await tx.audienceMember.delete({ where: { emailHash: h } });
@@ -384,6 +412,7 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
       noMarketing,
       suppressed,
       email: address,
+      resubscribePending,
       ...(erase ? { appliedTags: [], mcState: 'ABSENT' } : {}),
     };
     if (!existing) {
@@ -408,9 +437,10 @@ export async function recomputeMember(tx: Tx, hash: string, opts: RecomputeOptio
 
 function memberUnchanged(
   m: AudienceMember,
-  d: { desiredRole: string; noMarketing: boolean; suppressed: boolean; email: string | null; appliedTags?: string[] },
+  d: { desiredRole: string; noMarketing: boolean; suppressed: boolean; email: string | null; resubscribePending: boolean; appliedTags?: string[] },
 ): boolean {
   return (
+    m.resubscribePending === d.resubscribePending &&
     m.desiredRole === d.desiredRole &&
     m.noMarketing === d.noMarketing &&
     m.suppressed === d.suppressed &&
