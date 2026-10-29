@@ -39,8 +39,10 @@ import {
 
 /**
  * Digest Templates (docs/EMAIL_DIGEST_DESIGN.md §6, §7 Templates, §9; task 10).
- * Mounted inside `/api/digest`. ADMIN only (an ADMIN session or the
- * ADMIN_TOKEN bearer) — templates hold raw HTML. A publisher gets 403.
+ * Mounted inside `/api/digest`. Any signed-in staff user (ADMIN or PUBLISHER —
+ * owner, 29 Oct 2026; reverses the 22 Oct "admins edit templates") or the
+ * ADMIN_TOKEN bearer; no session is 401. Templates hold raw HTML (sanitised and
+ * previewed under the sandbox CSP).
  *
  *   GET  /templates                       list + what each audience uses now + placeholders + built-in source
  *   GET  /templates/:id                   one, with source and its last checklist
@@ -69,7 +71,7 @@ export type DigestTemplatesRouterOptions = {
   mjml?: MjmlCompiler | null;
 };
 
-const ADMIN = requireBearerOrUser(['ADMIN']);
+const STAFF = requireBearerOrUser(['ADMIN', 'PUBLISHER']);
 const AUDIENCE = z.enum(['FREE', 'PREMIUM'], { error: 'Audience must be Free or Premium' });
 
 const name = z
@@ -177,7 +179,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
   const audit = (req: Request, action: 'DIGEST_TEMPLATE_SAVED' | 'DIGEST_TEMPLATE_ACTIVATED' | 'DIGEST_TEMPLATE_ARCHIVED' | 'DIGEST_TEMPLATE_REVERTED', id: string, metadata: Record<string, unknown>) =>
     recordAudit({ userId: req.user?.id ?? null, action, resourceType: 'DigestTemplate', resourceId: id, metadata, ipAddress: req.ip ?? null });
 
-  router.get('/templates', ADMIN, async (_req, res, next) => {
+  router.get('/templates', STAFF, async (_req, res, next) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
       return res.json(await listPayload());
@@ -187,7 +189,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
   });
 
   // The built-in template's preview (registered before /templates/:id so "builtin" is not an id).
-  router.get('/templates/builtin/preview/:audience', ADMIN, async (req, res, next) => {
+  router.get('/templates/builtin/preview/:audience', STAFF, async (req, res, next) => {
     try {
       const audience = parseAudience(req.params.audience);
       if (!audience) return res.status(400).json({ error: 'bad_audience' });
@@ -197,7 +199,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.get('/templates/:id', ADMIN, async (req, res, next) => {
+  router.get('/templates/:id', STAFF, async (req, res, next) => {
     try {
       const t = await find(req.params.id);
       if (!t) return res.status(404).json({ error: 'not_found' });
@@ -208,7 +210,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.post('/templates', ADMIN, async (req, res, next) => {
+  router.post('/templates', STAFF, async (req, res, next) => {
     try {
       const parsed = CreateSchema.safeParse(req.body ?? {});
       if (!parsed.success) return invalid(res, parsed.error.issues);
@@ -252,7 +254,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.put('/templates/:id', ADMIN, async (req, res, next) => {
+  router.put('/templates/:id', STAFF, async (req, res, next) => {
     try {
       const existing = await find(req.params.id);
       if (!existing) return res.status(404).json({ error: 'not_found' });
@@ -287,7 +289,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.post('/templates/:id/validate', ADMIN, async (req, res, next) => {
+  router.post('/templates/:id/validate', STAFF, async (req, res, next) => {
     try {
       const t = await find(req.params.id);
       if (!t) return res.status(404).json({ error: 'not_found' });
@@ -298,7 +300,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.get('/templates/:id/preview', ADMIN, async (req, res, next) => {
+  router.get('/templates/:id/preview', STAFF, async (req, res, next) => {
     try {
       const t = await find(req.params.id);
       if (!t) return res.status(404).json({ error: 'not_found' });
@@ -312,7 +314,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.post('/templates/:id/activate', ADMIN, async (req, res, next) => {
+  router.post('/templates/:id/activate', STAFF, async (req, res, next) => {
     try {
       if (req.body?.confirm !== true) return res.status(400).json({ error: 'confirm_required', message: 'Activating needs confirm: true.' });
       const r = await activateTemplate(req.params.id, { portal: o.portal(), cfg: o.cfg(), now: o.clock() });
@@ -329,7 +331,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.post('/templates/:id/schedule', ADMIN, async (req, res, next) => {
+  router.post('/templates/:id/schedule', STAFF, async (req, res, next) => {
     try {
       const parsed = ScheduleSchema.safeParse(req.body ?? {});
       if (!parsed.success) return invalid(res, parsed.error.issues);
@@ -342,7 +344,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.post('/templates/:id/archive', ADMIN, async (req, res, next) => {
+  router.post('/templates/:id/archive', STAFF, async (req, res, next) => {
     try {
       if (req.body?.confirm !== true) return res.status(400).json({ error: 'confirm_required', message: 'Archiving needs confirm: true.' });
       const r = await archiveTemplate(req.params.id, { portal: o.portal(), now: o.clock() });
@@ -354,7 +356,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     }
   });
 
-  router.post('/templates/revert/:audience', ADMIN, async (req, res, next) => {
+  router.post('/templates/revert/:audience', STAFF, async (req, res, next) => {
     try {
       if (req.body?.confirm !== true) return res.status(400).json({ error: 'confirm_required', message: 'Reverting needs confirm: true.' });
       const audience = parseAudience(req.params.audience);

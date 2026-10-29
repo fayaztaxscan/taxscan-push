@@ -73,14 +73,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // CMS account events (door W): HMAC over the RAW body, so ahead of every JSON parser too.
   // Always mounted; answers 401 to everything while AUDIENCE_SYNC_ENABLED is off (contract v1.2 §3).
   app.use('/api/integrations', createIntegrationsRouter(opts.cmsEvents));
-  // Digest templates (task 10, ADMIN only) carry a whole email layout: their own,
+  // Digest templates (task 10; ADMIN or PUBLISHER since 29 Oct) carry a whole email layout: their own,
   // larger JSON limit, ahead of the global one (which then skips a parsed body).
   // Authenticated FIRST (2026-10-23): an anonymous caller gets 401 before a byte of
   // a 600 KB body is parsed. The cookie parser runs here too (it skips itself later).
   app.use(
     '/api/digest/templates',
     cookieParser(env.sessionCookieSecret),
-    requireBearerOrUser(['ADMIN']),
+    requireBearerOrUser(['ADMIN', 'PUBLISHER']),
     express.json({ limit: '600kb' }),
   );
   app.use(express.json({ limit: '64kb' }));

@@ -484,33 +484,57 @@ describe('revert to the previous version', () => {
 /* Access, audit, preview                                               */
 /* ================================================================== */
 
-describe('ADMIN only', () => {
-  it('a publisher gets 403 on every templates route (previews included); no session 401; bearer and admin get through', async () => {
+describe('any signed-in staff user (ADMIN or PUBLISHER, owner 29 Oct)', () => {
+  const ok = (name: string, status: number) => expect([name, status >= 200 && status < 300]).toEqual([name, true]);
+
+  it('a publisher gets 2xx on every templates route (previews, activate, revert and the large-body path included)', async () => {
     const portal = newPortal();
     const app = appFor(portal);
-    const t = await create(app, { name: 'X', audience: 'FREE', copyFrom: 'builtin' });
-    const calls: [string, string, Record<string, unknown>?][] = [
-      ['get', '/api/digest/templates'],
-      ['get', `/api/digest/templates/${t.id}`],
-      ['post', '/api/digest/templates', { name: 'p', audience: 'FREE', copyFrom: 'builtin' }],
-      ['put', `/api/digest/templates/${t.id}`, { name: 'p' }],
-      ['post', `/api/digest/templates/${t.id}/validate`, {}],
-      ['get', `/api/digest/templates/${t.id}/preview`],
-      ['get', '/api/digest/templates/builtin/preview/free'],
-      ['post', `/api/digest/templates/${t.id}/activate`, { confirm: true }],
-      ['post', `/api/digest/templates/${t.id}/schedule`, { startsAt: IST(0, 0, 23).toISOString(), endsAt: IST(0, 0, 24).toISOString() }],
-      ['post', `/api/digest/templates/${t.id}/archive`, { confirm: true }],
-      ['post', '/api/digest/templates/revert/free', { confirm: true }],
+    const fresh = () => create(app, { name: 'X', audience: 'FREE', copyFrom: 'builtin' }).then((t) => t.id);
+    const calls: [string, (id: string) => request.Test][] = [
+      ['GET /templates', () => request(app).get('/api/digest/templates')],
+      ['GET /templates/:id', (id) => request(app).get(`/api/digest/templates/${id}`)],
+      ['POST /templates', () => request(app).post('/api/digest/templates').send({ name: 'p', audience: 'FREE', copyFrom: 'builtin' })],
+      ['POST /templates (120 KB body, past the 64 KB default parser)', () => request(app).post('/api/digest/templates').send({ name: 'Big', audience: 'FREE', source: `<p>${'x'.repeat(120_000)}</p>` })],
+      ['PUT /templates/:id', (id) => request(app).put(`/api/digest/templates/${id}`).send({ name: 'p' })],
+      ['POST /templates/:id/validate', (id) => request(app).post(`/api/digest/templates/${id}/validate`).send({})],
+      ['GET /templates/:id/preview', (id) => request(app).get(`/api/digest/templates/${id}/preview`)],
+      ['GET /templates/builtin/preview/free', () => request(app).get('/api/digest/templates/builtin/preview/free')],
+      ['POST /templates/:id/activate', (id) => request(app).post(`/api/digest/templates/${id}/activate`).send({ confirm: true })],
+      ['POST /templates/:id/schedule', (id) => request(app).post(`/api/digest/templates/${id}/schedule`).send({ startsAt: IST(0, 0, 23).toISOString(), endsAt: IST(0, 0, 24).toISOString() })],
+      ['POST /templates/:id/archive', (id) => request(app).post(`/api/digest/templates/${id}/archive`).send({ confirm: true })],
     ];
-    for (const [method, path, body] of calls) {
-      const call = (r: request.Test) => (body ? r.send(body) : r);
-      const verb = (r: ReturnType<typeof request>) => (r as unknown as Record<string, (p: string) => request.Test>)[method](path);
-      expect([path, (await call(verb(request(app)).set('Cookie', publisherCookie))).status]).toEqual([path, 403]);
-      expect([path, (await call(verb(request(app)))).status]).toEqual([path, 401]);
-    }
+    for (const [name, run] of calls) ok(name, (await run(await fresh()).set('Cookie', publisherCookie)).status);
+    for (const [name, run] of calls) expect([name, (await run(await fresh())).status]).toEqual([name, 401]);
+
+    // Revert needs a replaced template to go back to: its own portal and history.
+    const rp = newPortal();
+    const rapp = appFor(rp);
+    const first = await create(rapp, { name: 'R1', audience: 'FREE', source: marked('R1') });
+    await activate(rapp, first.id);
+    const second = await create(rapp, { name: 'R2', audience: 'FREE', source: marked('R2') });
+    await activate(rapp, second.id);
+    ok('POST /templates/revert/:audience', (await request(rapp).post('/api/digest/templates/revert/free').set('Cookie', publisherCookie).send({ confirm: true })).status);
+    expect((await request(rapp).post('/api/digest/templates/revert/free').send({ confirm: true })).status).toBe(401);
+
     expect((await request(app).get('/api/digest/templates').set('Authorization', AUTH)).status).toBe(200);
     expect((await request(app).get('/api/digest/templates').set('Cookie', adminCookie)).status).toBe(200);
-    expect(await prisma.digestTemplate.findUniqueOrThrow({ where: { id: t.id } })).toMatchObject({ name: 'X', status: 'DRAFT' });
+  });
+
+  it('what a publisher saves, activates and archives is audited with the publisher as the actor', async () => {
+    const portal = newPortal();
+    const app = appFor(portal);
+    const made = await request(app).post('/api/digest/templates').set('Cookie', publisherCookie).send({ name: 'By publisher', audience: 'FREE', source: marked('PUB') });
+    expect(made.status).toBe(201);
+    const id = made.body.id as string;
+    await request(app).post(`/api/digest/templates/${id}/activate`).set('Cookie', publisherCookie).send({ confirm: true });
+    const other = await create(app, { name: 'Other', audience: 'FREE', copyFrom: 'builtin' });
+    await request(app).post(`/api/digest/templates/${other.id}/archive`).set('Cookie', publisherCookie).send({ confirm: true });
+    const rows = await prisma.auditLog.findMany({ where: { resourceType: 'DigestTemplate', resourceId: id }, orderBy: { createdAt: 'asc' } });
+    expect(rows.map((r) => r.action)).toEqual(['DIGEST_TEMPLATE_SAVED', 'DIGEST_TEMPLATE_ACTIVATED']);
+    expect(rows.every((r) => r.userId === publisher.id)).toBe(true);
+    const archived = await prisma.auditLog.findFirstOrThrow({ where: { resourceType: 'DigestTemplate', resourceId: other.id, action: 'DIGEST_TEMPLATE_ARCHIVED' } });
+    expect(archived.userId).toBe(publisher.id);
   });
 });
 

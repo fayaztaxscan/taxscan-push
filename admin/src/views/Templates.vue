@@ -7,7 +7,7 @@ import { AUDIENCES, AUDIENCE_LABEL, PREVIEW_WIDTHS, type Audience, type PreviewW
 
 /**
  * Templates (docs/EMAIL_DIGEST_DESIGN.md §7): the layout of each audience's
- * digest email. ADMIN only. Every decision is the server's — which template is
+ * digest email. Any signed-in user. Every decision is the server's — which template is
  * in use (`resolveTemplate`), whether one may be activated (the checklist) —
  * and this screen shows its answer.
  *

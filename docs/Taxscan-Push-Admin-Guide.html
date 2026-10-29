@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.3 &nbsp;·&nbsp; Updated 23 October 2026
+    &nbsp;·&nbsp; Version 2.4 &nbsp;·&nbsp; Updated 29 October 2026
   </div>
 </div>
 
@@ -123,7 +123,7 @@
   <li><span class="n">7</span> Sending a notification yourself (Compose)</li>
   <li><span class="n">8</span> The other screens — Campaigns, Reports, Reads &amp; Surfaces</li>
   <li><span class="n">9</span> The email digest — the Digests screen</li>
-  <li><span class="n">10</span> Digest ads and templates (Admins)</li>
+  <li><span class="n">10</span> Digest ads and templates</li>
   <li><span class="n">11</span> Quick reference card</li>
   <li><span class="n">12</span> Frequently asked questions</li>
 </ol>
@@ -160,8 +160,8 @@ you want to. This guide shows you how.</p>
 <table>
   <thead><tr><th style="width:25%">Role</th><th>What they can do</th></tr></thead>
   <tbody>
-    <tr><td><strong>Administrator</strong></td><td>Everything below, <em>plus</em> add/remove team members and change roles (the <strong>Users</strong> screen), and manage the email digest's <strong>Ads</strong> and <strong>Templates</strong>.</td></tr>
-    <tr><td><strong>Publisher</strong></td><td>Use the Dashboard, Review queue, Compose/send, Campaigns, Reports, <strong>Digests</strong> (approve, hold, send) and Activity. Cannot manage other users, ads or templates.</td></tr>
+    <tr><td><strong>Administrator</strong></td><td>Everything below, <em>plus</em> add/remove team members and change roles (the <strong>Users</strong> screen) and choose who gets the report email.</td></tr>
+    <tr><td><strong>Publisher</strong></td><td>Use the Dashboard, Review queue, Compose/send, Campaigns, Reports, <strong>Digests</strong> (approve, hold, send), the digest's <strong>Ads</strong> and <strong>Templates</strong>, and Activity. Cannot manage other users or the report email list.</td></tr>
   </tbody>
 </table>
 <div class="box tip"><span class="box-t">Tip — changing your password</span>
@@ -410,7 +410,7 @@ notification will look before sending it to anyone.</p>
     <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one, then confirm, to send it immediately instead of waiting its turn. At night (11 pm – 7 am) it only goes as Breaking. If the article has been deleted from the site, it is archived instead of sent.</td></tr>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
     <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
-    <tr><td><strong>Digests</strong></td><td>The daily email digest: preview, approve, hold or send it, and its last 14 days. See section 9. <span class="muted">Ads and Templates (Admins only) are in section 10.</span></td></tr>
+    <tr><td><strong>Digests</strong></td><td>The daily email digest: preview, approve, hold or send it, and its last 14 days. See section 9. <span class="muted">Ads and Templates (open to everyone signed in) are in section 10.</span></td></tr>
     <tr><td><strong>Activity</strong></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
     <tr><td><strong>Users</strong> <span class="muted">(Admins only)</span></td><td>Add teammates by email invite or with a temporary password, change their role, or deactivate them. New members get a link to set their own password.</td></tr>
     <tr><td><strong>Change password</strong></td><td>Update your own password at any time.</td></tr>
@@ -617,7 +617,7 @@ a day</strong> and is never sent again on a later day.</p>
 </table>
 <div class="box info"><span class="box-t">Who can do what</span>
   <strong>Publishers</strong> can approve, hold, Send now, Retry now and test send — like Push now. <strong>Ads</strong> and
-  <strong>Templates</strong> are for <strong>Administrators</strong> only, and appear in their menu only.</div>
+  <strong>Templates</strong> are open to <strong>everyone who is signed in</strong> — publishers and administrators alike. Only Users and the report email list are for administrators.</div>
 <div class="box tip"><span class="box-t">Failures retry by themselves</span>
   If Mailercloud doesn't answer, or the build fails, the system tries again <strong>1, 5 and 15 minutes</strong> later,
   then <strong>every hour</strong> until 17:00; <em>Retry now</em> just skips the wait. Errors a retry can't fix (a
@@ -655,16 +655,16 @@ dismissed. The common ones:</p>
   <tbody>
     <tr><td>Today's digest is waiting for approval</td><td>Read the preview, then <strong>Approve</strong> or <strong>Hold</strong> before 17:00, or it is skipped.</td></tr>
     <tr><td>Mailercloud is not answering; today's digest is retrying</td><td>Nothing yet — it retries by itself until 17:00.</td></tr>
-    <tr><td>…stopped: an ad slot cannot be filled</td><td>An admin opens <strong>Ads</strong>, fixes the slot named in the notice, then presses <strong>Retry now</strong> before 17:00. Only that version waits; the other still goes out.</td></tr>
+    <tr><td>…stopped: an ad slot cannot be filled</td><td>An editor opens <strong>Ads</strong>, fixes the slot named in the notice, then presses <strong>Retry now</strong> before 17:00. Only that version waits; the other still goes out.</td></tr>
     <tr><td>Mailercloud rejected today's digest</td><td>Whoever runs the platform checks the Mailercloud key and plan, then <strong>Retry now</strong>.</td></tr>
     <tr><td>Mailercloud did not confirm today's digest</td><td>Look in Mailercloud for today's <code>TS-DIGEST-</code> draft, then <strong>Retry now</strong>. Nothing is ever sent twice.</td></tr>
     <tr><td>Two campaigns named TS-DIGEST-… exist in Mailercloud</td><td>Someone copied the campaign. An admin deletes the extra one in Mailercloud; the digest carries on by itself.</td></tr>
-    <tr><td>Mailercloud already had today's … campaign, which this system did not create</td><td>After a database restore, or a campaign made by hand. An admin opens it in Mailercloud: delete it (a fresh one is made) or, if it is right, <strong>Approve</strong> that version. It never goes out without an Approve.</td></tr>
+    <tr><td>Mailercloud already had today's … campaign, which this system did not create</td><td>After a database restore, or a campaign made by hand. An editor opens it in Mailercloud: delete it (a fresh one is made) or, if it is right, <strong>Approve</strong> that version. It never goes out without an Approve.</td></tr>
     <tr><td>Mailercloud rejected the health check / is unreachable</td><td>Checked at 06:15 and 07:15 (hourly while rejected). Whoever runs the platform checks the key and plan; the digest picks itself up when it passes.</td></tr>
     <tr><td>Today's digest is held: … spam-complaint rate</td><td>Yesterday's readers marked it as spam unusually often (over 0.3%). Find out why, then <strong>Approve</strong> or <strong>Hold</strong>; it never goes out by itself that day.</td></tr>
     <tr><td>Today's digest settings are incomplete</td><td>A setting on the server is missing (lists, postal address, sender). Pass it to whoever runs the platform.</td></tr>
     <tr><td>Part of today's digest was not delivered</td><td>Not re-sent (people who got it would get it twice). Its top stories go into tomorrow's digest.</td></tr>
-    <tr><td>Today's … digest used the built-in template</td><td>Today's email went out on the standard layout instead. An admin fixes the template on <strong>Templates</strong> (or reverts it).</td></tr>
+    <tr><td>Today's … digest used the built-in template</td><td>Today's email went out on the standard layout instead. An editor fixes the template on <strong>Templates</strong> (or reverts it).</td></tr>
     <tr><td>Only the Free (or Premium) digest went out today</td><td>The other version was skipped; the notice says why. Its top stories roll into the next digest.</td></tr>
     <tr><td>Mailercloud has stopped calling our webhook / reports it switched off</td><td>An admin switches the webhook back on in Mailercloud (see below). Sends are still checked meanwhile.</td></tr>
     <tr><td>The spam-complaint rate of the last … digest is unknown</td><td>Mailercloud has not confirmed that send through the webhook (or it was never confirmed sent by 17:00), so the automatic hold can't protect today's digest. An admin checks the webhook and that campaign.</td></tr>
@@ -695,7 +695,7 @@ dismissed. The common ones:</p>
 
 <!-- 10 -->
 <section class="page-break">
-<h2>10 &nbsp;Digest ads and templates <span class="muted" style="font-size:13px">(Admins)</span></h2>
+<h2>10 &nbsp;Digest ads and templates <span class="muted" style="font-size:13px">(anyone signed in)</span></h2>
 <p>Every digest carries <strong>house ads</strong> — Taxscan's own products (Academy, Shopscan), never outside
 advertisers — and is drawn from a <strong>template</strong>. Both are managed here, and both can be prepared while the
 digest is still switched off.</p>
@@ -734,7 +734,7 @@ version <strong>will not go out</strong> until it is fixed — a slot is never s
   then built from the morning's frozen stories — and, in approval mode, needs its own Approve.</div>
 
 <h3>The Templates screen</h3>
-<p><strong>In use now</strong> shows what each version's next digest is built with. Until an admin activates a template,
+<p><strong>In use now</strong> shows what each version's next digest is built with. Until an editor activates a template,
 both use the <strong>built-in template</strong>: close to today's hand-made digest — a dark header bar with the white
 Taxscan logo, Arial throughout, dark headlines, blue links and square yellow buttons. <em>New template</em> starts from a
 copy of it. Templates are <strong>plain email HTML</strong> with placeholders the digest fills:</p>
@@ -935,7 +935,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.3 · Updated 23 October 2026
+  Taxscan Push · Admin User Guide · Version 2.4 · Updated 29 October 2026
 </p>
 </section>
 

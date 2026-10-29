@@ -6,7 +6,7 @@ import { AUDIENCES, AUDIENCE_LABEL, type Audience } from '../composables/digestV
 
 /**
  * Ads (docs/EMAIL_DIGEST_DESIGN.md §7): the house ads the morning digest
- * places in its three slots. ADMIN only. The server decides eligibility and
+ * places in its three slots. Any signed-in user. The server decides eligibility and
  * coverage (`pickAds`, the build's own rule); this screen shows its answer.
  *
  * The one new element is the coverage check: each audience's email drawn as a
