@@ -11,6 +11,7 @@ import { digestStatus } from '../services/digest/status';
 import { MockSenderInProductionError, mockSendersEnabled } from '../lib/mockSenderGuard';
 import { placeholderContent } from './digestPlaceholderContent';
 import { FakeSender } from './digestFakeSender';
+import { doorMessage, type DoorResult } from '../../admin/src/composables/digestView';
 
 /**
  * Email digest task 7 (docs/EMAIL_DIGEST_DESIGN.md §6, §7, §9): the Digests
@@ -634,5 +635,115 @@ describe('read basis and reads line', () => {
     expect(readsLine(true, 'ga', null)).toBe('Ranked by reads (Google Analytics).');
     expect(readsLine(false, 'ga', 'GA data stale')).toBe('Ranked newest-first — GA data stale.');
     expect(readsLine(null, null, null)).toBeNull();
+  });
+});
+
+describe('the retry / send-now reply says what happened to each version (the banner is built from it)', () => {
+  const post = (app: ReturnType<typeof appFor>, runId: string, door: 'retry' | 'send-now') =>
+    request(app).post(`/api/digest/runs/${runId}/${door}`).set('Cookie', testerCookie).send({ confirm: true });
+
+  it('preview mode, Mailercloud refuses both drafts again (HTTP 400): both versions FAILED with their reason, and the message is RED and never says "made"', async () => {
+    const c = cfg({ DIGEST_SEND_LIVE: 'false' });
+    const sender = new FakeSender().fail('createDraft', 'FATAL', 4, { http: 400, code: 'reply_email' }); // 2 at the build, 2 on the retry
+    const run = await createdRun(c, sender);
+    const res = await post(appFor(c, sender, run.portal, ist(7, 40)), run.id, 'retry');
+    expect(res.status).toBe(200);
+    const r = res.body.result as DoorResult;
+    expect(r.state).toBe('failed');
+    expect(r.audiences?.FREE).toMatchObject({ state: 'FAILED', errorKind: 'FATAL' });
+    expect(r.audiences?.PREMIUM).toMatchObject({ state: 'FAILED', errorKind: 'FATAL' });
+    expect(r.audiences?.FREE?.error).toBeTruthy();
+    const m = doorMessage('retry', false, r);
+    expect(m.tone).toBe('err');
+    expect(m.text).toMatch(/^Retry didn't work: Free — .+; Premium — .+\. Nothing was sent\.$/);
+    expect(m.text).not.toMatch(/made/i);
+    expect(sender.count('schedule')).toBe(0);
+  });
+
+  it('preview mode, both drafts get made: green "both drafts are made", nothing scheduled', async () => {
+    const c = cfg({ DIGEST_SEND_LIVE: 'false' });
+    const sender = new FakeSender().fail('createDraft', 'FATAL', 2, { http: 400 }); // only the build fails; the retry works
+    const run = await createdRun(c, sender);
+    const res = await post(appFor(c, sender, run.portal, ist(7, 40)), run.id, 'retry');
+    const r = res.body.result as DoorResult;
+    expect([r.audiences?.FREE?.state, r.audiences?.PREMIUM?.state]).toEqual(['CREATED', 'CREATED']);
+    expect(doorMessage('retry', false, r)).toEqual({ tone: 'ok', text: 'Retried in preview mode: both drafts are made in Mailercloud, nothing is sent.' });
+    expect(sender.count('schedule')).toBe(0);
+  });
+
+  it('preview mode, one made and one still refused: the partial message names both', async () => {
+    const c = cfg({ DIGEST_SEND_LIVE: 'false' });
+    // The build: Free refused, Premium made. The retry: Free refused again.
+    const sender = new FakeSender().fail('createDraft', 'FATAL', 1, { http: 400 });
+    const run = await createdRun(c, sender);
+    sender.fail('createDraft', 'FATAL', 1, { http: 400 });
+    const res = await post(appFor(c, sender, run.portal, ist(7, 40)), run.id, 'retry');
+    const r = res.body.result as DoorResult;
+    expect(r.audiences?.FREE?.state).toBe('FAILED');
+    expect(r.audiences?.PREMIUM?.state).toBe('CREATED');
+    const m = doorMessage('retry', false, r);
+    expect(m.tone).toBe('err');
+    expect(m.text).toMatch(/^Retry only partly worked: the Premium draft is made in Mailercloud; Free — .+\. Nothing was sent\.$/);
+  });
+
+  it('Send now (live): scheduled → "Handed to Mailercloud"; the reply carries each version as SCHEDULED', async () => {
+    const c = cfg();
+    const sender = new FakeSender();
+    const run = await createdRun(c, sender);
+    const res = await post(appFor(c, sender, run.portal, ist(7, 10)), run.id, 'send-now');
+    expect(res.status).toBe(200);
+    const r = res.body.result as DoorResult;
+    expect([r.audiences?.FREE?.state, r.audiences?.PREMIUM?.state]).toEqual(['SCHEDULED', 'SCHEDULED']);
+    expect(doorMessage('send_now', true, r)).toEqual({ tone: 'ok', text: 'Handed to Mailercloud. It is sending now.' });
+  });
+
+  it('Send now (live) when Mailercloud refuses the schedule: never "Handed to Mailercloud" — red, with the reason', async () => {
+    const c = cfg();
+    const sender = new FakeSender().fail('schedule', 'FATAL', 2, { http: 400 });
+    const run = await createdRun(c, sender);
+    const res = await post(appFor(c, sender, run.portal, ist(7, 10)), run.id, 'send-now');
+    expect(res.status).toBe(200);
+    const r = res.body.result as DoorResult;
+    const m = doorMessage('send_now', true, r);
+    expect(m.text).not.toMatch(/Handed to Mailercloud\. It is sending now/);
+    expect(m.tone).toBe('err');
+    expect(m.text).toMatch(/^Send now didn't work: .+\. Nothing was sent\.$/);
+  });
+});
+
+describe('doorMessage: the wording, from the per-version outcome alone (no strings parsed)', () => {
+  const v = (state: string, error: string | null = null) => ({ state: state as never, error, errorKind: error ? 'FATAL' : null });
+  const run = (state: DoorResult['state'], audiences: DoorResult['audiences']): DoorResult => ({ state, steps: [], audiences });
+
+  it('retry in preview mode', () => {
+    expect(doorMessage('retry', false, run('created', { FREE: v('CREATED'), PREMIUM: v('CREATED') }))).toEqual({
+      tone: 'ok',
+      text: 'Retried in preview mode: both drafts are made in Mailercloud, nothing is sent.',
+    });
+    expect(doorMessage('retry', false, run('created', { FREE: v('CREATED') }))).toEqual({ tone: 'ok', text: 'Retried in preview mode: the Free draft is made in Mailercloud, nothing is sent.' });
+    expect(doorMessage('retry', false, run('failed', { FREE: v('FAILED', 'HTTP 400 reply_email.'), PREMIUM: v('FAILED', 'HTTP 400 reply_email') }))).toEqual({
+      tone: 'err',
+      text: "Retry didn't work: Free — HTTP 400 reply_email; Premium — HTTP 400 reply_email. Nothing was sent.",
+    });
+    expect(doorMessage('retry', false, run('failed', { FREE: v('FAILED', 'HTTP 400'), PREMIUM: v('CREATED') })).text).toBe(
+      'Retry only partly worked: the Premium draft is made in Mailercloud; Free — HTTP 400. Nothing was sent.',
+    );
+    // A version waiting with an error (retrying later) is not "made" either.
+    expect(doorMessage('retry', false, run('building', { FREE: v('PENDING', 'create_unconfirmed'), PREMIUM: v('CREATED') })).tone).toBe('err');
+  });
+
+  it('Send now, and anything that is neither made nor failed', () => {
+    expect(doorMessage('send_now', true, run('scheduled', { FREE: v('SCHEDULED'), PREMIUM: v('SCHEDULED') }))).toEqual({ tone: 'ok', text: 'Handed to Mailercloud. It is sending now.' });
+    expect(doorMessage('send_now', true, run('partially_sent', { FREE: v('SCHEDULED'), PREMIUM: v('FAILED', 'HTTP 400') })).text).toBe(
+      'Only the Free digest was handed to Mailercloud. Premium — HTTP 400.',
+    );
+    expect(doorMessage('send_now', true, run('created', { FREE: v('CREATED'), PREMIUM: v('CREATED') }))).toEqual({ tone: 'ok', text: "Not sent yet. Today's digest is now: drafts ready." });
+    expect(doorMessage('retry', true, run('failed', { FREE: v('FAILED', 'x'), PREMIUM: v('FAILED', 'y') })).tone).toBe('err');
+    expect(doorMessage('retry', false, { state: null }).text).toBe("Not sent yet. Today's digest is now: unchanged.");
+  });
+
+  it('a long or empty reason stays one readable clause', () => {
+    expect(doorMessage('retry', false, run('failed', { FREE: v('FAILED', 'x'.repeat(400)), PREMIUM: v('FAILED', null) })).text).toContain('Premium — it did not work');
+    expect(doorMessage('retry', false, run('failed', { FREE: v('FAILED', 'x'.repeat(400)) })).text.length).toBeLessThan(260);
   });
 });

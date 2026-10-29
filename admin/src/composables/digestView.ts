@@ -108,3 +108,60 @@ export const PREVIEW_WIDTHS = [
   { key: 'desktop', label: 'Desktop', px: 1024 },
 ] as const;
 export type PreviewWidth = (typeof PREVIEW_WIDTHS)[number];
+
+/* ------------------------------------------------------------------ */
+/* What Retry now / Send now actually did                              */
+/* ------------------------------------------------------------------ */
+
+/** One version's outcome after a press, as the server read it back (`result.audiences`). */
+export type VersionOutcome = { state: SendState; error: string | null; errorKind: string | null };
+export type DoorResult = { state: RunState | null; steps?: string[]; audiences?: Partial<Record<Audience, VersionOutcome>> };
+export type DoorMessage = { tone: 'ok' | 'err'; text: string };
+
+/** The short reason a version shows (its last error), trimmed to one readable clause. */
+export function shortReason(error: string | null): string {
+  const t = (error ?? '').replace(/\s+/g, ' ').trim().replace(/[.;:,]+$/, '');
+  if (!t) return 'it did not work';
+  return t.length > 140 ? `${t.slice(0, 139).trimEnd()}…` : t;
+}
+
+const MADE: ReadonlySet<SendState> = new Set<SendState>(['CREATED', 'SCHEDULED', 'SENT', 'PARTIALLY_SENT']);
+const HANDED: ReadonlySet<SendState> = new Set<SendState>(['SCHEDULED', 'SENT', 'PARTIALLY_SENT']);
+
+/** "Free", "Premium", or "Free and Premium". */
+const names = (list: Audience[]) => list.map((a) => AUDIENCE_LABEL[a]).join(' and ');
+
+/**
+ * The message under Digests after Retry now or Send now. It reports what happened to each version,
+ * read from the server's per-version outcome — never a fixed success sentence (29 Oct 2026: a retry
+ * Mailercloud refused twice was announced, in green, as "the draft is made").
+ *  - green only when every version this press concerned is in the state it claims;
+ *  - a version that failed (FAILED, or waiting with an error) turns it red, naming each reason;
+ *  - partly made says which version was made and which failed.
+ * `sendLive` off = preview mode: a retry makes drafts and sends nothing.
+ */
+export function doorMessage(kind: 'retry' | 'send_now', sendLive: boolean, r: DoorResult): DoorMessage {
+  const run = r.state ? runStateLabel(r.state).toLowerCase() : 'unchanged';
+  const rows = AUDIENCES.flatMap((a) => (r.audiences?.[a] ? [{ a, o: r.audiences[a] as VersionOutcome }] : []));
+  const failed = rows.filter(({ o }) => o.state === 'FAILED' || (o.state === 'PENDING' && !!o.error));
+  const made = rows.filter(({ o }) => MADE.has(o.state));
+  const handed = rows.filter(({ o }) => HANDED.has(o.state));
+  const reasons = (list: typeof rows) => list.map(({ a, o }) => `${AUDIENCE_LABEL[a]} — ${shortReason(o.error)}`).join('; ');
+  const verb = kind === 'retry' ? "Retry didn't work" : "Send now didn't work";
+
+  if (failed.length > 0) {
+    if (kind === 'retry' && !sendLive && made.length > 0) {
+      return { tone: 'err', text: `Retry only partly worked: the ${names(made.map((m) => m.a))} draft is made in Mailercloud; ${reasons(failed)}. Nothing was sent.` };
+    }
+    if (kind === 'send_now' && handed.length > 0) {
+      return { tone: 'err', text: `Only the ${names(handed.map((m) => m.a))} digest was handed to Mailercloud. ${reasons(failed)}.` };
+    }
+    return { tone: 'err', text: `${verb}: ${reasons(failed)}. Nothing was sent.` };
+  }
+  if (handed.length > 0 && handed.length === rows.length) return { tone: 'ok', text: 'Handed to Mailercloud. It is sending now.' };
+  if (kind === 'retry' && !sendLive && made.length > 0 && made.length === rows.length) {
+    const which = made.length === AUDIENCES.length ? 'both drafts are' : `the ${names(made.map((m) => m.a))} draft is`;
+    return { tone: 'ok', text: `Retried in preview mode: ${which} made in Mailercloud, nothing is sent.` };
+  }
+  return { tone: 'ok', text: `Not sent yet. Today's digest is now: ${run}.` };
+}
