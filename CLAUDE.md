@@ -75,7 +75,7 @@ browsers after endpoint rotation, so it barely grows the base.
   shop click URLs, **Test on this device** isolated preview), **Review queue**, **Send queue**
   (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
   Manual/Automatic — Push-now sets `createdByUserId`), **Reports**,
-  **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (+ downloadable PDF).
+  **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (one HTML copy; "Print / Save as PDF" makes a PDF on the spot — the stored PDF and `build:guide` were removed 2026-10-29).
   Responsive phone→tablet→desktop (nav collapses to a hamburger below 1200px). **Phones (≤720px,
   2026-10-07):** data tables carry `class="stack"` and render one card per row — `data-label` on each
   `<td>` names it, `cell-lead/-wide/-full/-late/-actions` place it (app.css); fields are 16px (no iOS
@@ -93,7 +93,7 @@ browsers after endpoint rotation, so it barely grows the base.
   IST) Queue/Review Push now answer **409 `quiet_hours`** and change nothing; the admin then offers
   "Send now as Breaking" / "Leave for morning" — Breaking is the only way through at night (Compose
   `force` without `breaking` was already deferred). Both Push now doors also run the pacer's dead-link
-  check (deleted article → EXPIRED, **410 `dead_link`**; fail-open). Admin guide now **v2.3** (21 pages).
+  check (deleted article → EXPIRED, **410 `dead_link`**; fail-open). Admin guide now **v2.5** (29 Oct: publishers may use Ads + Templates; Templates → "Preview built-in").
 - **Resilient data fetch** — the shared `useApi` adds a 15s timeout + retry (network/502/503/504,
   GET-only) and routes a 401 to `/login?reason=expired`, so a cold worker / flaky connection no
   longer leaves Refresh stuck or "failed to load". `/api/metrics` (20s) and `/api/reports` (60s)
@@ -115,7 +115,7 @@ browsers after endpoint rotation, so it barely grows the base.
 - **Push-side changes in the digest PR (2026-10-23):** notifications use our own icon + badge
   `push.taxscan.in/brand/taxscan-icon-192.png` (the designer's 2026-10-23 mark; taxscan.in's old PWA icon
   has 404'd since the CMS move); body-parser errors answer **413/400/415** and never log the body
-  (`src/lib/httpErrors.ts`); every `console.*` of an error goes through **`safeErrorLog`** (`src/lib/redact.ts`;
+  (`src/lib/httpErrors.ts`); every `console.*` of an error goes through **`safeErrorLog`** (`src/lib/httpErrors.ts`; redaction in `src/lib/redact.ts`;
   never a Prisma message, which quotes query values — a source-scan test fails on a bare `err`); the R2
   backup is **format v2** (adds the digest tables + `EmailSuppression`; v1 files still restore).
 - **Email digest (Mailercloud, "Option B") — BUILT, shipped DARK (every digest flag OFF).** Replaces the
@@ -350,6 +350,13 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
   at a time. Project roles live in `.claude/agents/` (software-architect, product-manager,
   backend-developer, ui-developer, qa-verifier, devops-engineer, record-keeper, authz-sweeper,
   audience-strategist); default pipeline Architect → Developer → QA. Agents never push or merge.
+- **Two-session workflow (owner, 2026-10-29).** A **planning** session talks with the owner, reads code + prod
+  read-only, writes one brief per change (`docs/briefs/<date>-<name>.md`, from `docs/briefs/TEMPLATE.md`),
+  reviews each build's `.REPORT.md`, merges `build/<name>` → `develop`, and moves to `main` only on the owner's
+  explicit yes. It is the ONLY session that edits the record (this file, `NEXT_STEP.md`, `KNOWN_ISSUES.md`,
+  memory) and it runs no full suite. A **build** session follows `docs/briefs/BUILD-SESSION.md`: its own
+  worktree off `origin/develop` + its own `taxscan_push_build_<name>` DB + a minimal `.env` with no live keys,
+  one code commit + one report commit, pushes only its branch, never touches `main`/`develop`/Railway/the stash.
 - Work one numbered task at a time. After each, run the acceptance check, then stop and summarize.
 - Commit to `develop` after each task with a clear message (e.g. "Task 3: VAPID config").
 - Write tests as you go. Keep functions small and documented.

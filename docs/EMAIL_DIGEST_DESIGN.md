@@ -623,7 +623,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
 - **Links:** every article and ad link must pass `isAllowedPushUrl()`, the same allowlist and the same
   function push uses. This is checked when an ad is saved *and* again at render, where a non-allowlisted
   item is dropped. UTM parameters are added at render only.
-- **Roles:** Templates and Ads are ADMIN-only. Templates hold raw HTML, so all previews render in
+- **Roles:** ~~Templates and Ads are ADMIN-only.~~ *Superseded 29 Oct 2026: publishers too (see §12).* Templates hold raw HTML, so all previews render in
   `sandbox` iframes with a CSP sandbox header and never in the SPA's own origin context. Every approve,
   hold, send-now, retry, test send, template change and ad change writes an audit row.
 - **Webhook:** Mailercloud offers no signature, so the URL carries a 256-bit secret token. The route
@@ -735,7 +735,7 @@ Selection and failure-handling tests:
   digest **holds until the cut-off**, then skips. Auto-send is decided before going to full.
 - ~~**MJML** approved, on condition that one Railway build is verified on a branch first.~~ **Superseded 23 Oct
   2026: MJML is not adopted for now** — see below.
-- **Roles:** publishers may approve, hold, Send now and Retry (like Push now); Templates and Ads are admin-only.
+- **Roles:** publishers may approve, hold, Send now and Retry (like Push now); ~~Templates and Ads are admin-only.~~ *Superseded 29 Oct 2026: publishers too (see §12).*
 - **Item cap 12**, minimum 5. **Content:** queue-approved items only (no unreviewed explainers or job posts).
 - **Reply address:** a monitored address on the verified sending subdomain, replacing `noreply@`.
 - **Ad images:** validated (≤ 1200 px wide, ≤ 150 KB), not resized; hosted at `push.taxscan.in/email-assets`.
@@ -776,6 +776,8 @@ Selection and failure-handling tests:
   approved (the `contentPendingAt` path) is never covered by the run's approval.
 - **Reader text never carries a live merge tag** (`{{…}}` in a headline, excerpt, ad text, subject or
   preheader is neutralised).
+
+**Decided 29 Oct 2026 (owner):** **Ads and Templates are open to publishers as well as admins** ("Let us give publisher access to Digests, Ad and Templates too" — so a publisher can run the digest trial end to end). This reverses the 22 Oct "Templates and Ads are admin-only" decisions above and in §9; Users, report recipients and the subscriber endpoints stay ADMIN-only, and the digest alert emails still go to the same recipients.
 
 **Still open (owner checks in the Mailercloud account; do not ask Mailercloud support):**
 

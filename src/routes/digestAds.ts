@@ -12,8 +12,8 @@ import { istDateOf } from '../services/digest/retryPolicy';
 
 /**
  * Digest Ads (docs/EMAIL_DIGEST_DESIGN.md §6, §7 Ads, §9; task 9). Mounted
- * inside `/api/digest`. ADMIN only (a session with role ADMIN, or the
- * ADMIN_TOKEN bearer); a publisher gets 403. Every ad change writes an audit
+ * inside `/api/digest`. Any signed-in staff user (ADMIN or PUBLISHER — owner,
+ * 29 Oct 2026) or the ADMIN_TOKEN bearer; no session is 401. Every ad change writes an audit
  * row whose metadata holds the link HOST, never the full URL.
  *
  *   GET  /ads                 list (+ coverage, slots, topics)   ?archived=1 includes archived
@@ -32,7 +32,7 @@ export type DigestAdsRouterOptions = {
   portal: () => string;
 };
 
-const ADMIN = requireBearerOrUser(['ADMIN']);
+const STAFF = requireBearerOrUser(['ADMIN', 'PUBLISHER']);
 
 type AdRow = Awaited<ReturnType<typeof loadAds>>[number];
 
@@ -143,7 +143,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
     ...extra,
   });
 
-  router.get('/ads', ADMIN, async (req, res, next) => {
+  router.get('/ads', STAFF, async (req, res, next) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
       return res.json(await listPayload(req.query.archived === '1'));
@@ -152,7 +152,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
     }
   });
 
-  router.get('/ads/coverage', ADMIN, async (_req, res, next) => {
+  router.get('/ads/coverage', STAFF, async (_req, res, next) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
       return res.json(await adCoverage(o.portal(), buildAt(o.cfg())));
@@ -161,7 +161,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
     }
   });
 
-  router.post('/ads', ADMIN, async (req, res, next) => {
+  router.post('/ads', STAFF, async (req, res, next) => {
     try {
       const input = await parseAd(req, res);
       if (!input) return;
@@ -182,7 +182,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
     }
   });
 
-  router.put('/ads/:id', ADMIN, async (req, res, next) => {
+  router.put('/ads/:id', STAFF, async (req, res, next) => {
     try {
       const existing = await prisma.digestAd.findFirst({ where: { id: req.params.id, portal: o.portal() } });
       if (!existing) return res.status(404).json({ error: 'not_found' });
@@ -207,7 +207,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
     }
   });
 
-  router.post('/ads/:id/archive', ADMIN, async (req, res, next) => {
+  router.post('/ads/:id/archive', STAFF, async (req, res, next) => {
     try {
       if (req.body?.confirm !== true) return res.status(400).json({ error: 'confirm_required', message: 'Archiving needs confirm: true.' });
       const existing = await prisma.digestAd.findFirst({ where: { id: req.params.id, portal: o.portal() } });
@@ -232,7 +232,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
   // The ONLY route with a body over the global 64 KB JSON limit.
   router.post(
     '/ad-images',
-    ADMIN,
+    STAFF,
     express.raw({ type: () => true, limit: UPLOAD_LIMIT }),
     async (req, res, next) => {
       try {

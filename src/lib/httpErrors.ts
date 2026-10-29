@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { env } from './env';
+import { AUDIENCE_SECRET_NAMES, env } from './env';
 import { redactText } from './redact';
 
 /**
@@ -62,7 +62,7 @@ export function clientErrorBody(status: number, err: unknown): { error: string }
 }
 
 /** Secrets a log line must never repeat verbatim (each ≥ 8 chars is masked by `redactText`). */
-function logSecrets(): string[] {
+export function logSecrets(): string[] {
   return [
     env.adminToken,
     env.sessionCookieSecret,
@@ -70,7 +70,14 @@ function logSecrets(): string[] {
     env.digest.mailercloud.apiKey,
     env.digest.mailercloud.webhookToken,
     env.digest.mailercloud.webhookTokenPrevious,
-  ].filter((x): x is string => typeof x === 'string' && x !== '');
+    // CMS audience sync (design §8.2: `redactText` gets every secret).
+    env.audience.cms.inboundSecret,
+    env.audience.cms.inboundSecretPrevious,
+    env.audience.cms.pullSecret,
+    env.audience.mailercloud.syncApiKey,
+    // The RAW values as well: one under 32 characters counts as unset above, yet is still a secret.
+    ...AUDIENCE_SECRET_NAMES.map((name) => (process.env[name] ?? '').trim()),
+  ].filter((x, i, all): x is string => typeof x === 'string' && x !== '' && all.indexOf(x) === i);
 }
 
 /**

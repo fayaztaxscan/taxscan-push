@@ -684,7 +684,7 @@ academy/shop can plug in later. **Live in production since 2026-06-09; ~3,040 ac
   (Free + Premium): 1-minute IST tick, frozen 06:30 build, approval, 07:30 send, 17:00 cut-off, house ads,
   templates, webhooks + suppressions, staff push for approvers. `src/services/digest/`,
   `docs/EMAIL_DIGEST_DESIGN.md`, `docs/DIGEST_PILOT_RUNBOOK.md`.
-- **Admin user guide** — in-app `/guide` reader + downloadable PDF (`npm run build:guide`); v2.3.
+- **Admin user guide** — in-app `/guide` reader, one HTML copy, "Print / Save as PDF" (stored PDF + `build:guide` removed 2026-10-29); v2.5.
 - **Security** — cookie-session auth + `ADMIN_TOKEN` (cron/curl), DB-level append-only audit log,
   push-URL allowlist, rate limits, helmet.
 - **iZooto** — STOPPED (confirmed 2026-10-15: account access disabled, no longer sending). Its ~3M

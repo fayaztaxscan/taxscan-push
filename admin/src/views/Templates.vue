@@ -7,7 +7,7 @@ import { AUDIENCES, AUDIENCE_LABEL, PREVIEW_WIDTHS, type Audience, type PreviewW
 
 /**
  * Templates (docs/EMAIL_DIGEST_DESIGN.md §7): the layout of each audience's
- * digest email. ADMIN only. Every decision is the server's — which template is
+ * digest email. Any signed-in user. Every decision is the server's — which template is
  * in use (`resolveTemplate`), whether one may be activated (the checklist) —
  * and this screen shows its answer.
  *
@@ -64,6 +64,8 @@ const schedule = reactive({ startsAt: '', endsAt: '' });
 const confirming = ref<null | { kind: 'activate' | 'archive' | 'revert'; audience?: Audience }>(null);
 
 const previewData = ref<'recent' | 'worst'>('recent');
+/** The built-in layout shown for one version (Free / Premium), with or without an active template. */
+const builtinPreview = ref<Audience | null>(null);
 const width = ref<PreviewWidth>(PREVIEW_WIDTHS[0]);
 
 const templates = computed(() => (data.value?.templates ?? []).filter((t) => showArchived.value || t.status !== 'ARCHIVED'));
@@ -84,6 +86,9 @@ const activateBlock = computed(() => {
 });
 const previewSrc = computed(() =>
   current.value?.id ? `/api/digest/templates/${current.value.id}/preview?data=${previewData.value}&v=${encodeURIComponent(current.value.updatedAt)}` : null,
+);
+const builtinSrc = computed(() =>
+  builtinPreview.value ? `/api/digest/templates/builtin/preview/${builtinPreview.value.toLowerCase()}?data=${previewData.value}` : null,
 );
 /** Fill of the size meter, as a share of the limit. */
 const sizeShare = computed(() => {
@@ -324,6 +329,9 @@ onMounted(load);
             {{ inUseText(a) }}
             <span v-if="data.inUse[a].source === 'builtin'" class="muted"> — no template is active</span>
           </div>
+          <button class="btn btn-mini" :aria-pressed="builtinPreview === a" @click="builtinPreview = builtinPreview === a ? null : a">
+            {{ builtinPreview === a ? 'Hide built-in' : 'Preview built-in' }}
+          </button>
           <button
             v-if="data.revertTo[a].available"
             class="btn btn-mini"
@@ -334,6 +342,27 @@ onMounted(load);
           </button>
         </div>
       </div>
+    </section>
+
+    <!-- Preview of the BUILT-IN layout for one version: what readers get when no template is active -->
+    <section v-if="builtinPreview" class="card">
+      <div class="toolbar preview-bar">
+        <h2 style="margin: 0">Built-in template preview</h2>
+        <div class="seg" role="group" aria-label="Stories">
+          <button :class="{ on: previewData === 'recent' }" :aria-pressed="previewData === 'recent'" @click="previewData = 'recent'">Recent stories</button>
+          <button :class="{ on: previewData === 'worst' }" :aria-pressed="previewData === 'worst'" @click="previewData = 'worst'">Biggest case</button>
+        </div>
+        <div class="seg" role="group" aria-label="Screen width">
+          <button v-for="w in PREVIEW_WIDTHS" :key="w.key" :class="{ on: width.key === w.key }" :aria-pressed="width.key === w.key" @click="width = w">
+            {{ w.label }} <span class="seg-px">{{ w.px }}</span>
+          </button>
+        </div>
+        <button class="btn btn-mini" @click="builtinPreview = null">Close</button>
+      </div>
+      <p class="muted size-line">
+        The built-in layout, {{ AUDIENCE_LABEL[builtinPreview] }} digest, at {{ width.px }} px. It is what the digest uses until a template is activated. Ads are today’s picks, or samples when a slot has none.
+      </p>
+      <EmailPreviewFrame :src="builtinSrc" :width-px="width.px" :title="`Built-in ${AUDIENCE_LABEL[builtinPreview]} template preview`" />
     </section>
 
     <!-- List -->

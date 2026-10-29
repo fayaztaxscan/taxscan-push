@@ -40,8 +40,8 @@ async function onLogout() {
       <router-link to="/campaigns" @click="closeMenu">Campaigns</router-link>
       <router-link to="/reports" @click="closeMenu">Reports</router-link>
       <router-link to="/digests" @click="closeMenu">Digests</router-link>
-      <router-link v-if="user?.role === 'ADMIN'" to="/ads" @click="closeMenu">Ads</router-link>
-      <router-link v-if="user?.role === 'ADMIN'" to="/templates" @click="closeMenu">Templates</router-link>
+      <router-link to="/ads" @click="closeMenu">Ads</router-link>
+      <router-link to="/templates" @click="closeMenu">Templates</router-link>
       <router-link to="/activity" @click="closeMenu">Activity</router-link>
       <router-link v-if="user?.role === 'ADMIN'" to="/users" @click="closeMenu"
         >Users</router-link

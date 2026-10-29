@@ -689,27 +689,39 @@ const validBody = (o: Record<string, unknown> = {}) => ({
   ...o,
 });
 
-describe('routes: ADMIN only', () => {
-  it('a publisher gets 403 on every ads route; no session gets 401; the bearer and an admin get through', async () => {
+describe('routes: any signed-in staff user (ADMIN or PUBLISHER, owner 29 Oct)', () => {
+  it('a publisher gets 2xx on every ads route (coverage and image upload included); no session gets 401; the bearer and an admin get through', async () => {
     const portal = newPortal();
     const a = await dbAd(portal);
     const app = appFor(portal);
-    const calls = [
-      () => request(app).get('/api/digest/ads'),
-      () => request(app).get('/api/digest/ads/coverage'),
-      () => request(app).post('/api/digest/ads').send(validBody()),
-      () => request(app).put(`/api/digest/ads/${a.id}`).send(validBody()),
-      () => request(app).post(`/api/digest/ads/${a.id}/archive`).send({ confirm: true }),
-      () => request(app).post('/api/digest/ad-images').set('Content-Type', 'image/png').send(png(100)),
+    const calls: [string, () => request.Test][] = [
+      ['GET /ads', () => request(app).get('/api/digest/ads')],
+      ['GET /ads/coverage', () => request(app).get('/api/digest/ads/coverage')],
+      ['POST /ads', () => request(app).post('/api/digest/ads').send(validBody())],
+      ['PUT /ads/:id', () => request(app).put(`/api/digest/ads/${a.id}`).send(validBody())],
+      ['POST /ads/:id/archive', () => request(app).post(`/api/digest/ads/${a.id}/archive`).send({ confirm: true })],
+      ['POST /ad-images', () => request(app).post('/api/digest/ad-images').set('Content-Type', 'image/png').send(png(100))],
     ];
-    for (const c of calls) {
-      expect((await c().set('Cookie', publisherCookie)).status).toBe(403);
-      expect((await c()).status).toBe(401);
+    for (const [name, c] of calls) {
+      const status = (await c().set('Cookie', publisherCookie)).status;
+      expect([name, status >= 200 && status < 300]).toEqual([name, true]);
     }
-    expect(await prisma.digestAd.count({ where: { portal } })).toBe(1);
-    expect((await prisma.digestAd.findUniqueOrThrow({ where: { id: a.id } })).status).toBe('ACTIVE');
+    for (const [name, c] of calls) expect([name, (await c()).status]).toEqual([name, 401]);
     expect((await request(app).get('/api/digest/ads').set('Cookie', adminCookie)).status).toBe(200);
     expect((await request(app).get('/api/digest/ads').set('Authorization', AUTH)).status).toBe(200);
+  });
+
+  it('what a publisher saves is audited with the publisher as the actor', async () => {
+    const portal = newPortal();
+    const app = appFor(portal);
+    const created = await request(app).post('/api/digest/ads').set('Cookie', publisherCookie).send(validBody());
+    expect(created.status).toBe(201);
+    const id = created.body.id as string;
+    await request(app).put(`/api/digest/ads/${id}`).set('Cookie', publisherCookie).send(validBody({ headline: 'Edited by a publisher' }));
+    await request(app).post(`/api/digest/ads/${id}/archive`).set('Cookie', publisherCookie).send({ confirm: true });
+    const rows = await prisma.auditLog.findMany({ where: { resourceType: 'DigestAd', resourceId: id }, orderBy: { createdAt: 'asc' } });
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(rows.every((r) => r.userId === publisher.id)).toBe(true);
   });
 });
 

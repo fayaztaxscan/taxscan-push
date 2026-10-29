@@ -56,6 +56,11 @@ const ACTIONS = [
   'STAFF_PUSH_SUBSCRIBED',
   'STAFF_PUSH_UNSUBSCRIBED',
   'STAFF_PUSH_REMOVED',
+  // CMS audience sync (written from audience tasks 5–8; the default summary shows their counts)
+  'AUDIENCE_SYNC_RESUMED',
+  'AUDIENCE_FULL_LOAD',
+  'AUDIENCE_ERASURE',
+  'AUDIENCE_RESUBSCRIBED',
 ] as const;
 
 const api = useApi();
