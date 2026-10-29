@@ -203,6 +203,8 @@ describe('subscribe / unsubscribe routes', () => {
     expect((await request(app2).post('/api/staff-push/devices/test').set('Cookie', cookie).send({ endpoint: ok.endpoint })).status).toBe(200);
     expect(rec.sent.map((s) => s.endpoint)).toEqual([ok.endpoint]);
     expect(new URL(String(rec.sent[0].payload.url)).pathname).toBe('/admin/digests');
+    expect(rec.sent[0].payload.icon).toBe('https://push.taxscan.in/brand/taxscan-icon-192.png');
+    expect(rec.sent[0].payload.badge).toBe('https://push.taxscan.in/brand/taxscan-badge-96.png'); // the "Notify me" test notification too
     expect((await request(app2).post('/api/staff-push/devices/test').set('Cookie', cookie).send({ endpoint: gone.endpoint })).status).toBe(410);
     expect(await prisma.staffPushSubscription.count({ where: { id: gone.id } })).toBe(0);
     expect((await prisma.staffPushSubscription.findUnique({ where: { id: ok.id } }))?.lastSuccessAt).toBeInstanceOf(Date);
@@ -373,6 +375,7 @@ describe('the digest alert pass pushes editor kinds', () => {
     expect(p.tag).toBe('taxscan-digest-2026-10-23');
     expect(p.renotify).toBe(true);
     expect(p.icon).toBe('https://push.taxscan.in/brand/taxscan-icon-192.png');
+    expect(p.badge).toBe('https://push.taxscan.in/brand/taxscan-badge-96.png'); // the white T, not the colour logo
     expect(buildStaffPushPayload('ready_for_approval', { preview: true }, ist(6, 30), cfg())!.title).toBe("Today's digest is ready to review");
     const late = buildStaffPushPayload('not_approved_yet', {}, ist(8, 30), cfg())!;
     expect(late.title).toBe('Digest still waiting for approval');

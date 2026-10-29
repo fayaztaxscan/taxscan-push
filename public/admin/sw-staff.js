@@ -14,6 +14,8 @@
 const ADMIN_PREFIX = self.location.origin + '/admin/';
 const DIGESTS_URL = ADMIN_PREFIX + 'digests';
 const ICON = self.location.origin + '/brand/taxscan-icon-192.png';
+// The status-bar badge: the white "T" (the colour logo is a solid blob at 24 px).
+const BADGE = self.location.origin + '/brand/taxscan-badge-96.png';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
@@ -43,7 +45,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: payload.body || '',
     icon: payload.icon || ICON,
-    badge: payload.badge || ICON,
+    badge: payload.badge || BADGE,
     // One tag per run date: the 08:30 reminder replaces the 06:30 notification…
     tag,
     // …and still alerts the person again.

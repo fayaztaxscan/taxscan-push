@@ -31,7 +31,7 @@ import {
   type StaffPushTransport,
 } from '../services/staffPush';
 import { prisma } from '../lib/prisma';
-import { DEFAULT_NOTIFICATION_ICON } from '../services/send';
+import { DEFAULT_NOTIFICATION_BADGE, DEFAULT_NOTIFICATION_ICON } from '../services/send';
 
 const endpointField = z
   .string()
@@ -230,7 +230,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
           body: 'This device will get the digest approval alerts.',
           url: `${base}/admin/digests`,
           icon,
-          badge: icon,
+          badge: DEFAULT_NOTIFICATION_BADGE,
           tag: 'taxscan-staff-test',
           kind: 'staff_test',
         },

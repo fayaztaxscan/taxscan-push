@@ -53,7 +53,7 @@ function appendUtm(rawUrl: string): string {
   }
 }
 
-// Phase 1 fallback for the notification icon + badge when a campaign
+// Phase 1 fallback for the notification icon when a campaign
 // doesn't specify its own. Served by us (public/brand/, 192×192 from the
 // designer's 2026-10-23 logo) rather than taxscan.in: the CMS move on
 // 2026-09-28 removed taxscan.in's PWA icon, and every push since showed a
@@ -63,6 +63,17 @@ function appendUtm(rawUrl: string): string {
 // env-var map keyed by portal slug, or a Portal model column.
 export const DEFAULT_NOTIFICATION_ICON =
   'https://push.taxscan.in/brand/taxscan-icon-192.png';
+
+// The BADGE: the small status-bar icon Android shows. It is its own file, the
+// designer's white "T" on transparent (96×96, 2026-10-29): Android draws a badge
+// from its alpha channel only, so the coloured logo above is unusable at 24 px
+// (a solid blob). Every notification — readers' and staff's — carries this as its
+// badge, even when a campaign has its own icon: a campaign icon is colour
+// artwork and never a badge. Served by us from the same /brand/ route as the icon
+// (same cross-origin headers); the readers' sw.js is not edited — the payload's
+// `badge` overrides its fallback. Phase 2 (academy/shop) may make this per-portal.
+export const DEFAULT_NOTIFICATION_BADGE =
+  'https://push.taxscan.in/brand/taxscan-badge-96.png';
 
 export type Target = { type: 'all' } | { type: 'topics'; topics: string[] };
 
@@ -218,11 +229,8 @@ export async function executeCampaign(
       // UTM-tag the click URL for GA attribution; stored campaign.url stays clean.
       url: appendUtm(campaign.url),
       icon,
-      // Same URL as the badge for Phase 1: rendering the brand icon
-      // (Android desaturates it for the status-bar badge) is better than
-      // letting the SW fall back to its 404'd /icon-192.png. Phase 2 can
-      // ship a dedicated monochrome badge URL.
-      badge: icon,
+      // Always the monochrome "T", never the campaign's (colour) icon.
+      badge: DEFAULT_NOTIFICATION_BADGE,
       campaignId: campaign.id,
     };
 

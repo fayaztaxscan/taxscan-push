@@ -664,6 +664,21 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
     expect((await request(appFor(newPortal())).get('/brand/nope.png')).status).toBe(404);
     expect((await request(appFor(newPortal())).get('/brand/..%2Fsw.js')).status).toBe(404);
   });
+  it('the monochrome T badge gets exactly the icon\'s headers (the CORP header is load-bearing) and is the designer\'s file', async () => {
+    const icon = await request(appFor(newPortal())).get('/brand/taxscan-icon-192.png');
+    const badge = await request(appFor(newPortal())).get('/brand/taxscan-badge-96.png');
+    expect(badge.status).toBe(200);
+    expect(badge.headers['content-type']).toBe('image/png');
+    expect(badge.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(badge.headers['cache-control']).toMatch(/max-age=31536000.*immutable/);
+    for (const h of ['content-type', 'cross-origin-resource-policy', 'cache-control', 'access-control-allow-origin', 'x-content-type-options', 'cross-origin-opener-policy', 'cross-origin-embedder-policy']) {
+      expect([h, badge.headers[h]]).toEqual([h, icon.headers[h]]);
+    }
+    // 96 × 96 RGBA PNG, 692 bytes: a white T on transparent (IHDR: width, height, bit depth 8, colour type 6).
+    const png = badge.body as Buffer;
+    expect(png.length).toBe(692);
+    expect([png.readUInt32BE(16), png.readUInt32BE(20), png[24], png[25]]).toEqual([96, 96, 8, 6]);
+  });
 });
 
 /* ================================================================== */
