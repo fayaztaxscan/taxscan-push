@@ -510,7 +510,7 @@ describe('QA follow-ups', () => {
     its[0] = { ...its[0], title: `Lead${zw} ruling` };
     its[1] = { ...its[1], title: `Second${zw} ruling` };
     const r = render({ items: its, cfg: cfg({ DIGEST_POSTAL_ADDRESS: `Kochi${zw} 682001` }) });
-    const bad = /[​-‍⁠﻿‪-‮⁦-⁩]/;
+    const bad = /[\u200b-\u200d\u2060\ufeff\u202a-\u202e\u2066-\u2069]/; // zero-width and bidi controls (as escapes: the literal characters are invisible)
     expect(r.subject).toBe('Lead ruling');
     expect(r.preheader).toContain('Second ruling');
     expect(r.subject + r.preheader + r.text).not.toMatch(bad);
