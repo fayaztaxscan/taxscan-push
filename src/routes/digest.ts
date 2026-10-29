@@ -82,9 +82,9 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
   const viewerCanTest = (req: Request, cfg: DigestEnv) =>
     Boolean(req.user && cfg.testRecipients.includes(req.user.email.toLowerCase()));
 
-  // Ads (task 9): ADMIN only, works with the digest switched off so ads can be prepared first.
+  // Ads (task 9): ADMIN or PUBLISHER, works with the digest switched off so ads can be prepared first.
   router.use(createDigestAdsRouter({ cfg: cfgOf, clock: nowOf, portal: portalOf }));
-  // Templates (task 10): ADMIN only, raw HTML; previews under the same sandbox CSP as the frozen digest.
+  // Templates (task 10): ADMIN or PUBLISHER, raw HTML; previews under the same sandbox CSP as the frozen digest.
   router.use(
     createDigestTemplatesRouter({ cfg: cfgOf, clock: nowOf, portal: portalOf, previewCsp: PREVIEW_CSP, ...(opts.mjml !== undefined ? { mjml: opts.mjml } : {}) }),
   );

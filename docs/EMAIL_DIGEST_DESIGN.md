@@ -777,6 +777,8 @@ Selection and failure-handling tests:
 - **Reader text never carries a live merge tag** (`{{…}}` in a headline, excerpt, ad text, subject or
   preheader is neutralised).
 
+**Decided 29 Oct 2026 (owner):** **Ads and Templates are open to publishers as well as admins** ("Let us give publisher access to Digests, Ad and Templates too" — so a publisher can run the digest trial end to end). This reverses the 22 Oct "Templates and Ads are admin-only" decisions above and in §9; Users, report recipients and the subscriber endpoints stay ADMIN-only, and the digest alert emails still go to the same recipients.
+
 **Still open (owner checks in the Mailercloud account; do not ask Mailercloud support):**
 
 1. Are API access and the Email API included in the current plan, or billed separately?
