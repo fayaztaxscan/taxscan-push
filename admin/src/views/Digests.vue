@@ -11,6 +11,7 @@ import {
   approvalLabel,
   count,
   dateLabel,
+  doorMessage,
   kb,
   readLabel,
   runStateLabel,
@@ -18,6 +19,8 @@ import {
   sendStateLabel,
   timeIst,
   type Audience,
+  type DoorMessage,
+  type DoorResult,
   type RunState,
   type SendState,
   PREVIEW_WIDTHS,
@@ -212,29 +215,30 @@ const DOOR_UNKNOWN =
 async function confirmDoor() {
   const kind = confirming.value;
   if (!kind || !detail.value) return;
+  if (busy.value) return; // one press at a time: a second confirm while one is running does nothing
   busy.value = kind;
   error.value = null;
   notice.value = null;
+  let outcome: DoorMessage | null = null;
   try {
-    const res = await api.post<{ result: { state: RunState | null; steps: string[] } }>(
+    const res = await api.post<{ result: DoorResult }>(
       `/api/digest/runs/${detail.value.runId}/${kind === 'send_now' ? 'send-now' : 'retry'}`,
       { confirm: true },
       { timeoutMs: DISPATCH_TIMEOUT_MS, unknownMessage: DOOR_UNKNOWN },
     );
-    const st = res.result.state;
-    notice.value =
-      st === 'scheduled' || st === 'sent'
-        ? 'Handed to Mailercloud. It is sending now.'
-        : !sendLive.value && kind === 'retry'
-          ? `Retried in preview mode: the Mailercloud draft is made, nothing is sent. Today's digest is now: ${st ? runStateLabel(st).toLowerCase() : 'unchanged'}.`
-          : `Not sent yet. Today's digest is now: ${st ? runStateLabel(st).toLowerCase() : 'unchanged'}.`;
+    // What really happened to each version, not a fixed sentence: red when a version failed.
+    outcome = doorMessage(kind, sendLive.value, res.result);
   } catch (e) {
     const err = e as ApiError;
-    error.value = err.outcomeUnknown ? DOOR_UNKNOWN : apiErrorMessage(e);
+    outcome = { tone: 'err', text: err.outcomeUnknown ? DOOR_UNKNOWN : apiErrorMessage(e) };
   } finally {
     busy.value = null;
     confirming.value = null;
-    await load();
+    await load(); // refreshes the screen; it also clears `error`, so the message is set AFTER it
+    if (outcome) {
+      if (outcome.tone === 'err') error.value = outcome.text;
+      else notice.value = outcome.text;
+    }
   }
 }
 
