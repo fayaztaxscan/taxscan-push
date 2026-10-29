@@ -623,7 +623,7 @@ All three screens use the existing visual system, `stack` tables on phones and `
 - **Links:** every article and ad link must pass `isAllowedPushUrl()`, the same allowlist and the same
   function push uses. This is checked when an ad is saved *and* again at render, where a non-allowlisted
   item is dropped. UTM parameters are added at render only.
-- **Roles:** Templates and Ads are ADMIN-only. Templates hold raw HTML, so all previews render in
+- **Roles:** ~~Templates and Ads are ADMIN-only.~~ *Superseded 29 Oct 2026: publishers too (see §12).* Templates hold raw HTML, so all previews render in
   `sandbox` iframes with a CSP sandbox header and never in the SPA's own origin context. Every approve,
   hold, send-now, retry, test send, template change and ad change writes an audit row.
 - **Webhook:** Mailercloud offers no signature, so the URL carries a 256-bit secret token. The route
@@ -735,7 +735,7 @@ Selection and failure-handling tests:
   digest **holds until the cut-off**, then skips. Auto-send is decided before going to full.
 - ~~**MJML** approved, on condition that one Railway build is verified on a branch first.~~ **Superseded 23 Oct
   2026: MJML is not adopted for now** — see below.
-- **Roles:** publishers may approve, hold, Send now and Retry (like Push now); Templates and Ads are admin-only.
+- **Roles:** publishers may approve, hold, Send now and Retry (like Push now); ~~Templates and Ads are admin-only.~~ *Superseded 29 Oct 2026: publishers too (see §12).*
 - **Item cap 12**, minimum 5. **Content:** queue-approved items only (no unreviewed explainers or job posts).
 - **Reply address:** a monitored address on the verified sending subdomain, replacing `noreply@`.
 - **Ad images:** validated (≤ 1200 px wide, ≤ 150 KB), not resized; hosted at `push.taxscan.in/email-assets`.
