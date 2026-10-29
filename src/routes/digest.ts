@@ -335,6 +335,16 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       },
       ipAddress: req.ip ?? null,
     });
+    // What actually happened to each version, read back after the run (the screen builds its message
+    // from this, never from the overall state alone, and never by reading strings): the same short
+    // `lastError` the per-version line shows, and its kind (RETRYABLE / FATAL / AMBIGUOUS).
+    const afterSends = await prisma.digestSend.findMany({
+      where: { runId: exists.id },
+      select: { audience: true, state: true, lastError: true, lastErrorKind: true },
+    });
+    const audiences: Partial<Record<DigestAudience, { state: string; error: string | null; errorKind: string | null }>> = {};
+    for (const s of afterSends) audiences[s.audience] = { state: s.state, error: s.lastError, errorKind: s.lastErrorKind };
+    const reply = { ...result, audiences };
     if (result.outcome === 'refused') {
       return res.status(409).json({ error: 'refused', message: `Not sent: ${result.reason ?? 'refused by the digest rules'}.`, result });
     }
@@ -351,11 +361,11 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
           message: handed.length
             ? `Only the ${names.join(' and ')} digest went out; the rest missed the ${cfg.cutoff} IST cut-off and is not sent today.`
             : `Not sent — past the ${cfg.cutoff} IST cut-off. The top stories roll into the next digest.`,
-          result,
+          result: reply,
         });
       }
     }
-    return res.json({ ok: true, result });
+    return res.json({ ok: true, result: reply });
   }
 
   router.post('/runs/:id/send-now', requireBearerOrUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {
