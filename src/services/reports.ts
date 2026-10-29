@@ -641,7 +641,11 @@ function emailReadsSection(reads: ReadsEmailSummary, prevNoun: string): string {
       <tr>${th('Reads by category')}${th('Reads', 'right')}${th('Share', 'right')}</tr>${catRows}</table>
     <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif">
       <tr>${th('#', 'right')}${th('Most-read articles')}${th('Reads', 'right')}${th('via Push', 'right')}</tr>${topRows}</table>
-    <div style="margin-top:6px;font-size:11px;color:#94a3b8">Reads = pageviews from all traffic (Google Analytics), classified like the coverage rows above. Numbers for the newest days keep settling for ~48h.</div>`;
+    <div style="margin-top:6px;font-size:11px;color:#94a3b8">${
+      reads.sourceNote
+        ? `${reads.sourceNote}. Reads = article page views from all human traffic (robots and staff excluded), classified like the coverage rows above; “via push” counts from 15 Oct. Numbers for the newest days keep settling for ~48h.`
+        : 'Reads = pageviews from all traffic (Google Analytics), classified like the coverage rows above. Numbers for the newest days keep settling for ~48h.'
+    }</div>`;
 }
 
 /** Render the report as a self-contained HTML email (subject + body + text). */
@@ -664,7 +668,7 @@ export function renderReportEmail(
     ? `\n${fmtReadCount(reads.totalReads)} article reads so far (${fmtReadCount(reads.pushReads)} via push). Most read: ${reads.topArticles
         .slice(0, 3)
         .map((a) => `${a.title} (${fmtReadCount(a.reads)})`)
-        .join('; ')}.`
+        .join('; ')}.${reads.sourceNote ? ` ${reads.sourceNote}.` : ''}`
     : '';
   const text = `Taxscan ${periodLabel} Coverage Report (${report.start} → ${report.end})
 ${report.total} articles published, ${trendStr} vs previous ${prevNoun} (${report.prevTotal}).

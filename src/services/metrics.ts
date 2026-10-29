@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { readsPath, readsForPaths } from './reads';
 import { safeErrorLog } from '../lib/httpErrors';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
@@ -47,8 +48,13 @@ export type CampaignStat = {
    * Only set by listCampaigns (the /campaigns page); absent on the dashboard.
    */
   reads?: number | null;
-  /** The subset of reads whose session GA attributes to our push UTM. */
+  /**
+   * The subset of reads from a push: GA's push-attributed sessions, or the CMS's `push_views`.
+   * null = unknown / no data (the CMS records no source before 2026-10-15), never a silent 0.
+   */
   pushReads?: number | null;
+  /** Only with READS_SOURCE=cms: which source(s) the numbers came from (absent otherwise: the payload is unchanged). */
+  readsFrom?: ('ga' | 'cms')[];
 };
 
 export type SubscriberSource =
@@ -455,51 +461,8 @@ export async function getMetrics(
   return data;
 }
 
-const TAXSCAN_HOSTS = new Set(['taxscan.in', 'www.taxscan.in']);
-
-/**
- * The ArticleReadStat join key for a campaign URL: the taxscan.in path with
- * any trailing slash dropped. null for non-taxscan URLs (academy/shop) — GA
- * read data only exists for the taxscan.in property.
- */
-export function readsPath(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (!TAXSCAN_HOSTS.has(u.hostname.toLowerCase())) return null;
-    return u.pathname.replace(/\/+$/, '') || '/';
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Sum ArticleReadStat (totalViews/pushViews) per taxscan URL path. GA may
- * report the path with or without a trailing slash, so both spellings are
- * queried and folded onto the normalized key.
- */
-export async function readsByPath(
-  paths: string[],
-  portal: string = env.rss.portal,
-): Promise<Map<string, { reads: number; pushReads: number }>> {
-  const out = new Map<string, { reads: number; pushReads: number }>();
-  if (paths.length === 0) return out;
-  const rows = await prisma.articleReadStat.groupBy({
-    by: ['pagePath'],
-    where: {
-      portal,
-      pagePath: { in: [...paths, ...paths.map((p) => `${p}/`)] },
-    },
-    _sum: { totalViews: true, pushViews: true },
-  });
-  for (const r of rows) {
-    const key = r.pagePath.replace(/\/+$/, '') || '/';
-    const e = out.get(key) ?? { reads: 0, pushReads: 0 };
-    e.reads += r._sum.totalViews ?? 0;
-    e.pushReads += r._sum.pushViews ?? 0;
-    out.set(key, e);
-  }
-  return out;
-}
+// readsPath / readsByPath live in ./reads (the one reads implementation); re-exported so existing importers are unchanged.
+export { readsPath, readsByPath } from './reads';
 
 export async function listCampaigns(
   limit = 50,
@@ -550,7 +513,9 @@ export async function listCampaigns(
     ...new Set([...pathByCampaign.values()].filter((p): p is string => p !== null)),
   ];
   // Per-campaign sent/clicked/failed — rolled-up + live, see campaignStats().
-  const [stats, reads] = await Promise.all([campaignStats(ids), readsByPath(uniquePaths)]);
+  // Reads: the one reads module (GA only by default; the CMS from READS_CMS_FROM with READS_SOURCE=cms).
+  const cmsMode = env.cmsViews.source === 'cms';
+  const [stats, reads] = await Promise.all([campaignStats(ids), readsForPaths(uniquePaths, { portal: env.rss.portal })]);
   return campaigns.map((c) => {
     const { sent, clicked, failed, sentAt } = stats.get(c.id) ?? { sent: 0, clicked: 0, failed: 0, sentAt: null };
     const path = pathByCampaign.get(c.id);
@@ -571,8 +536,9 @@ export async function listCampaigns(
       createdBy: c.createdBy
         ? { id: c.createdBy.id, email: c.createdBy.email, role: c.createdBy.role }
         : null,
-      reads: r ? r.reads : null,
-      pushReads: r ? r.pushReads : null,
+      reads: r ? r.views : null,
+      pushReads: r ? r.pushViews : null,
+      ...(cmsMode && r ? { readsFrom: [...(r.usedGa ? (['ga'] as const) : []), ...(r.usedCms ? (['cms'] as const) : [])] } : {}),
     };
   });
 }

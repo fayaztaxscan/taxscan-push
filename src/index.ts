@@ -14,6 +14,7 @@ import { startPacer } from './services/pacer';
 import { startReportScheduler } from './services/reportScheduler';
 import { startReconciler, startRetention } from './services/reconciler';
 import { startGaReadsSync } from './services/gaReads';
+import { startCmsViewsSync } from './services/cmsViews/sync';
 import { startReadsReportCron } from './services/readsReport';
 import { startSearchSurfacesSync } from './services/searchSurfaces';
 import { startAuditRetentionSweeper } from './sweepers/auditRetention';
@@ -67,6 +68,7 @@ app.listen(env.port, () => {
   startReconciler();
   startRetention();
   startGaReadsSync();
+  startCmsViewsSync();
   startReadsReportCron();
   startSearchSurfacesSync();
   startAuditRetentionSweeper();

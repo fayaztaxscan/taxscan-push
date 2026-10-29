@@ -27,7 +27,8 @@ export type AudienceAlertKind =
   | 'unknown_status'
   | 'audience_writer_fatal'
   | 'audience_writer_failing'
-  | 'audience_drift';
+  | 'audience_drift'
+  | 'cms_views_failed';
 
 const MAX_ATTEMPTS = 3;
 const RETRY_AFTER_MS = 10 * 60_000;

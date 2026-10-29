@@ -1,6 +1,6 @@
 import { prisma } from '../../lib/prisma';
 import { env } from '../../lib/env';
-import { readsByPath } from '../metrics';
+import { cmsSums, cmsSumsFor, externalIdOfPath, readsByPath } from '../reads';
 
 /**
  * Where the digest builder gets per-article ORGANIC read counts for its
@@ -100,7 +100,61 @@ export function gaReadsSource(opts: GaSourceOpts = {}): ReadsSource {
   };
 }
 
-/** The read-count source for this build. Today always GA; a CMS source plugs in here. */
+export type CmsSourceOpts = {
+  enabled?: boolean;
+  portal?: string;
+  /** Override the freshness probe (tests). */
+  lastSyncAt?: (portal: string, now: Date) => Promise<Date | null>;
+};
+
+/** When the CMS views sync last wrote (every successful run re-stamps the rows of its window, like the GA cron). */
+export async function cmsLastSyncAt(portal: string, now: Date): Promise<Date | null> {
+  const since = new Date(now.getTime() - 4 * 24 * HOUR);
+  const r = await prisma.cmsArticleView.aggregate({
+    where: { portal, date: { gte: new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())) } },
+    _max: { fetchedAt: true },
+  });
+  return r._max.fetchedAt ?? null;
+}
+
+/**
+ * The CMS's Feed 2 via `CmsArticleView`. Organic = views − push_views − digest_views per day row when BOTH are
+ * known, else that row's views (the CMS records no source before 2026-10-15), clamped ≥ 0, summed over all dates.
+ * An article is matched by its path (`canonicalPath`) or, for a migrated story, by the trailing numeric id of its
+ * key (`article:<id>` = the CMS's `external_id`). Nothing here calls the CMS: the sync cron fills Postgres.
+ */
+export function cmsReadsSource(opts: CmsSourceOpts = {}): ReadsSource {
+  const enabled = opts.enabled ?? env.cmsViews.enabled;
+  const portal = opts.portal ?? env.rss.portal;
+  const probe = opts.lastSyncAt ?? cmsLastSyncAt;
+  return {
+    name: 'cms',
+    async organicReads(articles, now) {
+      const byKey = new Map<string, number>();
+      if (!enabled) return { fresh: false, reason: 'cms_views_disabled', byKey };
+      const last = await probe(portal, now);
+      if (!last) return { fresh: false, reason: 'no_read_data', byKey };
+      if (now.getTime() - last.getTime() > GA_FRESH_HOURS * HOUR) {
+        return { fresh: false, reason: `stale_since_${last.toISOString()}`, byKey };
+      }
+      const idOf = (a: ReadsArticle) => /^article:(\d+)$/.exec(a.key)?.[1] ?? null;
+      const paths = [...new Set(articles.flatMap((a) => a.paths))];
+      const ids = [...new Set(articles.flatMap((a) => [idOf(a), ...a.paths.map(externalIdOfPath)]).filter((i): i is string => i !== null))];
+      const sums = await cmsSums(paths, ids, portal, {});
+      for (const a of articles) {
+        const mine = new Set<(typeof sums)[number]>();
+        for (const p of new Set(a.paths)) for (const s of cmsSumsFor(p, sums)) mine.add(s);
+        const id = idOf(a);
+        if (id) for (const s of sums) if (s.externalId === id) mine.add(s);
+        // No CMS row for any path → left out, so the builder can tell "no data yet" from 0.
+        if (mine.size > 0) byKey.set(a.key, Math.max(0, [...mine].reduce((n, s) => n + s.organic, 0)));
+      }
+      return { fresh: true, byKey };
+    },
+  };
+}
+
+/** The read-count source for this build: GA by default, the CMS with READS_SOURCE=cms. */
 export function resolveReadsSource(): ReadsSource {
-  return gaReadsSource();
+  return env.cmsViews.source === 'cms' ? cmsReadsSource() : gaReadsSource();
 }
