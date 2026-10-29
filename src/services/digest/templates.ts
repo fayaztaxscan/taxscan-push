@@ -17,6 +17,7 @@ import {
   isAllowedDigestUrl,
   isAllowedTemplateImage,
   isSocialUrl,
+  isContactMailto,
   renderDigest,
   scanStartTags,
   srcsetUrls,
@@ -462,7 +463,7 @@ export function validateTemplate(
   const al: string[] = [];
   if (rendered) {
     for (const href of attrValues(rendered.html, LINK_ATTRS)) {
-      if (href === UNSUBSCRIBE_TAG || isSocialUrl(href)) continue;
+      if (href === UNSUBSCRIBE_TAG || isSocialUrl(href) || isContactMailto(href)) continue;
       if (!isAllowedDigestUrl(href)) ln.push(`Link ${shortUrl(href)} is not allowed (only https/http links to ALLOWED_PUSH_HOSTS).`);
     }
     const images = [
