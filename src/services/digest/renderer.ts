@@ -185,6 +185,20 @@ export const SOCIAL_LINKS = [
 ] as const;
 export const SOCIAL_ICON_SIZE = 28;
 const SOCIAL_HREFS: ReadonlySet<string> = new Set(SOCIAL_LINKS.map((l) => l.href));
+/**
+ * The footer's contact line (owner, 29 Oct 2026): "Questions or feedback? Write to info@taxscan.in".
+ * Mailercloud sends only from @hello.taxscan.in, so a reply lands at Mailercloud, not a real inbox
+ * (the reply-to stays info@hello.taxscan.in); readers are pointed at a real mailbox instead. The one
+ * `mailto:` the renderer draws, allowed EXACTLY (string-equal) by the link checks: no UTM, nothing broader.
+ */
+export const CONTACT_EMAIL = 'info@taxscan.in';
+export const CONTACT_MAILTO = `mailto:${CONTACT_EMAIL}`;
+export const CONTACT_LINE = `Questions or feedback? Write to ${CONTACT_EMAIL}`;
+/** Exactly `mailto:info@taxscan.in`: any other mailto (or the same with a subject, or another case) is not allowed. */
+export function isContactMailto(url: string): boolean {
+  return url === CONTACT_MAILTO;
+}
+
 /** One of the five fixed social links, exactly. */
 export function isSocialUrl(url: string): boolean {
   return SOCIAL_HREFS.has(url);
@@ -847,7 +861,7 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
   const reason = premium ? PREMIUM_REASON : FREE_REASON;
   const footer =
     `<tr><td class="ts-pad" data-footer="1" style="${WRAP}padding:24px 24px 32px 24px;font-family:${FONT};font-size:14px;line-height:21px;color:${C.muted};" align="left">` +
-    `<p style="${WRAP}margin:0 0 12px 0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">${esc(reason)} Questions or feedback? Just reply to this email.</p>` +
+    `<p style="${WRAP}margin:0 0 12px 0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">${esc(reason)} Questions or feedback? Write to <a href="${CONTACT_MAILTO}" class="ts-link" style="color:${C.link};text-decoration:underline;padding:9px 0;">${CONTACT_EMAIL}</a></p>` +
     `<p style="margin:0 0 12px 0;"><a href="${UNSUBSCRIBE_TAG}" class="ts-link" style="display:inline-block;min-height:44px;line-height:44px;font-size:16px;font-weight:700;color:${C.link};text-decoration:underline;">Unsubscribe from this digest</a></p>` +
     `<p style="${WRAP}margin:0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">Taxscan &middot; ${esc(p.postal)}</p>` +
     `</td></tr>`;
@@ -1020,7 +1034,7 @@ function templateLinks(html: string, o: { utmCampaign: string; mode: 'send' | 'c
         continue;
       }
       if (!LINK_ATTRS.has(a.name) || isPlaceholder(value)) continue;
-      if (isSocialUrl(value)) continue; // a fixed footer link: allowed exactly, and no UTM
+      if (isSocialUrl(value) || isContactMailto(value)) continue; // a fixed footer link: allowed exactly, and no UTM
       if (isAllowedDigestUrl(value)) {
         // Rewritten in the canonical quoted form whatever form it was written in.
         edits.push({ start: a.start, end: a.end, text: `href="${esc(withUtm(value, { campaign: o.utmCampaign, content: 'template' }))}"` });
@@ -1068,7 +1082,7 @@ function renderText(p: {
   for (const s of AD_SLOTS) if (s.position === 'beforeFooter' && p.ads.has(s.slot)) out.push(p.ads.get(s.slot) as string, '');
   out.push(
     '----',
-    `${premium ? PREMIUM_REASON : FREE_REASON} Questions or feedback? Just reply to this email.`,
+    `${premium ? PREMIUM_REASON : FREE_REASON} ${CONTACT_LINE}`,
     `Unsubscribe from this digest: ${UNSUBSCRIBE_TAG}`,
     `Taxscan · ${t(p.postal)}`,
     textUrl(p.homeHref),
