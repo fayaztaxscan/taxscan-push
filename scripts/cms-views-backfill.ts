@@ -10,46 +10,34 @@
  * write is a pure upsert, so the script is idempotent: an interrupted run is simply started again.
  *
  * Needs CMS_VIEWS_ENABLED=true, CMS_FEED_VIEWS_SECRET and CMS_FEED_BASE_URL (the same variables the cron uses).
+ * The same code runs behind `POST /api/admin/cms-views/backfill` (an ADMIN, from inside the running app, for
+ * when the shell can't reach the service); status at `GET /api/admin/cms-views/backfill/:id`.
  * Without --yes it only prints the plan. Writes to whatever DATABASE_URL points at; never prints a secret.
  */
 import { prisma } from '../src/lib/prisma';
-import { env } from '../src/lib/env';
-import { istDateKey } from '../src/services/reports';
-import { chunkRanges, runViewsSync } from '../src/services/cmsViews/sync';
+import { backfillConfigProblem, startBackfill, validateBackfillRange } from '../src/services/cmsViews/backfill';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
-const isDay = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 async function main(): Promise<void> {
-  const from = arg('from');
-  const to = arg('to') ?? istDateKey(new Date());
-  if (!isDay(from)) throw new Error('--from YYYY-MM-DD is required');
-  if (!isDay(to)) throw new Error('--to must be YYYY-MM-DD');
-  if (from > to) throw new Error('--from is after --to');
-  if (to > istDateKey(new Date())) throw new Error('--to is in the future (IST)');
-  if (!env.cmsViews.enabled) throw new Error('CMS_VIEWS_ENABLED is not true: the backfill is off with the sync');
-  if (!env.cmsViews.secret || !env.audience.cms.baseUrl) throw new Error('CMS_FEED_VIEWS_SECRET and CMS_FEED_BASE_URL must be set');
+  const range = validateBackfillRange(arg('from'), arg('to'));
+  if ('error' in range) throw new Error(range.error);
+  const problem = backfillConfigProblem();
+  if (problem) throw new Error(`${problem}: CMS_VIEWS_ENABLED, CMS_FEED_VIEWS_SECRET and CMS_FEED_BASE_URL must be set and valid`);
 
-  const chunks = chunkRanges(from, to);
-  console.log(`[cms-views] backfill ${from}..${to} in ${chunks.length} chunk(s): ${chunks.map((c) => `${c.from}..${c.to}`).join(', ')}`);
-  if (!process.argv.includes('--yes')) {
+  const dryRun = !process.argv.includes('--yes');
+  const started = startBackfill({ ...range, dryRun });
+  if (!started) throw new Error('a sync is already running');
+  console.log(`[cms-views] backfill ${range.from}..${range.to} in ${started.run.chunks.length} chunk(s): ${started.run.chunks.map((c) => `${c.from}..${c.to}`).join(', ')}`);
+  if (dryRun) {
     console.log('[cms-views] dry run — add --yes to write');
     return;
   }
-  let failed = 0;
-  for (const c of chunks) {
-    const r = await runViewsSync({ from: c.from, to: c.to });
-    if (!r.ok) {
-      failed += 1;
-      console.error(`[cms-views] chunk ${c.from}..${c.to} FAILED (nothing written for it): ${r.error}`);
-      break; // stop at the first failure: rerun resumes safely
-    }
-  }
-  console.log(failed ? '[cms-views] backfill stopped at a failed chunk — fix and run again (idempotent)' : '[cms-views] backfill done');
-  process.exitCode = failed ? 1 : 0;
+  await started.done;
+  process.exitCode = started.run.state === 'done' ? 0 : 1;
 }
 
 main()

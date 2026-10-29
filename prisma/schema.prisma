@@ -85,6 +85,8 @@ enum AuditAction {
   AUDIENCE_FULL_LOAD
   AUDIENCE_ERASURE
   AUDIENCE_RESUBSCRIBED
+  // CMS views (Feed 2): an admin started the history backfill (range + dryRun only)
+  CMS_VIEWS_BACKFILL_STARTED
 }
 
 model Subscriber {
