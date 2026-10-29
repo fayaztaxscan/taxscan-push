@@ -28,10 +28,13 @@ Reference pictures (from planning, in the owner's Downloads):
      the optional field without a migration. If a column is needed, add an additive migration.
    - **Fail-open:** no image, a timeout, a non-2xx, or a host not allowed → that story renders text-only, exactly
      as today. The build never fails or waits longer because of a picture.
-   - **Weight:** display the picture through taxscan's own resizer, as the site does:
-     `https://www.taxscan.in/_img?w=480&u=<encoded og:image URL>`. Verify it returns an image; if it doesn't, use
-     the original URL and say so in the REPORT. Only `www.taxscan.in` or `documents.taxscan.in` may serve them.
-     Extend the image allowlist (`isAllowedTemplateImage`) narrowly to those hosts; never add a general allowance.
+   - **Use the original `og:image` JPEG/PNG URL** (`documents.taxscan.in`, ~100 KB at 1200 px). **Do not** use
+     taxscan's `/_img` resizer: planning checked on 29 Oct and it **always returns WebP** (whatever the `Accept`
+     header or format parameter), which Outlook for Windows and some other clients can't show. Picture weight
+     doesn't count toward Gmail's ~102 KB clip, which is HTML only. Set `width` explicitly so the picture displays
+     at ≈ 240 px. Accept only a `documents.taxscan.in` https URL ending `.jpg`, `.jpeg` or `.png`; anything else →
+     text-only. Extend the image allowlist (`isAllowedTemplateImage`) to exactly that host; never add a general
+     allowance.
    - **Layout:** desktop is a two-column row, picture ≈ 40% on the left and title, summary and "Read more" on the
      right, like the old one. Phones (≤ 480 px) stack the picture above the text. It must work without media
      queries (fluid/hybrid technique) and in Outlook (MSO conditional fallback). Alt text = the headline.
@@ -62,7 +65,7 @@ Reference pictures (from planning, in the owner's Downloads):
 - Ranking, item count, subject and preheader.
 
 ## Acceptance tests
-1. Unit: an item with `imageUrl` renders the two-column row with the picture (resized URL) and alt = headline; an
+1. Unit: an item with `imageUrl` renders the two-column row with the picture (original URL, explicit width) and alt = headline; an
    item without one renders text-only; a disallowed image host renders text-only.
 2. Unit: the og:image fetch is fail-open. Use fakes, no real network: a timeout, a 404, a page with no og:image, a
    redirect, an http URL and a slow page past the 30 s cap all give `imageUrl` null, and the build completes.
