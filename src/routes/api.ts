@@ -16,6 +16,7 @@ import { endpointHint, sendToSubscriber } from '../lib/push';
 import { getMetrics, listCampaigns } from '../services/metrics';
 import { customReportWindow, getReport, reportWindow } from '../services/reports';
 import { getReadsReport } from '../services/readsReport';
+import { readsEnabled, readsSourceNote } from '../services/reads';
 import { customSurfacesWindow, getSurfacesReport } from '../services/surfacesReport';
 import { lastReportEmailRun, sendScheduledReport } from '../services/reportScheduler';
 import { lastBackupRun } from '../services/backup';
@@ -662,6 +663,11 @@ export function createApiRouter(
           ? req.query.createdByUserId
           : undefined;
       const campaigns = await listCampaigns(limit, { createdByUserId });
+      // READS_SOURCE=cms: say where the Reads columns came from (absent otherwise: the payload is unchanged).
+      if (env.cmsViews.source === 'cms') {
+        const used = { ga: campaigns.some((c) => c.readsFrom?.includes('ga')), cms: campaigns.some((c) => c.readsFrom?.includes('cms')) };
+        return res.json({ campaigns, readsSource: { mode: 'cms', note: readsSourceNote('cms', used) } });
+      }
       return res.json({ campaigns });
     } catch (err) {
       return next(err);
@@ -710,12 +716,16 @@ export function createApiRouter(
   // Never calls GA at request time. `ready:false` until the first build lands.
   router.get('/reports/reads', requireBearerOrUser(), async (_req, res, next) => {
     try {
-      if (!env.gaReads.enabled) {
+      if (!readsEnabled()) {
         return res.status(404).json({ error: 'disabled', message: 'Reads reporting is not enabled.' });
       }
       const row = await getReadsReport(env.rss.portal);
       if (!row) {
         return res.json({ ready: false, message: 'The first reads report has not been built yet — check back shortly.' });
+      }
+      // A cached build of the OTHER source (READS_SOURCE was flipped) is never served under the new label.
+      if ((row.payload.source?.mode ?? 'ga') !== env.cmsViews.source) {
+        return res.json({ ready: false, message: 'The reads report is being rebuilt for the new reads source — check back shortly.' });
       }
       return res.json({ ready: true, generatedAt: row.generatedAt, ...row.payload });
     } catch (err) {

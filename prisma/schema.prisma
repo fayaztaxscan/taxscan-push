@@ -343,6 +343,30 @@ model ArticleSurfaceStat {
 // from the GA4 Data API on a daily cron. One row per portal — the API serves
 // this row directly and never calls GA at request time, so the screen loads
 // instantly and a GA outage only means the report stays at its last build.
+/// Per-article, per-IST-day views mirrored from the CMS's Feed 2 (GET /api/v1/push-feed/article-views, contract
+/// A.8; src/services/cmsViews/). Filled ONLY by the sync cron / backfill: the request path never calls the CMS.
+/// `pushViews` / `digestViews` are NULL before 2026-10-15 (no source was recorded then): null is "unknown", not 0.
+/// `canonicalPath` = the path of `canonical_url` (trailing slash dropped); `externalId` = the old CMS's numeric
+/// news id for a migrated story. Grows ~thousands of rows a day (see the REPORT for sizes).
+model CmsArticleView {
+  id           String   @id @default(cuid())
+  portal       String   @default("taxscan")
+  articleId    String
+  canonicalPath String
+  externalId   String?
+  date         DateTime @db.Date
+  views        Int
+  pushViews    Int?
+  digestViews  Int?
+  cmsUpdatedAt DateTime
+  fetchedAt    DateTime @default(now())
+
+  @@unique([portal, articleId, date])
+  @@index([portal, canonicalPath, date])
+  @@index([portal, externalId, date])
+  @@index([portal, date])
+}
+
 model GaReadsReport {
   id          String   @id @default(cuid())
   portal      String   @unique

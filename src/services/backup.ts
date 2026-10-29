@@ -42,6 +42,8 @@ import { safeErrorLog } from '../lib/httpErrors';
  *   export into a gigabyte.
  * - `ArticleReadStat` / `ArticleSurfaceStat` (170 MB) — mirrors of GA and
  *   Search Console. Re-fetchable from the source; both syncs backfill.
+ * - `CmsArticleView` — a mirror of the CMS's Feed 2 (article views by IST day).
+ *   Re-fetchable: the CMS keeps history from 2026-09-28 and `npm run cms-views:backfill` reloads it.
  * - `GaReadsReport` / `ReportEmailRun` / `BackupRun` — derived caches and run
  *   logs; they rebuild themselves.
  * - `UserSession` / `UserInvite` — short-lived by design. Restoring sessions

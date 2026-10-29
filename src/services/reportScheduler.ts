@@ -5,6 +5,7 @@ import { env } from '../lib/env';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../lib/email';
 import { buildReport, renderReportEmail, reportWindow } from './reports';
 import { readsSummaryForWindow, type ReadsEmailSummary } from './readsReport';
+import { readsEnabled } from './reads';
 import { safeErrorLog } from '../lib/httpErrors';
 import { redactText } from '../lib/redact';
 
@@ -83,7 +84,7 @@ async function prepareReportEmail(args: {
   // "How it was read" section — only when read tracking is on, and never a
   // reason for the coverage email to fail: any error just drops the section.
   let reads: ReadsEmailSummary | undefined;
-  if (env.gaReads.enabled) {
+  if (readsEnabled()) {
     try {
       reads = (await readsSummaryForWindow({ start, end, portal })) ?? undefined;
     } catch (e) {

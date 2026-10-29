@@ -455,6 +455,13 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         did: 'Marked the mismatched contacts for re-sync.',
         todo: 'Nothing if it clears tomorrow. If it repeats, someone may be editing those tags by hand in Mailercloud.',
       };
+    case 'cms_views_failed':
+      return {
+        short: 'Reads from the CMS: the sync failed',
+        what: `The latest pull of article views from the CMS did not complete${m.reason ? ` (${safeDetail(m.reason, cfg)})` : ''}.`,
+        did: 'Wrote nothing from that run: the last good numbers stay in place (stale, never partial). It tries again at the next slot.',
+        todo: 'Nothing if it clears at the next run. If it repeats, check CMS_FEED_VIEWS_SECRET and that the CMS views feed is up.',
+      };
     case 'resolved':
       return {
         short: 'Resolved — digest sent',
