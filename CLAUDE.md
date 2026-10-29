@@ -154,11 +154,23 @@ pacer), `FREQ_CAP_PER_DAY`=30 (manual non-force path only), `MIN_GAP_MINUTES`=0,
 `LINK_CHECK_ENABLED`=ON, **`SOFT_PROMPT_V2`=ON** (since 2026-10-22 10:43:51 UTC), `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
 **`EVENT_RETENTION_ENABLED`=ON** (30d window, nightly 03:30 IST),
 **`BACKUP_ENABLED`=ON** (daily 02:20 IST to Cloudflare R2, `BACKUP_KEEP_DAYS`=14, `R2_*` creds).
-**Digest: all OFF / unset** — `DIGEST_ENABLED`, `DIGEST_SEND_LIVE`, `DIGEST_WEBHOOKS_ENABLED`,
-`DIGEST_RETENTION_ENABLED` default false; `DIGEST_APPROVAL_REQUIRED` defaults true;
-`DIGEST_STAFF_PUSH_ENABLED` defaults true but sends nothing unless `DIGEST_ENABLED` is on and someone
-opted in; `MAILERCLOUD_*` (API key, `_WEBHOOK_TOKEN`/`_PREVIOUS`/`_ID`, sender) and the `DIGEST_*` list,
-address, size and timing settings are in design §5, switched on in the runbook's order.
+**Digest (since 2026-10-29): stage 2 — real sends to the STAFF list only.** `DIGEST_ENABLED`=ON,
+`DIGEST_WEBHOOKS_ENABLED`=ON, **`DIGEST_SEND_LIVE`=ON**, `DIGEST_APPROVAL_REQUIRED` unset (= true, owner: keep
+approval on); `DIGEST_RETENTION_ENABLED` off. `MAILERCLOUD_SENDER_EMAIL`=newsletter@hello.taxscan.in (sender name
+"Team Taxscan"; "noreply" is refused by design), `MAILERCLOUD_REPLY_EMAIL`=info@hello.taxscan.in (Mailercloud is
+restricted to @hello.taxscan.in; a reply-to must be on its **Reply IDs** list), `DIGEST_FREE_LIST_IDS` =
+`DIGEST_PREMIUM_LIST_IDS` = `hgvfXF` (staff trial: Anagha, Abdullah, Fayaz), `DIGEST_FREE_EXCLUDE_LIST_IDS`=`HwEWai`
+(Mailercloud refuses an exclude list with no active contacts, so it holds one internal address), postal address +
+test recipients set; the Mailercloud webhook is registered (5 events, payload signing on, not yet verified by us).
+**Before any real reader is added, the lists change per the runbook's stage 3.**
+**CMS feeds (since 2026-10-29):** `AUDIENCE_SYNC_ENABLED`=ON (Feed 1 receiver + pulls write **Postgres only**;
+`AUDIENCE_SYNC_WRITE_MAILERCLOUD` unset = dry run), `CMS_FEED_INBOUND_SECRET`/`_PULL_SECRET`/`CMS_FEED_VIEWS_SECRET`
+set (W/L/V, 48 chars, copied straight from the CMS box), `CMS_FEED_ALLOWED_IPS`=148.113.0.114 (the CMS sender),
+`CMS_FEED_BASE_URL` = default `https://api.taxscan.in`. **`CMS_VIEWS_ENABLED`=ON, `READS_SOURCE`=cms,
+`READS_CMS_FROM`=2026-10-08** (the CMS's earlier days are inflated by robots; owner accepted the counts are
+indicative, incl. for digest ranking). **Railway Static Outbound IPs ON** for taxscan-push: 208.77.246.240/.241/.242
+(shared) — the CMS fences doors L/V on them; side effect: `railway ssh` and the dashboard Console no longer
+connect to this service (use the admin endpoints, e.g. `POST /api/admin/cms-views/backfill`).
 (`METRICS_CACHE_TTL_MS`=20s, `REPORTS_CACHE_TTL_MS`=60s and `METRICS_HEAVY_REFRESH_MS`=5min
 default in code; not set on Railway.) **Secrets live only in Railway — never in this file.**
 

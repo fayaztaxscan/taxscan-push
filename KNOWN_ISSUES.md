@@ -630,3 +630,32 @@ poller first reads the new feed** — that is the whole fix, and it costs nothin
 A durable version would dedupe on the article's trailing numeric id (stable
 across both CMS platforms) in addition to the GUID; `readsPath()` already
 extracts it. Not worth building speculatively — the flag covers it.
+
+---
+
+## 10. Railway Static Outbound IPs break `railway ssh` and the dashboard Console (2026-10-29)
+
+**What:** after enabling Static Outbound IPs on the taxscan-push service (needed so the CMS can fence its feed
+doors on our egress: 208.77.246.240/.241/.242, "shared"), both `railway ssh --service taxscan-push` and the
+dashboard **Console** fail with "An error occurred connecting to your service". `railway ssh` into the Postgres
+service still works, and the app itself is healthy.
+**Impact:** no shell inside the container, so in-container one-off scripts can't run. Running them from a laptop
+doesn't help either: the CMS only accepts our static IPs.
+**Workaround:** admin API endpoints that run the job in-process, e.g. `POST /api/admin/cms-views/backfill`
+(ADMIN bearer). A support message for Railway is drafted (owner).
+
+## 11. CMS webhook refused at our IP fence despite the right source IP (OPEN, 2026-10-29)
+
+**What:** the CMS's first real webhook (`evt_01M63XFAWNANZ9ZA7F9J06M3C6`) got 401 `step=fence`. Railway's HTTP log
+shows srcIp 148.113.0.114, which is allowlisted, so `cmsClientIp(req.ip, CF-Connecting-IP)` under `trust proxy 1`
+derives a different address behind Railway's edge (likely an extra proxy hop in X-Forwarded-For).
+**Status:** PR #85 logs `[audience] fence detail …` on each refusal. The fix follows once one line is seen (walk
+X-Forwarded-For from the right, skipping Railway/internal hops; never trust a header from a non-Cloudflare peer).
+The CMS retries hourly until 2026-10-30 13:28Z, then re-queues on request.
+
+## 12. Digest "Read more" turns dull brown under FORCED dark mode (minor, 2026-10-29)
+
+**What:** with the email declared light-only plus gradient/`data-ogsc` defences, the header and logo hold under
+forced dark, but the yellow button still renders brown in Chrome forced-dark and possibly Zoho dark. It stays
+readable (white on brown). A hosted button image was rejected (it made the text white on yellow). Revisit only if
+the trial shows it in a real inbox.
