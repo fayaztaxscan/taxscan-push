@@ -456,4 +456,15 @@ describe('POST /api/send/test-device (preview on the caller device only)', () =>
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
+
+  it('the preview carries the same badge a reader gets: the white T, even with its own icon', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const capturing = createApp({ sender: async (_s, payload) => (seen.push(payload as unknown as Record<string, unknown>), { ok: true, statusCode: 201 }) });
+    const post = (extra: Record<string, unknown>) =>
+      request(capturing).post('/api/send/test-device').set('Authorization', AUTH).send({ subscription: sub(), title: 'Preview', body: 'Hello', url: 'https://academy.taxscan.in/course/x', ...extra });
+    expect((await post({})).status).toBe(200);
+    expect((await post({ icon: 'https://www.taxscan.in/images/colour.png' })).status).toBe(200);
+    expect(seen.map((p) => p.badge)).toEqual(['https://push.taxscan.in/brand/taxscan-badge-96.png', 'https://push.taxscan.in/brand/taxscan-badge-96.png']);
+    expect(seen.map((p) => p.icon)).toEqual(['https://push.taxscan.in/brand/taxscan-icon-192.png', 'https://www.taxscan.in/images/colour.png']);
+  });
 });

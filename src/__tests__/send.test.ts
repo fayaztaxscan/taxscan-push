@@ -6,6 +6,8 @@ import type { PushPayload } from '../lib/push';
 import { startOfTodayIST } from '../lib/quietHours';
 import { validKeys } from './helpers';
 
+// The designer's white "T" (96×96, 2026-10-29): every notification's badge, whatever its icon.
+const TAXSCAN_BADGE = 'https://push.taxscan.in/brand/taxscan-badge-96.png';
 const TAXSCAN_BRAND_ICON =
   'https://push.taxscan.in/brand/taxscan-icon-192.png';
 
@@ -402,7 +404,7 @@ describe('dispatchCampaign', () => {
   // an icon URL again — that 404 was the source of the "generic browser
   // bell" mobile-UX finding. The second proves an explicit campaign icon
   // is left alone, so admin-set or Phase 2 per-portal overrides still win.
-  it('defaults the icon + badge to the taxscan brand URL when campaign.icon is unset', async () => {
+  it('defaults the icon to the taxscan brand URL, and the badge to the monochrome T, when campaign.icon is unset', async () => {
     const portal = uniquePortal('icon-default');
     await makeSubscriber(portal, 'icon-default');
 
@@ -427,7 +429,7 @@ describe('dispatchCampaign', () => {
 
     expect(captured).toHaveLength(1);
     expect(captured[0].icon).toBe(TAXSCAN_BRAND_ICON);
-    expect(captured[0].badge).toBe(TAXSCAN_BRAND_ICON);
+    expect(captured[0].badge).toBe(TAXSCAN_BADGE); // not the colour logo: Android draws a badge from alpha only
   });
 
   it('preserves an explicit campaign.icon when set', async () => {
@@ -457,7 +459,9 @@ describe('dispatchCampaign', () => {
 
     expect(captured).toHaveLength(1);
     expect(captured[0].icon).toBe(explicitIcon);
-    expect(captured[0].badge).toBe(explicitIcon);
+    // A campaign icon is colour artwork, never a badge: the badge is the T either way.
+    expect(captured[0].badge).toBe(TAXSCAN_BADGE);
+    expect(captured[0].badge).not.toBe(explicitIcon);
   });
 
   // Security (M1): the click-URL allowlist must be enforced on the dispatch

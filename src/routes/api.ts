@@ -8,6 +8,7 @@ import { Prisma, type Subscriber } from '@prisma/client';
 import {
   dispatchCampaign,
   executeCampaign,
+  DEFAULT_NOTIFICATION_BADGE,
   DEFAULT_NOTIFICATION_ICON,
   type Sender,
 } from '../services/send';
@@ -432,7 +433,7 @@ export function createApiRouter(
         body,
         url,
         icon: icon || DEFAULT_NOTIFICATION_ICON,
-        badge: icon || DEFAULT_NOTIFICATION_ICON,
+        badge: DEFAULT_NOTIFICATION_BADGE,
         tag: 'taxscan-test',
       });
       if (!outcome.ok) {

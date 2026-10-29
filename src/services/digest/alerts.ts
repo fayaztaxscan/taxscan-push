@@ -7,7 +7,7 @@ import { runDateKey } from './retryPolicy';
 import { digestRunState } from './runState';
 import { pushToActiveStaff, type StaffPushTransport } from '../staffPush';
 import type { StaffPushSubscription } from '@prisma/client';
-import { DEFAULT_NOTIFICATION_ICON } from '../send';
+import { DEFAULT_NOTIFICATION_BADGE, DEFAULT_NOTIFICATION_ICON } from '../send';
 
 /**
  * Digest alert emails (docs/EMAIL_DIGEST_DESIGN.md §4 `alerts.ts`, §8, task 6).
@@ -827,10 +827,10 @@ export function buildStaffPushPayload(
 ): { title: string; body: string; url: string; icon: string; badge: string; tag: string; renotify: true; kind: string } | null {
   const copy = staffPushCopy(kind, m, cfg);
   if (!copy) return null;
-  // The brand icon (absolute, production host, as on reader pushes). The URL is the same
+  // The brand icon + the monochrome "T" badge (absolute, production host, as on reader pushes). The URL is the same
   // link as the editor email's; the staff worker opens its PATH on its own origin.
   const icon = DEFAULT_NOTIFICATION_ICON;
-  return { ...copy, url: digestsScreenUrl(cfg), icon, badge: icon, tag: `taxscan-digest-${runDateKey(runDate)}`, renotify: true, kind };
+  return { ...copy, url: digestsScreenUrl(cfg), icon, badge: DEFAULT_NOTIFICATION_BADGE, tag: `taxscan-digest-${runDateKey(runDate)}`, renotify: true, kind };
 }
 
 /** The push twin of `claimKind`: its own fields on the same marker, the same rules. */
