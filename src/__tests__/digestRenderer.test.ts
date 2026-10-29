@@ -320,8 +320,8 @@ describe('9. responsive, email-safe HTML', () => {
     expect(r.html).toContain('max-width:600px');
     expect(r.html).toMatch(/width="100%"[^>]*style="width:100%;max-width:600px/);
     expect(r.html).toContain('<!--[if mso]><table role="presentation" width="600"');
-    expect(r.html).toContain('<meta name="color-scheme" content="light dark">');
-    expect(r.html).toContain('<meta name="supported-color-schemes" content="light dark">');
+    expect(r.html).toContain('<meta name="color-scheme" content="light">');
+    expect(r.html).toContain('<meta name="supported-color-schemes" content="light">');
     expect(r.html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
   });
   it('works without media queries: stripping <style> leaves every layout style inline', () => {
@@ -341,7 +341,7 @@ describe('9. responsive, email-safe HTML', () => {
     for (const p of r.html.match(/<p [^>]*class="ts-body"/g) ?? []) expect(p).toContain('font-size:16px');
     for (const a of r.html.match(/<a\s[^>]*>/g) ?? []) {
       const style = /style="([^"]*)"/.exec(a)?.[1] ?? '';
-      const ok = /min-height:44px/.test(style) || /padding:9px 0/.test(style); // 26px line + 18px padding
+      const ok = /(^|;)(min-)?height:44px/.test(style) || /padding:(9px 0|0 0 18px 0)/.test(style); // 26px line + 18px padding (headline: all below, so it starts level with the picture)
       expect(ok).toBe(true);
     }
   });

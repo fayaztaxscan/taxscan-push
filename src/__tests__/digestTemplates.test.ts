@@ -625,7 +625,7 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
 
   it('a solid #3b3543 header bar (also in dark mode) with the white logo centred, 220 px, alt text; Arial throughout', () => {
     expect(r.html).toMatch(/<td class="ts-pad ts-hdr" align="center" style="[^"]*background-color:#3b3543;[^"]*" bgcolor="#3b3543">/);
-    expect(r.html).toMatch(/<img src="https:\/\/push\.taxscan\.in\/email\/taxscan-logo-white-440\.png" width="220" height="53" alt="Taxscan"/);
+    expect(r.html).toMatch(/<img src="https:\/\/push\.taxscan\.in\/email\/taxscan-logo-on-dark-440\.png" width="220" height="53" alt="Taxscan"/);
     expect(r.html).toContain('.ts-hdr{background-color:#3b3543!important}');
     expect(r.html).not.toContain('#9b1c1c');
     const fonts = new Set([...r.html.matchAll(/font-family:([^;"]+)/g)].map((m) => m[1]));
@@ -634,9 +634,9 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
   it('square yellow buttons with bold dark text and an Outlook VML fallback, for stories and ads', () => {
     const btns = r.html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBe(7); // 5 stories + 2 ads
-    for (const b of btns) expect(b).toMatch(/background-color:#FEE620;border-radius:0;[^"]*font-size:15px;font-weight:700;color:#111111;text-decoration:none/);
+    for (const b of btns) expect(b).toMatch(/display:inline-block;width:\d+px;height:44px;line-height:44px;padding:0;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);border-radius:0;[^"]*font-size:15px;font-weight:700;color:#111111;text-decoration:none/);
     expect((r.html.match(/<v:rect [^>]*fillcolor="#FEE620"/g) ?? []).length).toBe(7);
-    expect(r.html).toContain('.ts-btn{background-color:#FEE620!important;color:#111111!important}');
+    expect(r.html).toContain('[data-ogsb] .ts-btn{background-color:#FEE620!important}[data-ogsc] .ts-btn{color:#111111!important}');
   });
   it('headlines #111111 (never pure black), not underlined; body #333333; other links #1376c8', () => {
     expect(r.html).toMatch(/class="ts-head" style="[^"]*color:#111111;text-decoration:none;"/);

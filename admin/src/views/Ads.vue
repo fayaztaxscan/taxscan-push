@@ -432,6 +432,7 @@ onMounted(load);
             <div class="image-side">
               <input id="ad-image" type="file" accept="image/jpeg,image/png" :disabled="uploading" @change="onFile" />
               <p class="muted">JPEG or PNG, up to 1200 px wide and 150 KB. Put the offer in the headline below, not only in the picture.</p>
+              <p class="muted">Best size: 1200 × 628 (wide rectangle).</p>
               <p v-if="form.imageInfo" class="muted">{{ form.imageInfo }}</p>
               <p v-if="uploading" class="muted">Uploading…</p>
               <button v-if="form.imageId" type="button" class="btn btn-mini" @click="removeImage">Remove image</button>
