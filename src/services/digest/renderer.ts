@@ -204,21 +204,28 @@ export function isSocialUrl(url: string): boolean {
   return SOCIAL_HREFS.has(url);
 }
 
-/** The Taxscan logo (white on transparent, 440×106 for 2× at 220 px), served from the asset host. */
-export const LOGO_PATH = '/email/taxscan-logo-white-440.png';
+/**
+ * The Taxscan logo (white, 440×106 for 2× at 220 px) on its own #3b3543 background, so it stays legible
+ * even when a mail app recolours the header bar. Served from the asset host; the old transparent
+ * `taxscan-logo-white-440.png` stays in `public/email/` because sent mail references it.
+ */
+export const LOGO_PATH = '/email/taxscan-logo-on-dark-440.png';
 export const LOGO_WIDTH = 220;
 export const LOGO_HEIGHT = 53;
 
+/** A flat colour as a background-image too: apps that force-invert colours recolour `background-color` but leave an image alone. */
+const solid = (hex: string) => `background-image:linear-gradient(${hex},${hex});`;
+
 /**
- * A "bulletproof" button: square corners, yellow, bold dark text; a VML
- * rectangle for Outlook desktop (which ignores padding on links), the plain
- * link everywhere else. `href` is already escaped.
+ * A "bulletproof" button: square corners, a fixed-size yellow box (`widthPx` × 44) with bold dark text
+ * centred in it; a VML rectangle for Outlook desktop (which ignores padding on links), the plain link
+ * everywhere else. `href` is already escaped.
  */
 function button(href: string, label: string, widthPx: number): string {
   const text = esc(label);
   return (
     `<!--[if mso]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${href}" style="height:44px;v-text-anchor:middle;width:${widthPx}px;" stroke="f" fillcolor="${C.button}"><w:anchorlock/><center style="color:${C.buttonText};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${text}</center></v:rect><![endif]-->` +
-    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;min-height:44px;line-height:44px;padding:0 22px;background-color:${C.button};border-radius:0;font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;mso-hide:all;">${text}</a><!--<![endif]-->`
+    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;width:${widthPx}px;height:44px;line-height:44px;padding:0;text-align:center;background-color:${C.button};${solid(C.button)}border-radius:0;font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;mso-hide:all;">${text}</a><!--<![endif]-->`
   );
 }
 
@@ -627,7 +634,8 @@ export const AD_IMAGE_DISPLAY_WIDTH = 552;
 function adRow(a: RenderAd, href: string): string {
   const h = esc(href);
   if (a.image) {
-    const w = Math.min(a.image.width, AD_IMAGE_DISPLAY_WIDTH);
+    // Always the full content width, at the stored image's own aspect (a narrower image is scaled up).
+    const w = AD_IMAGE_DISPLAY_WIDTH;
     const hgt = Math.max(1, Math.round((a.image.height * w) / a.image.width));
     return (
       `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" data-ad-image="1" style="${WRAP}padding:16px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
@@ -684,6 +692,11 @@ const PREVIEW_FILLER = '&#847;&zwnj;&nbsp;'.repeat(40);
 
 /** The story picture's display width, and the text column beside it (552 px inside the 600 px card). */
 export const STORY_IMAGE_WIDTH = 240;
+/**
+ * The picture's box is 1.91:1 (the og:image standard, 1200×628). We store no picture size, so this is an
+ * assumption; `object-fit:cover` crops a picture of another shape instead of stretching it.
+ */
+export const STORY_IMAGE_HEIGHT = Math.round(STORY_IMAGE_WIDTH / (1200 / 628));
 export const STORY_TEXT_WIDTH = 552 - STORY_IMAGE_WIDTH;
 
 /**
@@ -699,18 +712,19 @@ function itemRow(it: Prepared): string {
     : '';
   const href = esc(it.href);
   const text =
-    `<h2 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:20px;line-height:26px;font-weight:700;color:${C.text};"><a href="${href}" class="ts-head" style="${WRAP}display:block;padding:9px 0;color:${C.text};text-decoration:none;">${esc(it.title)}</a></h2>` +
+    `<h2 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:20px;line-height:26px;font-weight:700;color:${C.text};"><a href="${href}" class="ts-head" style="${WRAP}display:block;padding:0 0 18px 0;color:${C.text};text-decoration:none;">${esc(it.title)}</a></h2>` +
     summary +
-    `<div style="margin:8px 0 0 0;">${button(href, 'Read more', 140)}</div>`;
+    `<div style="margin:14px 0 0 0;">${button(href, 'Read more', 140)}</div>`;
   const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}"`;
   if (!it.imageUrl) return `${open} style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">${text}</td></tr>`;
   const W = STORY_IMAGE_WIDTH;
+  const H = STORY_IMAGE_HEIGHT;
   const T = STORY_TEXT_WIDTH;
   return (
     `${open} data-image="1" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};font-size:0;line-height:0;">` +
     `<!--[if mso]><table role="presentation" width="552" cellpadding="0" cellspacing="0" border="0"><tr><td width="${W}" valign="top"><![endif]-->` +
     `<div class="ts-col" style="display:inline-block;width:100%;max-width:${W}px;vertical-align:top;">` +
-    `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic" src="${esc(it.imageUrl)}" width="${W}" alt="${esc(it.title)}" style="display:block;width:100%;max-width:${W}px;height:auto;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:14px;line-height:20px;color:${C.text};"></a>` +
+    `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic" src="${esc(it.imageUrl)}" width="${W}" height="${H}" alt="${esc(it.title)}" style="display:block;width:${W}px;max-width:${W}px;height:${H}px;object-fit:cover;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:14px;line-height:20px;color:${C.text};"></a>` +
     `</div>` +
     `<!--[if mso]></td><td width="${T}" valign="top"><![endif]-->` +
     `<div class="ts-col" style="display:inline-block;width:100%;max-width:${T}px;vertical-align:top;box-sizing:border-box;">` +
@@ -777,20 +791,20 @@ export const BUILTIN_TEMPLATE_HTML =
   `<meta http-equiv="X-UA-Compatible" content="IE=edge">\n` +
   `<meta name="x-apple-disable-message-reformatting">\n` +
   `<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">\n` +
-  `<meta name="color-scheme" content="light dark">\n` +
-  `<meta name="supported-color-schemes" content="light dark">\n` +
+  `<meta name="color-scheme" content="light">\n` +
+  `<meta name="supported-color-schemes" content="light">\n` +
   `<title>{{subject}}</title>\n` +
   `<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n` +
   // Enhancement only: the layout works with this block stripped (Gmail app, Outlook).
   `<style>\n` +
-  `:root{color-scheme:light dark;supported-color-schemes:light dark}\n` +
-  `@media (prefers-color-scheme:dark){.ts-bg{background-color:#111214!important}.ts-card{background-color:#1c1d20!important;border-color:#2c2e33!important}` +
-  `.ts-head,.ts-text{color:#eceef1!important}.ts-body{color:#c9ccd1!important}.ts-muted{color:#a9adb3!important}.ts-link{color:#8ab4f8!important}.ts-label{color:#cdbfe0!important}` +
-  // The header bar and the yellow buttons keep their colours in dark mode (white logo on #3b3543 stays legible).
-  `.ts-hdr{background-color:${C.brand}!important}.ts-btn{background-color:${C.button}!important;color:${C.buttonText}!important}}\n` +
+  // Light only: the email has no dark palette, so a dark-mode app has nothing of ours to switch to. The header and the
+  // yellow buttons also carry a background-image (see `solid`), and Gmail's forced-colour hooks ([data-ogsb] background,
+  // [data-ogsc] text) put the brand colours back where an app recolours them anyway.
+  `:root{color-scheme:light;supported-color-schemes:light}\n` +
+  `[data-ogsb] .ts-hdr{background-color:${C.brand}!important}[data-ogsb] .ts-btn{background-color:${C.button}!important}[data-ogsc] .ts-btn{color:${C.buttonText}!important}[data-ogsc] .ts-hdr-text{color:${C.brandText}!important}\n` +
   `@media only screen and (max-width:620px){.ts-pad{padding-left:16px!important;padding-right:16px!important}}\n` +
   // Phones: a story's picture sits above its text, full width (stacking itself needs no media query).
-  `@media only screen and (max-width:480px){.ts-col,.ts-pic{max-width:100%!important}.ts-textpad{padding-left:0!important;padding-top:12px!important}}\n` +
+  `@media only screen and (max-width:480px){.ts-col{max-width:100%!important}.ts-pic{width:100%!important;max-width:100%!important;height:auto!important;max-height:240px!important}.ts-textpad{padding-left:0!important;padding-top:12px!important}}\n` +
   `</style>\n` +
   `</head>\n` +
   `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
@@ -798,9 +812,9 @@ export const BUILTIN_TEMPLATE_HTML =
   `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td align="center" style="padding:16px 8px;">\n` +
   `<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="600"><![endif]-->\n` +
   `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;margin:0 auto;border-collapse:collapse;">\n` +
-  `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 24px 18px 24px;background-color:${C.brand};text-align:center;" bgcolor="${C.brand}">` +
+  `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 24px 18px 24px;background-color:${C.brand};${solid(C.brand)}text-align:center;" bgcolor="${C.brand}">` +
   `<a href="{{home_url}}" style="display:inline-block;min-height:44px;text-decoration:none;color:${C.brandText};">{{logo}}</a>` +
-  `<p style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest &middot; {{date}}{{premium_badge}}</p>` +
+  `<p class="ts-hdr-text" style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest &middot; {{date}}{{premium_badge}}</p>` +
   `</td></tr>\n` +
   `{{stories}}\n` +
   `{{icymi}}\n` +

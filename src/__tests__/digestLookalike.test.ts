@@ -70,14 +70,14 @@ describe('a story with a picture is a two-column row; without one, plain text', 
     const r = render(its);
     const row = rowOf(r.html, 1);
     expect(row).toContain('data-image="1"');
-    expect(row).toContain(`<img class="ts-pic" src="${PIC}" width="240"`);
+    expect(row).toContain(`<img class="ts-pic" src="${PIC}" width="240" height="126"`);
     expect(row).toContain('alt="GST Registration Cancelled Over ₹8.87 Lakh ITC &amp; more'); // alt = the (escaped) headline
     expect(row).toMatch(/<!--\[if mso\]><table role="presentation" width="552"[^>]*><tr><td width="240" valign="top"><!\[endif\]-->/);
     expect(row).toMatch(/<!--\[if mso\]><\/td><td width="312" valign="top"><!\[endif\]-->/);
     expect(row).toContain('display:inline-block;width:100%;max-width:240px'); // fluid: stacks without a media query
     expect((row.match(/<a /g) ?? []).length).toBe(3); // picture link, headline, Read more — one href
     expect(new Set([...row.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).size).toBe(1);
-    expect(r.html).toMatch(/@media only screen and \(max-width:480px\)\{\.ts-col,\.ts-pic\{max-width:100%!important\}/);
+    expect(r.html).toMatch(/@media only screen and \(max-width:480px\)\{\.ts-col\{max-width:100%!important\}\.ts-pic\{width:100%!important;max-width:100%!important;height:auto!important;/);
     // The second story has no picture: today's single column.
     const plain = rowOf(r.html, 2);
     expect(plain).not.toContain('<img');
