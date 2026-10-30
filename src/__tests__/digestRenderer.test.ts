@@ -172,7 +172,8 @@ describe('3. visible date from runDate in IST', () => {
   });
   it('a date inside a headline is never used as the visible date', () => {
     const r = render({ items: [item({ title: 'Circular dated Oct 15 2026 explained' }), ...items(4)] });
-    expect(r.html).toContain('Daily Digest &middot; 22 October 2026');
+    expect(r.html).toContain('>22 October 2026</td>'); // the date line above the header bar
+    expect(r.html).toContain('>Daily Digest</p>');
   });
 });
 
@@ -180,12 +181,14 @@ describe('4. footer', () => {
   it('an empty postal address is refused', () => {
     expectRefused(() => render({ cfg: cfg({ DIGEST_POSTAL_ADDRESS: '   ' }) }), 'no_postal_address');
   });
-  it('carries the address and the unsubscribe tag, never "all types" wording', () => {
+  it('carries the address, the reason and contact lines and NO unsubscribe link of ours (Mailercloud adds its own), never "all types" wording', () => {
     const r = render();
     expect(r.html).toContain('Kochi, Kerala 682001');
-    expect(r.html).toContain(`href="${UNSUBSCRIBE_TAG}"`);
-    expect(r.text).toContain(UNSUBSCRIBE_TAG);
+    expect(`${r.html}\n${r.text}`).not.toContain('{{unsubscribe_link}}');
+    expect(`${r.html}\n${r.text}`).not.toMatch(/Unsubscribe from this digest/i);
+    expect(r.html).toContain('Questions or feedback? Write to');
     expect(r.text).toContain('Kochi, Kerala 682001');
+    expect(r.text).toContain('Questions or feedback? Write to info@taxscan.in');
     expect(`${r.html}\n${r.text}`).not.toMatch(/all types? of e-?mails/i);
   });
   it('PREMIUM has the subscription line, FREE the subscribed line — never each other', () => {
@@ -253,12 +256,12 @@ describe('6. alt text on every image', () => {
 });
 
 describe('7. links: allowlist + digest UTM', () => {
-  it('every href is allowlisted and carries the digest UTM (except the exact unsubscribe tag)', () => {
+  it('every href is allowlisted and carries the digest UTM (the contact mailto aside; no unsubscribe tag)', () => {
     for (const audience of ['FREE', 'PREMIUM'] as const) {
       const r = renderDigest({ items: worstCase(), audience, runDate: RUN_DATE, cfg: cfg() });
-      // The two fixed footer hrefs that are not story/ad links: the unsubscribe tag and the contact mailto (exactly one).
+      // The one fixed footer href that is not a story/ad link: the contact mailto (exactly one). No unsubscribe href of ours.
       expect(hrefs(r.html).filter((h) => h === 'mailto:info@taxscan.in')).toHaveLength(1);
-      const links = hrefs(r.html).filter((h) => h !== UNSUBSCRIBE_TAG && h !== 'mailto:info@taxscan.in');
+      const links = hrefs(r.html).filter((h) => h !== 'mailto:info@taxscan.in');
       expect(links.length).toBeGreaterThan(15);
       for (const h of links) {
         const u = new URL(h);
@@ -267,7 +270,7 @@ describe('7. links: allowlist + digest UTM', () => {
         expect(u.searchParams.getAll('utm_medium')).toEqual(['email']);
         expect(u.searchParams.getAll('utm_campaign')).toEqual([`digest-2026-10-22-${audience.toLowerCase()}`]);
       }
-      expect(hrefs(r.html).filter((h) => h === UNSUBSCRIBE_TAG)).toHaveLength(1);
+      expect(hrefs(r.html).filter((h) => h === UNSUBSCRIBE_TAG)).toHaveLength(0);
     }
   });
   it('an off-allowlist item link is refused, and the error names only the host', () => {
@@ -316,33 +319,35 @@ describe('8. size budget', () => {
 
 describe('9. responsive, email-safe HTML', () => {
   const r = renderDigest({ items: worstCase(), audience: 'FREE', runDate: RUN_DATE, cfg: cfg() });
-  it('fluid 600 px single column, MSO fixed wrapper, colour-scheme metas, viewport', () => {
-    expect(r.html).toContain('max-width:600px');
-    expect(r.html).toMatch(/width="100%"[^>]*style="width:100%;max-width:600px/);
-    expect(r.html).toContain('<!--[if mso]><table role="presentation" width="600"');
+  it('fluid 900 px column (860 inside), MSO fixed wrapper, colour-scheme metas, viewport', () => {
+    expect(r.html).toContain('max-width:900px');
+    expect(r.html).toMatch(/width="100%"[^>]*style="width:100%;max-width:900px/);
+    expect(r.html).toContain('<!--[if mso]><table role="presentation" width="900"');
+    expect(r.html).toContain('@media only screen and (max-width:600px)');
     expect(r.html).toContain('<meta name="color-scheme" content="light">');
     expect(r.html).toContain('<meta name="supported-color-schemes" content="light">');
     expect(r.html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
   });
   it('works without media queries: stripping <style> leaves every layout style inline', () => {
     const stripped = r.html.replace(/<style>[\s\S]*?<\/style>/, '');
-    expect(stripped).toContain('max-width:600px');
+    expect(stripped).toContain('max-width:900px');
     expect((stripped.match(/data-item="/g) ?? []).length).toBe(15);
     for (const td of stripped.match(/<td class="ts-card[^>]*>/g) ?? []) expect(td).toMatch(/style="[^"]*padding/);
   });
-  it('no JS, no external CSS, no web fonts; text never pure black', () => {
+  it('no JS, no external CSS, no web fonts; headline and button text are the old newsletter\'s #000000, nothing else is pure black', () => {
     expect(r.html).not.toMatch(/<script|<link\b|@import|@font-face|fonts\.googleapis/i);
-    expect(r.html).not.toMatch(/color:#000(000)?\b/i);
+    const black = r.html.match(/<[^>]*color:#000000[^>]*>/gi) ?? [];
+    expect(black.length).toBeGreaterThan(0);
+    for (const tag of black) expect(/^<(a|h2|center)\b/i.test(tag)).toBe(true); // headline link, its h2, the button (link and VML)
     expect(r.html).toContain("font-family:Arial,'Helvetica Neue',Helvetica,sans-serif"); // the look readers know (owner, 2026-10-23)
   });
-  it('body text ≥ 16 px, no font under 14 px; every link has a ≥ 44 px tap target', () => {
+  it('body text 16 px, no font under 14 px; the Read More button is 38 px tall, every other button 44 px', () => {
     const sizes = [...r.html.matchAll(/font-size:(\d+)px/g)].map((m) => Number(m[1])).filter((n) => n !== 1); // 1px = hidden preheader
     expect(Math.min(...sizes)).toBeGreaterThanOrEqual(14);
     for (const p of r.html.match(/<p [^>]*class="ts-body"/g) ?? []) expect(p).toContain('font-size:16px');
-    for (const a of r.html.match(/<a\s[^>]*>/g) ?? []) {
+    for (const a of r.html.match(/<a\s[^>]*class="ts-btn"[^>]*>/g) ?? []) {
       const style = /style="([^"]*)"/.exec(a)?.[1] ?? '';
-      const ok = /(^|;)(min-)?height:44px/.test(style) || /padding:(9px 0|0 0 18px 0)/.test(style); // 26px line + 18px padding (headline: all below, so it starts level with the picture)
-      expect(ok).toBe(true);
+      expect(/(^|;)height:(38|44)px/.test(style)).toBe(true);
     }
   });
 });
@@ -432,9 +437,10 @@ describe('15. item content', () => {
     expect(first).not.toContain('>GST<'); // no category / authority label above the headline (owner, 29 Oct)
     expect(first).not.toContain('ts-label');
     const summary = /class="ts-body">([^<]*)</.exec(first)![1];
-    expect(summary.length).toBeLessThanOrEqual(180);
+    expect(summary.length).toBeLessThanOrEqual(220);
+    expect(summary.length).toBeGreaterThan(150);
     expect(summary.endsWith('…')).toBe(true);
-    expect((first.match(/<a /g) ?? []).length).toBe(2); // headline + "Read more", same href
+    expect((first.match(/<a /g) ?? []).length).toBe(2); // headline + "Read More", same href
     expect(first).not.toMatch(/<img|capturedAt|readRate|article:/);
     const second = /<td [^>]*data-item="2"[\s\S]*?<\/td><\/tr>/.exec(r.html)![0];
     expect(second).not.toContain('>Supreme Court<');

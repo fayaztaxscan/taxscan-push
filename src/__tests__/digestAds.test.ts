@@ -540,7 +540,7 @@ describe('renderer: ad markup, size and image weight', () => {
     const r = renderDigest({ items: items(5), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads: [ra(1, { headline: 'A & B <x>' }), ra(3)] });
     const row = slotRow(r.html, 1);
     expect(row).toMatch(/<a href="[^"]*utm_content=ad-ad1-slot1[^"]*"[^>]*><img [^>]*alt="GST appeals course"/);
-    expect(row).toMatch(/width="552" height="276"/);
+    expect(row).toMatch(/width="860" height="430"/);
     expect(row).toContain('ref=x');
     expect(row).toContain('data-ad-image="1"');
     expect(row).not.toMatch(/From Taxscan|A &amp; B|Enrol now|<h3|ts-btn|<p /);
@@ -651,7 +651,7 @@ describe('POST /api/digest/ad-images + public /email-assets', () => {
     expect(wide.body.error).toBe('too_wide');
     const spoof = await request(appFor(portal)).post('/api/digest/ad-images').set('Cookie', adminCookie).set('Content-Type', 'image/png').set('X-Filename', 'x.png').send(Buffer.from('GIF89a......'));
     expect(spoof.body.error).toBe('wrong_type');
-    const huge = await request(appFor(portal)).post('/api/digest/ad-images').set('Cookie', adminCookie).set('Content-Type', 'image/png').send(Buffer.alloc(260 * 1024, 1));
+    const huge = await request(appFor(portal)).post('/api/digest/ad-images').set('Cookie', adminCookie).set('Content-Type', 'image/png').send(Buffer.alloc(320 * 1024, 1));
     expect(huge.status).toBe(413);
     expect(huge.body.error).toBe('too_big');
   });

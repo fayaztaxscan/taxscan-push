@@ -51,7 +51,7 @@ const newPortal = () => `${PORTAL_PREFIX}${RUN}-${++n}`;
 
 /** The built-in layout with a visible marker (and a sentinel comment) — a valid template. */
 const marked = (marker: string, extra = '') =>
-  BUILTIN_TEMPLATE_HTML.replace('Daily Digest &middot;', `${marker} &middot;`).replace('</body>', `<!-- ${SENTINEL} -->${extra}</body>`);
+  BUILTIN_TEMPLATE_HTML.replace('Daily Digest{{premium_badge}}', `${marker} &middot;{{premium_badge}}`).replace('</body>', `<!-- ${SENTINEL} -->${extra}</body>`);
 
 const check = (html: string | null, audience: DigestAudience = 'FREE', c = cfg(), compileError: string | null = null) =>
   validateTemplate({ audience, compiledHtml: html, compileError }, { cfg: c, now: NOW });
@@ -227,7 +227,7 @@ describe('ACCEPT: resolveTemplate — override inside its window, then the ACTIV
     expect(free.templateId).not.toBeNull();
     expect(free.templateId).not.toBe(active.id);
     expect(premium.templateId).toBeNull(); // no Premium template → built-in
-    expect(premium.html).toContain('Daily Digest &middot;');
+    expect(premium.html).toContain('>Daily Digest');
 
     // The next day the override has lapsed: the ACTIVE template is used.
     const out = await renderDigestContent({ runId: 'r', runDate: new Date(Date.UTC(2026, 9, 23)), audience: 'FREE', items, cfg: cfg(), portal, at: IST(6, 30, 23) });
@@ -241,7 +241,8 @@ describe('ACCEPT: resolveTemplate — override inside its window, then the ACTIV
     const items: FrozenItem[] = [1, 2, 3, 4, 5].map((i) => ({ rank: i, section: 'MAIN', articleKey: `b:${i}`, campaignId: null, title: `Story ${i}`, url: `https://www.taxscan.in/x/${i}`, authority: null, category: 'GST', excerpt: null, capturedAt: NOW, readRate: null }));
     const out = await renderDigestContent({ runId: 'r', runDate: new Date(Date.UTC(2026, 9, 22)), audience: 'FREE', items, cfg: cfg(), portal, at: NOW });
     expect(out.templateId).toBeNull();
-    expect(out.html).toContain('Daily Digest &middot; 22 October 2026');
+    expect(out.html).toContain('>22 October 2026</td>');
+    expect(out.html).toContain('>Daily Digest</p>');
   });
 });
 
@@ -274,8 +275,12 @@ describe('checklist: every rule, red and green', () => {
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{date}}', '{{date}} {{reader_name}}'), 'placeholders').problems).toContain('{{reader_name}} is not a placeholder this digest fills.');
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{icymi}}', '<tr><td>{{icymi}}</td></tr>'), 'placeholders').problems.join(' ')).toMatch(/\{\{icymi\}\} must sit directly inside a <table>.*inside a <td>/);
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('<title>{{subject}}</title>', '<title>{{subject}}</title>{{preheader}}').replace('</style>\n</head>\n<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:#f2f3f5;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n{{preheader}}', '</style>\n</head>\n<body>'), 'placeholders').problems).toContain('{{preheader}} must be in <body>, not <head>.');
-    // The provider's unsubscribe tag may appear; optional placeholders may be left out.
-    expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{logo}}', 'Taxscan').replace('</body>', '<a href="{{unsubscribe_link}}">Unsubscribe</a></body>'), 'placeholders').ok).toBe(true);
+    // Optional placeholders may be left out ...
+    expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{logo}}', 'Taxscan'), 'placeholders').ok).toBe(true);
+    // ... but {{unsubscribe_link}} is refused: Mailercloud adds its own unsubscribe footer and does not fill this tag.
+    const dead = checkOf(BUILTIN_TEMPLATE_HTML.replace('</body>', '<a href="{{unsubscribe_link}}">Unsubscribe</a></body>'), 'placeholders');
+    expect(dead.ok).toBe(false);
+    expect(dead.problems.join(' ')).toMatch(/\{\{unsubscribe_link\}\} must be removed: Mailercloud adds the unsubscribe footer/);
   });
 
   it('footer: inside a comment, an Outlook-only block, a hidden element, <head>, or hidden by a <style> rule → red; hiding your own class is fine', () => {
@@ -330,7 +335,7 @@ describe('checklist: every rule, red and green', () => {
     const n2 = checkOf(near, 'size');
     expect(n2.ok).toBe(true);
     expect(n2.note).toMatch(/close to the 90 KB limit/);
-    expect(checkOf(BUILTIN_TEMPLATE_HTML, 'size').note).toMatch(/KB of 90 KB/);
+    expect(checkOf(BUILTIN_TEMPLATE_HTML, 'size').note).toMatch(/KB( of 90 KB| — close to the 90 KB limit)/);
   });
 
   it('Premium: a subscription link or "Subscribe now" in the Premium template → red; the same in the Free one is fine', () => {
@@ -634,15 +639,15 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
   it('square yellow buttons with bold dark text and an Outlook VML fallback, for stories and ads', () => {
     const btns = r.html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBe(7); // 5 stories + 2 ads
-    for (const b of btns) expect(b).toMatch(/display:inline-block;width:\d+px;height:44px;line-height:44px;padding:0;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);border-radius:0;[^"]*font-size:15px;font-weight:700;color:#111111;text-decoration:none/);
+    for (const b of btns) expect(b).toMatch(/display:inline-block;width:\d+px;height:(38|44)px;line-height:(38|44)px;padding:0;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);border-radius:0;[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
     expect((r.html.match(/<v:rect [^>]*fillcolor="#FEE620"/g) ?? []).length).toBe(7);
-    expect(r.html).toContain('[data-ogsb] .ts-btn{background-color:#FEE620!important}[data-ogsc] .ts-btn{color:#111111!important}');
+    expect(r.html).toContain('[data-ogsb] .ts-btn{background-color:#FEE620!important}[data-ogsc] .ts-btn{color:#000000!important}');
   });
-  it('headlines #111111 (never pure black), not underlined; body #333333; other links #1376c8', () => {
-    expect(r.html).toMatch(/class="ts-head" style="[^"]*color:#111111;text-decoration:none;"/);
+  it('headlines #000000 (the old newsletter\'s), not underlined; body #333333; other links #1376c8', () => {
+    expect(r.html).toMatch(/class="ts-head" style="[^"]*color:#000000;text-decoration:none;"/);
     expect(r.html).toMatch(/class="ts-body">Summary/);
     expect(r.html).toMatch(/color:#333333;" class="ts-body"/);
-    expect(r.html).toMatch(/href="\{\{unsubscribe_link\}\}" class="ts-link" style="[^"]*color:#1376c8;/);
+    expect(r.html).toMatch(/href="mailto:info@taxscan\.in" class="ts-link" style="[^"]*color:#1376c8;/);
   });
   it('without an asset host (unit renders) the header falls back to a white TAXSCAN wordmark', () => {
     expect(renderDigest({ items: its, audience: 'FREE', runDate: NOW, cfg: cfg() }).html).toContain('>TAXSCAN</span>');

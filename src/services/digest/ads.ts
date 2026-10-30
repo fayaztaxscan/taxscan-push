@@ -59,6 +59,8 @@ export type PoolAd = {
   status: string;
   imageId: string | null;
   image: { id: string; mime: string; width: number; height: number; size: number } | null;
+  mobileImageId?: string | null;
+  mobileImage?: { id: string; mime: string; width: number; height: number; size: number } | null;
   lastPlacedAt: Date | null;
 };
 
@@ -87,6 +89,7 @@ export function whyIneligible(ad: PoolAd, audience: DigestAudience, slot: number
   // An http: link saved before the https rule (or written outside the save path) is dropped here.
   if (!isAllowedAdUrl(ad.linkUrl)) return 'link_not_https';
   if (ad.imageId && !ad.image) return 'image_missing';
+  if (ad.mobileImageId && !ad.mobileImage) return 'image_missing';
   return null;
 }
 
@@ -245,7 +248,10 @@ export function assertPlacementsAllowed(audience: DigestAudience, placed: { slot
 export async function loadAdPool(portal: string): Promise<PoolAd[]> {
   const ads = await prisma.digestAd.findMany({
     where: { portal, status: 'ACTIVE' },
-    include: { image: { select: { id: true, mime: true, width: true, height: true, size: true } } },
+    include: {
+      image: { select: { id: true, mime: true, width: true, height: true, size: true } },
+      mobileImage: { select: { id: true, mime: true, width: true, height: true, size: true } },
+    },
   });
   if (ads.length === 0) return [];
   const last = await prisma.digestAdPlacement.groupBy({
@@ -359,6 +365,11 @@ export const AdInputSchema = z
       .regex(/^[a-f0-9]{64}$/, 'Unknown image')
       .nullish()
       .transform((v) => v ?? null),
+    mobileImageId: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/, 'Unknown image')
+      .nullish()
+      .transform((v) => v ?? null),
     audience: z.enum(AD_AUDIENCES, { error: 'Audience must be All, Free only or Premium only' }),
     topic: optionalText(60, 'Topic'),
     slots: z
@@ -379,6 +390,9 @@ export const AdInputSchema = z
       ctx.addIssue({ code: 'custom', path: ['linkUrl'], message: 'The link must start with https://' });
     } else if ([...new URL(v.linkUrl).searchParams.keys()].some((k) => k.toLowerCase().startsWith('utm_'))) {
       ctx.addIssue({ code: 'custom', path: ['linkUrl'], message: 'Remove the utm_ parameters from the link; the digest adds its own' });
+    }
+    if (v.mobileImageId && !v.imageId) {
+      ctx.addIssue({ code: 'custom', path: ['mobileImageId'], message: 'Add the desktop banner too; the mobile square goes with it' });
     }
     if (v.kind === 'SUBSCRIPTION' && v.audience === 'PREMIUM_ONLY') {
       ctx.addIssue({ code: 'custom', path: ['audience'], message: 'A subscription ad can never go to Premium readers' });
