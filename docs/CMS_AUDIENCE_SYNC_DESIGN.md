@@ -891,6 +891,35 @@ An **Audience card on Digests**. All of it comes from Postgres.
   - Tests: `audienceWriter.test.ts` (both behaviours of M-1 … M-3 and the read-back shape; `contact_type` and DELETE asserted on
     every recorded request).
 
+- **Task 7 — built 2026-10-30** (behind `DIGEST_AUDIENCE_FROM_CMS`, default off; with it off the runner never calls the guard
+  and `audienceTarget()` is unchanged). `audience/guard.ts`: `audienceGuard(audience, snapshot, now, thresholds)` is pure; every
+  §7.2 check has a code (`stale_full_load`, `no_activity`, `breaker_open`, `pending_writes`, `mailercloud_deviation`,
+  `cms_deviation`; missing inputs `mailercloud_count_missing` / `cms_count_missing`; FREE `premium_tag_empty` / `sync_stale`) and a
+  plain sentence; `loadGuardSnapshot` reads Postgres only. Decisions:
+  - **Same-instant Mailercloud comparison.** Mailercloud's Premium count is the nightly drift check's `premiumMailercloud`,
+    compared with the `premiumOurs` stored by that same check (not today's live count), so the two describe one moment.
+    "Pending" = members whose Premium role and Premium tag disagree (either direction). "Liveness" = the newest of the last
+    full pull, incremental pull and webhook.
+  - **Runner.** `scheduleStep()` calls the guard after `scheduleBlocker()` and BEFORE the claim, so a refusal never spends
+    `scheduleAttemptedAt`. A refusal leaves the variant as it is, sets `nextAttemptAt` = next minute and raises
+    `audience_unverified` (once per run, with the failing check; a BLOCKING kind). Send now and Retry meet the same guard;
+    approval never overrides it. At the cut-off a variant that nothing else explains is SKIPPED `audience_unverified`. A guard
+    read that throws refuses (`guard_unreadable`). `AdvanceDeps.audience` injects the audience config (default `env.audience`).
+  - **Derived targets (§7.1).** Premium: `tagIds` = the Premium tag (the configured lists/segments are kept). Free: the configured
+    lists + the Former tag (unless `AUDIENCE_FORMER_TO_FREE=false`), excluding the Premium and No-marketing tags ALWAYS; the
+    configured exclude *tag* ids are ignored. Missing tag ids → the build fails closed (`config_invalid`).
+  - **Correction.** `audience_breaker_open` / `audience_writer_failing` no longer claim "Premium is held" unless the guard is on.
+  - The run detail carries `variants[].audienceHold` ({check, plain} or null) for the Digests screen.
+  - Tests: `audienceGuard.test.ts`.
+- **Task 8 — built 2026-10-30.** `GET /api/digest/audience` (session only; ADMIN full, PUBLISHER `{enabled, ok, line}` with a
+  number-free line) and `POST /api/digest/audience/resume` (cookie ADMIN only → `resumeBreaker`, which audits
+  `AUDIENCE_SYNC_RESUMED`; 409 `not_open` when closed or the sync is off). Payload from `audience/adminView.ts`: Premium
+  CMS / ours / applied / Mailercloud, Former, No-marketing, pending writes, last webhook/incremental/full, errors in 24 h by
+  kind (writer retryable/fatal from `lastErrorKind`, today's seq-conflict/unknown-status counters), breaker reason in plain
+  words with the reviewed counts, writes live vs dry-run, guard on/off. Never an address, hash or account id; Postgres only.
+  `admin/src/components/AudienceCard.vue` on Digests (hidden when `AUDIENCE_SYNC_ENABLED` is off; Resume behind `ConfirmPush`
+  with Cancel focused, `busy-label` prop added). The admin guide page for the card is task 10.
+
 **Needs the CMS or Mailercloud:**
 
 - the signature cross-check with real vectors (task 2);

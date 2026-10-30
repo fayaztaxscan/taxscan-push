@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { DISPATCH_TIMEOUT_MS, apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
+import AudienceCard from '../components/AudienceCard.vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
 import EmailPreviewFrame from '../components/EmailPreviewFrame.vue';
 import StaffPushCard from '../components/StaffPushCard.vue';
@@ -74,6 +75,8 @@ type Variant = {
   templateFallback?: { fromId: string; reason: string | null } | null;
   /** Task 13: Mailercloud already had this draft (e.g. after a restore); a person checks it and approves. */
   adoptedDraft?: boolean;
+  /** CMS audience sync task 7: the send guard is holding this variant (null = not held / guard off). */
+  audienceHold?: { check: string; plain: string } | null;
 };
 type Item = {
   rank: number;
@@ -271,6 +274,9 @@ const confirmTitle = computed(() => {
 
 /** One plain line per variant about what happens next. */
 function variantNote(v: Variant): string | null {
+  if (v.audienceHold && (v.state === 'PENDING' || v.state === 'CREATED' || v.state === 'FAILED')) {
+    return `Held — ${v.audienceHold.plain}. It is checked again every minute and goes out by itself once it passes; approval does not override it.`;
+  }
   if (v.adoptedDraft && v.approval === 'waiting' && (v.state === 'PENDING' || v.state === 'CREATED')) {
     return 'Mailercloud already had this draft (it may be from before a database restore). Check it in Mailercloud, then approve — or delete it there and a fresh one is made.';
   }
@@ -333,6 +339,9 @@ onMounted(load);
 
     <!-- Task 14: this device's approval notifications (shown whether or not the digest is on). -->
     <StaffPushCard />
+
+    <!-- CMS audience sync: counts, the breaker and Resume (hidden when AUDIENCE_SYNC_ENABLED is off). -->
+    <AudienceCard />
 
     <!-- Off: a calm explainer, nothing to press. -->
     <div v-if="status && !status.enabled" class="card">
