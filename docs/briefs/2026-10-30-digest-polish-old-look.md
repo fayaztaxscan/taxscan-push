@@ -95,3 +95,16 @@ Each one must PASS in the REPORT.
 - Migrations: additive only.
 - Size: stay under the existing warning threshold at 15 stories; if not, stop and report rather than raise limits.
 - Never re-render an already-built run.
+
+## Follow-up 1 (owner, 30 Oct — after the REPORT's size failure): "go with recommendation, I need maximum delivery"
+Continue on the SAME branch `build/digest-polish-old-look` (add commits; update the same REPORT).
+1. **Drop the Outlook VML buttons** (Read More and ad CTAs): table-cell "bulletproof" buttons only — the `<a>` carries
+   the padding/background so the whole box is clickable everywhere except Outlook for Windows (text only there; the
+   owner accepted this). Keep the #FEE620 / #000 15 px bold look, 96 × 38 desktop, full width on phones.
+2. **`DIGEST_HTML_WARN_KB` default 75 → 80** (`src/lib/env.ts:115`). `DIGEST_MAX_HTML_KB` stays **90** — do not raise it.
+3. Keep alt = headline. Keep 15 stories (`DIGEST_MAX_ITEMS`=15, cap still main + ICYMI together).
+4. "Biggest case" preview: sample **ads** must not show broken pictures either (same rule as item F: default story
+   picture / brand block for display only; size check keeps realistic URL lengths).
+5. **Acceptance (replaces the size line):** the builder's real worst case (15 total incl. ICYMI + 3 ads) and the
+   15-main-no-ICYMI case are each **≤ 80 KB budget** (report bytes; target ≥ 10 KB under the 90 KB refusal). Then run
+   the **full suite once** after the final change and report it.
