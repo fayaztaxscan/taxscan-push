@@ -7,7 +7,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
-**▶ 2026-10-30 (PRs #86–#87 LIVE):**
+**▶ 2026-10-30 (PRs #86–#88 LIVE):**
 - **#86 CMS webhook fence fixed** (deploy 83324b62, 09:02Z). Railway now puts two hops in front of the app
   (`xff=<cloudflare>, <railway hop 152.233.x / 79.127.x>`), so `req.ip` was never Cloudflare. `cmsClientIp` reads the
   last two XFF hops; CF-Connecting-IP believed only when one is Cloudflare. The CMS retry at 09:18Z was accepted:
@@ -20,8 +20,10 @@ status changes so a fresh Claude session can pick up cleanly.
 - **Stage-3 switch-on order must include:** clear `DIGEST_PREMIUM_LIST_IDS`/segments before `DIGEST_AUDIENCE_FROM_CMS`
   (derived Premium keeps configured lists alongside the tag); flag on today would hold BOTH versions (breaker open,
   drift never run, no Premium tags while dry-run).
-- **Follow-up (not briefed):** with Railway's extra hop every `req.ip`-keyed rate limiter keys on a few Railway edge
-  addresses — readers may share a bucket. Next brief candidate. Tasks 9–10 (backup v3/retention, docs/guide) next.
+- **#88 real client IP** (deploy f0a9cd31, 10:32Z): `requestClientIp` (same derivation as the fence) keys both rate
+  limiters and every audit `ipAddress`. Post-deploy: track 204 / config 200 / subscribe 201, no 429, no limiter warnings.
+- CMS test reader 84239: account.created + subscription.started `applied` 09:38Z — Feed 1 works end to end.
+- Next: tasks 9–10 (backup v3/retention, docs/guide); owner reviews the Audience card + Resume.
 
 **▶ PICKUP FOR THE NEXT SESSION (written 2026-10-29 19:20 IST):**
 1. **URGENT — CMS webhook fence (deadline 2026-10-30 13:28Z = 18:58 IST).** The CMS's first event
