@@ -65,24 +65,26 @@ const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${
 /* ------------------------------------------------------------------ */
 
 describe('a story with a picture is a two-column row; without one, plain text', () => {
-  it('imageUrl → picture left (the ORIGINAL url, explicit width 240), alt = headline, text right; Outlook ghost table; phones stack', () => {
+  it('imageUrl → picture left (the ORIGINAL url, 280 px), 20 px gap, text 560 px, alt = headline; phones stack', () => {
     const its = stories(5, (i) => (i === 0 ? PIC : null));
     const r = render(its);
     const row = rowOf(r.html, 1);
     expect(row).toContain('data-image="1"');
-    expect(row).toContain(`<img class="ts-pic" src="${PIC}" width="240" height="126"`);
+    expect(row).toContain(`<img class="ts-pic adapt-img" src="${PIC}" width="280" height="147"`);
     expect(row).toContain('alt="GST Registration Cancelled Over ₹8.87 Lakh ITC &amp; more'); // alt = the (escaped) headline
-    expect(row).toMatch(/<!--\[if mso\]><table role="presentation" width="552"[^>]*><tr><td width="240" valign="top"><!\[endif\]-->/);
-    expect(row).toMatch(/<!--\[if mso\]><\/td><td width="312" valign="top"><!\[endif\]-->/);
-    expect(row).toContain('display:inline-block;width:100%;max-width:240px'); // fluid: stacks without a media query
+    expect(row).toMatch(/<td class="ts-stcol ts-stpic" width="280" valign="top"/);
+    expect(row).toMatch(/<td class="ts-stgap" width="20"/);
+    expect(row).toMatch(/<td class="ts-stcol ts-sttext" width="560" valign="top"/);
     expect((row.match(/<a /g) ?? []).length).toBe(3); // picture link, headline, Read more — one href
     expect(new Set([...row.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).size).toBe(1);
-    expect(r.html).toMatch(/@media only screen and \(max-width:480px\)\{\.ts-col\{max-width:100%!important\}\.ts-pic\{width:100%!important;max-width:100%!important;height:auto!important;/);
+    expect(r.html).toContain('@media only screen and (max-width:600px){');
+    expect(r.html).toContain('.ts-stcol{display:block!important;width:100%!important}.ts-stgap{display:none!important}');
+    expect(r.html).toContain('.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}');
     // The second story has no picture: today's single column.
     const plain = rowOf(r.html, 2);
     expect(plain).not.toContain('<img');
     expect(plain).not.toContain('data-image');
-    expect(plain).toContain('>Read more</a>');
+    expect(plain).toContain('>Read More</a>');
   });
 
   it('a picture URL that is not exactly documents.taxscan.in .jpg/.jpeg/.png renders text-only', () => {
@@ -308,9 +310,9 @@ describe('the social icons row: exactly the five fixed links', () => {
     expect(SOCIAL_LINKS.map((l) => l.href)).toEqual(FIVE);
   });
 
-  it('the footer parts are untouched: unsubscribe, postal address, reply line, no "noreply"', () => {
+  it('the footer parts: no unsubscribe link of ours, postal address, reply line, no "noreply"', () => {
     const r = render(stories(5, () => null));
-    expect(r.html).toContain('href="{{unsubscribe_link}}"');
+    expect(r.html).not.toContain('{{unsubscribe_link}}'); // Mailercloud appends its own footer; ours would arrive dead
     expect(r.html).toContain('Kochi, Kerala 682001');
     expect(r.html).not.toContain('Just reply'); // replaced 29 Oct: replies land at Mailercloud, readers are sent to a real mailbox
     expect(r.html.toLowerCase()).not.toContain('noreply');
@@ -386,7 +388,7 @@ describe('the footer says "Questions or feedback? Write to info@taxscan.in" (a r
     const r = render(stories(5, () => null), { audience });
     const footer = new RegExp('<td [^>]*data-footer="1"[\\s\\S]*?</td></tr>').exec(r.html)![0];
     expect(footer).toContain(`${reason.replace(/'/g, '&#39;')} Questions or feedback? Write to ${link}</p>`); // the reason line is the same text as before, HTML-escaped
-    expect(footer).toContain('href="{{unsubscribe_link}}"'); // unsubscribe untouched
+    expect(footer).not.toContain('unsubscribe'); // none of ours: Mailercloud adds its own footer
     expect(footer).toContain('Kochi, Kerala 682001'); // postal address untouched
     expect(r.html).not.toContain('Just reply');
     expect((r.html.match(/href="mailto:/g) ?? []).length).toBe(1);

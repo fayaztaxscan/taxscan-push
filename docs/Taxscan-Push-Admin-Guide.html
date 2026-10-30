@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.7 &nbsp;·&nbsp; Updated 29 October 2026
+    &nbsp;·&nbsp; Version 2.9 &nbsp;·&nbsp; Updated 30 October 2026
   </div>
 </div>
 
@@ -707,6 +707,13 @@ dismissed. The common ones:</p>
 advertisers — and is drawn from a <strong>template</strong>. Both are managed here, and both can be prepared while the
 digest is still switched off.</p>
 
+<h3>Changing a version's subject line</h3>
+<p>Under the inbox preview, <strong>Edit subject</strong> lets you replace the automatic subject (the lead headline) of one
+version — Free or Premium — before the digest is approved. Type the new line and press <strong>Save</strong>: it is updated in
+the Mailercloud draft and on this screen together. Keep it under about 90 characters (a counter warns you; the limit is 150).
+Once the digest is <strong>approved</strong>, scheduled or past the 17:00 cut-off the box says <em>Locked</em> and the subject can no
+longer be changed — <strong>Hold</strong> the digest first if you need to. The email's text is not changed, only its subject.</p>
+
 <h3>The Ads screen</h3>
 <p>The top of the screen is the <strong>coverage check</strong>: both emails drawn as the reader meets them, with the ad
 the next 06:30 build would put in each slot. A green line means every slot is filled. A slot marked empty means that
@@ -724,9 +731,14 @@ version <strong>will not go out</strong> until it is fixed — a slot is never s
       Premium needs at least three ads (or slot defaults) that can reach it.</li>
   <li><strong>Premium never gets the subscription ad.</strong> A <em>Subscription</em> ad set to "Free and Premium" is listed as
       <em>Free only (never Premium)</em>, and Premium's slot is filled from the other ads.</li>
-  <li><strong>Image:</strong> JPEG or PNG, up to <strong>1200 px wide</strong>, up to <strong>150 KB</strong>, no taller than twice
-      its width. One picture per ad, not resized. <strong>Put the offer in the headline</strong> — many readers' email apps hide
-      images.</li>
+  <li><strong>Two pictures per ad, exact sizes:</strong> a <strong>desktop banner of exactly 1720 × 400 px</strong> (shown 860 px
+      wide on computers) and a <strong>mobile square of exactly 1080 × 1080 px</strong> (shown 300 px wide on phones). JPEG or
+      PNG, up to <strong>250 KB</strong> each. They are not resized — a picture of any other size is refused, and the message
+      names both the size you uploaded and the size needed. <strong>Put the offer in the headline</strong> — many readers' email
+      apps hide images.</li>
+  <li><strong>Older ads</strong> keep working: their one picture counts as the desktop banner, whatever its size. The list tags
+      an ad with no mobile square <em>Needs mobile square</em> (phones then see the desktop banner) and a banner that is not
+      1720 × 400 <em>Old size — replace</em>. Neither tag stops an ad from being sent.</li>
   <li><strong>Link:</strong> must start with <code>https://</code>, must be one of our own sites, and must not carry its own
       <code>utm_</code> tags (the digest adds its own, so sales can be traced back to the email).</li>
   <li><strong>Starts / Ends:</strong> give every offer an end date, so it stops on time by itself.</li>
@@ -744,7 +756,7 @@ version <strong>will not go out</strong> until it is fixed — a slot is never s
 <p><strong>In use now</strong> shows what each version's next digest is built with. Until an editor activates a template,
 both use the <strong>built-in template</strong>: close to today's hand-made digest — a dark header bar with the white
 Taxscan logo, Arial throughout, dark headlines, blue links and square yellow buttons. <em>New template</em> starts from a
-copy of it. <strong>Preview built-in</strong> beside each version shows that built-in layout the way readers get it (recent stories or the biggest case, at phone, tablet or desktop width), whether or not a template is active — handy for comparing a draft with the default. Templates are <strong>plain email HTML</strong> with placeholders the digest fills:</p>
+copy of it. Its layout is the old Mailercloud newsletter's: a wide (900 px) email whose stories have the picture on the left and the text beside it (one column on phones), and the date in a small line above the header. <strong>Preview built-in</strong> beside each version shows that built-in layout the way readers get it (recent stories or the biggest case, at phone, tablet or desktop width), whether or not a template is active — handy for comparing a draft with the default. Templates are <strong>plain email HTML</strong> with placeholders the digest fills:</p>
 <table>
   <thead><tr><th style="width:34%">Placeholder</th><th>What goes there</th></tr></thead>
   <tbody>
@@ -752,10 +764,11 @@ copy of it. <strong>Preview built-in</strong> beside each version shows that bui
     <tr><td><code>{{stories}}</code> <span class="pill">required</span></td><td>The stories, with ad slots 1 and 2 inside them.</td></tr>
     <tr><td><code>{{icymi}}</code> <span class="pill">required</span></td><td>The <em>In case you missed it</em> stories, when there are any.</td></tr>
     <tr><td><code>{{ad_slot_3}}</code> <span class="pill">required</span></td><td>The ad above the footer.</td></tr>
-    <tr><td><code>{{footer}}</code> <span class="pill">required</span></td><td>Why the reader gets this email, the unsubscribe link and the postal address. Always the system's own text; it can be placed, never changed or removed.</td></tr>
+    <tr><td><code>{{footer}}</code> <span class="pill">required</span></td><td>Why the reader gets this email, the contact line and the postal address. Always the system's own text; it can be placed, never changed or removed.</td></tr>
     <tr><td>Optional</td><td><code>{{subject}}</code>, <code>{{date}}</code>, <code>{{home_url}}</code>, <code>{{logo}}</code>, <code>{{premium_badge}}</code>, <code>{{audience}}</code>.</td></tr>
   </tbody>
 </table>
+<p><strong>No unsubscribe link of your own.</strong> Mailercloud adds its own working unsubscribe footer ("Manage preferences … Unsubscribe") to every campaign, so the digest draws none, and a template that contains <code>{{unsubscribe_link}}</code> is refused (it would arrive as a dead link).</p>
 <p>Each required placeholder must appear <strong>exactly once</strong>. The four row placeholders (stories, ICYMI, slot 3,
 footer) must sit directly inside a table.</p>
 
@@ -942,7 +955,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.7 · Updated 29 October 2026
+  Taxscan Push · Admin User Guide · Version 2.9 · Updated 30 October 2026
 </p>
 </section>
 

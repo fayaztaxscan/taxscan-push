@@ -68,6 +68,7 @@ enum AuditAction {
   DIGEST_SEND_NOW
   DIGEST_RETRY
   DIGEST_TEST_SENT
+  DIGEST_SUBJECT_EDITED
   DIGEST_SCHEDULED
   DIGEST_SKIPPED
   DIGEST_TEMPLATE_SAVED
@@ -201,7 +202,7 @@ model User {
   sessions    UserSession[]
   auditLogs   AuditLog[]
   campaigns   Campaign[]
-  invitesSent UserInvite[]  @relation("InvitesSent")
+  invitesSent UserInvite[]            @relation("InvitesSent")
   pushDevices StaffPushSubscription[]
 }
 
@@ -351,17 +352,17 @@ model ArticleSurfaceStat {
 /// `canonicalPath` = the path of `canonical_url` (trailing slash dropped); `externalId` = the old CMS's numeric
 /// news id for a migrated story. Grows ~thousands of rows a day (see the REPORT for sizes).
 model CmsArticleView {
-  id           String   @id @default(cuid())
-  portal       String   @default("taxscan")
-  articleId    String
+  id            String   @id @default(cuid())
+  portal        String   @default("taxscan")
+  articleId     String
   canonicalPath String
-  externalId   String?
-  date         DateTime @db.Date
-  views        Int
-  pushViews    Int?
-  digestViews  Int?
-  cmsUpdatedAt DateTime
-  fetchedAt    DateTime @default(now())
+  externalId    String?
+  date          DateTime @db.Date
+  views         Int
+  pushViews     Int?
+  digestViews   Int?
+  cmsUpdatedAt  DateTime
+  fetchedAt     DateTime @default(now())
 
   @@unique([portal, articleId, date])
   @@index([portal, canonicalPath, date])
@@ -557,58 +558,58 @@ model DigestRun {
 
 /// One per (run, audience): each variant is its own provider campaign with its own state.
 model DigestSend {
-  id                  String           @id @default(cuid())
-  runId               String
-  audience            DigestAudience
-  state               DigestSendState  @default(PENDING)
-  templateId          String?
-  subject             String
-  preheader           String
-  html                String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
-  text                String?
-  htmlBytes           Int
-  mcCampaignName      String           @unique // TS-DIGEST-2026-10-23-FREE (rows before 2026-10-23: …-FREE-<runId>)
-  mcCampaignId        String?          @unique // persisted the instant create returns
-  sendAfter           DateTime // planned send instant (Send now moves it earlier)
-  scheduledAt         DateTime? // when we called schedule
-  sentConfirmedAt     DateTime?
-  sentVia             String? // status_poll | webhook
-  stepClaimedAt       DateTime? // DB claim; protects against two containers mid-deploy
+  id                     String           @id @default(cuid())
+  runId                  String
+  audience               DigestAudience
+  state                  DigestSendState  @default(PENDING)
+  templateId             String?
+  subject                String
+  preheader              String
+  html                   String? // FROZEN at build; nulled after DIGEST_HTML_RETENTION_DAYS
+  text                   String?
+  htmlBytes              Int
+  mcCampaignName         String           @unique // TS-DIGEST-2026-10-23-FREE (rows before 2026-10-23: …-FREE-<runId>)
+  mcCampaignId           String?          @unique // persisted the instant create returns
+  sendAfter              DateTime // planned send instant (Send now moves it earlier)
+  scheduledAt            DateTime? // when we called schedule
+  sentConfirmedAt        DateTime?
+  sentVia                String? // status_poll | webhook
+  stepClaimedAt          DateTime? // DB claim; protects against two containers mid-deploy
   // Write-ahead markers, set in the claim update BEFORE the provider call. A set
   // marker means the call may have happened: ask the provider before repeating it.
-  createAttemptedAt   DateTime?
-  scheduleAttemptedAt DateTime?
+  createAttemptedAt      DateTime?
+  scheduleAttemptedAt    DateTime?
   // Written (fenced on the claim) immediately BEFORE the createDraft() HTTP call, i.e. after
   // the name lookup proved no campaign exists. Set = this database actually called create, so
   // a draft found later by name is ours (decision A). `createAttemptedAt` only says the step
   // was claimed: a crash before the call leaves it set but this one null (2026-10-23).
-  createSentAt        DateTime?
-  attempts            Int              @default(0) // all failed attempts (display)
-  firstFailureAt      DateTime? // first failure of any step (display)
+  createSentAt           DateTime?
+  attempts               Int              @default(0) // all failed attempts (display)
+  firstFailureAt         DateTime? // first failure of any step (display)
   // Retry bookkeeping for the CURRENT step (create or schedule); reset when the step succeeds.
-  stepAttempts        Int              @default(0)
-  stepFirstFailureAt  DateTime?
-  nextAttemptAt       DateTime?
-  lastError           String? // truncated, email-shaped substrings redacted
-  lastErrorKind       SenderErrorKind?
-  targeted            Int? // from the provider report
-  reached             Int?
-  opens               Int? // aggregate from the report API, trend only
-  clicks              Int?
-  rolledUnsub         Int              @default(0) // EmailEvent rows folded by the sweeper
-  rolledBounce        Int              @default(0)
-  rolledSpam          Int              @default(0)
+  stepAttempts           Int              @default(0)
+  stepFirstFailureAt     DateTime?
+  nextAttemptAt          DateTime?
+  lastError              String? // truncated, email-shaped substrings redacted
+  lastErrorKind          SenderErrorKind?
+  targeted               Int? // from the provider report
+  reached                Int?
+  opens                  Int? // aggregate from the report API, trend only
+  clicks                 Int?
+  rolledUnsub            Int              @default(0) // EmailEvent rows folded by the sweeper
+  rolledBounce           Int              @default(0)
+  rolledSpam             Int              @default(0)
   // Set when this variant was frozen WITHOUT content because its ad slots could not be
   // filled while the other audience's could (task 9 follow-ups): the run's stories are
   // frozen, this variant's html is rendered from them once ads are fixed (state FAILED,
   // lastError "ads_unfillable: …" until then). Null for every normally built variant.
-  contentPendingAt    DateTime?
+  contentPendingAt       DateTime?
   // Owner, 2026-10-23: a variant rendered AFTER the build (the contentPendingAt path) is
   // never covered by the run's approval — in approval mode it needs its own (approvedAt).
   // False for every variant frozen at the build (the run approval covers those).
-  ownApprovalRequired Boolean          @default(false)
-  approvedAt          DateTime?
-  approvedByUserId    String?
+  ownApprovalRequired    Boolean          @default(false)
+  approvedAt             DateTime?
+  approvedByUserId       String?
   // Owner, 2026-10-23: the custom template failed at send time, so this variant was
   // rendered with the built-in template (templateId null). The template it fell back from
   // and why (RenderError text, redacted). Null when no fallback happened.
@@ -617,14 +618,14 @@ model DigestSend {
   // Task 11 (retention): stamped by the nightly fold when it deletes this send's
   // campaign_sent / campaign_error events, so the "the webhook was receiving" proof that
   // digestSendStats() needs outlives the events themselves (else old sends turn to "—").
-  webhookProofAt      DateTime?
+  webhookProofAt         DateTime?
   // Task 11: when the frozen html/text were nulled (DIGEST_HTML_RETENTION_DAYS). Null = still stored.
-  htmlPurgedAt        DateTime?
+  htmlPurgedAt           DateTime?
   // Task 13, owner decision A (2026-10-23): set when this variant ADOPTED a campaign that
   // Mailercloud already had as a DRAFT (or whose status could not be read) — e.g. after a
   // database restore. Its content cannot be confirmed to match our frozen html, so it is
   // never scheduled without a person's approval (ownApprovalRequired), in any mode.
-  adoptedDraftAt      DateTime?
+  adoptedDraftAt         DateTime?
 
   run        DigestRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   placements DigestAdPlacement[]
@@ -751,7 +752,8 @@ model DigestAd {
   body            String?
   ctaText         String
   linkUrl         String // passes isAllowedPushUrl() at save AND at render; UTM added at render, never stored
-  imageId         String?
+  imageId         String? // the desktop banner (shown 860 px wide; 1720 × 400 px for new ads)
+  mobileImageId   String? // the mobile square (1080 × 1080 px, shown 300 px wide on phones); null = phones get the banner
   audience        String // ALL | FREE_ONLY | PREMIUM_ONLY
   topic           String? // matched against the lead items' report category (ordering only)
   slots           Int[] // empty = any slot
@@ -764,8 +766,9 @@ model DigestAd {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  image      DigestAdImage?      @relation(fields: [imageId], references: [id])
-  placements DigestAdPlacement[]
+  image       DigestAdImage?      @relation("DigestAdImage", fields: [imageId], references: [id])
+  mobileImage DigestAdImage?      @relation("DigestAdMobileImage", fields: [mobileImageId], references: [id])
+  placements  DigestAdPlacement[]
 
   @@index([portal, status])
 }
@@ -782,7 +785,8 @@ model DigestAdImage {
   bytes     Bytes
   createdAt DateTime @default(now())
 
-  ads DigestAd[]
+  ads       DigestAd[] @relation("DigestAdImage")
+  mobileAds DigestAd[] @relation("DigestAdMobileImage")
 }
 
 /// One row per ad per send (task 9): rotation (least recently placed) and, later, order matching.
@@ -808,21 +812,21 @@ model DigestAdPlacement {
 /// Mirror of the CMS reader accounts. NO address, NO name: `emailHash` finds the member row.
 /// `applyAccountSnapshot()` (task 3) is the only writer; higher `seq` wins.
 model CmsAccount {
-  accountId    String    @id // CMS account_id (a string)
-  portal       String    @default("taxscan")
-  seq          BigInt // last applied
-  status       String // free|active|cancelled|ended|deleted|<unknown kept verbatim>
-  plan         String?
-  periodEnd    DateTime? @db.Date
-  consentValue Boolean? // raw tri-state marketing_consent.value
-  consentAt    DateTime?
-  emailHash    String? // sha256(normalised email); null once deleted, or when the CMS withholds the email (Q10)
-  deletedAt    DateTime? // tombstone: blocks late lower-seq events
-  erasedAt     DateTime? // contract v1.2 `account.deleted` + `erasure: true`: never reactivated
+  accountId     String    @id // CMS account_id (a string)
+  portal        String    @default("taxscan")
+  seq           BigInt // last applied
+  status        String // free|active|cancelled|ended|deleted|<unknown kept verbatim>
+  plan          String?
+  periodEnd     DateTime? @db.Date
+  consentValue  Boolean? // raw tri-state marketing_consent.value
+  consentAt     DateTime?
+  emailHash     String? // sha256(normalised email); null once deleted, or when the CMS withholds the email (Q10)
+  deletedAt     DateTime? // tombstone: blocks late lower-seq events
+  erasedAt      DateTime? // contract v1.2 `account.deleted` + `erasure: true`: never reactivated
   unknownStatus String? // the last snapshot's status when not a known one (`status` keeps the last KNOWN)
-  outOfScopeAt DateTime? // task 5 absence rule: missing from a COMPLETE full load → ignored by memberRole until any snapshot names it again
-  lastSource   String // webhook|pull_incr|pull_full
-  updatedAt    DateTime  @updatedAt
+  outOfScopeAt  DateTime? // task 5 absence rule: missing from a COMPLETE full load → ignored by memberRole until any snapshot names it again
+  lastSource    String // webhook|pull_incr|pull_full
+  updatedAt     DateTime  @updatedAt
 
   @@index([emailHash])
   @@index([status])
@@ -832,21 +836,21 @@ model CmsAccount {
 /// place an address lives. Deleted once desiredRole = NONE and appliedTags = []. `email` is never
 /// logged and is stripped from backups; null after an erasure.
 model AudienceMember {
-  emailHash     String    @id
-  email         String? // normalised; NEVER logged; not in backups
-  desiredRole   String // PREMIUM | FORMER | NONE (memberRole(), the single definition)
-  noMarketing   Boolean   @default(false) // any linked account said consent=false
-  suppressed    Boolean   @default(false) // EmailSuppression by address OR by any linked accountId
-  appliedTags   String[]  @default([]) // what Mailercloud has acknowledged; [] = nothing of ours
-  mcState       String    @default("UNKNOWN") // UNKNOWN | ABSENT | PRESENT (from our own GET)
-  attempts      Int       @default(0)
-  nextAttemptAt DateTime?
-  lastErrorKind String? // RETRYABLE | FATAL — never a provider message
-  syncedAt      DateTime?
-  resubscribePending Boolean @default(false) // ingest lifted a suppression on this address; held (with the address) until the writer has handled the lift
-  eraseRequestedAt DateTime? // UNUSED since 24 Oct (owner: the CMS erases in Mailercloud; we null `email` at ingest). Kept: migrations are additive-only
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  emailHash          String    @id
+  email              String? // normalised; NEVER logged; not in backups
+  desiredRole        String // PREMIUM | FORMER | NONE (memberRole(), the single definition)
+  noMarketing        Boolean   @default(false) // any linked account said consent=false
+  suppressed         Boolean   @default(false) // EmailSuppression by address OR by any linked accountId
+  appliedTags        String[]  @default([]) // what Mailercloud has acknowledged; [] = nothing of ours
+  mcState            String    @default("UNKNOWN") // UNKNOWN | ABSENT | PRESENT (from our own GET)
+  attempts           Int       @default(0)
+  nextAttemptAt      DateTime?
+  lastErrorKind      String? // RETRYABLE | FATAL — never a provider message
+  syncedAt           DateTime?
+  resubscribePending Boolean   @default(false) // ingest lifted a suppression on this address; held (with the address) until the writer has handled the lift
+  eraseRequestedAt   DateTime? // UNUSED since 24 Oct (owner: the CMS erases in Mailercloud; we null `email` at ingest). Kept: migrations are additive-only
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   @@index([nextAttemptAt])
   @@index([desiredRole])
@@ -867,19 +871,19 @@ model CmsEventReceipt {
 
 /// One row per portal; read by the send guard, the Audience card and alerts.
 model AudienceSyncState {
-  portal        String    @id
-  lastFullAsOf  DateTime?
-  lastFullOkAt  DateTime?
-  lastIncrAsOf  DateTime?
-  lastIncrOkAt  DateTime?
-  lastWebhookAt DateTime?
-  cmsCounts     Json      @default("{}") // from the last COMPLETE full load: {active,cancelled,free,ended}
-  breakerOpenAt DateTime? // Mailercloud writes paused
-  breakerReason String? // change_too_large | truncated_load | erasure_cap | ...
-  pendingReview Json? // counts only, shown to the ADMIN who resumes
+  portal           String    @id
+  lastFullAsOf     DateTime?
+  lastFullOkAt     DateTime?
+  lastIncrAsOf     DateTime?
+  lastIncrOkAt     DateTime?
+  lastWebhookAt    DateTime?
+  cmsCounts        Json      @default("{}") // from the last COMPLETE full load: {active,cancelled,free,ended}
+  breakerOpenAt    DateTime? // Mailercloud writes paused
+  breakerReason    String? // change_too_large | truncated_load | erasure_cap | ...
+  pendingReview    Json? // counts only, shown to the ADMIN who resumes
   lastFullRowCount Int? // rows in the last COMPLETE full load (the 90% acceptance rule and the scope-change check)
-  counters      Json      @default("{}") // {day, seqConflict, unknownStatus, removals:[{at,n}]} — daily alerts + the 24 h Premium-removal breaker
-  drift         Json? // last nightly drift check: {at, sampled, mismatched, premiumOurs, premiumMailercloud}
-  alerts        Json      @default("{}") // {kind: {raisedAt, day, emailedAt, emailAttempts, …counts}} — audience alerts, once per kind per IST day
-  updatedAt     DateTime  @updatedAt
+  counters         Json      @default("{}") // {day, seqConflict, unknownStatus, removals:[{at,n}]} — daily alerts + the 24 h Premium-removal breaker
+  drift            Json? // last nightly drift check: {at, sampled, mismatched, premiumOurs, premiumMailercloud}
+  alerts           Json      @default("{}") // {kind: {raisedAt, day, emailedAt, emailAttempts, …counts}} — audience alerts, once per kind per IST day
+  updatedAt        DateTime  @updatedAt
 }

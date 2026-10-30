@@ -4,7 +4,7 @@ import { recordAudit } from '../lib/audit';
 import { prisma } from '../lib/prisma';
 import type { DigestEnv } from '../lib/env';
 import { reportCategoryLabels } from '../services/reports';
-import { ImageRejected, UPLOAD_LIMIT, assetUrl, readAsset, storeImage, ASSET_FILE } from '../services/digest/adImages';
+import { AD_IMAGE_ROLES, ImageRejected, ROLE_SIZE, UPLOAD_LIMIT, assetUrl, readAsset, storeImage, ASSET_FILE, roleSizeText, type AdImageRole } from '../services/digest/adImages';
 import { AdInputSchema, SLOT_NUMBERS, adCoverage, linkHost, nextBuildAt, utmPreview, type AdInput } from '../services/digest/ads';
 import { validateDigestSchedule } from '../services/digest/scheduler';
 import { digestUtmCampaign } from '../services/digest/renderer';
@@ -22,7 +22,8 @@ import { requestClientIp } from '../lib/clientIp';
  *   POST /ads                 create                               DIGEST_AD_SAVED
  *   PUT  /ads/:id             update (not an archived ad)          DIGEST_AD_SAVED
  *   POST /ads/:id/archive     {confirm: true}                      DIGEST_AD_ARCHIVED
- *   POST /ad-images           raw JPEG/PNG body (≤ 200 KB on this route only; ≤ 150 KB accepted)
+ *   POST /ad-images           raw JPEG/PNG body (≤ 300 KB on this route only). ?role=desktop → exactly 1720 × 400 px,
+ *                             ?role=mobile → exactly 1080 × 1080 px, each ≤ 250 KB; no role → the older rules (≤ 150 KB, ≤ 1200 px wide)
  *
  * The public image route (`GET /email-assets/:sha.(jpg|png)`) is `emailAssetsHandler` below,
  * mounted at the app root.
@@ -40,7 +41,10 @@ type AdRow = Awaited<ReturnType<typeof loadAds>>[number];
 async function loadAds(portal: string, includeArchived: boolean) {
   return prisma.digestAd.findMany({
     where: { portal, ...(includeArchived ? {} : { status: { not: 'ARCHIVED' } }) },
-    include: { image: { select: { id: true, mime: true, width: true, height: true, size: true } } },
+    include: {
+      image: { select: { id: true, mime: true, width: true, height: true, size: true } },
+      mobileImage: { select: { id: true, mime: true, width: true, height: true, size: true } },
+    },
     orderBy: [{ status: 'asc' }, { priority: 'desc' }, { updatedAt: 'desc' }],
   });
 }
@@ -80,6 +84,11 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
       linkUrl: ad.linkUrl,
       imageId: ad.imageId,
       image: ad.image ? { url: assetUrl(cfg.assetBaseUrl, ad.image), width: ad.image.width, height: ad.image.height, size: ad.image.size } : null,
+      mobileImageId: ad.mobileImageId,
+      mobileImage: ad.mobileImage ? { url: assetUrl(cfg.assetBaseUrl, ad.mobileImage), width: ad.mobileImage.width, height: ad.mobileImage.height, size: ad.mobileImage.size } : null,
+      // Neither tag blocks sending or coverage; they tell the editor what to replace.
+      needsMobileSquare: !!ad.image && !ad.mobileImageId,
+      oldSize: !!ad.image && (ad.image.width !== ROLE_SIZE.desktop.width || ad.image.height !== ROLE_SIZE.desktop.height),
       audience: ad.audience,
       topic: ad.topic,
       slots: ad.slots,
@@ -125,10 +134,21 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
       invalid(res, [{ message: 'The image was not found; upload it again', path: ['imageId'] }]);
       return null;
     }
+    if (parsed.data.mobileImageId) {
+      const m = await prisma.digestAdImage.findUnique({ where: { id: parsed.data.mobileImageId }, select: { width: true, height: true } });
+      if (!m) {
+        invalid(res, [{ message: 'The mobile square was not found; upload it again', path: ['mobileImageId'] }]);
+        return null;
+      }
+      if (m.width !== ROLE_SIZE.mobile.width || m.height !== ROLE_SIZE.mobile.height) {
+        invalid(res, [{ message: `The mobile square must be exactly ${roleSizeText('mobile')}; upload it again`, path: ['mobileImageId'] }]);
+        return null;
+      }
+    }
     return parsed.data;
   }
 
-  type AuditSource = Pick<AdRow, 'name' | 'kind' | 'audience' | 'slots' | 'priority' | 'isSlotDefault' | 'status' | 'linkUrl' | 'imageId' | 'startsAt' | 'endsAt'>;
+  type AuditSource = Pick<AdRow, 'name' | 'kind' | 'audience' | 'slots' | 'priority' | 'isSlotDefault' | 'status' | 'linkUrl' | 'imageId' | 'mobileImageId' | 'startsAt' | 'endsAt'>;
   const auditMeta = (a: AuditSource | AdInput, extra: Record<string, unknown> = {}) => ({
     name: a.name,
     kind: a.kind,
@@ -139,6 +159,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
     status: a.status,
     linkHost: linkHost(a.linkUrl),
     imageId: a.imageId ?? null,
+    mobileImageId: a.mobileImageId ?? null,
     startsAt: a.startsAt ? a.startsAt.toISOString() : null,
     endsAt: a.endsAt ? a.endsAt.toISOString() : null,
     ...extra,
@@ -239,7 +260,11 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
       try {
         const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
         const filename = typeof req.header('x-filename') === 'string' ? decodeURIComponent(req.header('x-filename') as string).slice(0, 200) : undefined;
-        const img = await storeImage(buf, { contentType: req.header('content-type'), filename });
+        const roleQ = req.query.role;
+        if (roleQ !== undefined && !AD_IMAGE_ROLES.includes(roleQ as AdImageRole)) {
+          return res.status(400).json({ error: 'bad_role', message: 'role must be desktop or mobile.' });
+        }
+        const img = await storeImage(buf, { contentType: req.header('content-type'), filename }, roleQ as AdImageRole | undefined);
         return res.status(img.deduped ? 200 : 201).json({
           id: img.id,
           url: assetUrl(o.cfg().assetBaseUrl, img),
@@ -265,7 +290,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
 export function adImageTooLarge(err: unknown, _req: Request, res: Response, next: (e?: unknown) => void): void {
   const e = err as { type?: string; status?: number };
   if (e && e.type === 'entity.too.large') {
-    res.status(413).json({ error: 'too_big', message: 'The image is over 150 KB; export it smaller.' });
+    res.status(413).json({ error: 'too_big', message: 'The image is over 250 KB; export it smaller (JPEG quality ~75 usually does it).' });
     return;
   }
   next(err);

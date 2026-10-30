@@ -7,7 +7,7 @@ import { readsPath } from '../metrics';
 import { isUrlDeadDefault } from '../pacer';
 import { istDateOf } from './retryPolicy';
 import { resolveReadsSource, type ReadsSource } from './readsSource';
-import { fetchArticleImages, isAllowedArticleImage } from './articleImage';
+import { fetchArticlePages, isAllowedArticleImage, type ArticlePage } from './articleImage';
 
 /**
  * Digest builder: selection, ranking, freeze (docs/EMAIL_DIGEST_DESIGN.md §4.1,
@@ -98,7 +98,7 @@ export type SelectDeps = {
   isUrlDead?: (url: string) => Promise<boolean>;
   readsSource?: ReadsSource;
   /** The picture step (design: brief 2026-10-29-digest-lookalike). Default: the real, fail-open og:image fetch. */
-  articleImages?: (articleUrls: string[]) => Promise<Map<string, string | null>>;
+  articleImages?: (articleUrls: string[]) => Promise<Map<string, ArticleFetched>>;
 };
 
 /* ------------------------------------------------------------------ */
@@ -526,21 +526,29 @@ export async function selectDigest(
   };
 }
 
-/** The real picture step. Tests never touch the network: they pass their own, or get none. */
-async function defaultArticleImages(urls: string[]): Promise<Map<string, string | null>> {
+/** What the page step returns per article: a picture URL alone (older callers) or the picture plus the description. */
+export type ArticleFetched = string | null | ArticlePage;
+
+/** The real picture + description step. Tests never touch the network: they pass their own, or get none. */
+async function defaultArticleImages(urls: string[]): Promise<Map<string, ArticleFetched>> {
   if (process.env.NODE_ENV === 'test') return new Map();
-  return fetchArticleImages(urls);
+  return fetchArticlePages(urls);
 }
 
-/** Fills `imageUrl` on every frozen item that has none yet. Never throws; never adds more than the 30 s cap. */
+/**
+ * Fills `imageUrl` on every frozen item that has none yet, and — where the RSS excerpt is empty — `excerpt`
+ * from the article page's own description (brief digest-old-format: the description is stored in the frozen
+ * item's existing `excerpt` field, no new column). ONE page request per article gives both. Never throws;
+ * never adds more than the 30 s cap.
+ */
 export async function attachImages(
   perAudience: Record<DigestAudience, FrozenItem[]>,
-  fetchImages: (urls: string[]) => Promise<Map<string, string | null>>,
+  fetchImages: (urls: string[]) => Promise<Map<string, ArticleFetched>>,
 ): Promise<void> {
   const need = new Set<string>();
-  for (const a of AUDIENCES) for (const it of perAudience[a]) if (!it.imageUrl) need.add(it.url);
+  for (const a of AUDIENCES) for (const it of perAudience[a]) if (!it.imageUrl || !(it.excerpt ?? '').trim()) need.add(it.url);
   if (need.size === 0) return;
-  let found = new Map<string, string | null>();
+  let found = new Map<string, ArticleFetched>();
   try {
     found = await fetchImages([...need]);
   } catch {
@@ -548,8 +556,11 @@ export async function attachImages(
   }
   for (const a of AUDIENCES) {
     for (const it of perAudience[a]) {
-      const url = it.imageUrl || found.get(it.url) || null;
+      const got = found.get(it.url);
+      const page: ArticlePage = typeof got === 'string' || got == null ? { image: got ?? null, description: null } : got;
+      const url = it.imageUrl || page.image || null;
       it.imageUrl = isAllowedArticleImage(url) ? url : null;
+      if (!(it.excerpt ?? '').trim()) it.excerpt = page.description?.trim() || null;
     }
   }
 }

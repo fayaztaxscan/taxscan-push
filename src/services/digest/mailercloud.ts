@@ -85,7 +85,7 @@ export type MailercloudOptions = {
 };
 
 type Mode = 'read' | 'write';
-type Op = 'health' | 'createDraft' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName' | 'webhookStatus';
+type Op = 'health' | 'createDraft' | 'updateSubject' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName' | 'webhookStatus';
 type Reply = { status: number; body: unknown };
 
 /** Error codes that mean the connection was never made, so no request byte reached the provider. */
@@ -189,6 +189,15 @@ export class MailercloudSender implements DigestSender {
       throw this.err('AMBIGUOUS', 'createDraft', `HTTP ${reply.status} without a campaign id`, { http: reply.status });
     }
     return { campaignId: id };
+  }
+
+  /**
+   * Subject only: `PUT /v1/campaign/{id}` with `{ subject }` (1–150 chars). UNVERIFIED against a real DRAFT (the docs
+   * do not say whether a draft can be updated; only that a sending campaign's lists/rules cannot). A write: one attempt,
+   * no retry here; the caller decides. The subject text is never put in an error.
+   */
+  async updateSubject(campaignId: string, subject: string): Promise<void> {
+    await this.call('updateSubject', 'write', 'PUT', `${this.o.baseV1}/campaign/${encodeURIComponent(campaignId)}`, { subject });
   }
 
   async schedule(campaignId: string, when: 'now'): Promise<void> {
@@ -314,7 +323,7 @@ export class MailercloudSender implements DigestSender {
   }
 
   /** One logical call: a single attempt for writes; bounded retries with backoff for reads. */
-  private async call(op: Op, mode: Mode, method: 'GET' | 'POST', url: string, body?: unknown): Promise<Reply> {
+  private async call(op: Op, mode: Mode, method: 'GET' | 'POST' | 'PUT', url: string, body?: unknown): Promise<Reply> {
     if (!this.o.apiKey) throw this.err('FATAL', op, 'not configured (MAILERCLOUD_API_KEY unset)', { notSent: true });
     // Read-only client: a write never leaves this process (checked before any request).
     if (mode === 'write' && this.o.readOnly) throw this.err('FATAL', op, 'refused: this client is read-only', { notSent: true });
@@ -335,7 +344,7 @@ export class MailercloudSender implements DigestSender {
     return Math.round(step / 2 + this.o.random() * (step / 2));
   }
 
-  private async attempt(op: Op, mode: Mode, method: 'GET' | 'POST', url: string, body?: unknown): Promise<Reply> {
+  private async attempt(op: Op, mode: Mode, method: 'GET' | 'POST' | 'PUT', url: string, body?: unknown): Promise<Reply> {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.o.timeoutMs);
     let status: number;

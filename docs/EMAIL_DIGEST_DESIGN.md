@@ -393,7 +393,7 @@ ledger — `DigestRun`, `DigestSend`, `DigestItem`, `DigestAdPlacement` — and 
 | `sender.ts` | The **`DigestSender` interface** and the Mailercloud implementation (`mailercloud.ts`). Methods: `health()`, `createDraft(input) → {campaignId}` (always `is_publish: "0"`, so it cannot send), `schedule(id, 'now')`, `status(id) → {state, targeted, reached}`, `report(id) → {opens, clicks}`, `testSend(id, emails)`. Every failure is a typed `SenderError {kind, code, http}`: 429/5xx/timeout → RETRYABLE; 401, 400, 9002 → FATAL; a timeout *after* the request was sent on create/schedule → AMBIGUOUS. Auth goes in the `Authorization: <key>` header, **with no `Bearer ` prefix**. Backoff inside one call (task 2 as built): only for calls safe to repeat (health, status, report, the name lookup) — exponential with jitter on 429/5xx/network failure, ~1 s doubling, step capped at 30 s, at most 5 retries; createDraft, schedule and testSend are never repeated inside the client. 30 s timeout per request. There is no Retry-After header to honour. Uses zero-dependency `fetch`. Tests inject `FakeSender`. |
 | `builder.ts` | Picks candidates and freezes them (§4.1). |
 | `ads.ts` | `pickAds(slots, audience, items, at)`. For each slot, the eligible ads are those that are ACTIVE, inside their date window, match the audience, allow the slot and are not already used in this email. They are ordered: topic match, then priority, then least recently placed. If none is eligible, the slot's default ad is used; if there is no default either, the build **fails closed** with `config_invalid` and an alert. **A second guard:** `kind = SUBSCRIPTION` is rejected for PREMIUM whatever its `audience` field says. |
-| `renderer.ts` | Substitutes into the template's `compiledHtml` and escapes all text. It adds the visible date, the subject (= the lead headline, ≤ 90 chars), the preheader ("Plus N more: <2nd headline>", ≤ 110 chars), the non-removable footer (postal address and Mailercloud's unsubscribe tag) and the plain-text part. `withUtm(url, {campaign, content})` is the single UTM function: `utm_source=taxscan-digest&utm_medium=email&utm_campaign=digest-YYYYMMDD-free&utm_content=item3\|ad-<id>-slot2`. **Size budget:** rendered bytes + (number of links × 150 B for Mailercloud's tracking rewrite) must stay under `DIGEST_MAX_HTML_KB` (90). It warns at 75 KB. Over budget, the lowest-ranked MAIN items are dropped until the email fits, and the drop is logged. |
+| `renderer.ts` | Substitutes into the template's `compiledHtml` and escapes all text. It adds the visible date, the subject (= the lead headline, ≤ 90 chars), the preheader ("Plus N more: <2nd headline>", ≤ 110 chars), the non-removable footer (reason line, contact line and postal address; **no unsubscribe link of ours since 30 Oct 2026 — Mailercloud appends its own**) and the plain-text part. `withUtm(url, {campaign, content})` is the single UTM function: `utm_source=taxscan-digest&utm_medium=email&utm_campaign=digest-YYYYMMDD-free&utm_content=item3\|ad-<id>-slot2`. **Size budget:** rendered bytes + (number of links × 150 B for Mailercloud's tracking rewrite) must stay under `DIGEST_MAX_HTML_KB` (90). It warns at 75 KB. Over budget, the lowest-ranked MAIN items are dropped until the email fits, and the drop is logged. |
 | `runner.ts` | `advanceRun()`, the state machine and the only door (§2.1). Each step first claims its row with a conditional update (`updateMany where state = X and (stepClaimedAt is null or older than 10 min)`), the same claim pattern as `Campaign.claimedAt`. |
 | `retryPolicy.ts` | A pure function, `nextAttemptAt(firstFailureAt, attempts, cutoff)`: +1 m, +5 m, +15 m, then +1 h each, returning `null` at or past 17:00 IST. |
 | `scheduler.ts` | node-cron `* * * * *` (tz Asia/Kolkata), guarded by an in-process single-flight lock. Creates today's run at T−75 (the first health check; *built task 13: T−60 in the original plan, moved so the 06:15 check has a run to record on*), runs the complaint-rate check once, the health checks, then from T−60 hands the run to `advanceRun` every minute. From 17:00 every tick runs the runner's cut-off sweep; an earlier day left open is swept too. One log line per state change. |
@@ -1161,7 +1161,7 @@ agents.
         `awaiting_approval` for it. At the cut-off it is SKIPPED `not_approved`. Non-approval mode: unchanged.
       - **Merge tags.** `esc()` encodes `{`/`}` as `&#123;`/`&#125;` in every reader value in the HTML; the
         subject, preheader and plain-text part split doubled braces (`defuseMergeTags`: "{{" → "{ {"); text URLs
-        get `%7B`/`%7D`. The renderer's own `{{unsubscribe_link}}` is inserted raw and still works. Mailercloud
+        get `%7B`/`%7D`. (The renderer's own `{{unsubscribe_link}}` was removed 30 Oct 2026: Mailercloud does not expand it and adds its own footer.) Mailercloud
         documents no other merge-tag syntax (checked 23 Oct 2026), so `[…]`/`%…%` are left alone.
       - **Templates JSON parsed after auth.** `/api/digest/templates*` runs the ADMIN check before its 600 KB
         parser: anonymous → 401 with nothing parsed.
@@ -1403,3 +1403,29 @@ agents.
       "nothing goes to readers"); 08:30 "Digest still waiting for approval". Icon `/brand/taxscan-icon-192.png`.
     - Not verifiable headless: real delivery through a push service (the browser check stubs `PushManager` and
       checks the subscription is made with the server's VAPID key, the row, the states at 1280 and 390 px).
+
+### Old-format layout, two-image ads, page descriptions, no unsubscribe link of ours — built (brief 2026-10-30-digest-old-format)
+
+- **Layout** (`renderer.ts`): the built-in template follows the old hand-made Mailercloud newsletter. 900 px container
+  (860 inside 20 px side padding; MSO wrapper table 900), phones collapse at ≤ 600 px (padding 10 px). A story with a
+  picture is a table row: picture 280 px (`adapt-img` = full width on phones), 20 px gap, text column 560 px, top-aligned;
+  headline Arial 16 px bold #000 (line-height 150 %), summary 16 px #333 (15 px above it, cut at ~220 characters on a
+  word boundary, ending "…"), **Read More** 13 px below: 120 × 38 px #FEE620 square, 15 px bold #000 (VML for Outlook).
+  A story without a picture is the text column alone. The date is a small line above the header bar on the page colour;
+  the header keeps the logo and the Premium badge. `SUMMARY_MAX` 180 → 220.
+- **Ads**: each picture ad is two blocks swapped with the old newsletter's own CSS — the desktop banner
+  (`ml-mobile-hidden`, shown 860 px wide) and the mobile square (`ml-desk-hidden` + `mso-hide:all`, 300 px wide, centred,
+  phone-only). No mobile square → only the desktop block (phones get the banner, as before). `DigestAd.mobileImageId`
+  (additive, nullable FK to `DigestAdImage`); the R2 backup exports whole rows, so it is carried and an older backup
+  restores with it null. Uploads name a role (`POST /api/digest/ad-images?role=desktop|mobile`): desktop exactly
+  1720 × 400, mobile exactly 1080 × 1080, JPEG/PNG ≤ 250 KB, refusal names both sizes; no role = the older rules. Existing
+  ads keep their one image as the desktop banner (any size); the Ads list tags "Needs mobile square" and "Old size — replace"
+  (neither blocks sending or coverage). Content weight counts the heavier of an ad's two images.
+- **Descriptions**: where the RSS excerpt is empty the build uses the article page's `og:description` (else
+  `meta name=description`), from the **same** 06:30 page request that reads `og:image` (`articleImage.ts`
+  `fetchArticlePages`; one fetch per article, same allowlist, same fail-open). Stored in the frozen item's existing
+  `excerpt` field — **no new column**. Entities decoded, tags stripped, whitespace collapsed.
+- **Unsubscribe**: our own "Unsubscribe from this digest" link (href `{{unsubscribe_link}}`, which Mailercloud never
+  expanded) is gone from the HTML and text; Mailercloud's appended footer is the unsubscribe. The template checklist no
+  longer demands it and refuses `{{unsubscribe_link}}`; the renderer also refuses it at send time for an already-active
+  template (the build then falls back to the built-in one). Runbook §2.1 closed.

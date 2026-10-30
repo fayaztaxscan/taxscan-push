@@ -176,16 +176,18 @@ Mailercloud switches a webhook off after about 20 failed calls.
 Check these in the Mailercloud account yourself. Don't ask Mailercloud
 support (design §12). Each one says when it must be done by.
 
-### 2.1 Unsubscribe link: merge tag (by the end of stage 1)
+### 2.1 Unsubscribe link: Mailercloud's own footer (CLOSED 30 Oct 2026)
 
-- We guessed `{{unsubscribe_link}}`.
-- **How:** in stage 1, "Test send to me", then click Unsubscribe in
-  the footer. It must open Mailercloud's unsubscribe page. Raw
-  `{{unsubscribe_link}}` text or a broken link means it is wrong. Use a
-  staff address you can add back.
-- **If wrong:** stop. The developer changes the tag in the renderer
-  and every template is checked again. No stage 2 until it works.
-- [ ] Checked. Result: __________
+- We guessed `{{unsubscribe_link}}`; Mailercloud does **not** expand it. The first
+  real staff send (29 Oct) showed our "Unsubscribe from this digest" link arriving dead.
+- **Decision:** the digest draws **no unsubscribe link of its own**. Mailercloud appends
+  its own working footer to every campaign ("Manage preferences | If you wish to opt out
+  of all type of emails, click Unsubscribe. | Report Abuse", links on `hello.taxscan.in`),
+  exactly as the old hand-made newsletter relied on. A template containing
+  `{{unsubscribe_link}}` is refused by the checklist.
+- **Still to look at in a test send:** Mailercloud's footer's Unsubscribe link opens its
+  unsubscribe page (it did in the 30 Oct hand-made send). Use a staff address you can add back.
+- [x] Closed. Result: Mailercloud's footer is the unsubscribe (brief 2026-10-30-digest-old-format).
 
 ### 2.2 Does the list search include drafts? (by the end of stage 1)
 

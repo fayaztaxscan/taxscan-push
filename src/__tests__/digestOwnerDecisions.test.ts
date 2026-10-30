@@ -420,19 +420,19 @@ describe('D1: no live merge tags from reader text', () => {
     image: null,
   }));
 
-  it('subject, preheader, html and text carry no reader-supplied {{…}}; our own tag still works', () => {
+  it('subject, preheader, html and text carry no reader-supplied {{…}}; we render no merge tag of our own', () => {
     const r = renderDigest({ items: tricky, audience: 'FREE', runDate: RUN_DATE, cfg: c, ads });
     expect(r.subject).not.toContain('{{');
     expect(r.subject).toBe(defuseMergeTags(r.subject));
     expect(r.preheader).not.toContain('{{');
-    // The only {{…}} left in either part is the renderer's own unsubscribe tag.
-    expect(r.html.match(/\{\{[^}]*\}\}/g)).toEqual([UNSUBSCRIBE_TAG]);
-    expect(r.text.match(/\{\{[^}]*\}\}/g)).toEqual([UNSUBSCRIBE_TAG]);
+    // No {{…}} is left in either part: we render no merge tag of our own any more (Mailercloud adds the unsubscribe footer).
+    expect(r.html.match(/\{\{[^}]*\}\}/g)).toBeNull();
+    expect(r.text.match(/\{\{[^}]*\}\}/g)).toBeNull();
     expect(r.html).toContain('Ruling on &#123;&#123;unsubscribe_link&#125;&#125;');
     expect(r.html).toContain('Offer &#123;&#123;coupon&#125;&#125;');
     expect(r.text).toContain('Ruling on { {unsubscribe_link} }');
     expect(r.text).toContain('Use code { {code} }');
-    expect(r.html).toContain(`href="${UNSUBSCRIBE_TAG}"`);
+    expect(r.html).not.toContain(UNSUBSCRIBE_TAG);
   });
 
   it('a custom template’s placeholders still fill, and the postal address cannot smuggle a tag either', () => {

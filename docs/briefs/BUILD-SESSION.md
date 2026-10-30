@@ -66,6 +66,9 @@ more than half the machine.** That means:
 - Run one test run, one dev server and one browser at a time, never two together.
 - Use at most one subagent at a time (project roles are in `.claude/agents/`: backend-developer, ui-developer,
   qa-verifier, …). The planning session does not run the full suite, so the build owns the heavy job.
+- **UI items in a brief go to the `ui-developer` agent** (owner, 30 Oct): any admin screen (`admin/src`), the reader
+  soft prompt (`public/taxscan-push.js`) or the digest email's look. Backend parts stay with `backend-developer`. Still
+  one subagent at a time; the UI part's real-browser check (desktop AND 375 px) is part of its job.
 
 ## 3. Build
 - Follow the project's conventions in `CLAUDE.md` (read it; don't edit it). Behaviour changes go behind a
