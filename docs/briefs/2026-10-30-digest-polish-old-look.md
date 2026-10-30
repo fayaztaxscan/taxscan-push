@@ -57,6 +57,12 @@ D. **ICYMI without pictures:** "In case you missed it" stories render text-only 
 E. **Social row like the old:** icons 24 px, light-grey strip (`#f2f3f5` or the page colour), no rule above; the five
    links stay.
 
+F. **"Biggest case" preview shows broken pictures** (owner screenshot, 30 Oct). The worst-case fixture
+   (`src/services/digest/templates.ts:183`) uses made-up `documents.taxscan.in/cms/media/…-<n>.jpg` URLs so the size
+   check measures realistic URL lengths; in the PREVIEW they 404 and show a broken-image icon. Keep the long URLs for
+   the size/budget check, but when the fixture is rendered for **display** (Templates → Biggest case), use the
+   default story picture if one is set, else the brand block (decision A) — never a URL that doesn't exist.
+
 **Out (do not build):** dark-mode hacks; template HTML editing changes; ad rules; any change to sending, approval or
 subject edit.
 
