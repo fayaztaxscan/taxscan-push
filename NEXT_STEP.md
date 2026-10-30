@@ -7,14 +7,15 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
-**▶ 2026-10-30 (PRs #86–#89 LIVE):**
+**▶ 2026-10-30 (PRs #86–#90 LIVE):**
+- **#90** admin menu grouped (Dashboard │ PUSH │ EMAIL │ Reports │ Admin ▾), verified on prod (labels, active group, Admin dropdown Esc/outside-click). All six build worktrees + DBs cleaned.
 - **#89** (deploy 8bf47bd0, ~12:10Z; migrations `20261030120000_digest_ad_mobile_image` + `…140000_digest_subject_edited_audit`):
   built-in digest = the old Mailercloud format (900 px, 280+560, 16 px heads, ~220-char summaries, date above header);
   ads = desktop 1720×400 + mobile 1080×1080 (old 4 ads grandfathered/tagged — designer to supply both sizes); page
   description fallback; our dead `{{unsubscribe_link}}` removed (Mailercloud appends its own footer; its real tag is
   `%%unsubscribe%%`); **Edit subject** per version before approval (`PUT /v1/campaign/{id}`) — **UNVERIFIED on a real
   draft: test on 31 Oct's staff draft before Anagha approves.** Verified: built-in preview 280/860 images, no dead link.
-- Briefs queued: `2026-10-30-nav-groups` (Push / Email / Admin grouped menu, ui-developer). BUILD-SESSION: UI → ui-developer.
+- BUILD-SESSION: UI → ui-developer. Anagha adds the ad pictures herself (Ads → Edit: 1720×400 + 1080×1080).
 - Anagha feedback 30 Oct: #1/#5 = Zoho dark mode recolouring (no hacks); address confirmed correct.
 - **#86 CMS webhook fence fixed** (deploy 83324b62, 09:02Z). Railway now puts two hops in front of the app
   (`xff=<cloudflare>, <railway hop 152.233.x / 79.127.x>`), so `req.ip` was never Cloudflare. `cmsClientIp` reads the
