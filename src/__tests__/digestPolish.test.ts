@@ -54,7 +54,8 @@ const ad = (slot: number, w: number, h: number): RenderAd => ({
 });
 const render = (its: FrozenItem[], ads: RenderAd[] = [ad(1, 800, 210), ad(2, 1200, 628), ad(3, 1200, 628)]) =>
   renderDigest({ items: its, audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), assetBaseUrl: ASSET, ads });
-const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${rank}"[\\s\\S]*?</td></tr>`).exec(html)![0];
+// A row ends at `</td></tr>` + newline (the story markup holds `</td></tr>` inside its MSO table and brand block).
+const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${rank}"[\\s\\S]*?</td></tr>(?=\n)`).exec(html)![0];
 
 describe('1. brand colours hold in every mode', () => {
   const html = render(items(10, PIC)).html;
@@ -77,7 +78,7 @@ describe('1. brand colours hold in every mode', () => {
   });
   it('the logo is the on-dark PNG, which exists, is 440×106 and has no transparency', () => {
     expect(LOGO_PATH).toBe('/email/taxscan-logo-on-dark-440.png');
-    expect(html).toContain(`<img src="${ASSET}/email/taxscan-logo-on-dark-440.png" width="220" height="53"`);
+    expect(html).toContain(`<img class="ts-logo" src="${ASSET}/email/taxscan-logo-on-dark-440.png" width="220" height="53"`);
     const png = fs.readFileSync(path.join(__dirname, '../../public/email/taxscan-logo-on-dark-440.png'));
     expect(png.readUInt32BE(16)).toBe(440);
     expect(png.readUInt32BE(20)).toBe(106);
@@ -111,11 +112,11 @@ describe('3. alignment', () => {
   });
   it('no padding above the headline; Read More has 13 px above it', () => {
     expect(row).not.toMatch(/class="ts-head"[^>]*padding/);
-    expect(row).toContain('<div style="margin:13px 0 0 0;">');
+    expect(row).toContain('<div style="padding-top:13px;">');
   });
-  it('Read More is a fixed 120×38 box (the old newsletter\'s), text centred both ways, with the VML fallback', () => {
-    expect(row).toContain('class="ts-btn" style="display:inline-block;width:120px;height:38px;line-height:38px;padding:0;text-align:center;');
-    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:120px;"/);
+  it('Read More is a fixed 96×38 box (the old newsletter\'s is 95), text centred both ways, with the VML fallback', () => {
+    expect(row).toContain('class="ts-btn" style="display:inline-block;width:96px;height:38px;line-height:38px;text-align:center;');
+    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:96px;"/);
   });
 });
 

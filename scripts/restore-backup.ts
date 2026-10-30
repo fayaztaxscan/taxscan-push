@@ -38,6 +38,7 @@ const RESTORABLE = [
   'EmailSuppression',
   'DigestTemplate',
   'DigestAdImage',
+  'DigestSetting',
   'DigestAd',
   'DigestRun',
   'DigestSend',
@@ -120,6 +121,9 @@ async function upsert(table: Restorable, data: Record<string, unknown>): Promise
     case 'DigestAdImage':
       // Immutable by construction (id = sha256 of the bytes): an existing row is already right.
       await prisma.digestAdImage.upsert({ where: { id }, create: data as never, update: {} });
+      return;
+    case 'DigestSetting':
+      await prisma.digestSetting.upsert({ where: { id }, create: data as never, update: data as never });
       return;
     case 'DigestAd':
       await prisma.digestAd.upsert({ where: { id }, create: data as never, update: data as never });

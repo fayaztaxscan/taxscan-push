@@ -7,7 +7,7 @@ import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import { advanceRun, awaitDigestAlerts, ensureRun } from '../services/digest/runner';
 import { collapseRows, type DigestSelection, type FrozenItem } from '../services/digest/builder';
 import { BUILTIN_TEMPLATE_HTML, renderDigest } from '../services/digest/renderer';
-import { compileTemplate, resolveTemplate, validateTemplate, type MjmlCompiler, type TemplateCheckId } from '../services/digest/templates';
+import { compileTemplate, resolveTemplate, validateTemplate, worstCaseFixture, type MjmlCompiler, type TemplateCheckId } from '../services/digest/templates';
 import { renderDigestContent } from '../services/digest/content';
 import { PREVIEW_CSP } from '../routes/digest';
 import { FakeSender } from './digestFakeSender';
@@ -51,7 +51,7 @@ const newPortal = () => `${PORTAL_PREFIX}${RUN}-${++n}`;
 
 /** The built-in layout with a visible marker (and a sentinel comment) — a valid template. */
 const marked = (marker: string, extra = '') =>
-  BUILTIN_TEMPLATE_HTML.replace('Daily Digest{{premium_badge}}', `${marker} &middot;{{premium_badge}}`).replace('</body>', `<!-- ${SENTINEL} -->${extra}</body>`);
+  BUILTIN_TEMPLATE_HTML.replace('Daily Digest &middot; {{date}}{{premium_badge}}', `${marker} &middot;{{premium_badge}}`).replace('</body>', `<!-- ${SENTINEL} -->${extra}</body>`);
 
 const check = (html: string | null, audience: DigestAudience = 'FREE', c = cfg(), compileError: string | null = null) =>
   validateTemplate({ audience, compiledHtml: html, compileError }, { cfg: c, now: NOW });
@@ -117,6 +117,7 @@ afterAll(async () => {
   await prisma.digestAdPlacement.deleteMany({ where: { ad: { portal: { startsWith: PORTAL_PREFIX } } } });
   await prisma.digestAd.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
   await prisma.digestTemplate.deleteMany({ where: { portal: { startsWith: PORTAL_PREFIX } } });
+  await prisma.digestSetting.deleteMany({ where: { key: { startsWith: PORTAL_PREFIX } } });
   await prisma.userSession.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.$disconnect();
@@ -241,8 +242,8 @@ describe('ACCEPT: resolveTemplate — override inside its window, then the ACTIV
     const items: FrozenItem[] = [1, 2, 3, 4, 5].map((i) => ({ rank: i, section: 'MAIN', articleKey: `b:${i}`, campaignId: null, title: `Story ${i}`, url: `https://www.taxscan.in/x/${i}`, authority: null, category: 'GST', excerpt: null, capturedAt: NOW, readRate: null }));
     const out = await renderDigestContent({ runId: 'r', runDate: new Date(Date.UTC(2026, 9, 22)), audience: 'FREE', items, cfg: cfg(), portal, at: NOW });
     expect(out.templateId).toBeNull();
-    expect(out.html).toContain('>22 October 2026</td>');
-    expect(out.html).toContain('>Daily Digest</p>');
+    expect(out.html).toContain('Daily Digest &middot; 22 October 2026</p>'); // the date sits in the header bar
+    expect(out.html).not.toContain('ts-date');
   });
 });
 
@@ -586,6 +587,38 @@ describe('audit: a row on every save, activate, revert and archive — never the
   });
 });
 
+describe('previews: "Biggest case" never shows a made-up picture URL (brief item F)', () => {
+  const jpeg1600 = (): Buffer => {
+    const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+    const sof = Buffer.alloc(19);
+    sof[0] = 0xff;
+    sof[1] = 0xc0;
+    sof.writeUInt16BE(17, 2);
+    sof[4] = 8;
+    sof.writeUInt16BE(840, 5);
+    sof.writeUInt16BE(1600, 7);
+    return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof, Buffer.alloc(300, 1), Buffer.from([0xff, 0xd9])]);
+  };
+  it('no default set: the brand block; default set: that picture; the size check still uses the long URLs', async () => {
+    const portal = newPortal();
+    const app = appFor(portal);
+    const t = await create(app, { name: 'Big', audience: 'FREE', source: marked('BIG') });
+    const path = `/api/digest/templates/${t.id}/preview?data=worst`;
+    const none = await request(app).get(path).set('Cookie', adminCookie);
+    expect(none.status).toBe(200);
+    expect(none.text).not.toContain('documents.taxscan.in/cms/media');
+    expect(none.text).toContain('class="ts-brand"');
+    const up = await request(app).post('/api/digest/default-story-image').set('Cookie', adminCookie).set('Content-Type', 'image/jpeg').send(jpeg1600());
+    expect([200, 201]).toContain(up.status);
+    const set = await request(app).get(path).set('Cookie', adminCookie);
+    expect(set.text).not.toContain('documents.taxscan.in/cms/media');
+    expect(set.text).not.toContain('class="ts-brand"');
+    expect(set.text).toContain(up.body.image.url);
+    // The checklist's size figure is measured on the fixture itself, which keeps its long made-up URLs.
+    expect(worstCaseFixture(cfg()).items.every((i) => (i.imageUrl ?? '').length > 120)).toBe(true);
+  });
+});
+
 describe('previews: sandbox CSP, never in the SPA origin', () => {
   it('a template preview and the built-in preview carry the sandbox CSP and frame headers', async () => {
     const portal = newPortal();
@@ -630,7 +663,7 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
 
   it('a solid #3b3543 header bar (also in dark mode) with the white logo centred, 220 px, alt text; Arial throughout', () => {
     expect(r.html).toMatch(/<td class="ts-pad ts-hdr" align="center" style="[^"]*background-color:#3b3543;[^"]*" bgcolor="#3b3543">/);
-    expect(r.html).toMatch(/<img src="https:\/\/push\.taxscan\.in\/email\/taxscan-logo-on-dark-440\.png" width="220" height="53" alt="Taxscan"/);
+    expect(r.html).toMatch(/<img class="ts-logo" src="https:\/\/push\.taxscan\.in\/email\/taxscan-logo-on-dark-440\.png" width="220" height="53" alt="Taxscan"/);
     expect(r.html).toContain('.ts-hdr{background-color:#3b3543!important}');
     expect(r.html).not.toContain('#9b1c1c');
     const fonts = new Set([...r.html.matchAll(/font-family:([^;"]+)/g)].map((m) => m[1]));
@@ -639,7 +672,7 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
   it('square yellow buttons with bold dark text and an Outlook VML fallback, for stories and ads', () => {
     const btns = r.html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBe(7); // 5 stories + 2 ads
-    for (const b of btns) expect(b).toMatch(/display:inline-block;width:\d+px;height:(38|44)px;line-height:(38|44)px;padding:0;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);border-radius:0;[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
+    for (const b of btns) expect(b).toMatch(/display:inline-block;width:\d+px;height:38px;line-height:38px;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
     expect((r.html.match(/<v:rect [^>]*fillcolor="#FEE620"/g) ?? []).length).toBe(7);
     expect(r.html).toContain('[data-ogsb] .ts-btn{background-color:#FEE620!important}[data-ogsc] .ts-btn{color:#000000!important}');
   });

@@ -107,7 +107,7 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
     sendAt: (src.DIGEST_SEND_AT ?? '07:30').trim(),
     buildLeadMinutes: intFrom(src, 'DIGEST_BUILD_LEAD_MINUTES', 60),
     cutoff: (src.DIGEST_CUTOFF ?? '17:00').trim(),
-    maxItems: intFrom(src, 'DIGEST_MAX_ITEMS', 12),
+    maxItems: intFrom(src, 'DIGEST_MAX_ITEMS', 15),
     minItems: intFrom(src, 'DIGEST_MIN_ITEMS', 5),
     rollforwardItems: intFrom(src, 'DIGEST_ROLLFORWARD_ITEMS', 3),
     sanityMaxCandidates: intFrom(src, 'DIGEST_SANITY_MAX_CANDIDATES', 150),

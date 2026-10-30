@@ -102,7 +102,8 @@ const ra = (slot: number, o: Partial<RenderAd> = {}): RenderAd => ({
 });
 const render = (its: FrozenItem[], ads?: RenderAd[], over: Partial<Parameters<typeof renderDigest>[0]> = {}) =>
   renderDigest({ items: its, audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), ads, assetBaseUrl: 'https://push.taxscan.in', ...over });
-const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${rank}"[\\s\\S]*?</td></tr>`).exec(html)![0];
+// A row ends at `</td></tr>` + newline (the story markup itself holds `</td></tr>` inside its MSO table and brand block).
+const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${rank}"[\\s\\S]*?</td></tr>(?=\n)`).exec(html)![0];
 
 /* ------------------------------------------------------------------ */
 /* 1. the layout                                                       */
@@ -117,38 +118,43 @@ describe('1. the old newsletter’s layout', () => {
     expect(r.html).toContain('<!--[if mso]><table role="presentation" width="900"');
     expect(r.html).toContain('@media only screen and (max-width:600px){');
   });
-  it('story row: 280 picture + 20 gap + 560 text, top-aligned', () => {
-    expect(row).toMatch(/<td class="ts-stcol ts-stpic" width="280" valign="top"/);
-    expect(row).toMatch(/<td class="ts-stgap" width="20"/);
-    expect(row).toMatch(/<td class="ts-stcol ts-sttext" width="560" valign="top"/);
-    expect(row).toContain('padding:20px;'); // 860 inside the 900
+  it('story row: 280 picture + 20 gap + 560 text, two inline-block columns, an MSO 280/20/560 table, 20 px above', () => {
+    expect(row).toContain('<!--[if mso]><table width="860" cellpadding="0" cellspacing="0"><tr><td width="280" valign="top"><![endif]-->');
+    expect(row).toContain('<!--[if mso]></td><td width="20"></td><td width="560" valign="top"><![endif]-->');
+    expect(row).toMatch(/<div class="ts-stcol ts-stpic" style="display:inline-block;width:100%;max-width:280px;vertical-align:top;">/);
+    expect(row).toMatch(/<div class="ts-stcol ts-sttext" style="display:inline-block;width:100%;max-width:560px;vertical-align:top;">/);
+    expect(row).toContain('padding:20px 20px 0 20px;'); // 860 inside the 900, 20 px of white space above, no rule
   });
-  it('headline 16 px bold #000, 150 %, linked, no underline', () => {
-    expect(row).toMatch(/<h2 style="[^"]*margin:0;[^"]*font-size:16px;line-height:150%;font-weight:700;color:#000000;"><a href="[^"]+" class="ts-head" style="[^"]*color:#000000;text-decoration:none;">/);
+  it('headline 16/24 bold #000 (exact line height in Outlook), linked, no underline', () => {
+    expect(row).toMatch(/<h2 style="[^"]*margin:0;[^"]*font-size:16px;line-height:24px;mso-line-height-rule:exactly;font-weight:700;color:#000000;"><a href="[^"]+" class="ts-head" style="[^"]*color:#000000;text-decoration:none;">/);
   });
-  it('summary 16 px #333, 150 %, 15 px above it', () => {
-    expect(row).toMatch(/<p style="[^"]*margin:15px 0 0 0;[^"]*font-size:16px;line-height:150%;color:#333333;" class="ts-body">A short summary\.<\/p>/);
+  it('summary 16/24 #333 (exact line height), 15 px above it', () => {
+    expect(row).toMatch(/<p style="[^"]*margin:15px 0 0 0;[^"]*font-size:16px;line-height:24px;mso-line-height-rule:exactly;color:#333333;" class="ts-body">A short summary\.<\/p>/);
   });
-  it('Read More: 13 px above, #FEE620 square, 38 px tall, Arial 15 px bold #000 (VML for Outlook)', () => {
-    expect(row).toContain('<div style="margin:13px 0 0 0;">');
-    expect(row).toMatch(/class="ts-btn" style="display:inline-block;width:120px;height:38px;line-height:38px;padding:0;text-align:center;background-color:#FEE620;[^"]*border-radius:0;[^"]*font-size:15px;font-weight:700;color:#000000;/);
-    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:120px;"[^>]*fillcolor="#FEE620"/);
+  it('Read More: 13 px above (padding, not margin), #FEE620 square, 96 x 38, Arial 15 px bold #000 (VML for Outlook)', () => {
+    expect(row).toContain('<div style="padding-top:13px;">');
+    expect(row).toMatch(/class="ts-btn" style="display:inline-block;width:96px;height:38px;line-height:38px;text-align:center;background-color:#FEE620;[^"]*font-size:15px;font-weight:700;color:#000000;/);
+    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:96px;"[^>]*fillcolor="#FEE620"/);
     expect(row).toContain('>Read More</a>');
   });
-  it('the date is a small line above the header bar on the page colour; Premium badge stays in the header', () => {
-    expect(r.html.indexOf('class="ts-pad ts-date"')).toBeGreaterThan(0);
-    expect(r.html.indexOf('class="ts-pad ts-date"')).toBeLessThan(r.html.indexOf('class="ts-pad ts-hdr"'));
-    expect(r.html).toContain('>22 October 2026</td>');
+  it('the header bar reads "Daily Digest · <date>" (Premium badge after it); no separate date line above it', () => {
+    expect(r.html).not.toContain('ts-date');
+    expect(r.html).toContain('Daily Digest &middot; 22 October 2026</p>');
     const p = render(items(5), [ra(1), ra(3)], { audience: 'PREMIUM' });
+    expect(p.html).toContain('Daily Digest &middot; 22 October 2026 <span');
     expect(p.html.indexOf('>Premium</span>')).toBeGreaterThan(p.html.indexOf('class="ts-pad ts-hdr"'));
+    expect(p.html.indexOf('22 October 2026')).toBeGreaterThan(p.html.indexOf('class="ts-pad ts-hdr"'));
   });
-  it('a story with no picture is the text column alone, full width', () => {
+  it('a story with no picture of its own keeps the 280 x 147 box: the brand block (#3b3543, white logo) until a default picture is set', () => {
     const plain = rowOf(render(items(5)).html, 2);
-    expect(plain).not.toContain('<img');
-    expect(plain).not.toContain('ts-stcol');
+    expect(plain).toContain('class="ts-brand"');
+    expect(plain).toContain('bgcolor="#3b3543"');
+    expect(plain).toContain('height="147"');
+    expect(plain).toContain('src="https://push.taxscan.in/email/taxscan-logo-white-440.png"');
+    expect(plain).toContain('class="ts-stcol ts-stpic"');
     expect(plain).toContain('>Read More</a>');
   });
-  it('keeps light-only metas, the Gmail hooks, preheader, social row, footer lines', () => {
+  it('keeps light-only metas, the Outlook.com hooks, preheader, social row, footer lines', () => {
     expect(r.html).toContain('<meta name="color-scheme" content="light">');
     expect(r.html).toContain('[data-ogsb] .ts-hdr{background-color:#3b3543!important}');
     expect(r.html).toContain('data-social="1"');
@@ -298,7 +304,8 @@ describe('4. ads: the rendered blocks', () => {
     expect(AD_IMAGE_DISPLAY_WIDTH).toBe(860);
     expect(AD_MOBILE_DISPLAY_WIDTH).toBe(300);
     expect(b).toMatch(/<div class="ml-mobile-hidden" data-ad-variant="desktop"><a [^>]*><img class="adapt-img" src="[^"]*a{64}\.jpg" width="860" height="200"/);
-    expect(b).toMatch(/<div class="ml-desk-hidden" data-ad-variant="mobile" style="display:none;float:left;overflow:hidden;width:0;max-height:0;line-height:0;mso-hide:all;"><a [^>]*><img src="[^"]*b{64}\.jpg" width="300" height="300"/);
+    expect(b).toMatch(/<!--\[if !mso\]><!--><div class="ml-desk-hidden" data-ad-variant="mobile" style="display:none;float:left;overflow:hidden;width:0;max-height:0;line-height:0;mso-hide:all;"><a [^>]*><img class="adapt-img" src="[^"]*b{64}\.jpg" width="300" height="300"/);
+    expect(b).toContain('</div><!--<![endif]-->'); // Outlook never sees it (MSO conditional + mso-hide)
     expect(b).toContain('margin:0 auto'); // centred
     expect((b.match(/alt="GST appeals course"/g) ?? []).length).toBe(2);
     expect(new Set([...b.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).size).toBe(1); // one link, one UTM
@@ -473,8 +480,10 @@ describe('9. Mailercloud adds the unsubscribe footer; we draw none', () => {
       expect(`${r.html}\n${r.text}`).not.toMatch(/Unsubscribe from this digest/i);
       expect(r.html).toContain('Questions or feedback? Write to');
       expect(r.text).toContain('Questions or feedback? Write to info@taxscan.in');
-      expect(r.html).toContain('Taxscan &middot; Taxscan Media, Kochi, Kerala 682001, India');
-      expect(r.text).toContain('Taxscan · Taxscan Media, Kochi, Kerala 682001, India');
+      expect(r.html).toContain('Taxscan Media, Kochi, Kerala 682001, India');
+      expect(r.text).toContain('Taxscan Media, Kochi, Kerala 682001, India');
+      expect(r.text).not.toContain('Taxscan · Taxscan');
+      expect(r.html).not.toContain('Taxscan &middot; Taxscan');
     }
   });
   it('the built-in template passes the checklist and no longer demands an unsubscribe link', () => {

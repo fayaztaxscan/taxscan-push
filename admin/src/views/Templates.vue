@@ -63,6 +63,13 @@ const fieldErrors = ref<Record<string, string>>({});
 const schedule = reactive({ startsAt: '', endsAt: '' });
 const confirming = ref<null | { kind: 'activate' | 'archive' | 'revert'; audience?: Audience }>(null);
 
+/* The default story picture: shown for any story that has no picture of its own (until one is set, the brand block). */
+type StoryImage = { id: string; url: string; width: number; height: number; size: number; mime: string; updatedAt: string };
+type StoryPayload = { image: StoryImage | null; required: { width: number; height: number; maxKb: number; text: string } };
+const story = ref<StoryPayload | null>(null);
+const storyBusy = ref(false);
+const storyError = ref<string | null>(null);
+
 const previewData = ref<'recent' | 'worst'>('recent');
 /** The built-in layout shown for one version (Free / Premium), with or without an active template. */
 const builtinPreview = ref<Audience | null>(null);
@@ -303,7 +310,54 @@ const confirmCopy = computed(() => {
   return null;
 });
 
-onMounted(load);
+/** The server serves the picture from the asset host; the admin shows it from its own origin (same path). */
+function localSrc(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+async function loadStory() {
+  try {
+    story.value = await api.get<StoryPayload>('/api/digest/default-story-image');
+  } catch (e) {
+    storyError.value = apiErrorMessage(e);
+  }
+}
+async function onStoryFile(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  storyBusy.value = true;
+  storyError.value = null;
+  try {
+    story.value = await api.upload<StoryPayload>('/api/digest/default-story-image', file);
+    notice.value = 'Default story picture saved. It applies to the next digest that is built; digests already built keep theirs.';
+  } catch (e) {
+    storyError.value = apiErrorMessage(e);
+  } finally {
+    storyBusy.value = false;
+  }
+}
+async function removeStory() {
+  storyBusy.value = true;
+  storyError.value = null;
+  try {
+    story.value = await api.del<StoryPayload>('/api/digest/default-story-image');
+    notice.value = 'Default story picture removed. Stories without a picture show the Taxscan brand block.';
+  } catch (e) {
+    storyError.value = apiErrorMessage(e);
+  } finally {
+    storyBusy.value = false;
+  }
+}
+
+onMounted(() => {
+  void load();
+  void loadStory();
+});
 </script>
 
 <template>
@@ -340,6 +394,34 @@ onMounted(load);
           >
             Revert to {{ data.revertTo[a].name }}
           </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Default story picture: any signed-in user (editors + admins) -->
+    <section v-if="story" class="card">
+      <h2 class="card-h">Default story picture</h2>
+      <div class="story-row">
+        <div class="story-box" :class="{ has: story.image }">
+          <img v-if="story.image" :src="localSrc(story.image.url)" alt="Default story picture" />
+          <span v-else class="story-brand"><span>TAXSCAN</span><small>Brand block (nothing uploaded)</small></span>
+        </div>
+        <div class="story-side">
+          <p class="story-rule">
+            <strong>Exactly {{ story.required.width }} × {{ story.required.height }} px</strong> — JPEG or PNG, up to {{ story.required.maxKb }} KB.
+            Shown on any story that has no picture of its own, in every digest.
+          </p>
+          <p class="muted">
+            Until you upload one, those stories show the Taxscan logo on the dark brand colour. A digest that is already built keeps the picture it was built with.
+          </p>
+          <p v-if="story.image" class="muted">{{ story.image.width }} × {{ story.image.height }} px, {{ Math.ceil(story.image.size / 1024) }} KB</p>
+          <label class="story-file">
+            <span class="story-file-label">{{ story.image ? 'Replace picture' : 'Upload picture' }}</span>
+            <input type="file" accept="image/jpeg,image/png" :disabled="storyBusy" @change="onStoryFile" />
+          </label>
+          <p v-if="storyBusy" class="muted">Working…</p>
+          <button v-if="story.image" type="button" class="btn btn-mini" :disabled="storyBusy" @click="removeStory">Remove picture</button>
+          <p v-if="storyError" class="story-err" role="alert">{{ storyError }}</p>
         </div>
       </div>
     </section>
@@ -566,6 +648,75 @@ onMounted(load);
 </template>
 
 <style scoped>
+.story-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.story-box {
+  flex: 0 0 280px;
+  aspect-ratio: 1600 / 840;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #3b3543;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.story-box.has {
+  border-style: solid;
+  background: #fff;
+}
+.story-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.story-brand {
+  color: #fff;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.story-brand small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  opacity: 0.75;
+}
+.story-side {
+  min-width: 0;
+  flex: 1;
+}
+/* The exact-size rule is the one thing the editor must not miss: full-strength text, not the muted grey. */
+.story-rule {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.story-file {
+  display: block;
+  margin: 8px 0;
+}
+.story-file-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.story-file input {
+  font-size: 16px;
+  max-width: 100%;
+}
+.story-err {
+  margin: 8px 0 0;
+  color: #dc2626;
+  font-size: 13px;
+}
 h2 .badge {
   display: inline-block;
   margin-left: 8px;
@@ -892,6 +1043,13 @@ tr.picked td {
   }
 }
 @media (max-width: 720px) {
+  .story-row {
+    flex-direction: column;
+  }
+  .story-box {
+    flex-basis: auto;
+    width: 100%;
+  }
   .meta-row,
   .sched-row {
     grid-template-columns: 1fr;

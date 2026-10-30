@@ -530,18 +530,18 @@ describe('roll-forward', () => {
         { key: `article:${k[3]}`, rank: 6 },
       ],
     });
-    for (let i = 0; i < 12; i++) await camp(portal);
+    for (let i = 0; i < 15; i++) await camp(portal);
     const sel = await selectDigest(await todayRun(portal), NOW, deps());
     for (const a of ['FREE', 'PREMIUM'] as const) {
       const list = sel.perAudience[a];
-      expect(list).toHaveLength(12);
+      expect(list).toHaveLength(15);
       const icymi = list.filter((i) => i.section === 'ICYMI');
       expect(icymi.map((i) => i.articleKey)).toEqual([`article:${k[0]}`, `article:${k[1]}`, `article:${k[2]}`]);
       expect(list.slice(-3).every((i) => i.section === 'ICYMI')).toBe(true);
       expect(list.filter((i) => i.articleKey === keyOf(todayDup.url))).toHaveLength(1);
       expect(list.map((i) => i.rank)).toEqual(list.map((_, i) => i + 1));
     }
-    expect(sel.mainCounts).toEqual({ FREE: 9, PREMIUM: 9 });
+    expect(sel.mainCounts).toEqual({ FREE: 12, PREMIUM: 12 });
   });
 
   it('a partial send rolls forward to the affected audience only; a fully sent day rolls nothing', async () => {

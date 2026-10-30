@@ -26,7 +26,7 @@ describe('parseDigestEnv defaults', () => {
     expect(d.sendAt).toBe('07:30');
     expect(d.buildLeadMinutes).toBe(60);
     expect(d.cutoff).toBe('17:00');
-    expect([d.maxItems, d.minItems, d.rollforwardItems]).toEqual([12, 5, 3]);
+    expect([d.maxItems, d.minItems, d.rollforwardItems]).toEqual([15, 5, 3]);
     expect(d.sanityMaxCandidates).toBe(150);
     expect([d.maxHtmlKb, d.htmlWarnKb]).toEqual([90, 75]);
     expect([d.htmlRetentionDays, d.emailEventRetentionDays]).toEqual([30, 90]);
@@ -53,7 +53,7 @@ describe('parseDigestEnv defaults', () => {
       DIGEST_MIN_ITEMS: '-4',
     });
     expect(d.audiences.free.excludeListIds).toEqual(['a1', 'b2']);
-    expect(d.maxItems).toBe(12);
+    expect(d.maxItems).toBe(15);
     expect(d.minItems).toBe(5);
   });
 });
