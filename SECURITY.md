@@ -111,6 +111,8 @@ the body or the message; any other error is a 500 logged as name, message, type,
 
 Implementation: `src/lib/rateLimit.ts` factories; wired in `createApiRouter`. `createApp({rateLimit:{publicPerMin, loginPerMin}})` accepts overrides for tests. Stores are in-memory; if we scale beyond a single instance, switch to a Redis store (`rate-limit-redis`).
 
+**Whose address is "the client" (30 Oct 2026).** `req.ip` is NOT used for limits or audit rows. Production has Cloudflare and then two Railway hops in front of the app, so under `trust proxy 1` `req.ip` is Railway's inner hop, shared by every reader and every editor. `requestClientIp(req)` (`src/lib/clientIp.ts`, also the CMS webhook fence's rule) reads `X-Forwarded-For` positionally: of its last two entries, `CF-Connecting-IP` is believed only when one of them is a Cloudflare address; otherwise the client is the second-from-last entry (the caller Railway's edge saw), so a forged `CF-Connecting-IP` or forged left-hand entries change nothing. The limiters key on it (IPv6 grouped by /56; an unreadable client shares one `unknown` bucket, so it fails towards limiting) and every `recordAudit` call stores it. With no `X-Forwarded-For` at all the address is the socket's outside production and `null` in production. `trust proxy 1` is unchanged (the HTTPS redirect needs it); express-rate-limit's `xForwardedForHeader` validation is switched off because reading the header ourselves is the point.
+
 Tests: `security: rate limiting` — bursts to `/api/subscribe` and `/api/auth/login` at tiny caps both produce 429s.
 
 ## 4. Auth

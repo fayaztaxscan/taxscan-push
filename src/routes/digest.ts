@@ -17,6 +17,7 @@ import { digestActions, digestHistory, digestRunDetail } from '../services/diges
 import { createDigestAdsRouter } from './digestAds';
 import { createDigestTemplatesRouter } from './digestTemplates';
 import type { MjmlCompiler } from '../services/digest/templates';
+import { requestClientIp } from '../lib/clientIp';
 
 /**
  * Email digest routes (docs/EMAIL_DIGEST_DESIGN.md §6), mounted at
@@ -257,7 +258,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
         resourceType: 'DigestRun',
         resourceId: run.id,
         metadata: { runDate: run.runDate.toISOString().slice(0, 10), from: run.approval },
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
       return res.json({ ok: true, approval: 'HELD' });
     }
@@ -301,7 +302,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
         ...(outcome.runApproved ? {} : { scope: 'variant' }),
         ...(outcome.variants.length ? { audiences: outcome.variants } : {}),
       },
-      ipAddress: req.ip ?? null,
+      ipAddress: requestClientIp(req),
     });
     return res.json({ ok: true, approval: 'APPROVED', variants: outcome.variants });
   }
@@ -363,7 +364,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
         ...(cfg.sendLive ? {} : { previewOnly: true }),
         via: req.user ? 'session' : 'bearer',
       },
-      ipAddress: req.ip ?? null,
+      ipAddress: requestClientIp(req),
     });
     // What actually happened to each version, read back after the run (the screen builds its message
     // from this, never from the overall state alone, and never by reading strings): the same short
@@ -457,7 +458,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
         resourceType: 'DigestRun',
         resourceId: req.params.id,
         metadata: { audience },
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
       return res.json({ ok: true });
     } catch (err) {

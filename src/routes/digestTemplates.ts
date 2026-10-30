@@ -36,6 +36,7 @@ import {
   type MjmlCompiler,
   type TemplateValidation,
 } from '../services/digest/templates';
+import { requestClientIp } from '../lib/clientIp';
 
 /**
  * Digest Templates (docs/EMAIL_DIGEST_DESIGN.md §6, §7 Templates, §9; task 10).
@@ -177,7 +178,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
   const find = (id: string) => prisma.digestTemplate.findFirst({ where: { id, portal: o.portal() } });
 
   const audit = (req: Request, action: 'DIGEST_TEMPLATE_SAVED' | 'DIGEST_TEMPLATE_ACTIVATED' | 'DIGEST_TEMPLATE_ARCHIVED' | 'DIGEST_TEMPLATE_REVERTED', id: string, metadata: Record<string, unknown>) =>
-    recordAudit({ userId: req.user?.id ?? null, action, resourceType: 'DigestTemplate', resourceId: id, metadata, ipAddress: req.ip ?? null });
+    recordAudit({ userId: req.user?.id ?? null, action, resourceType: 'DigestTemplate', resourceId: id, metadata, ipAddress: requestClientIp(req) });
 
   router.get('/templates', STAFF, async (_req, res, next) => {
     try {
