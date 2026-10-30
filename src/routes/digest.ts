@@ -1,10 +1,12 @@
 import { Router, type Request, type Response } from 'express';
 import type { DigestAudience } from '@prisma/client';
 import { requireBearerOrUser, requireUser } from '../lib/auth';
-import { env, type DigestEnv } from '../lib/env';
+import { env, type AudienceEnv, type DigestEnv } from '../lib/env';
 import { prisma } from '../lib/prisma';
 import { recordAudit } from '../lib/audit';
 import { digestStatus } from '../services/digest/status';
+import { audienceCard } from '../services/audience/adminView';
+import { resumeBreaker } from '../services/audience/breaker';
 import { advanceRun, type DigestTrigger, type SelectItems } from '../services/digest/runner';
 import { selectDigest } from '../services/digest/builder';
 import { isPastCutoff } from '../services/digest/retryPolicy';
@@ -40,6 +42,8 @@ import type { MjmlCompiler } from '../services/digest/templates';
 export type DigestRouterOptions = {
   /** Tests inject config, clock and portal; production reads env and the wall clock. */
   cfg?: DigestEnv;
+  /** The audience config (the Audience card and the guard). Default: env. */
+  audience?: AudienceEnv;
   clock?: () => Date;
   portal?: string;
   /** Provider client. Default: the real Mailercloud client when MAILERCLOUD_API_KEY is set. */
@@ -73,6 +77,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
   const cfgOf = () => opts.cfg ?? env.digest;
   const nowOf = () => (opts.clock ? opts.clock() : new Date());
   const portalOf = () => opts.portal ?? env.rss.portal;
+  const audOf = () => opts.audience ?? env.audience;
   const quietOf = () => opts.quiet ?? { start: env.send.quietStart, end: env.send.quietEnd };
   const senderOf = (cfg: DigestEnv): DigestSender | null =>
     opts.sender ?? (cfg.mailercloud.apiKey.trim() ? createMailercloudSender(cfg) : null);
@@ -108,6 +113,30 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
     }
   });
 
+  // Audience card (CMS audience sync task 8, design §10.2). Cookie session only: the ADMIN sees the counts, a
+  // PUBLISHER one line. Postgres only — never calls the CMS or Mailercloud.
+  router.get('/audience', requireUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {
+    try {
+      const role = req.user?.role === 'ADMIN' ? 'ADMIN' : 'PUBLISHER';
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(await audienceCard(portalOf(), role, nowOf(), audOf()));
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Resume the audience sync breaker after the ADMIN has reviewed the counts. Audited by resumeBreaker.
+  router.post('/audience/resume', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      if (!audOf().enabled) return res.status(409).json({ error: 'not_open', message: 'The audience sync is switched off.' });
+      const resumed = await resumeBreaker(portalOf(), req.user?.id ?? null, nowOf());
+      if (!resumed) return res.status(409).json({ error: 'not_open', message: 'The audience sync is not paused.' });
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   // 14-day history (status only carries date + state).
   router.get('/runs', requireBearerOrUser(), async (req, res, next) => {
     try {
@@ -125,6 +154,7 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       const cfg = cfgOf();
       const detail = await digestRunDetail(req.params.id, {
         cfg,
+        audience: audOf(),
         now: nowOf(),
         quiet: quietOf(),
         providerReady: senderOf(cfg) !== null,

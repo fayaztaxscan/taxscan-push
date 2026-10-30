@@ -85,6 +85,7 @@ export const BLOCKING_KINDS: ReadonlySet<string> = new Set([
   'build_failed',
   'sanity_hold',
   'duplicate_name',
+  'audience_unverified',
 ]);
 
 /** Kinds emailed to editors (active ADMIN + PUBLISHER) instead of admins only. */
@@ -174,6 +175,7 @@ const SKIP_WORDS: Record<string, string> = {
   complaint_hold_expired: 'it was held after a high spam-complaint rate and not approved before the cut-off',
   config_invalid: 'the digest settings are incomplete',
   too_little_news: 'there was too little news',
+  audience_unverified: 'the reader list could not be verified before the cut-off',
 };
 
 export function skipWords(reason: string | null | undefined): string {
@@ -187,7 +189,7 @@ function variantWords(m: AlertMarker): string {
 }
 
 /** The copy for one alert kind. Unknown (future) kinds get a generic text, never nothing. */
-export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.digest): AlertCopy {
+export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.digest, guardOn: boolean = env.audience.digestFromCms): AlertCopy {
   const cutoff = `${cfg.cutoff} IST`;
   const who = variantWords(m);
   const retryNow = `press Retry now in Admin → Digests before ${cutoff}`;
@@ -410,11 +412,20 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         did: 'The rows it did read were applied. Nobody was removed for being missing, and Mailercloud writes are paused until a complete load.',
         todo: 'Nothing if tomorrow night’s load completes (it resumes by itself). If it repeats, check the CMS feed with the CMS team.',
       };
+    case 'audience_unverified':
+      return {
+        short: `${who} held — the reader list could not be verified`,
+        what: `${who} was not sent because ${safeDetail(m.plain, cfg) || 'the audience check failed'}.`,
+        did: `Held, and checked again every minute; it goes out by itself as soon as the check passes. Approval does not override it. Not verified by ${cutoff}, it is skipped and its top stories roll into the next digest.`,
+        todo: 'Open Admin → Digests (Audience card) to see the counts. If the sync is paused, an ADMIN reviews them and presses Resume.',
+      };
     case 'audience_breaker_open':
       return {
         short: 'Audience sync paused — needs review',
         what: `The audience sync stopped writing to Mailercloud (${safeDetail(m.reason, cfg) || 'unknown reason'}). The data still lands in Postgres.`,
-        did: 'Paused Mailercloud writes. The Premium digest is held while the audience cannot be trusted.',
+        did: guardOn
+          ? 'Paused Mailercloud writes. The Premium digest is held while the audience cannot be trusted.'
+          : 'Paused Mailercloud writes. Premium is not held yet (the send guard is off); today’s digest goes to its configured lists as usual.',
         todo:
           m.reason === 'truncated_load'
             ? 'Nothing if the next full load completes; it resumes by itself.'
@@ -445,7 +456,9 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
       return {
         short: 'Audience sync: Mailercloud writes failing for 6 hours',
         what: 'Contact writes to Mailercloud have been failing for more than 6 hours.',
-        did: 'Kept retrying (hourly). Nothing is lost; the Premium digest is held if its audience falls too far behind.',
+        did: guardOn
+          ? 'Kept retrying (hourly). Nothing is lost; the Premium digest is held if its audience falls too far behind.'
+          : 'Kept retrying (hourly). Nothing is lost; the send guard is off, so the digest is not held.',
         todo: 'Check Mailercloud’s status and the sync key.',
       };
     case 'audience_drift':

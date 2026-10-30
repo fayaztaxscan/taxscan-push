@@ -1,6 +1,6 @@
 import type { DigestAudience, DigestRun, DigestSend, Prisma, SenderErrorKind } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, type DigestEnv } from '../../lib/env';
+import { env, type AudienceEnv, type DigestEnv } from '../../lib/env';
 import { isQuietHours } from '../../lib/quietHours';
 import { recordAudit } from '../../lib/audit';
 import {
@@ -18,6 +18,7 @@ import { renderDigestContent } from './content';
 import { AdSlotError, assertPlacementsAllowed } from './ads';
 import { writeDigestItems, type DigestSelection, type FrozenItem } from './builder';
 import { sendDigestAlerts } from './alerts';
+import { checkAudienceGuard } from '../audience/guard';
 import { recordRunAlert } from './runAlerts';
 import { checkWebhookLiveness } from './webhookLiveness';
 import { awaitingOwnApproval as variantAwaitingOwnApproval, isComplaintHeld, runNeedsApproval } from './holds';
@@ -118,6 +119,8 @@ export type AdvanceDeps = {
   /** Read again right before schedule() for the quiet-hours / cut-off re-check (default: () => now). */
   clock?: () => Date;
   cfg?: DigestEnv;
+  /** The audience config (task 7: `digestFromCms` derives the targets and turns the send guard on). Default: env. */
+  audience?: AudienceEnv;
   quiet?: { start: string; end: string };
   /** Default: the renderer (`renderDigestContent`, task 5). Tests may inject a stub. */
   buildContent?: BuildContent;
@@ -183,7 +186,9 @@ export type DigestAlertKind =
   | 'health_failed'
   | 'health_recovered'
   | 'complaint_hold'
-  | 'webhook_disabled';
+  | 'webhook_disabled'
+  // CMS audience sync task 7 (design §7.2)
+  | 'audience_unverified';
 
 /**
  * `lastError` prefixes that end a FAILED variant for the day: no door resumes
@@ -204,6 +209,7 @@ type Ctx = {
   now: Date;
   clock: () => Date;
   cfg: DigestEnv;
+  aud: AudienceEnv;
   quiet: { start: string; end: string };
   cutoffAt: Date;
   staleMs: number;
@@ -287,10 +293,26 @@ export function digestProviderCampaignName(portal: string, runDate: Date, audien
 export function audienceTarget(
   cfg: DigestEnv,
   audience: DigestAudience,
+  aud: AudienceEnv = env.audience,
 ): { ok: true; target: AudienceTarget } | { ok: false; reason: string } {
+  // DIGEST_AUDIENCE_FROM_CMS (design §7.1): the tag ids are DERIVED from the audience config, never read from
+  // DIGEST_PREMIUM_TAG_IDS / DIGEST_FREE_EXCLUDE_TAG_IDS (boot refuses both being set).
+  const derived = aud.digestFromCms;
+  const { tagPremium, tagFormer, tagNoMarketing } = aud.mailercloud;
+  if (derived && (!tagPremium || !tagNoMarketing)) {
+    return { ok: false, reason: 'AUDIENCE_MC_TAG_PREMIUM / AUDIENCE_MC_TAG_NO_MARKETING are not set (DIGEST_AUDIENCE_FROM_CMS needs them)' };
+  }
   if (audience === 'FREE') {
     const a = cfg.audiences.free;
     if (a.listIds.length === 0) return { ok: false, reason: 'DIGEST_FREE_LIST_IDS is empty' };
+    if (derived) {
+      // Premium + No-marketing are excluded ALWAYS; config can add excludes but never remove these.
+      const former = aud.formerToFree && tagFormer ? [tagFormer] : [];
+      return {
+        ok: true,
+        target: { listIds: a.listIds, segmentIds: [], tagIds: former, excludeListIds: a.excludeListIds, excludeTagIds: [tagPremium, tagNoMarketing] },
+      };
+    }
     if (a.excludeListIds.length === 0 && a.excludeTagIds.length === 0) {
       return { ok: false, reason: 'Free has no premium exclude (DIGEST_FREE_EXCLUDE_LIST_IDS / _TAG_IDS)' };
     }
@@ -300,6 +322,9 @@ export function audienceTarget(
     };
   }
   const p = cfg.audiences.premium;
+  if (derived) {
+    return { ok: true, target: { listIds: p.listIds, segmentIds: p.segmentIds, tagIds: [tagPremium], excludeListIds: [], excludeTagIds: [] } };
+  }
   if (p.listIds.length === 0 && p.segmentIds.length === 0 && p.tagIds.length === 0) {
     return { ok: false, reason: 'Premium has no list, segment or tag (DIGEST_PREMIUM_*_IDS)' };
   }
@@ -310,12 +335,12 @@ export function audienceTarget(
 }
 
 /** Problems that stop the build itself (§5: the build fails closed without a postal address). */
-function buildConfigProblems(cfg: DigestEnv): string[] {
+function buildConfigProblems(cfg: DigestEnv, aud: AudienceEnv): string[] {
   const problems: string[] = [];
   if (!cfg.postalAddress) problems.push('DIGEST_POSTAL_ADDRESS is empty');
   problems.push(...senderAddressProblems(cfg.mailercloud));
   for (const a of AUDIENCES) {
-    const t = audienceTarget(cfg, a);
+    const t = audienceTarget(cfg, a, aud);
     if (!t.ok) problems.push(t.reason);
   }
   return problems;
@@ -464,6 +489,7 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
     now,
     clock: deps.clock ?? (deps.now ? () => now : () => new Date()),
     cfg,
+    aud: deps.audience ?? env.audience,
     quiet: deps.quiet ?? { start: env.send.quietStart, end: env.send.quietEnd },
     cutoffAt: istInstant(run.runDate, cfg.cutoff),
     staleMs: (deps.claimStaleMinutes ?? 10) * MINUTE,
@@ -560,7 +586,7 @@ async function applySendNow(ctx: Ctx): Promise<boolean> {
  * Any other failure fails the whole build and is retried on the retry policy.
  */
 async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: SelectItems): Promise<boolean> {
-  const problems = buildConfigProblems(ctx.cfg);
+  const problems = buildConfigProblems(ctx.cfg, ctx.aud);
   if (problems.length > 0) {
     await prisma.digestRun.updateMany({
       where: { id: ctx.run.id, build: { in: ['BUILDING', 'BUILD_FAILED'] } },
@@ -1088,7 +1114,7 @@ function provablyNotApplied(err: unknown): boolean {
  */
 async function createStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | null> {
   const a = send.audience;
-  const target = audienceTarget(ctx.cfg, a);
+  const target = audienceTarget(ctx.cfg, a, ctx.aud);
   if (!target.ok) {
     await prisma.digestSend.updateMany({
       where: { id: send.id, mcCampaignId: null, state: { in: ['PENDING', 'FAILED'] } },
@@ -1355,6 +1381,20 @@ function scheduleBlocker(ctx: Ctx, send: DigestSend): string | null {
 }
 
 /**
+ * The CMS audience send guard (design §7.2). Off (`DIGEST_AUDIENCE_FROM_CMS` unset) → null and the guard is never
+ * called. A refusal is the plain sentence; a read that throws refuses too (fail closed).
+ */
+async function guardRefusal(ctx: Ctx, audience: DigestAudience): Promise<{ check: string; plain: string } | null> {
+  if (!ctx.aud.digestFromCms) return null;
+  try {
+    const r = await checkAudienceGuard(audience, ctx.run.portal, ctx.clock(), ctx.aud);
+    return r.ok ? null : { check: r.check, plain: r.plain };
+  } catch {
+    return { check: 'guard_unreadable', plain: 'the audience guard could not read its own state' };
+  }
+}
+
+/**
  * Step 2: send the saved draft now, on the SAME id.
  *
  *  - Marker null and CREATED → claim and set `scheduleAttemptedAt` in one
@@ -1370,6 +1410,15 @@ async function scheduleStep(ctx: Ctx, send: DigestSend): Promise<DigestSend | nu
   const blocker = scheduleBlocker(ctx, send);
   if (blocker) {
     log(ctx, a, `wait:${blocker}`);
+    return null;
+  }
+  // Before the claim, so a refusal never spends the first-call marker. Approval does not override it; Send now
+  // and Retry meet it too. The variant stays as it is and is looked at again next minute.
+  const held = await guardRefusal(ctx, a);
+  if (held) {
+    await prisma.digestSend.updateMany({ where: { id: send.id, state: send.state }, data: { nextAttemptAt: new Date(ctx.now.getTime() + MINUTE) } });
+    await raiseAlert(ctx, 'audience_unverified', { audience: a, check: held.check, plain: held.plain });
+    log(ctx, a, `wait:audience_unverified:${held.check}`);
     return null;
   }
   const id = send.mcCampaignId as string;
@@ -1692,13 +1741,15 @@ async function cutoffSweep(ctx: Ctx): Promise<void> {
   for (const audience of AUDIENCES) {
     const s = await prisma.digestSend.findUnique({ where: { runId_audience: { runId: ctx.run.id, audience } } });
     if (!s) continue;
-    const reason = cutoffReason(ctx, s);
     if (s.state === 'SCHEDULED') {
       await verifyStep(ctx, s, true);
       continue;
     }
     if (s.state !== 'PENDING' && s.state !== 'CREATED' && s.state !== 'FAILED') continue;
     if (isTerminal(s)) continue;
+    let reason = cutoffReason(ctx, s);
+    // Nothing else explains the skip and the audience guard is refusing: say so (design §7.2).
+    if (reason === 'cutoff_passed' && s.contentPendingAt === null && (await guardRefusal(ctx, s.audience))) reason = 'audience_unverified';
     if (s.scheduleAttemptedAt !== null && s.mcCampaignId) {
       await resolveAtCutoff(ctx, s, reason);
       continue;
