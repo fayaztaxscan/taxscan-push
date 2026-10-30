@@ -229,7 +229,9 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
-**Evening 29 Oct (PRs #83–#85):** digest STAGE 2 live sends to the staff list (approval on); CMS Feed 1 receiver ON (Postgres only); CMS reads ON (`READS_SOURCE=cms`, from 8 Oct). **URGENT pickup: the CMS webhook fence fix — see the NEXT_STEP top block.**
+**30 Oct (PRs #86–#87 LIVE):** CMS webhook fence reads Railway's two-hop X-Forwarded-For (the CMS event now lands); audience tasks 7–8 — send guard + derived targets behind `DIGEST_AUDIENCE_FROM_CMS` (off), Audience card + ADMIN Resume on Digests. Breaker `first_load` awaits the owner's review. Detail: `NEXT_STEP.md` top block.
+
+**Evening 29 Oct (PRs #83–#85):** digest STAGE 2 live sends to the staff list (approval on); CMS Feed 1 receiver ON (Postgres only); CMS reads ON (`READS_SOURCE=cms`, from 8 Oct). (Fence fix shipped 30 Oct, PR #86.)
 
 **Open next steps (2026-10-29):** digest stage-1 week (daily 06:30 drafts, Anagha reviews; owner signs off after 7 clean days); CMS Feed 1 allowlist (~1–2 Nov: set CMS egress IP + W/L secrets, then AUDIENCE_SYNC_ENABLED) and Feed 2 (~4–5 Nov: cms-reads switch-on order in NEXT_STEP); real-Android white-T check; retention rule for CmsArticleView; verify Mailercloud's webhook signature (later). Older list: **Open next steps (2026-10-23; board in `NEXT_STEP.md`; suite 1,147):** deploy the digest PR (all digest flags off)
 and run its post-deploy checks (runbook §1.1: 12 migrations, `[digest] disabled …` boot line, push
