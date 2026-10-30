@@ -12,7 +12,9 @@ sizes and enforces them. Stories with no RSS description get one from the articl
 ## Why (owner + Anagha, 30 Oct)
 Anagha's feedback on the first real staff send (points 2, 3, 4, 6, 9, and 1) and the owner: **"need to follow the same
 format"** as the two old samples (`~/Downloads/GST Portal Enables GSTR-9_9C Annual Returns for FY 2025-26.eml`,
-`~/Downloads/GSTR-3B vs GSTR-2A Mismatch….eml` — read the HTML part of either; it is the reference).
+`~/Downloads/GSTR-3B vs GSTR-2A Mismatch….eml`, and today's (30 Oct) hand-made one, same measurements:
+`~/Downloads/GST S. 16(5)_ Madras HC quashes order Rejecting ITC u_s 16(4), Orders Defreezing of Club’s Bank Account.eml`
+— read the HTML part of any; it is the reference).
 Our version squeezes text into a 312 px column beside a 240 px picture (600 px email), so long headlines misalign and
 180-char summaries run to 4+ lines. The old one is 900 px wide with a 280 px picture and a 560 px text column, where
 ~220 chars is 3 lines. Today's ads (800×190–210 strips) are the old *desktop* banners shown on phones too.
@@ -54,10 +56,21 @@ Our version squeezes text into a 312 px column beside a 240 px picture (600 px e
    px" / "Mobile square: exactly 1080 × 1080 px" — "JPEG or PNG, up to 250 KB". Preview shows both.
 6. Templates: custom templates keep working; the new ad markup is produced by the renderer, not by templates.
 7. Admin guide (Ads page): the two sizes; bump minor version.
+8. **Unsubscribe (#8):** our own "Unsubscribe from this digest" link points at `{{unsubscribe_link}}`, which
+   Mailercloud does NOT recognise — it arrives as a dead link (Anagha's screenshot, 30 Oct). Mailercloud already
+   appends its own working footer to every campaign ("Manage preferences | If you wish to opt out of all type of
+   emails, click Unsubscribe. | Report Abuse", links `hello.taxscan.in/mp/…` and `/un/…`), exactly as the old
+   newsletter relied on. So: **remove our unsubscribe link** from the HTML footer and the plain-text part
+   (`renderer.ts` ~879 and ~1100), keep the reason line + contact line + postal address; in `templates.ts` (~454,
+   ~466) drop the "must contain our unsubscribe link" checklist rule and instead **refuse** `{{unsubscribe_link}}` in
+   a template (it would render dead). Keep `UNSUBSCRIBE_TAG` only if something else still needs it; otherwise remove.
+   Update `docs/EMAIL_DIGEST_DESIGN.md` + `docs/DIGEST_PILOT_RUNBOOK.md` §2.1 (check closed: Mailercloud's own footer
+   is the unsubscribe).
 
 **Out (do not build):**
-- The unsubscribe merge tag (separate brief once the owner finds the right tag).
-- Dark-mode work for Zoho (#1/#5 text colours) beyond moving the date line — waiting on Anagha's screenshot.
+- Dark-mode work for Zoho (#1/#5): the screenshots show Zoho's dark mode recolouring our text (date dark-on-purple,
+  "Read more" white-on-yellow). Moving the date line above the header is the only change here; the button colours
+  stay as the old newsletter's (#000 on #FEE620). Do not add dark-mode hacks.
 - No server-side resize/crop, no new dependency, no change to ad rules/rotation/coverage.
 
 ## Acceptance tests
@@ -77,6 +90,10 @@ Each one must PASS in the REPORT.
    ad with one.
 7. HTML size of a 15-story + 3-ad digest reported in bytes, below the existing warning threshold.
 8. `tsc`, lint, admin `vue-tsc`, full suite green (known flaky "metrics warmer" may be re-run alone).
+9. Unsubscribe (scope item 8): no `{{unsubscribe_link}}` anywhere in the rendered HTML or text part; the footer still
+   has the reason line, contact line and postal address; the template checklist passes for the built-in template and
+   no longer demands our own unsubscribe link; a custom template that still contains `{{unsubscribe_link}}` is
+   refused with a message saying Mailercloud adds the unsubscribe footer itself.
 
 ## Files
 - `src/services/digest/renderer.ts`, `articleImage.ts`, `builder.ts` (frozen item), `adImages.ts`, `ads.ts`,
