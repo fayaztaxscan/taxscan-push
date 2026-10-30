@@ -71,6 +71,11 @@ export interface DigestSender {
   health(): Promise<void>;
   /** Creates a draft that cannot send by itself. Returns the provider's campaign id. */
   createDraft(input: DraftInput): Promise<{ campaignId: string }>;
+  /**
+   * Replaces the subject of an existing DRAFT, and nothing else (Mailercloud: `PUT /campaign/{id}` with `{ subject }` only —
+   * never lists, sender, schedule or html). Errors as for the other calls; the subject never appears in an error message.
+   */
+  updateSubject(campaignId: string, subject: string): Promise<void>;
   /** Sends an existing draft now. Never creates a campaign. */
   schedule(campaignId: string, when: 'now'): Promise<void>;
   status(campaignId: string): Promise<CampaignStatus>;

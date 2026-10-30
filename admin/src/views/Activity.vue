@@ -45,6 +45,7 @@ const ACTIONS = [
   'DIGEST_SEND_NOW',
   'DIGEST_RETRY',
   'DIGEST_TEST_SENT',
+  'DIGEST_SUBJECT_EDITED',
   'DIGEST_SCHEDULED',
   'DIGEST_SKIPPED',
   'DIGEST_TEMPLATE_SAVED',
@@ -170,6 +171,8 @@ function summarize(item: AuditItem): string {
         return `Oldest notification device turned off at the ${m.limit ?? 10}-device limit (${m.label ?? 'unknown device'})`;
       }
       return `Removed ${m.email ?? '—'}'s notification devices (${m.removed ?? '?'})`;
+    case 'DIGEST_SUBJECT_EDITED':
+      return `Changed the ${m.audience === 'PREMIUM' ? 'Premium' : 'Free'} digest subject line (${m.oldLength ?? '?'} → ${m.newLength ?? '?'} characters)`;
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;
     case 'DIGEST_TEMPLATE_SAVED': {

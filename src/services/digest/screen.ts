@@ -1,4 +1,5 @@
 import type { DigestApproval, DigestAudience, DigestBuild, DigestSendState, SenderErrorKind } from '@prisma/client';
+import { SUBJECT_LOCK_TEXT, subjectLock } from './subjectEdit';
 import { prisma } from '../../lib/prisma';
 import { env, type AudienceEnv, type DigestEnv } from '../../lib/env';
 import { checkAudienceGuard } from '../audience/guard';
@@ -226,6 +227,7 @@ const AUDIT_WORDS: Record<string, string> = {
   DIGEST_SEND_NOW: 'Send now pressed',
   DIGEST_RETRY: 'Retry now pressed',
   DIGEST_TEST_SENT: 'Test send',
+  DIGEST_SUBJECT_EDITED: 'Subject line changed',
   DIGEST_SCHEDULED: 'Handed to Mailercloud to send',
   DIGEST_SKIPPED: 'Skipped',
 };
@@ -289,6 +291,8 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
           ownApprovalRequired: true,
           approvedAt: true,
           approvedByUserId: true,
+          scheduleAttemptedAt: true,
+          createAttemptedAt: true,
           templateFallbackFromId: true,
           templateFallbackReason: true,
           adoptedDraftAt: true,
@@ -392,6 +396,11 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       // CMS audience sync task 7: null = not held by the guard (or the guard is off).
       audienceHold: guardHeld.get(s.audience) ?? null,
       subject: s.subject,
+      // Owner, 30 Oct: the subject can be edited until the run is approved; `reason` says why not.
+      subjectEdit: ((): { editable: boolean; reason: string | null } => {
+        const lock = subjectLock(run, s, now, cfg);
+        return { editable: lock === null, reason: lock ? SUBJECT_LOCK_TEXT[lock] : null };
+      })(),
       preheader: s.preheader,
       htmlBytes: s.htmlBytes,
       hasPreview: s.hasHtml,
