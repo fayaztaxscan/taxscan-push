@@ -108,22 +108,3 @@ Continue on the SAME branch `build/digest-polish-old-look` (add commits; update 
 5. **Acceptance (replaces the size line):** the builder's real worst case (15 total incl. ICYMI + 3 ads) and the
    15-main-no-ICYMI case are each **≤ 80 KB budget** (report bytes; target ≥ 10 KB under the 90 KB refusal). Then run
    the **full suite once** after the final change and report it.
-
-## Follow-up 2 (owner, 30 Oct): "not rejections" — a digest is never refused for size
-Today `renderDigest` in send mode throws `over_size_limit` above `DIGEST_MAX_HTML_KB` (`renderer.ts` ~580), so that
-version's build fails and the digest doesn't go out. Change it to **shrink, not refuse**:
-1. At the 06:30 build (where content is rendered and frozen — `content.ts` / `builder.ts`), if the render is over the
-   90 KB budget, **drop stories from the end and re-render** until it fits: ICYMI items first (last first), then main
-   stories from the bottom of the ranking; never the lead story; ads and footer untouched. Stop at a floor of
-   **5 main stories**; only if it is STILL over at the floor does today's refusal path apply (practically unreachable —
-   say how many KB the 5-story worst case is).
-2. Items dropped this way are **not lost**: they are treated exactly like items the cap left out (eligible for
-   tomorrow's ICYMI by the existing roll-forward rule — reuse it, don't invent a new one).
-3. Log one line per trimmed version: `[digest] <AUDIENCE> trimmed to fit: dropped N item(s), budget B bytes` (no
-   headlines), and show it on the Digests run card ("2 stories dropped to keep the email under the size limit").
-4. The template checklist's worst-case size check (Templates) keeps reporting over-budget for a CUSTOM template, but
-   activation must explain "it would be trimmed to fit at send time" rather than block — **unless** even the 5-story
-   case is over (then keep blocking).
-5. **Acceptance:** a fixture forced over budget (e.g. very long headlines/summaries) builds successfully with fewer
-   stories, never drops the lead, logs the line, shows the card note; dropped items appear as roll-forward candidates
-   the next day; a normal day is unchanged (no trimming). Full suite once at the end.
