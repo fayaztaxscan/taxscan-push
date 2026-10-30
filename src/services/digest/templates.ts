@@ -9,7 +9,7 @@ import {
   ROW_PLACEHOLDERS,
   RenderError,
   TEMPLATE_PLACEHOLDERS,
-  UNSUBSCRIBE_TAG,
+  CONTACT_EMAIL,
   IMAGE_ATTRS,
   LINK_ATTRS,
   decodeAttr,
@@ -49,8 +49,11 @@ export const TEMPLATE_FORMATS = ['HTML', 'MJML'] as const;
 export type TemplateFormat = (typeof TEMPLATE_FORMATS)[number];
 /** Longest template source accepted (characters). The route's own JSON limit sits above it. */
 export const TEMPLATE_SOURCE_MAX = 150_000;
-/** The provider merge tag that may appear in a template besides our placeholders. */
-const PASS_THROUGH = new Set(['unsubscribe_link']);
+/**
+ * Merge tags that may appear in a template besides our placeholders: none. `{{unsubscribe_link}}` used to pass; since
+ * 30 Oct 2026 it is refused (Mailercloud does not expand it, and appends its own unsubscribe footer to every campaign).
+ */
+const PASS_THROUGH = new Set<string>();
 
 /* ------------------------------------------------------------------ */
 /* Compile (save time only)                                            */
@@ -188,7 +191,8 @@ export function worstCaseFixture(cfg: Pick<DigestEnv, 'maxItems' | 'rollforwardI
     ctaText: long('Enrol now ', 30).trim(),
     linkUrl: `https://academy.taxscan.in/courses/sample-course-${slot}`,
     altText: long('Sample course banner ', 150).trim(),
-    image: { url: `${cfg.assetBaseUrl}/email-assets/${String(slot).repeat(64)}.jpg`, width: 1200, height: 600 },
+    image: { url: `${cfg.assetBaseUrl}/email-assets/${String(slot).repeat(64)}.jpg`, width: 1720, height: 400 },
+    mobileImage: { url: `${cfg.assetBaseUrl}/email-assets/${String(slot + 3).repeat(64)}.jpg`, width: 1080, height: 1080 },
   }));
   return { items, ads };
 }
@@ -341,7 +345,7 @@ export type TemplateValidation = {
 export const CHECK_LABELS: Record<TemplateCheckId, string> = {
   compiles: 'Compiles',
   placeholders: 'Required placeholders, each exactly once',
-  footer: 'Footer with postal address and unsubscribe link, visible and not removable',
+  footer: 'Footer with reason line, contact line and postal address, visible and not removable',
   no_active_content: 'No scripts, forms, iframes or external styles',
   links: 'Every link and image passes the digest URL check',
   alt_text: 'Every image has alt text',
@@ -399,7 +403,9 @@ export function validateTemplate(
     else if (n > 1) ph.push(`{{${r}}} appears ${n} times; it must appear exactly once.`);
   }
   for (const [name] of counts) {
-    if (!(name in TEMPLATE_PLACEHOLDERS) && !PASS_THROUGH.has(name)) ph.push(`{{${name}}} is not a placeholder this digest fills.`);
+    if (name === 'unsubscribe_link') {
+      ph.push('{{unsubscribe_link}} must be removed: Mailercloud adds the unsubscribe footer to every campaign itself, and does not fill this tag, so it would arrive as a dead link.');
+    } else if (!(name in TEMPLATE_PLACEHOLDERS) && !PASS_THROUGH.has(name)) ph.push(`{{${name}}} is not a placeholder this digest fills.`);
   }
   for (const x of occ) {
     if (!ROW_PLACEHOLDERS.includes(x.name as never) || x.inComment) continue;
@@ -451,7 +457,7 @@ export function validateTemplate(
 
   if (rendered) {
     const postal = esc(cfg.postalAddress || 'Postal address (DIGEST_POSTAL_ADDRESS)');
-    if (!rendered.html.includes(`href="${UNSUBSCRIBE_TAG}"`)) ft.push('The rendered email has no unsubscribe link.');
+    if (!rendered.html.includes(CONTACT_EMAIL)) ft.push('The rendered email has no contact line.');
     if (!rendered.html.includes(postal)) ft.push('The rendered email has no postal address.');
   } else if (renderProblem) {
     ft.push(renderProblem);
@@ -463,7 +469,7 @@ export function validateTemplate(
   const al: string[] = [];
   if (rendered) {
     for (const href of attrValues(rendered.html, LINK_ATTRS)) {
-      if (href === UNSUBSCRIBE_TAG || isSocialUrl(href) || isContactMailto(href)) continue;
+      if (isSocialUrl(href) || isContactMailto(href)) continue;
       if (!isAllowedDigestUrl(href)) ln.push(`Link ${shortUrl(href)} is not allowed (only https/http links to ALLOWED_PUSH_HOSTS).`);
     }
     const images = [

@@ -28,6 +28,11 @@ type Ad = {
   linkUrl: string;
   imageId: string | null;
   image: { url: string; width: number; height: number; size: number } | null;
+  mobileImageId: string | null;
+  mobileImage: { url: string; width: number; height: number; size: number } | null;
+  /** Neither tag blocks sending: they tell the editor what to replace. */
+  needsMobileSquare: boolean;
+  oldSize: boolean;
   audience: AdAudience;
   topic: string | null;
   slots: number[];
@@ -92,6 +97,9 @@ const form = reactive({
   imageId: null as string | null,
   imagePreview: null as string | null,
   imageInfo: '' as string,
+  mobileImageId: null as string | null,
+  mobilePreview: null as string | null,
+  mobileInfo: '' as string,
   audience: 'ALL' as AdAudience,
   topic: '',
   slots: [] as number[],
@@ -159,6 +167,9 @@ function resetForm() {
     imageId: null,
     imagePreview: null,
     imageInfo: '',
+    mobileImageId: null,
+    mobilePreview: null,
+    mobileInfo: '',
     audience: 'ALL',
     topic: '',
     slots: [],
@@ -191,6 +202,9 @@ function startEdit(a: Ad) {
     imageId: a.imageId,
     imagePreview: localSrc(a.image?.url),
     imageInfo: a.image ? `${a.image.width} × ${a.image.height} px, ${Math.ceil(a.image.size / 1024)} KB` : '',
+    mobileImageId: a.mobileImageId,
+    mobilePreview: localSrc(a.mobileImage?.url),
+    mobileInfo: a.mobileImage ? `${a.mobileImage.width} × ${a.mobileImage.height} px, ${Math.ceil(a.mobileImage.size / 1024)} KB` : '',
     audience: a.audience,
     topic: a.topic ?? '',
     slots: [...a.slots],
@@ -211,29 +225,50 @@ function closeForm() {
   editingId.value = null;
 }
 
-async function onFile(ev: Event) {
+type ImageRole = 'desktop' | 'mobile';
+
+/** Uploads one creative; the server holds it to that role's exact size (1720 × 400 desktop, 1080 × 1080 mobile). */
+async function onFile(role: ImageRole, ev: Event) {
   const input = ev.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
   if (!file) return;
+  const errKey = role === 'desktop' ? 'imageId' : 'mobileImageId';
   uploading.value = true;
-  fieldErrors.value = { ...fieldErrors.value, imageId: '' };
+  fieldErrors.value = { ...fieldErrors.value, [errKey]: '' };
   try {
-    const r = await api.upload<Uploaded>('/api/digest/ad-images', file);
-    form.imageId = r.id;
-    form.imagePreview = localSrc(r.url);
-    form.imageInfo = `${r.width} × ${r.height} px, ${Math.ceil(r.size / 1024)} KB${r.deduped ? ' (already uploaded)' : ''}`;
+    const r = await api.upload<Uploaded>(`/api/digest/ad-images?role=${role}`, file);
+    const info = `${r.width} × ${r.height} px, ${Math.ceil(r.size / 1024)} KB${r.deduped ? ' (already uploaded)' : ''}`;
+    if (role === 'desktop') {
+      form.imageId = r.id;
+      form.imagePreview = localSrc(r.url);
+      form.imageInfo = info;
+    } else {
+      form.mobileImageId = r.id;
+      form.mobilePreview = localSrc(r.url);
+      form.mobileInfo = info;
+    }
   } catch (e) {
-    fieldErrors.value = { ...fieldErrors.value, imageId: apiErrorMessage(e) };
+    fieldErrors.value = { ...fieldErrors.value, [errKey]: apiErrorMessage(e) };
   } finally {
     uploading.value = false;
   }
 }
 
-function removeImage() {
-  form.imageId = null;
-  form.imagePreview = null;
-  form.imageInfo = '';
+function removeImage(role: ImageRole) {
+  if (role === 'desktop') {
+    form.imageId = null;
+    form.imagePreview = null;
+    form.imageInfo = '';
+    // The square goes with its banner.
+    form.mobileImageId = null;
+    form.mobilePreview = null;
+    form.mobileInfo = '';
+  } else {
+    form.mobileImageId = null;
+    form.mobilePreview = null;
+    form.mobileInfo = '';
+  }
 }
 
 function toggleSlot(n: number) {
@@ -255,6 +290,7 @@ async function save() {
     ctaText: form.ctaText,
     linkUrl: form.linkUrl.trim(),
     imageId: form.imageId,
+    mobileImageId: form.mobileImageId,
     audience: form.audience,
     topic: form.topic || null,
     slots: form.slots,
@@ -423,20 +459,38 @@ onMounted(load);
         </div>
 
         <div class="f f-wide image-field">
-          <label for="ad-image">Image (optional)</label>
+          <label for="ad-image">Desktop banner (optional)</label>
           <div class="image-row">
-            <div class="image-box" :class="{ has: form.imagePreview }">
-              <img v-if="form.imagePreview" :src="form.imagePreview" :alt="form.altText || 'Ad image'" />
-              <span v-else class="muted">No image</span>
+            <div class="image-box image-box-wide" :class="{ has: form.imagePreview }">
+              <img v-if="form.imagePreview" :src="form.imagePreview" :alt="form.altText || 'Desktop banner'" />
+              <span v-else class="muted">No banner</span>
             </div>
             <div class="image-side">
-              <input id="ad-image" type="file" accept="image/jpeg,image/png" :disabled="uploading" @change="onFile" />
-              <p class="muted">JPEG or PNG, up to 1200 px wide and 150 KB. Put the offer in the headline below, not only in the picture.</p>
-              <p class="muted">Best size: 1200 × 628 (wide rectangle).</p>
+              <input id="ad-image" type="file" accept="image/jpeg,image/png" :disabled="uploading" @change="onFile('desktop', $event)" />
+              <p class="image-rule"><strong>Desktop banner: exactly 1720 × 400 px</strong> — JPEG or PNG, up to 250 KB. Shown 860 px wide on computers.</p>
+              <p class="muted">Put the offer in the headline below, not only in the picture.</p>
               <p v-if="form.imageInfo" class="muted">{{ form.imageInfo }}</p>
               <p v-if="uploading" class="muted">Uploading…</p>
-              <button v-if="form.imageId" type="button" class="btn btn-mini" @click="removeImage">Remove image</button>
+              <button v-if="form.imageId" type="button" class="btn btn-mini" @click="removeImage('desktop')">Remove banner</button>
               <p v-if="fieldErrors.imageId" class="f-err">{{ fieldErrors.imageId }}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="f f-wide image-field">
+          <label for="ad-image-mobile">Mobile square (optional)</label>
+          <div class="image-row">
+            <div class="image-box image-box-square" :class="{ has: form.mobilePreview }">
+              <img v-if="form.mobilePreview" :src="form.mobilePreview" :alt="form.altText || 'Mobile square'" />
+              <span v-else class="muted">No square</span>
+            </div>
+            <div class="image-side">
+              <input id="ad-image-mobile" type="file" accept="image/jpeg,image/png" :disabled="uploading || !form.imageId" @change="onFile('mobile', $event)" />
+              <p class="image-rule"><strong>Mobile square: exactly 1080 × 1080 px</strong> — JPEG or PNG, up to 250 KB. Shown 300 px wide on phones.</p>
+              <p class="muted">Without it, phones get the desktop banner. Add the desktop banner first.</p>
+              <p v-if="form.mobileInfo" class="muted">{{ form.mobileInfo }}</p>
+              <button v-if="form.mobileImageId" type="button" class="btn btn-mini" @click="removeImage('mobile')">Remove square</button>
+              <p v-if="fieldErrors.mobileImageId" class="f-err">{{ fieldErrors.mobileImageId }}</p>
             </div>
           </div>
         </div>
@@ -574,7 +628,11 @@ onMounted(load);
               <div class="ad-cell">
                 <img v-if="a.image" class="ad-thumb" :src="localSrc(a.image.url) ?? ''" :alt="a.altText" />
                 <div>
-                  <div>{{ a.name }}</div>
+                  <div>
+                    {{ a.name }}
+                    <span v-if="a.needsMobileSquare" class="badge SCHEDULED tag">Needs mobile square</span>
+                    <span v-if="a.oldSize" class="badge SCHEDULED tag">Old size — replace</span>
+                  </div>
                   <div class="muted">
                     {{ KIND_LABEL[a.kind] }} · {{ a.headline }}<span v-if="a.topic"> · topic {{ a.topic }}</span>
                   </div>
@@ -825,9 +883,27 @@ select[aria-invalid='true'] {
   max-height: 100%;
   display: block;
 }
+.image-box-wide {
+  flex: 0 0 240px;
+  height: 56px;
+}
+.image-box-square {
+  flex: 0 0 110px;
+  height: 110px;
+}
 .image-side {
   min-width: 0;
   flex: 1;
+}
+/* The exact-size rule is the one thing the editor must not miss: full-strength text, not the muted grey. */
+.image-rule {
+  margin: 6px 0 2px;
+  font-size: 13px;
+  color: var(--text);
+}
+.tag {
+  margin-left: 6px;
+  white-space: nowrap;
 }
 .form-actions {
   display: flex;
@@ -888,6 +964,12 @@ td.num {
     flex-basis: auto;
     width: 100%;
     height: 140px;
+  }
+  .image-box-wide {
+    height: 80px;
+  }
+  .image-box-square {
+    width: 140px;
   }
   .form-actions .btn {
     flex: 1;

@@ -15,17 +15,33 @@ import { prisma } from '../../lib/prisma';
  *  - height ≤ 2 × width (MAX_HEIGHT_TO_WIDTH), and ≤ 65,535 px
  *  - size   ≤ MAX_IMAGE_BYTES (150 KB)
  *  - id     = sha256 of the bytes: an identical upload is the same row.
+ *
+ * Since 30 Oct 2026 (brief digest-old-format) an upload names its ROLE and is held to the old newsletter's two
+ * creatives instead: the desktop banner is exactly 1720 × 400 px (2× of the 860 × 200 it is shown at), the mobile
+ * square exactly 1080 × 1080 px, each ≤ 250 KB. An upload with no role keeps the rules above (older callers); an
+ * ad saved before the change keeps its single image as the desktop banner, whatever its size.
  */
 
 export const MAX_IMAGE_BYTES = 150 * 1024;
 export const MAX_IMAGE_WIDTH = 1200;
 /** The route's body limit (express.raw) sits above MAX_IMAGE_BYTES so a too-big file gets our message, not a bare 413. */
-export const UPLOAD_LIMIT = '200kb';
+export const UPLOAD_LIMIT = '300kb';
+
+/** The two creatives (exact pixels, 2× of what the email shows) and their size limit. */
+export type AdImageRole = 'desktop' | 'mobile';
+export const AD_IMAGE_ROLES: readonly AdImageRole[] = ['desktop', 'mobile'];
+export const ROLE_SIZE: Record<AdImageRole, { width: number; height: number; label: string }> = {
+  desktop: { width: 1720, height: 400, label: 'desktop banner' },
+  mobile: { width: 1080, height: 1080, label: 'mobile square' },
+};
+export const ROLE_MAX_BYTES = 250 * 1024;
+/** "1720 × 400 px" */
+export const roleSizeText = (r: AdImageRole): string => `${ROLE_SIZE[r].width} × ${ROLE_SIZE[r].height} px`;
 
 export type ImageMime = 'image/jpeg' | 'image/png';
 export const EXT_OF: Record<ImageMime, 'jpg' | 'png'> = { 'image/jpeg': 'jpg', 'image/png': 'png' };
 
-export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide' | 'too_tall' | 'too_tall_for_width';
+export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide' | 'too_tall' | 'too_tall_for_width' | 'wrong_size';
 /** The tallest image accepted: JPEG's own maximum. A PNG header can claim up to 2^32-1, which overflows the Int column (500). */
 export const MAX_IMAGE_HEIGHT = 65_535;
 /**
@@ -114,10 +130,11 @@ const LABEL: Record<ImageMime, string> = { 'image/jpeg': 'JPEG', 'image/png': 'P
  * Validates an upload. Throws ImageRejected with a plain-words message the
  * Ads screen shows as is. Pure.
  */
-export function validateImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}): ImageInfo {
+export function validateImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: AdImageRole): ImageInfo {
   if (!buf || buf.length === 0) throw new ImageRejected('empty', 'The file is empty.');
-  if (buf.length > MAX_IMAGE_BYTES) {
-    throw new ImageRejected('too_big', `The image is ${Math.ceil(buf.length / 1024)} KB; the limit is ${MAX_IMAGE_BYTES / 1024} KB. Export it smaller (JPEG quality ~75 usually does it).`);
+  const limit = role ? ROLE_MAX_BYTES : MAX_IMAGE_BYTES;
+  if (buf.length > limit) {
+    throw new ImageRejected('too_big', `The image is ${Math.ceil(buf.length / 1024)} KB; the limit is ${limit / 1024} KB. Export it smaller (JPEG quality ~75 usually does it).`);
   }
   const mime = sniffMime(buf);
   if (!mime) throw new ImageRejected('wrong_type', 'Only JPEG or PNG images are accepted.');
@@ -129,6 +146,16 @@ export function validateImage(buf: Buffer, declared: { contentType?: string; fil
   }
   const size = mime === 'image/png' ? pngSize(buf) : jpegSize(buf);
   if (!size || size.width <= 0 || size.height <= 0) throw new ImageRejected('unreadable', 'The image header could not be read; re-export the file.');
+  if (role) {
+    const want = ROLE_SIZE[role];
+    if (size.width !== want.width || size.height !== want.height) {
+      throw new ImageRejected(
+        'wrong_size',
+        `The ${want.label} must be exactly ${roleSizeText(role)}, but this image is ${size.width} × ${size.height} px. Export it at exactly ${roleSizeText(role)} and upload again.`,
+      );
+    }
+    return { mime, ...size };
+  }
   if (size.width > MAX_IMAGE_WIDTH) {
     throw new ImageRejected('too_wide', `The image is ${size.width} px wide; the limit is ${MAX_IMAGE_WIDTH} px. It shows at up to 552 px, so 1200 px is plenty.`);
   }
@@ -155,8 +182,8 @@ export type StoredImage = { id: string; mime: ImageMime; width: number; height: 
  * existing row (`deduped: true`); a concurrent identical upload loses on the
  * primary key and also returns the stored row.
  */
-export async function storeImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}): Promise<StoredImage> {
-  const info = validateImage(buf, declared);
+export async function storeImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: AdImageRole): Promise<StoredImage> {
+  const info = validateImage(buf, declared, role);
   const id = imageId(buf);
   const out = (deduped: boolean): StoredImage => ({ id, ...info, size: buf.length, ext: EXT_OF[info.mime], deduped });
   if (await prisma.digestAdImage.findUnique({ where: { id }, select: { id: true } })) return out(true);

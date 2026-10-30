@@ -88,48 +88,48 @@ describe('1. brand colours hold in every mode', () => {
 
 describe('2. pictures keep their size in every app', () => {
   const row = rowOf(render(items(10, PIC)).html, 1);
-  it('explicit width AND height attributes plus fixed inline sizes (desktop ≈ 240 px, 1.91:1 box)', () => {
-    expect(STORY_IMAGE_WIDTH).toBe(240);
-    expect(STORY_IMAGE_HEIGHT).toBe(126);
-    expect(row).toMatch(/<img class="ts-pic"[^>]* width="240" height="126" /);
-    expect(row).toContain('style="display:block;width:240px;max-width:240px;height:126px;object-fit:cover;');
+  it('explicit width AND height attributes plus fixed inline sizes (desktop 280 px, 1.91:1 box)', () => {
+    expect(STORY_IMAGE_WIDTH).toBe(280);
+    expect(STORY_IMAGE_HEIGHT).toBe(147);
+    expect(row).toMatch(/<img class="ts-pic adapt-img"[^>]* width="280" height="147" /);
+    expect(row).toContain('style="display:block;width:280px;max-width:100%;height:147px;object-fit:cover;');
   });
   it('stripping <style> (Zoho-like) leaves the picture at those sizes', () => {
     const stripped = render(items(10, PIC)).html.replace(/<style>[\s\S]*?<\/style>/, '');
-    expect(rowOf(stripped, 1)).toContain('width:240px;max-width:240px;height:126px');
+    expect(rowOf(stripped, 1)).toContain('width:280px;max-width:100%;height:147px');
   });
-  it('phones: the stylesheet makes it full width, natural aspect, height-limited', () => {
-    expect(render(items(10, PIC)).html).toMatch(/\.ts-pic\{width:100%!important;max-width:100%!important;height:auto!important;max-height:240px!important\}/);
+  it('phones: the stylesheet makes it full width at its natural aspect', () => {
+    expect(render(items(10, PIC)).html).toContain('.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}');
   });
 });
 
 describe('3. alignment', () => {
   const row = rowOf(render(items(10, PIC)).html, 1);
-  it('picture and text columns both start at the top (ghost cells valign=top, columns vertical-align:top)', () => {
+  it('picture and text columns both start at the top (cells valign=top, vertical-align:top)', () => {
     expect((row.match(/valign="top"/g) ?? []).length).toBe(2);
-    expect((row.match(/class="ts-col" style="[^"]*vertical-align:top/g) ?? []).length).toBe(2);
+    expect((row.match(/class="ts-stcol[^"]*"[^>]*style="[^"]*vertical-align:top/g) ?? []).length).toBe(2);
   });
-  it('no stray top padding above the headline; Read more has fixed spacing above it', () => {
-    expect(row).not.toMatch(/class="ts-head"[^>]*padding:9px 0/);
-    expect(row).toContain('<div style="margin:14px 0 0 0;">');
+  it('no padding above the headline; Read More has 13 px above it', () => {
+    expect(row).not.toMatch(/class="ts-head"[^>]*padding/);
+    expect(row).toContain('<div style="margin:13px 0 0 0;">');
   });
-  it('Read more is a fixed 140×44 box, text centred both ways, with the VML fallback', () => {
-    expect(row).toContain('class="ts-btn" style="display:inline-block;width:140px;height:44px;line-height:44px;padding:0;text-align:center;');
-    expect(row).toMatch(/<v:rect [^>]*style="height:44px;v-text-anchor:middle;width:140px;"/);
+  it('Read More is a fixed 120×38 box (the old newsletter\'s), text centred both ways, with the VML fallback', () => {
+    expect(row).toContain('class="ts-btn" style="display:inline-block;width:120px;height:38px;line-height:38px;padding:0;text-align:center;');
+    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:120px;"/);
   });
 });
 
 describe('4. ads at full content width, real aspect', () => {
-  it('an 800×210 banner and a 1200×628 banner both draw at 552 px wide with heights from the stored size', () => {
+  it('an 800×210 banner and a 1200×628 banner both draw at 860 px wide with heights from the stored size', () => {
     const html = render(items(10, null)).html;
-    const imgs = [...html.matchAll(/<img src="[^"]*email-assets[^"]*" width="(\d+)" height="(\d+)"/g)].map((m) => [Number(m[1]), Number(m[2])]);
-    expect(AD_IMAGE_DISPLAY_WIDTH).toBe(552);
+    const imgs = [...html.matchAll(/<img class="adapt-img" src="[^"]*email-assets[^"]*" width="(\d+)" height="(\d+)"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    expect(AD_IMAGE_DISPLAY_WIDTH).toBe(860);
     expect(imgs).toEqual([
-      [552, 145], // 800×210
-      [552, 289], // 1200×628
-      [552, 289],
+      [860, 226], // 800×210
+      [860, 450], // 1200×628
+      [860, 450],
     ]);
-    expect(html).toContain('style="display:block;width:100%;max-width:552px;height:auto;');
+    expect(html).toContain('style="display:block;width:100%;max-width:860px;height:auto;');
   });
 });
 

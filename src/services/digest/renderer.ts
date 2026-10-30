@@ -25,17 +25,19 @@ import { isAllowedArticleImage } from './articleImage';
  *  - preheader = "Plus N more: <2nd headline>…", ≤ 110 chars, hidden in the
  *                HTML and returned for the provider's email_preheader (#7)
  *  - date      = from runDate in IST, "22 October 2026", never copied (#3)
- *  - footer    = postal address (empty → refuse), the unsubscribe tag, no
- *                "all types of emails" wording, Premium/Free reason line (#5, #6)
+ *  - footer    = postal address (empty → refuse), no "all types of emails" wording,
+ *                Premium/Free reason line (#5, #6). NO unsubscribe link of ours: Mailercloud appends its
+ *                own working footer to every campaign, and its merge tag is not one it expands (30 Oct 2026)
  *  - links     = every href passes isAllowedPushUrl() (else refuse) and
  *                carries the digest UTM (#16)
  *  - images    = every <img> has non-empty alt (#8); v0 is text-only unless a
  *                logo URL is passed
  *  - size      = HTML bytes + tracking-rewrite overhead per link: warn at
  *                DIGEST_HTML_WARN_KB, refuse above DIGEST_MAX_HTML_KB (#2)
- *  - layout    = fluid single column, 600 px max, no media queries required,
- *                MSO fixed wrapper, ≥ 16 px body, ≥ 44 px taps, dark-mode
- *                colour-scheme meta, no web fonts / JS / external CSS (#18)
+ *  - layout    = the old Mailercloud newsletter's (30 Oct 2026): 900 px wide (860 inside), a story is a 280 px
+ *                picture + 20 px gap + 560 px text row that stacks on phones (≤ 600 px media query), an ad is
+ *                a desktop banner plus a mobile square swapped with the old newsletter's own CSS pattern;
+ *                MSO fixed wrapper, 16 px body, light-only colour-scheme meta, no web fonts / JS / external CSS (#18)
  *  - escaping  = every text value is HTML-escaped
  *  - ads       = task 9: `ads` (picked by ads.ts) are drawn at fixed slots with
  *                live-text headline, real CTA button and image alt text; each
@@ -89,15 +91,15 @@ export type AdPlacementRecord = { adId: string; slot: number; utmContent: string
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-// UNVERIFIED: Mailercloud merge tag — confirm in account (design §12 open question 3).
-// Used as the href of the footer unsubscribe link and printed in the plain-text part.
-// It is the ONLY href exempt from the allowlist check, and only as this exact string.
+// Mailercloud does NOT expand this tag (Anagha's screenshot, 30 Oct 2026: it arrived as a dead link), and it
+// appends its own working unsubscribe footer to every campaign. We never render it; a custom template that
+// contains it is refused (it would render dead). Kept only to recognise it.
 export const UNSUBSCRIBE_TAG = '{{unsubscribe_link}}';
 
 export const SUBJECT_MAX = 90;
 export const PREHEADER_MAX = 110;
-/** Summary shown under a headline: about two lines on a phone. */
-export const SUMMARY_MAX = 180;
+/** Summary shown under a headline: about three lines in the 560 px text column. */
+export const SUMMARY_MAX = 220;
 /** Allowance per link for the provider's click-tracking rewrite (design §4). */
 export const TRACKING_BYTES_PER_LINK = 150;
 
@@ -138,7 +140,10 @@ export type RenderAd = {
   ctaText: string;
   linkUrl: string;
   altText: string;
+  /** The desktop banner (shown 860 px wide). */
   image: { url: string; width: number; height: number } | null;
+  /** The mobile square (shown 300 px wide on phones). null = phones get the banner too. */
+  mobileImage?: { url: string; width: number; height: number } | null;
 };
 
 /** Returns the slot's complete `<tr>…</tr>` markup, or '' for nothing. */
@@ -162,13 +167,14 @@ const C = {
   card: '#ffffff',
   rule: '#e3e5e8',
   text: '#111111', // never pure black (dark-mode inversion)
+  ink: '#000000', // the old newsletter's headline and button text
   body: '#333333',
   muted: '#5f6368',
   link: '#1376c8',
   brand: '#3b3543', // the header bar (as in today's digest); fixed in dark mode too
   brandText: '#ffffff',
   button: '#FEE620', // square yellow CTA, bold dark text (today's digest)
-  buttonText: '#111111',
+  buttonText: '#000000',
 };
 
 /**
@@ -217,15 +223,15 @@ export const LOGO_HEIGHT = 53;
 const solid = (hex: string) => `background-image:linear-gradient(${hex},${hex});`;
 
 /**
- * A "bulletproof" button: square corners, a fixed-size yellow box (`widthPx` × 44) with bold dark text
+ * A "bulletproof" button: square corners, a fixed-size yellow box (`widthPx` × `heightPx`) with bold black text
  * centred in it; a VML rectangle for Outlook desktop (which ignores padding on links), the plain link
  * everywhere else. `href` is already escaped.
  */
-function button(href: string, label: string, widthPx: number): string {
+function button(href: string, label: string, widthPx: number, heightPx = 44): string {
   const text = esc(label);
   return (
-    `<!--[if mso]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${href}" style="height:44px;v-text-anchor:middle;width:${widthPx}px;" stroke="f" fillcolor="${C.button}"><w:anchorlock/><center style="color:${C.buttonText};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${text}</center></v:rect><![endif]-->` +
-    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;width:${widthPx}px;height:44px;line-height:44px;padding:0;text-align:center;background-color:${C.button};${solid(C.button)}border-radius:0;font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;mso-hide:all;">${text}</a><!--<![endif]-->`
+    `<!--[if mso]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${href}" style="height:${heightPx}px;v-text-anchor:middle;width:${widthPx}px;" stroke="f" fillcolor="${C.button}"><w:anchorlock/><center style="color:${C.buttonText};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${text}</center></v:rect><![endif]-->` +
+    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;width:${widthPx}px;height:${heightPx}px;line-height:${heightPx}px;padding:0;text-align:center;background-color:${C.button};${solid(C.button)}border-radius:0;font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;mso-hide:all;">${text}</a><!--<![endif]-->`
   );
 }
 
@@ -240,7 +246,8 @@ export type RenderErrorCode =
   | 'over_size_limit'
   | 'noreply_address'
   | 'ad_not_allowed'
-  | 'ad_slot_empty';
+  | 'ad_slot_empty'
+  | 'template_unsubscribe_tag';
 
 /** A refusal to render. The message never contains a full URL or an address. */
 export class RenderError extends Error {
@@ -556,6 +563,9 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   const textAds = input.ads ? textAdsFor(input.ads, utmCampaign) : new Map<number, string>();
 
   const mode = input.mode ?? 'send';
+  if (mode === 'send' && input.template && input.template.html.includes(UNSUBSCRIBE_TAG)) {
+    throw new RenderError('template_unsubscribe_tag', 'the template contains {{unsubscribe_link}}, which Mailercloud does not expand; it adds its own unsubscribe footer');
+  }
   const shell = input.template
     ? templateLinks(input.template.html, { utmCampaign, mode, assetBaseUrl: input.assetBaseUrl ?? null })
     : BUILTIN_TEMPLATE_HTML;
@@ -600,6 +610,7 @@ function adHookFor(ads: RenderAd[], audience: DigestAudience, utmCampaign: strin
     }
     if (!isAllowedAdUrl(a.linkUrl)) throw new RenderError('link_not_allowed', `ad in slot ${a.slot} links over plain http; ad links must be https`);
     if (a.image && !/^https:\/\//.test(a.image.url)) throw new RenderError('link_not_allowed', `ad image in slot ${a.slot} is not served over https`);
+    if (a.mobileImage && !/^https:\/\//.test(a.mobileImage.url)) throw new RenderError('link_not_allowed', `ad image in slot ${a.slot} is not served over https`);
     if (bySlot.has(a.slot)) throw new RenderError('ad_not_allowed', `two ads for slot ${a.slot}`);
     if (ids.has(a.adId)) throw new RenderError('ad_not_allowed', `the same ad is placed twice (slot ${a.slot})`);
     bySlot.set(a.slot, a);
@@ -623,25 +634,45 @@ function textAdsFor(ads: RenderAd[], utmCampaign: string): Map<number, string> {
   return out;
 }
 
-/** Width the creative is drawn at inside the 600 px column (24 px padding each side). */
-export const AD_IMAGE_DISPLAY_WIDTH = 552;
+/** Width the desktop banner is drawn at (the 900 px email's 860 px inner width). */
+export const AD_IMAGE_DISPLAY_WIDTH = 860;
+/** Width the mobile square is drawn at on phones (centred). */
+export const AD_MOBILE_DISPLAY_WIDTH = 300;
 
 /**
- * One house ad. WITH a picture it is the banner only, like the old newsletter's: full width, the
- * whole image linked, its alt text — no label, headline, body or button (owner, 29 Oct 2026).
- * WITHOUT one: the "From Taxscan" label, live-text headline, body and a real CTA button.
+ * One house ad. WITH a picture it is the banner only, like the old newsletter's: the whole image linked, its alt
+ * text — no label, headline, body or button (owner, 29 Oct 2026). Since 30 Oct it is TWO blocks swapped with the
+ * old newsletter's CSS pattern: the desktop banner (`ml-mobile-hidden`, 860 px wide, hidden on phones) and, when the
+ * ad has one, the mobile square (`ml-desk-hidden` + `mso-hide:all`, 300 px wide and centred, shown on phones only —
+ * Outlook never sees it). An ad with no mobile square renders the banner alone, so phones get the banner as before.
+ * WITHOUT a picture: the "From Taxscan" label, live-text headline, body and a real CTA button.
  */
 function adRow(a: RenderAd, href: string): string {
   const h = esc(href);
   if (a.image) {
-    // Always the full content width, at the stored image's own aspect (a narrower image is scaled up).
+    // The banner is always the full content width, at the stored image's own aspect (a narrower image is scaled up).
     const w = AD_IMAGE_DISPLAY_WIDTH;
     const hgt = Math.max(1, Math.round((a.image.height * w) / a.image.width));
+    const alt = esc(clean(a.altText));
+    const imgBase = `border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:${FONT};font-size:16px;color:${C.text};`;
+    const link = (inner: string) => `<a href="${h}" style="display:block;margin:0;text-decoration:none;">${inner}</a>`;
+    const desktop =
+      `<div${a.mobileImage ? ' class="ml-mobile-hidden"' : ''} data-ad-variant="desktop">` +
+      link(`<img class="adapt-img" src="${esc(a.image.url)}" width="${w}" height="${hgt}" alt="${alt}" style="display:block;width:100%;max-width:${w}px;height:auto;${imgBase}">`) +
+      `</div>`;
+    let mobile = '';
+    if (a.mobileImage) {
+      const mw = AD_MOBILE_DISPLAY_WIDTH;
+      const mh = Math.max(1, Math.round((a.mobileImage.height * mw) / a.mobileImage.width));
+      mobile =
+        `<div class="ml-desk-hidden" data-ad-variant="mobile" style="display:none;float:left;overflow:hidden;width:0;max-height:0;line-height:0;mso-hide:all;">` +
+        link(`<img src="${esc(a.mobileImage.url)}" width="${mw}" height="${mh}" alt="${alt}" style="display:block;width:100%;max-width:${mw}px;height:auto;margin:0 auto;${imgBase}">`) +
+        `</div>`;
+    }
     return (
-      `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" data-ad-image="1" style="${WRAP}padding:16px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
-      `<a href="${h}" style="display:block;margin:0;text-decoration:none;">` +
-      `<img src="${esc(a.image.url)}" width="${w}" height="${hgt}" alt="${esc(clean(a.altText))}" style="display:block;width:100%;max-width:${w}px;height:auto;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:16px;color:${C.text};">` +
-      `</a>` +
+      `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" data-ad-image="1" style="${WRAP}padding:16px 20px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+      desktop +
+      mobile +
       `</td></tr>`
     );
   }
@@ -649,7 +680,7 @@ function adRow(a: RenderAd, href: string): string {
     ? `<p style="${WRAP}margin:0 0 12px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(clean(a.body))}</p>`
     : '';
   return (
-    `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+    `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" style="${WRAP}padding:20px 20px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
     `<p style="${WRAP}margin:0 0 8px 0;font-family:${FONT};font-size:12px;line-height:16px;letter-spacing:0.06em;text-transform:uppercase;color:${C.muted};" class="ts-muted">From Taxscan</p>` +
     `<h3 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(clean(a.headline))}</h3>` +
     body +
@@ -690,54 +721,57 @@ type HtmlParts = {
 /** Zero-width filler after the preheader so clients don't pull body text into the preview. */
 const PREVIEW_FILLER = '&#847;&zwnj;&nbsp;'.repeat(40);
 
-/** The story picture's display width, and the text column beside it (552 px inside the 600 px card). */
-export const STORY_IMAGE_WIDTH = 240;
+/** The content width of the email (the old newsletter's), and what is inside its 20 px side padding. */
+export const EMAIL_WIDTH = 900;
+export const EMAIL_INNER_WIDTH = 860;
+/** A story row: picture 280 px, 20 px gap, text column 560 px (= 860). */
+export const STORY_IMAGE_WIDTH = 280;
+export const STORY_GAP = 20;
+export const STORY_TEXT_WIDTH = EMAIL_INNER_WIDTH - STORY_IMAGE_WIDTH - STORY_GAP;
 /**
  * The picture's box is 1.91:1 (the og:image standard, 1200×628). We store no picture size, so this is an
  * assumption; `object-fit:cover` crops a picture of another shape instead of stretching it.
  */
 export const STORY_IMAGE_HEIGHT = Math.round(STORY_IMAGE_WIDTH / (1200 / 628));
-export const STORY_TEXT_WIDTH = 552 - STORY_IMAGE_WIDTH;
 
 /**
- * One story: headline, summary, "Read more". No label above the headline (owner, 29 Oct 2026). With a
- * picture it is a two-column row like the old newsletter's — picture left (240 px), text right — built
- * with the fluid/hybrid technique: two inline-blocks that sit side by side while 552 px is there and
- * stack (picture first) when it is not, with no media query needed; Outlook gets a ghost table. A
- * story without a picture is the plain single column. Alt text = the headline.
+ * One story, laid out like the old newsletter's: picture left (280 px, `adapt-img` = full width on phones), a 20 px
+ * gap, the text column right (560 px), both top-aligned; on phones (≤ 600 px) the row collapses to one column with
+ * the picture first. Headline: Arial 16 px bold, line-height 150 %, black, linked, no underline. Summary: 16 px #333,
+ * 15 px below the headline. "Read More": 13 px below the summary, a 38 px yellow square with 15 px bold black text
+ * (VML roundrect for Outlook). A story without a picture is the text column alone, full width. Alt text = the headline.
  */
 function itemRow(it: Prepared): string {
   const summary = it.summary
-    ? `<p style="${WRAP}margin:0 0 4px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
+    ? `<p style="${WRAP}margin:15px 0 0 0;font-family:${FONT};font-size:16px;line-height:150%;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
     : '';
   const href = esc(it.href);
   const text =
-    `<h2 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:20px;line-height:26px;font-weight:700;color:${C.text};"><a href="${href}" class="ts-head" style="${WRAP}display:block;padding:0 0 18px 0;color:${C.text};text-decoration:none;">${esc(it.title)}</a></h2>` +
+    `<h2 style="${WRAP}margin:0;font-family:${FONT};font-size:16px;line-height:150%;font-weight:700;color:${C.ink};"><a href="${href}" class="ts-head" style="${WRAP}color:${C.ink};text-decoration:none;">${esc(it.title)}</a></h2>` +
     summary +
-    `<div style="margin:14px 0 0 0;">${button(href, 'Read more', 140)}</div>`;
+    `<div style="margin:13px 0 0 0;">${button(href, 'Read More', 120, 38)}</div>`;
   const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}"`;
-  if (!it.imageUrl) return `${open} style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};">${text}</td></tr>`;
+  const pad = `${WRAP}padding:20px;background-color:${C.card};border-top:1px solid ${C.rule};`;
+  if (!it.imageUrl) return `${open} style="${pad}">${text}</td></tr>`;
   const W = STORY_IMAGE_WIDTH;
   const H = STORY_IMAGE_HEIGHT;
   const T = STORY_TEXT_WIDTH;
   return (
-    `${open} data-image="1" style="${WRAP}padding:20px 24px;background-color:${C.card};border-top:1px solid ${C.rule};font-size:0;line-height:0;">` +
-    `<!--[if mso]><table role="presentation" width="552" cellpadding="0" cellspacing="0" border="0"><tr><td width="${W}" valign="top"><![endif]-->` +
-    `<div class="ts-col" style="display:inline-block;width:100%;max-width:${W}px;vertical-align:top;">` +
-    `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic" src="${esc(it.imageUrl)}" width="${W}" height="${H}" alt="${esc(it.title)}" style="display:block;width:${W}px;max-width:${W}px;height:${H}px;object-fit:cover;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:14px;line-height:20px;color:${C.text};"></a>` +
-    `</div>` +
-    `<!--[if mso]></td><td width="${T}" valign="top"><![endif]-->` +
-    `<div class="ts-col" style="display:inline-block;width:100%;max-width:${T}px;vertical-align:top;box-sizing:border-box;">` +
-    `<div class="ts-textpad" style="padding:0 0 0 16px;">${text}</div>` +
-    `</div>` +
-    `<!--[if mso]></td></tr></table><![endif]-->` +
+    `${open} data-image="1" style="${pad}">` +
+    `<table role="presentation" class="ts-st" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;"><tr>` +
+    `<td class="ts-stcol ts-stpic" width="${W}" valign="top" style="width:${W}px;padding:0;vertical-align:top;">` +
+    `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(it.imageUrl)}" width="${W}" height="${H}" alt="${esc(it.title)}" style="display:block;width:${W}px;max-width:100%;height:${H}px;object-fit:cover;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:${FONT};font-size:14px;line-height:20px;color:${C.text};"></a>` +
+    `</td>` +
+    `<td class="ts-stgap" width="${STORY_GAP}" style="width:${STORY_GAP}px;font-size:0;line-height:0;">&nbsp;</td>` +
+    `<td class="ts-stcol ts-sttext" width="${T}" valign="top" style="width:${T}px;padding:0;vertical-align:top;">${text}</td>` +
+    `</tr></table>` +
     `</td></tr>`
   );
 }
 
 function sectionHeading(text: string, id: string): string {
   return (
-    `<tr><td class="ts-card ts-pad" data-heading="${id}" style="${WRAP}padding:24px 24px 4px 24px;background-color:${C.card};border-top:4px solid ${C.brand};">` +
+    `<tr><td class="ts-card ts-pad" data-heading="${id}" style="${WRAP}padding:24px 20px 4px 20px;background-color:${C.card};border-top:4px solid ${C.brand};">` +
     `<h2 style="${WRAP}margin:0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(text)}</h2>` +
     `</td></tr>`
   );
@@ -802,19 +836,28 @@ export const BUILTIN_TEMPLATE_HTML =
   // [data-ogsc] text) put the brand colours back where an app recolours them anyway.
   `:root{color-scheme:light;supported-color-schemes:light}\n` +
   `[data-ogsb] .ts-hdr{background-color:${C.brand}!important}[data-ogsb] .ts-btn{background-color:${C.button}!important}[data-ogsc] .ts-btn{color:${C.buttonText}!important}[data-ogsc] .ts-hdr-text{color:${C.brandText}!important}\n` +
-  `@media only screen and (max-width:620px){.ts-pad{padding-left:16px!important;padding-right:16px!important}}\n` +
-  // Phones: a story's picture sits above its text, full width (stacking itself needs no media query).
-  `@media only screen and (max-width:480px){.ts-col{max-width:100%!important}.ts-pic{width:100%!important;max-width:100%!important;height:auto!important;max-height:240px!important}.ts-textpad{padding-left:0!important;padding-top:12px!important}}\n` +
+  // The old newsletter's own pattern: a desktop-only block (.ml-mobile-hidden) and a phone-only block (.ml-desk-hidden, hidden
+  // by its inline style and shown here), and a story row that becomes one column (picture first) on phones.
+  `@media only screen and (max-width:600px){` +
+  `.ts-pad{padding-left:10px!important;padding-right:10px!important}` +
+  `.ml-mobile-hidden{display:none!important}` +
+  `.ml-desk-hidden{display:block!important;float:none!important;overflow:visible!important;width:auto!important;max-height:none!important;line-height:normal!important;text-align:center!important}` +
+  `.ts-stcol{display:block!important;width:100%!important}.ts-stgap{display:none!important}` +
+  `.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}` +
+  `.ts-sttext{padding-top:12px!important}` +
+  `}\n` +
   `</style>\n` +
   `</head>\n` +
   `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
   `{{preheader}}\n` +
   `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td align="center" style="padding:16px 8px;">\n` +
-  `<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="600"><![endif]-->\n` +
-  `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;margin:0 auto;border-collapse:collapse;">\n` +
-  `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 24px 18px 24px;background-color:${C.brand};${solid(C.brand)}text-align:center;" bgcolor="${C.brand}">` +
+  `<!--[if mso]><table role="presentation" width="${EMAIL_WIDTH}" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="${EMAIL_WIDTH}"><![endif]-->\n` +
+  `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${EMAIL_WIDTH}px;margin:0 auto;border-collapse:collapse;">\n` +
+  // The date, small, at the very top on the page colour (as the old newsletter shows it) — above the header bar.
+  `<tr><td class="ts-pad ts-date" align="left" style="${WRAP}padding:0 20px 8px 20px;font-family:${FONT};font-size:14px;line-height:20px;color:${C.muted};">{{date}}</td></tr>\n` +
+  `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 20px 18px 20px;background-color:${C.brand};${solid(C.brand)}text-align:center;" bgcolor="${C.brand}">` +
   `<a href="{{home_url}}" style="display:inline-block;min-height:44px;text-decoration:none;color:${C.brandText};">{{logo}}</a>` +
-  `<p class="ts-hdr-text" style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest &middot; {{date}}{{premium_badge}}</p>` +
+  `<p class="ts-hdr-text" style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest{{premium_badge}}</p>` +
   `</td></tr>\n` +
   `{{stories}}\n` +
   `{{icymi}}\n` +
@@ -864,7 +907,7 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
 
   // Five fixed links, centred, small, each icon with alt text; no UTM. Needs the asset host for the icons.
   const social = p.assetBaseUrl
-    ? `<tr><td class="ts-card ts-pad" data-social="1" align="center" style="${WRAP}padding:20px 24px 4px 24px;background-color:${C.card};border-top:1px solid ${C.rule};text-align:center;">` +
+    ? `<tr><td class="ts-card ts-pad" data-social="1" align="center" style="${WRAP}padding:20px 20px 4px 20px;background-color:${C.card};border-top:1px solid ${C.rule};text-align:center;">` +
       SOCIAL_LINKS.map(
         (l) =>
           `<a href="${esc(l.href)}" style="display:inline-block;margin:0 5px;text-decoration:none;"><img src="${esc(`${p.assetBaseUrl}/email/social-${l.key}.png`)}" width="${SOCIAL_ICON_SIZE}" height="${SOCIAL_ICON_SIZE}" alt="${esc(l.label)}" style="display:block;width:${SOCIAL_ICON_SIZE}px;height:${SOCIAL_ICON_SIZE}px;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:12px;color:${C.muted};"></a>`,
@@ -874,9 +917,8 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
 
   const reason = premium ? PREMIUM_REASON : FREE_REASON;
   const footer =
-    `<tr><td class="ts-pad" data-footer="1" style="${WRAP}padding:24px 24px 32px 24px;font-family:${FONT};font-size:14px;line-height:21px;color:${C.muted};" align="left">` +
+    `<tr><td class="ts-pad" data-footer="1" style="${WRAP}padding:24px 20px 32px 20px;font-family:${FONT};font-size:14px;line-height:21px;color:${C.muted};" align="left">` +
     `<p style="${WRAP}margin:0 0 12px 0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">${esc(reason)} Questions or feedback? Write to <a href="${CONTACT_MAILTO}" class="ts-link" style="color:${C.link};text-decoration:underline;padding:9px 0;">${CONTACT_EMAIL}</a></p>` +
-    `<p style="margin:0 0 12px 0;"><a href="${UNSUBSCRIBE_TAG}" class="ts-link" style="display:inline-block;min-height:44px;line-height:44px;font-size:16px;font-weight:700;color:${C.link};text-decoration:underline;">Unsubscribe from this digest</a></p>` +
     `<p style="${WRAP}margin:0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">Taxscan &middot; ${esc(p.postal)}</p>` +
     `</td></tr>`;
 
@@ -1097,7 +1139,6 @@ function renderText(p: {
   out.push(
     '----',
     `${premium ? PREMIUM_REASON : FREE_REASON} ${CONTACT_LINE}`,
-    `Unsubscribe from this digest: ${UNSUBSCRIBE_TAG}`,
     `Taxscan · ${t(p.postal)}`,
     textUrl(p.homeHref),
     '',

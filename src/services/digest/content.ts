@@ -101,6 +101,7 @@ export function toRenderAd(p: Placement, assetBase: string): RenderAd {
     linkUrl: a.linkUrl,
     altText: a.altText,
     image: a.image ? { url: assetUrl(assetBase, a.image), width: a.image.width, height: a.image.height } : null,
+    mobileImage: a.image && a.mobileImage ? { url: assetUrl(assetBase, a.mobileImage), width: a.mobileImage.width, height: a.mobileImage.height } : null,
   };
 }
 
@@ -113,7 +114,11 @@ export function imageWeight(placements: Placement[], renderedSlots?: readonly nu
   const seen = new Map<string, number>();
   for (const p of placements) {
     if (renderedSlots && !renderedSlots.includes(p.slot)) continue;
-    if (p.ad.image) seen.set(p.ad.image.id, p.ad.image.size);
+    if (!p.ad.image) continue;
+    // A reader loads the banner (desktop) or the square (phone), not both: the heavier one counts.
+    const m = p.ad.mobileImage;
+    const heavier = m && m.size > p.ad.image.size ? m : p.ad.image;
+    seen.set(heavier.id, heavier.size);
   }
   return [...seen.values()].reduce((a, b) => a + b, 0);
 }
