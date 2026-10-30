@@ -312,7 +312,7 @@ label {
      to a hamburger below 1200px is the primary handling — see the media query
      at the bottom of this file. */
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -353,6 +353,127 @@ label {
 }
 .nav .spacer {
   flex: 1;
+}
+/* Channel groups (desktop): small uppercase muted labels with a thin divider
+   before each group; the active route's group label is emphasised. */
+.nav-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+  margin-right: 2px;
+  white-space: nowrap;
+}
+.nav-label.active {
+  color: var(--primary);
+}
+.nav .nav-after-group {
+  margin-left: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
+}
+.nav-admin {
+  position: relative;
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.nav-admin-heading {
+  display: none;
+}
+.nav-admin-btn {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.nav-admin-btn:hover,
+.nav-admin-btn.active {
+  color: var(--text);
+}
+.nav-admin-btn.active {
+  background: #eef2f7;
+}
+.nav-admin-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 140px;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  z-index: 20;
+}
+.nav-admin-panel.open {
+  display: flex;
+}
+/* Fit one row at 1200px: links a touch tighter, long email hidden until 1500. */
+@media (min-width: 1200px) {
+  .nav {
+    flex-wrap: nowrap;
+  }
+  .nav a {
+    padding: 6px 9px;
+  }
+  .nav .brand {
+    margin-right: 8px;
+    white-space: nowrap;
+  }
+  .nav a,
+  .nav .logout,
+  .nav-user {
+    white-space: nowrap;
+  }
+  .nav-email {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+@media (min-width: 1200px) and (max-width: 1499px) {
+  .nav-email {
+    display: none;
+  }
+}
+@media (min-width: 1600px) {
+  .nav-email {
+    max-width: 200px;
+  }
+}
+/* The tightest desktop widths: smaller link padding and group spacing so the whole row still fits on one line. */
+@media (min-width: 1200px) and (max-width: 1499px) {
+  .nav {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .nav a {
+    padding: 6px 6px;
+  }
+  .nav-label {
+    margin-left: 4px;
+    padding-left: 8px;
+  }
+  .nav .nav-after-group,
+  .nav-admin {
+    margin-left: 4px;
+    padding-left: 8px;
+  }
+  .nav .logout {
+    padding: 6px 6px;
+  }
 }
 .nav .logout {
   font-size: 12px;
@@ -765,6 +886,44 @@ td .badge {
   }
   .nav-menu .spacer {
     display: none;
+  }
+  /* Groups become headings; Admin's links are listed under its heading. */
+  .nav-label,
+  .nav-admin-heading {
+    display: block;
+    margin: 10px 0 0;
+    padding: 6px 8px 2px;
+    border-left: 0;
+    font-size: 11px;
+  }
+  .nav-menu .nav-first {
+    order: -2;
+  }
+  .nav-menu .nav-after-group {
+    order: -1;
+  }
+  .nav-menu .nav-after-group,
+  .nav .nav-after-group {
+    margin-left: 0;
+    padding-left: 8px;
+    border-left: 0;
+    border-radius: 6px;
+  }
+  .nav-admin {
+    margin: 0;
+    padding: 0;
+    border-left: 0;
+  }
+  .nav-admin-btn {
+    display: none;
+  }
+  .nav-admin-panel {
+    display: flex;
+    position: static;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+    min-width: 0;
   }
   /* Bigger tap targets + a divider above the account row. */
   .nav a,
