@@ -9,6 +9,7 @@ import { AdInputSchema, SLOT_NUMBERS, adCoverage, linkHost, nextBuildAt, utmPrev
 import { validateDigestSchedule } from '../services/digest/scheduler';
 import { digestUtmCampaign } from '../services/digest/renderer';
 import { istDateOf } from '../services/digest/retryPolicy';
+import { requestClientIp } from '../lib/clientIp';
 
 /**
  * Digest Ads (docs/EMAIL_DIGEST_DESIGN.md §6, §7 Ads, §9; task 9). Mounted
@@ -174,7 +175,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
         resourceType: 'DigestAd',
         resourceId: ad.id,
         metadata: auditMeta(input, { created: true }),
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
       return res.status(201).json({ id: ad.id, ...(await listPayload(false)) });
     } catch (err) {
@@ -199,7 +200,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
         resourceType: 'DigestAd',
         resourceId: existing.id,
         metadata: auditMeta(input, { changed }),
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
       return res.json({ id: existing.id, ...(await listPayload(false)) });
     } catch (err) {
@@ -220,7 +221,7 @@ export function createDigestAdsRouter(o: DigestAdsRouterOptions): Router {
           resourceType: 'DigestAd',
           resourceId: existing.id,
           metadata: auditMeta(existing, { status: 'ARCHIVED', from: existing.status }),
-          ipAddress: req.ip ?? null,
+          ipAddress: requestClientIp(req),
         });
       }
       return res.json({ id: existing.id, ...(await listPayload(false)) });

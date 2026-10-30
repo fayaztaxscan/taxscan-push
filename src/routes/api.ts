@@ -27,6 +27,7 @@ import { makePublicLimiter } from '../lib/rateLimit';
 import { recordAudit } from '../lib/audit';
 import { backfillConfigProblem, getBackfillRun, startBackfill, validateBackfillRange } from '../services/cmsViews/backfill';
 import { isViewsSyncRunning } from '../services/cmsViews/sync';
+import { requestClientIp } from '../lib/clientIp';
 
 function base64urlByteLength(s: string): number {
   const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
@@ -943,7 +944,7 @@ export function createApiRouter(
         resourceType: 'CmsArticleView',
         resourceId: started.run.id,
         metadata: { from: range.from, to: range.to, dryRun },
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
       return res.status(202).json(started.run);
     } catch (err) {

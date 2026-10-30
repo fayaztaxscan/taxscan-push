@@ -26,6 +26,7 @@ import { generateTemporaryPassword, passwordIssue } from '../lib/passwordPolicy'
 import { recordAudit } from '../lib/audit';
 import { createInviteToken, buildInviteUrl } from '../lib/invites';
 import { buildInviteEmail, defaultEmailSender, type EmailSender } from '../lib/email';
+import { requestClientIp } from '../lib/clientIp';
 
 const BCRYPT_COST = 12;
 
@@ -237,7 +238,7 @@ export function createUsersRouter(
         resourceType: 'user',
         resourceId: created.id,
         metadata: { createdUserId: created.id, role: created.role, email: created.email },
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
 
       return res.status(201).json({
@@ -326,7 +327,7 @@ export function createUsersRouter(
         parsed.data.role,
         req.user!.id,
         originFor(req),
-        req.ip ?? null,
+        requestClientIp(req),
       );
       return res.status(201).json(out);
     } catch (err) {
@@ -368,7 +369,7 @@ export function createUsersRouter(
         invite.role,
         req.user!.id,
         originFor(req),
-        req.ip ?? null,
+        requestClientIp(req),
       );
       return res.json(out);
     } catch (err) {
@@ -455,7 +456,7 @@ export function createUsersRouter(
             after: { role: updated.role, isActive: updated.isActive },
             ...(action === 'USER_DEACTIVATED' && pushDevicesRemoved ? { pushDevicesRemoved } : {}),
           },
-          ipAddress: req.ip ?? null,
+          ipAddress: requestClientIp(req),
         });
       }
 
@@ -479,7 +480,7 @@ export function createUsersRouter(
           resourceType: 'user',
           resourceId: target.id,
           metadata: { targetUserId: target.id, email: target.email, removed },
-          ipAddress: req.ip ?? null,
+          ipAddress: requestClientIp(req),
         });
       }
       return res.json({ removed });
@@ -508,7 +509,7 @@ export function createUsersRouter(
         resourceType: 'user',
         resourceId: target.id,
         metadata: { targetUserId: target.id, email: target.email },
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
 
       return res.json({ temporaryPassword });
