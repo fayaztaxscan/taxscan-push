@@ -1,9 +1,17 @@
 # REPORT: digest-polish-old-look
 
-**Status: NOT READY TO MERGE — size acceptance FAILED, I stopped per the brief ("if not, stop and report rather than raise limits").**
+**Status: UPDATE 30 Oct — size now PASSES after the owner chose the VML-button option (follow-up commit on this branch). Full suite green. See "Update" below; the earlier size table is kept as history.**
 Code commit: `3f06e48` on branch `build/digest-polish-old-look` (base origin/develop 50f3a5b + brief item F).
 
-## Size decision needed (owner/planning)
+## Update — owner chose the table-cell button (30 Oct)
+The 15 Outlook VML roundrect buttons were replaced by one-URL table-cell buttons (renderer.ts ~224–240; same 96x38 desktop / full-width phone). Alt = headline kept; no limit raised. Measured by me (planning-visible figures, worstCaseFixture = 12 main + 3 ICYMI + 3 ads):
+- FREE: html 68,110 B, budget 76,360 B. PREMIUM: html 68,539 B, budget 76,789 B. Warning is 76,800 B → **passes, but PREMIUM by only 11 bytes** — any added copy/ad/link will trip it again.
+- Not re-measured by me: the 15 main + 3 ads and the 15+3+3 direct cases.
+- Trade-off (as warned): in Outlook desktop the button is clickable on its text only, not the whole 96x38 box.
+- Results after the change: tsc clean, lint clean, **full suite: Test Suites: 84 passed, 84 total; Tests: 1717 passed, 1717 total** (incl. the 4 former size tests and the digestBuilder roll-forward).
+- Acceptance 4 (size) and 9 (suite): now PASS. A quick 375/1000 px re-render after the button change was done by the ui-developer; I did NOT re-inspect it myself — planning should look at the Outlook/phone button once.
+
+## History: size decision that was needed
 Budget = html bytes + 150/link. Warning 76,800; refusal 92,160. No limit raised.
 | Case | html | budget |
 |---|---|---|

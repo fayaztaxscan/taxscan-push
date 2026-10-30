@@ -114,9 +114,11 @@ describe('3. alignment', () => {
     expect(row).not.toMatch(/class="ts-head"[^>]*padding/);
     expect(row).toContain('<div style="padding-top:13px;">');
   });
-  it('Read More is a fixed 96×38 box (the old newsletter\'s is 95), text centred both ways, with the VML fallback', () => {
-    expect(row).toContain('class="ts-btn" style="display:inline-block;width:96px;height:38px;line-height:38px;text-align:center;');
-    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:96px;"/);
+  it('Read More is a fixed 96×38 box (the old newsletter\'s is 95), text centred both ways, as a table cell (Outlook paints the cell), one link', () => {
+    expect(row).toContain('class="ts-btn" style="display:block;height:38px;line-height:38px;text-align:center;');
+    expect(row).toMatch(/<td align="center" width="96" height="38" bgcolor="#FEE620"/);
+    expect(row).not.toContain('v:rect'); // one URL per button: no VML copy
+    expect((row.match(/href=/g) ?? []).length).toBe(3); // picture, headline, Read More
   });
 });
 

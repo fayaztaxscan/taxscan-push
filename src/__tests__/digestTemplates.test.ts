@@ -669,11 +669,12 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
     const fonts = new Set([...r.html.matchAll(/font-family:([^;"]+)/g)].map((m) => m[1]));
     expect([...fonts].every((f) => /^Arial/.test(f))).toBe(true);
   });
-  it('square yellow buttons with bold dark text and an Outlook VML fallback, for stories and ads', () => {
+  it('square yellow buttons with bold dark text in a table cell (Outlook paints the cell; one link, no VML), for stories and ads', () => {
     const btns = r.html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBe(7); // 5 stories + 2 ads
-    for (const b of btns) expect(b).toMatch(/display:inline-block;width:\d+px;height:38px;line-height:38px;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
-    expect((r.html.match(/<v:rect [^>]*fillcolor="#FEE620"/g) ?? []).length).toBe(7);
+    for (const b of btns) expect(b).toMatch(/display:block;height:38px;line-height:38px;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
+    expect((r.html.match(/<td align="center" width="\d+" height="38" bgcolor="#FEE620"/g) ?? []).length).toBe(7);
+    expect(r.html).not.toContain('v:rect');
     expect(r.html).toContain('[data-ogsb] .ts-btn{background-color:#FEE620!important}[data-ogsc] .ts-btn{color:#000000!important}');
   });
   it('headlines #000000 (the old newsletter\'s), not underlined; body #333333; other links #1376c8', () => {

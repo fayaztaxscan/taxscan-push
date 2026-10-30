@@ -131,10 +131,11 @@ describe('1. the old newsletter’s layout', () => {
   it('summary 16/24 #333 (exact line height), 15 px above it', () => {
     expect(row).toMatch(/<p style="[^"]*margin:15px 0 0 0;[^"]*font-size:16px;line-height:24px;mso-line-height-rule:exactly;color:#333333;" class="ts-body">A short summary\.<\/p>/);
   });
-  it('Read More: 13 px above (padding, not margin), #FEE620 square, 96 x 38, Arial 15 px bold #000 (VML for Outlook)', () => {
+  it('Read More: 13 px above (padding, not margin), #FEE620 square, 96 x 38, Arial 15 px bold #000 (table-cell button, one link)', () => {
     expect(row).toContain('<div style="padding-top:13px;">');
-    expect(row).toMatch(/class="ts-btn" style="display:inline-block;width:96px;height:38px;line-height:38px;text-align:center;background-color:#FEE620;[^"]*font-size:15px;font-weight:700;color:#000000;/);
-    expect(row).toMatch(/<v:rect [^>]*style="height:38px;v-text-anchor:middle;width:96px;"[^>]*fillcolor="#FEE620"/);
+    expect(row).toMatch(/class="ts-btn" style="display:block;height:38px;line-height:38px;text-align:center;background-color:#FEE620;[^"]*font-size:15px;font-weight:700;color:#000000;/);
+    expect(row).toMatch(/<td align="center" width="96" height="38" bgcolor="#FEE620"/);
+    expect(row).not.toContain('v:rect');
     expect(row).toContain('>Read More</a>');
   });
   it('the header bar reads "Daily Digest · <date>" (Premium badge after it); no separate date line above it', () => {

@@ -228,15 +228,17 @@ const READ_MORE_WIDTH = 96;
 const solid = (hex: string) => `background-image:linear-gradient(${hex},${hex});`;
 
 /**
- * A "bulletproof" button: square corners, a fixed-size yellow box (`widthPx` × `heightPx`) with bold black text
- * centred in it; a VML rectangle for Outlook desktop (which ignores padding on links), the plain link
- * everywhere else. `href` is already escaped.
+ * A "bulletproof" table-cell button: square corners, a fixed-size yellow cell (`widthPx` × `heightPx`, `bgcolor` so Outlook
+ * paints it) with ONE link inside, bold black text centred; the link's own box carries the same colours everywhere else.
+ * One URL per button (the VML roundrect it replaced repeated it, 30 Oct 2026). On phones the table is the full column.
+ * `href` is already escaped.
  */
 function button(href: string, label: string, widthPx: number, heightPx = BUTTON_HEIGHT): string {
   const text = esc(label);
   return (
-    `<!--[if mso]><v:rect href="${href}" style="height:${heightPx}px;v-text-anchor:middle;width:${widthPx}px;" stroke="f" fillcolor="${C.button}"><w:anchorlock/><center style="color:${C.buttonText};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${text}</center></v:rect><![endif]-->` +
-    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;width:${widthPx}px;height:${heightPx}px;line-height:${heightPx}px;text-align:center;background-color:${C.button};${solid(C.button)}font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;">${text}</a><!--<![endif]-->`
+    `<table class="ts-btnt" width="${widthPx}" cellpadding="0" cellspacing="0"><tr><td align="center" width="${widthPx}" height="${heightPx}" bgcolor="${C.button}">` +
+    `<a href="${href}" class="ts-btn" style="display:block;height:${heightPx}px;line-height:${heightPx}px;text-align:center;background-color:${C.button};${solid(C.button)}font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;">${text}</a>` +
+    `</td></tr></table>`
   );
 }
 
@@ -761,7 +763,7 @@ const BRAND_LOGO_PATH = '/email/taxscan-logo-white-440.png';
  * One story, laid out like the old newsletter's: picture left (280 px, `adapt-img` = full width on phones), a 20 px
  * gap, the text column right (560 px), both top-aligned. Headline: Arial 16 px bold, line-height 24 px (exact in
  * Outlook), black, linked, no underline. Summary: 16/24 #333, 15 px below the headline. "Read More": 13 px below the
- * summary, a 96 x 38 yellow square with 15 px bold black text (VML roundrect for Outlook; full column, 43 px high on
+ * summary, a 96 x 38 yellow square with 15 px bold black text (a table-cell button, one link; full column, 43 px high on
  * phones). Alt text = the headline.
  *
  * The row holds its shape WITHOUT the <style> block: it is two `display:inline-block` divs (100 % wide, capped at 280
@@ -870,7 +872,7 @@ export const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
  */
 export const BUILTIN_TEMPLATE_HTML =
   `<!DOCTYPE html>\n` +
-  `<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n` +
+  `<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">\n` +
   `<head>\n` +
   `<meta charset="utf-8">\n` +
   `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
@@ -901,7 +903,7 @@ export const BUILTIN_TEMPLATE_HTML =
   `.ts-stcol{display:block!important;width:100%!important;max-width:100%!important}.ts-stgap{display:none!important}.ts-brand{max-width:100%!important}` +
   `.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}` +
   `.ts-sttext{padding-top:12px!important}` +
-  `.ts-btn{display:block!important;width:auto!important;height:43px!important;line-height:43px!important}` +
+  `.ts-btnt{width:100%!important}.ts-btn{display:block!important;width:auto!important;height:43px!important;line-height:43px!important}` +
   `}\n` +
   `</style>\n` +
   `</head>\n` +
