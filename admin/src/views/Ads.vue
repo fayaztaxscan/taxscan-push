@@ -118,6 +118,10 @@ const buildLabel = computed(() => {
   if (!at) return '';
   return new Date(at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 });
+/** Live ads (not archived) carrying a picture tag: the note above the list counts these. */
+const taggedCount = computed(
+  () => ads.value.filter((a) => a.status !== 'ARCHIVED' && (a.needsMobileSquare || a.oldSize)).length,
+);
 const brokenCount = computed(() => coverage.value?.problems.length ?? 0);
 /** The audiences whose email cannot be filled (each one is held back on its own; the other still goes out). */
 const brokenAudiences = computed(() => AUDIENCES.filter((a) => coverage.value && !coverage.value.audiences[a].ok));
@@ -487,7 +491,7 @@ onMounted(load);
             <div class="image-side">
               <input id="ad-image-mobile" type="file" accept="image/jpeg,image/png" :disabled="uploading || !form.imageId" @change="onFile('mobile', $event)" />
               <p class="image-rule"><strong>Mobile square: exactly 1080 × 1080 px</strong> — JPEG or PNG, up to 250 KB. Shown 300 px wide on phones.</p>
-              <p class="muted">Without it, phones get the desktop banner. Add the desktop banner first.</p>
+              <p class="muted">Add a desktop banner before the square. The square is optional but recommended — without it, phones show the banner.</p>
               <p v-if="form.mobileInfo" class="muted">{{ form.mobileInfo }}</p>
               <button v-if="form.mobileImageId" type="button" class="btn btn-mini" @click="removeImage('mobile')">Remove square</button>
               <p v-if="fieldErrors.mobileImageId" class="f-err">{{ fieldErrors.mobileImageId }}</p>
@@ -609,6 +613,13 @@ onMounted(load);
           <input v-model="showArchived" type="checkbox" @change="load" /> Show archived
         </label>
       </div>
+      <div v-if="taggedCount > 0" class="banner warn" role="note">
+        <strong>{{ taggedCount === 1 ? '1 ad needs new pictures.' : `${taggedCount} ads need new pictures.` }}</strong>
+        Press <strong>Edit</strong> on each tagged ad: add a <strong>mobile square, exactly 1080 × 1080 px</strong>
+        (phones show it instead of the wide banner), and if it says <em>Old size</em>, replace the
+        <strong>desktop banner with exactly 1720 × 400 px</strong>. JPEG or PNG, up to 250 KB each. Ads keep running
+        meanwhile.
+      </div>
       <table class="stack">
         <thead>
           <tr>
@@ -630,8 +641,30 @@ onMounted(load);
                 <div>
                   <div>
                     {{ a.name }}
-                    <span v-if="a.needsMobileSquare" class="badge SCHEDULED tag">Needs mobile square</span>
-                    <span v-if="a.oldSize" class="badge SCHEDULED tag">Old size — replace</span>
+                    <button
+                      v-if="a.needsMobileSquare"
+                      type="button"
+                      class="badge SCHEDULED tag"
+                      :aria-describedby="`ad-hint-square-${a.id}`"
+                    >
+                      Needs mobile square
+                    </button>
+                    <button
+                      v-if="a.oldSize"
+                      type="button"
+                      class="badge SCHEDULED tag"
+                      :aria-describedby="`ad-hint-size-${a.id}`"
+                    >
+                      Old size — replace
+                    </button>
+                  </div>
+                  <div v-if="a.needsMobileSquare || a.oldSize" class="tag-hints">
+                    <p v-if="a.needsMobileSquare" :id="`ad-hint-square-${a.id}`">
+                      Phones show the wide banner, which is hard to read. Add a 1080 × 1080 square.
+                    </p>
+                    <p v-if="a.oldSize" :id="`ad-hint-size-${a.id}`">
+                      This banner isn't 1720 × 400 px. Replace it so it looks sharp on computers.
+                    </p>
                   </div>
                   <div class="muted">
                     {{ KIND_LABEL[a.kind] }} · {{ a.headline }}<span v-if="a.topic"> · topic {{ a.topic }}</span>
@@ -904,6 +937,29 @@ select[aria-invalid='true'] {
 .tag {
   margin-left: 6px;
   white-space: nowrap;
+  border: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+}
+.tag:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* Explanations under the name: always visible on phones (no hover there), on computers when the row is hovered or a tag has focus. */
+.tag-hints {
+  display: none;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.tag-hints p {
+  margin: 0;
+}
+.ad-cell:hover .tag-hints,
+.ad-cell:focus-within .tag-hints {
+  display: block;
 }
 .form-actions {
   display: flex;
@@ -948,6 +1004,9 @@ td.num {
 }
 
 @media (max-width: 720px) {
+  .tag-hints {
+    display: block;
+  }
   .cov-grid {
     grid-template-columns: 1fr;
   }
