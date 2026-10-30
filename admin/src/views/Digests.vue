@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { DISPATCH_TIMEOUT_MS, apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import AudienceCard from '../components/AudienceCard.vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
@@ -53,6 +53,8 @@ type Variant = {
   audience: Audience;
   state: SendState;
   subject: string;
+  /** Whether the subject can still be edited (until the run is approved), else why not. */
+  subjectEdit: { editable: boolean; reason: string | null };
   preheader: string;
   htmlBytes: number;
   hasPreview: boolean;
@@ -163,6 +165,46 @@ async function loadDetail(runId: string | null) {
   }
   detail.value = await api.get<Detail>(`/api/digest/runs/${runId}`);
 }
+
+/* Subject edit: one version at a time, inline. */
+const SUBJECT_LIMIT = 150;
+const SUBJECT_WARN = 90;
+const editingSubject = ref(false);
+const subjectDraft = ref('');
+const subjectBusy = ref(false);
+const subjectError = ref<string | null>(null);
+const subjectCount = computed(() => subjectDraft.value.trim().length);
+
+function startSubjectEdit() {
+  if (!variant.value) return;
+  subjectDraft.value = variant.value.subject;
+  subjectError.value = null;
+  editingSubject.value = true;
+}
+function cancelSubjectEdit() {
+  editingSubject.value = false;
+  subjectError.value = null;
+}
+async function saveSubject() {
+  if (!detail.value || !variant.value) return;
+  subjectBusy.value = true;
+  subjectError.value = null;
+  try {
+    await api.post(`/api/digest/runs/${detail.value.runId}/subject/${audience.value.toLowerCase()}`, {
+      subject: subjectDraft.value,
+      from: variant.value.subject, // what this editor saw: if someone else changed it meanwhile, the server says so
+    });
+    editingSubject.value = false;
+    notice.value = `${AUDIENCE_LABEL[audience.value]} subject updated.`;
+    await load();
+  } catch (e) {
+    subjectError.value = apiErrorMessage(e);
+  } finally {
+    subjectBusy.value = false;
+  }
+}
+// Switching version (or run) closes an open edit: the draft belongs to one version.
+watch([audience, () => detail.value?.runId], () => cancelSubjectEdit());
 
 async function load() {
   loading.value = true;
@@ -472,6 +514,29 @@ onMounted(load);
               <span class="inbox-pre">{{ variant.preheader }}</span>
             </span>
           </div>
+          <div class="subject-edit">
+            <template v-if="!editingSubject">
+              <button v-if="variant.subjectEdit.editable" type="button" class="btn btn-mini" @click="startSubjectEdit">Edit subject</button>
+              <span v-else-if="variant.subjectEdit.reason" class="muted subject-lock">{{ variant.subjectEdit.reason }}</span>
+            </template>
+            <form v-else class="subject-form" @submit.prevent="saveSubject">
+              <label for="subject-input">Subject line ({{ AUDIENCE_LABEL[audience] }})</label>
+              <input id="subject-input" v-model="subjectDraft" type="text" autocomplete="off" :disabled="subjectBusy" @keydown.esc="cancelSubjectEdit" />
+              <p class="muted subject-count" :class="{ over: subjectCount > SUBJECT_LIMIT }">
+                {{ subjectCount }} / {{ SUBJECT_LIMIT }}
+              </p>
+              <p v-if="subjectCount > SUBJECT_WARN && subjectCount <= SUBJECT_LIMIT" class="subject-warn">
+                Over {{ SUBJECT_WARN }} characters: it may be cut off on phones.
+              </p>
+              <p v-if="subjectError" class="f-err" role="alert">{{ subjectError }}</p>
+              <div class="subject-actions">
+                <button type="submit" class="btn btn-primary" :disabled="subjectBusy || subjectCount === 0 || subjectCount > SUBJECT_LIMIT">
+                  {{ subjectBusy ? 'Saving…' : 'Save' }}
+                </button>
+                <button type="button" class="btn" :disabled="subjectBusy" @click="cancelSubjectEdit">Cancel</button>
+              </div>
+            </form>
+          </div>
           <p class="muted size-line">
             {{ kb(variant.htmlBytes) }}, shown at {{ width.px }} px<span v-if="scale < 1"> (scaled to fit)</span>.
           </p>
@@ -765,6 +830,39 @@ onMounted(load);
 .size-line {
   margin: 6px 0 10px;
 }
+.subject-edit {
+  margin: 8px 0 0;
+}
+.subject-lock {
+  font-size: 13px;
+}
+.subject-form input {
+  width: 100%;
+  font-size: 16px; /* no iOS zoom */
+  box-sizing: border-box;
+}
+.subject-count {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.subject-count.over {
+  color: var(--danger);
+}
+.subject-warn {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--warn);
+}
+.f-err {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+.subject-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 .test-row {
   display: flex;
   flex-wrap: wrap;
@@ -823,6 +921,9 @@ tr.picked td {
   .inbox-pre {
     display: block;
     margin-left: 0;
+  }
+  .subject-actions .btn {
+    flex: 1;
   }
   table.stack td.num {
     text-align: left !important;

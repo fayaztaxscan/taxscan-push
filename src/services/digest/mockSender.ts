@@ -18,6 +18,7 @@ export function createMockDigestSender(): DigestSender {
       campaigns.set(campaignId, { scheduled: false });
       return { campaignId };
     },
+    async updateSubject() {},
     async schedule(campaignId: string) {
       campaigns.set(campaignId, { scheduled: true });
     },

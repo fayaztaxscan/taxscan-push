@@ -14,6 +14,7 @@ import { createMailercloudSender } from '../services/digest/mailercloud';
 import { redactError, type DigestSender } from '../services/digest/sender';
 import type { BuildContent } from '../services/digest/renderer';
 import { digestActions, digestHistory, digestRunDetail } from '../services/digest/screen';
+import { editSubject } from '../services/digest/subjectEdit';
 import { createDigestAdsRouter } from './digestAds';
 import { createDigestTemplatesRouter } from './digestTemplates';
 import type { MjmlCompiler } from '../services/digest/templates';
@@ -417,6 +418,34 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
 
   // Test send to the viewer's OWN address, only if it is in DIGEST_TEST_RECIPIENTS.
   // Calls only sender.testSend on the variant's existing draft: nothing is created or scheduled.
+  /**
+   * Edit one version's subject line before approval (cookie session, ADMIN or PUBLISHER; the bearer is refused).
+   * Everything is in `editSubject`; this only audits a change. The audit row carries lengths, never the text — no
+   * digest audit row carries headlines.
+   */
+  router.post('/runs/:id/subject/:audience', requireUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {
+    try {
+      const cfg = cfgOf();
+      if (!cfg.enabled) return notEnabled(res);
+      const audience = parseAudience(req.params.audience);
+      if (!audience) return res.status(400).json({ error: 'bad_audience', message: 'The version must be free or premium.' });
+      const out = await editSubject({ runId: req.params.id, audience, raw: req.body?.subject, from: req.body?.from, now: nowOf(), cfg, sender: senderOf(cfg) });
+      if (out.status === 200 && out.audit) {
+        await recordAudit({
+          userId: req.user!.id,
+          action: 'DIGEST_SUBJECT_EDITED',
+          resourceType: 'DigestRun',
+          resourceId: req.params.id,
+          metadata: { audience, oldLength: out.audit.oldLength, newLength: out.audit.newLength, draftUpdated: out.audit.created },
+          ipAddress: requestClientIp(req),
+        });
+      }
+      return res.status(out.status).json(out.body);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   router.post('/runs/:id/test-send/:audience', requireUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {
     try {
       const cfg = cfgOf();

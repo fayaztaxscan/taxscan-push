@@ -21,7 +21,7 @@ import {
  * `withLookup: true` gives it the optional `findCampaignByName`.
  */
 
-type Method = 'health' | 'createDraft' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName' | 'webhookStatus';
+type Method = 'health' | 'createDraft' | 'updateSubject' | 'schedule' | 'status' | 'report' | 'testSend' | 'findCampaignByName' | 'webhookStatus';
 
 /** `applied`: the provider DID act, then the reply was lost (the call still throws). */
 type Failure = { kind: SenderErrorKind; code?: string; http?: number; applied?: boolean; notSent?: boolean };
@@ -117,6 +117,13 @@ export class FakeSender implements DigestSender {
     // AMBIGUOUS-after-the-fact: the provider made the campaign, the reply was lost.
     if (f?.applied) throw this.toError('createDraft', f);
     return { campaignId: id };
+  }
+
+  async updateSubject(campaignId: string, subject: string): Promise<void> {
+    await this.enter('updateSubject', [campaignId, subject]);
+    const c = this.campaigns.get(campaignId);
+    if (!c) throw new SenderError('FATAL', 'fake updateSubject: unknown campaign', { http: 404 });
+    c.input = { ...c.input, subject };
   }
 
   async schedule(campaignId: string, when: 'now'): Promise<void> {
