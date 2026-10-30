@@ -30,13 +30,16 @@ export const UPLOAD_LIMIT = '300kb';
 /** The two creatives (exact pixels, 2× of what the email shows) and their size limit. */
 export type AdImageRole = 'desktop' | 'mobile';
 export const AD_IMAGE_ROLES: readonly AdImageRole[] = ['desktop', 'mobile'];
-export const ROLE_SIZE: Record<AdImageRole, { width: number; height: number; label: string }> = {
+/** Ad roles plus the digest's "default story picture" (exactly 1600 × 840, 2× of the 800 × 420 cell; brief digest-polish-old-look). */
+export type ImageRole = AdImageRole | 'story';
+export const ROLE_SIZE: Record<ImageRole, { width: number; height: number; label: string }> = {
   desktop: { width: 1720, height: 400, label: 'desktop banner' },
   mobile: { width: 1080, height: 1080, label: 'mobile square' },
+  story: { width: 1600, height: 840, label: 'default story picture' },
 };
 export const ROLE_MAX_BYTES = 250 * 1024;
 /** "1720 × 400 px" */
-export const roleSizeText = (r: AdImageRole): string => `${ROLE_SIZE[r].width} × ${ROLE_SIZE[r].height} px`;
+export const roleSizeText = (r: ImageRole): string => `${ROLE_SIZE[r].width} × ${ROLE_SIZE[r].height} px`;
 
 export type ImageMime = 'image/jpeg' | 'image/png';
 export const EXT_OF: Record<ImageMime, 'jpg' | 'png'> = { 'image/jpeg': 'jpg', 'image/png': 'png' };
@@ -130,7 +133,7 @@ const LABEL: Record<ImageMime, string> = { 'image/jpeg': 'JPEG', 'image/png': 'P
  * Validates an upload. Throws ImageRejected with a plain-words message the
  * Ads screen shows as is. Pure.
  */
-export function validateImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: AdImageRole): ImageInfo {
+export function validateImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: ImageRole): ImageInfo {
   if (!buf || buf.length === 0) throw new ImageRejected('empty', 'The file is empty.');
   const limit = role ? ROLE_MAX_BYTES : MAX_IMAGE_BYTES;
   if (buf.length > limit) {
@@ -182,7 +185,7 @@ export type StoredImage = { id: string; mime: ImageMime; width: number; height: 
  * existing row (`deduped: true`); a concurrent identical upload loses on the
  * primary key and also returns the stored row.
  */
-export async function storeImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: AdImageRole): Promise<StoredImage> {
+export async function storeImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: ImageRole): Promise<StoredImage> {
   const info = validateImage(buf, declared, role);
   const id = imageId(buf);
   const out = (deduped: boolean): StoredImage => ({ id, ...info, size: buf.length, ext: EXT_OF[info.mime], deduped });

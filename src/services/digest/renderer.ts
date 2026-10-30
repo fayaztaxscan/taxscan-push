@@ -189,7 +189,7 @@ export const SOCIAL_LINKS = [
   { key: 'linkedin', label: 'LinkedIn', href: 'https://www.linkedin.com/company/tax-scan-9aa530129/' },
   { key: 'website', label: 'Taxscan website', href: 'https://www.taxscan.in/' },
 ] as const;
-export const SOCIAL_ICON_SIZE = 28;
+export const SOCIAL_ICON_SIZE = 24;
 const SOCIAL_HREFS: ReadonlySet<string> = new Set(SOCIAL_LINKS.map((l) => l.href));
 /**
  * The footer's contact line (owner, 29 Oct 2026): "Questions or feedback? Write to info@taxscan.in".
@@ -219,19 +219,26 @@ export const LOGO_PATH = '/email/taxscan-logo-on-dark-440.png';
 export const LOGO_WIDTH = 220;
 export const LOGO_HEIGHT = 53;
 
+/** Every button (Read More and an ad's CTA) is 38 px tall on desktop (the old newsletter's); phones draw it 43 px, full column. */
+const BUTTON_HEIGHT = 38;
+/** "Read More" is 96 px wide (the old newsletter's VML button is 95). */
+const READ_MORE_WIDTH = 96;
+
 /** A flat colour as a background-image too: apps that force-invert colours recolour `background-color` but leave an image alone. */
 const solid = (hex: string) => `background-image:linear-gradient(${hex},${hex});`;
 
 /**
- * A "bulletproof" button: square corners, a fixed-size yellow box (`widthPx` × `heightPx`) with bold black text
- * centred in it; a VML rectangle for Outlook desktop (which ignores padding on links), the plain link
- * everywhere else. `href` is already escaped.
+ * A "bulletproof" table-cell button: square corners, a fixed-size yellow cell (`widthPx` × `heightPx`, `bgcolor` so Outlook
+ * paints it) with ONE link inside, bold black text centred; the link's own box carries the same colours everywhere else.
+ * One URL per button (the VML roundrect it replaced repeated it, 30 Oct 2026). On phones the table is the full column.
+ * `href` is already escaped.
  */
-function button(href: string, label: string, widthPx: number, heightPx = 44): string {
+function button(href: string, label: string, widthPx: number, heightPx = BUTTON_HEIGHT): string {
   const text = esc(label);
   return (
-    `<!--[if mso]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${href}" style="height:${heightPx}px;v-text-anchor:middle;width:${widthPx}px;" stroke="f" fillcolor="${C.button}"><w:anchorlock/><center style="color:${C.buttonText};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${text}</center></v:rect><![endif]-->` +
-    `<!--[if !mso]><!--><a href="${href}" class="ts-btn" style="display:inline-block;width:${widthPx}px;height:${heightPx}px;line-height:${heightPx}px;padding:0;text-align:center;background-color:${C.button};${solid(C.button)}border-radius:0;font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;mso-hide:all;">${text}</a><!--<![endif]-->`
+    `<table class="ts-btnt" width="${widthPx}" cellpadding="0" cellspacing="0"><tr><td align="center" width="${widthPx}" height="${heightPx}" bgcolor="${C.button}">` +
+    `<a href="${href}" class="ts-btn" style="display:block;height:${heightPx}px;line-height:${heightPx}px;text-align:center;background-color:${C.button};${solid(C.button)}font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;">${text}</a>` +
+    `</td></tr></table>`
   );
 }
 
@@ -473,6 +480,12 @@ export type RenderInput = {
    * (`overBudget`) instead of thrown. Never used for a digest that is frozen.
    */
   mode?: 'send' | 'check';
+  /**
+   * Decision A (brief digest-polish-old-look): URL of the 1600 x 840 "default story picture" (a
+   * `/email-assets/<sha>.<jpg|png>` URL), resolved and frozen at the build. A main story whose own
+   * `imageUrl` is null shows this; null/undefined = none set, draw the brand block. ICYMI never shows a picture.
+   */
+  defaultStoryImageUrl?: string | null;
   /** Where `/email-assets/` images are served from: template images may live there. */
   assetBaseUrl?: string;
 };
@@ -549,11 +562,13 @@ export function renderDigest(input: RenderInput): RenderedDigest {
     throw new RenderError('link_not_allowed', `logo image is on ${hostOf(logoUrl)}, which is not on ALLOWED_PUSH_HOSTS`);
   }
 
+  const defaultPic = input.defaultStoryImageUrl && isAllowedTemplateImage(input.defaultStoryImageUrl, input.assetBaseUrl ?? null) ? input.defaultStoryImageUrl : null;
   const dateText = formatDigestDate(runDate);
   // Reader text never carries a live merge tag (owner, 2026-10-23).
   const subject = defuseMergeTags(trimWords(main[0].title, SUBJECT_MAX));
-  const second = items[1];
-  const preheader = defuseMergeTags(second ? preheaderFor(items.length - 1, second.title) : `Taxscan Daily Digest · ${dateText}`);
+  // "Plus N more" counts the MAIN stories only: "In case you missed it" repeats yesterday's, it is not "more".
+  const second = main[1];
+  const preheader = defuseMergeTags(second ? preheaderFor(main.length - 1, second.title) : `Taxscan Daily Digest · ${dateText}`);
   const campaignName = digestCampaignName(runDate, audience);
   const homeHref = withUtm('https://www.taxscan.in/', { campaign: utmCampaign, content: 'header' });
   if (!isAllowedDigestUrl(homeHref)) throw new RenderError('link_not_allowed', 'the header link host is not on ALLOWED_PUSH_HOSTS');
@@ -569,7 +584,7 @@ export function renderDigest(input: RenderInput): RenderedDigest {
   const shell = input.template
     ? templateLinks(input.template.html, { utmCampaign, mode, assetBaseUrl: input.assetBaseUrl ?? null })
     : BUILTIN_TEMPLATE_HTML;
-  const html = fillTemplate(shell, templateValues({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad, assetBaseUrl: input.assetBaseUrl ?? null }));
+  const html = fillTemplate(shell, templateValues({ audience, subject, preheader, dateText, main, icymi, postal, logoUrl, homeHref, ad, defaultPic, assetBaseUrl: input.assetBaseUrl ?? null }));
   const text = renderText({ audience, dateText, main, icymi, postal, homeHref, ads: textAds });
 
   const htmlBytes = Buffer.byteLength(html, 'utf8');
@@ -620,7 +635,7 @@ function adHookFor(ads: RenderAd[], audience: DigestAudience, utmCampaign: strin
   if (empty.length > 0) throw new RenderError('ad_slot_empty', `no ad for slot ${empty.join(', ')}`);
   return (slot: AdSlot) => {
     const a = bySlot.get(slot.slot);
-    return a ? adRow(a, adHref(a, utmCampaign)) : '';
+    return a ? adRow(a, adHref(a, utmCampaign), slot.position === 'beforeFooter') : '';
   };
 }
 
@@ -647,7 +662,9 @@ export const AD_MOBILE_DISPLAY_WIDTH = 300;
  * Outlook never sees it). An ad with no mobile square renders the banner alone, so phones get the banner as before.
  * WITHOUT a picture: the "From Taxscan" label, live-text headline, body and a real CTA button.
  */
-function adRow(a: RenderAd, href: string): string {
+function adRow(a: RenderAd, href: string, last = false): string {
+  // 20 px of white space above each row, no rule (as the old newsletter); the last white row before the footer also closes with 20 px.
+  const pad = `padding:20px 20px ${last ? 20 : 0}px 20px;`;
   const h = esc(href);
   if (a.image) {
     // The banner is always the full content width, at the stored image's own aspect (a narrower image is scaled up).
@@ -664,13 +681,15 @@ function adRow(a: RenderAd, href: string): string {
     if (a.mobileImage) {
       const mw = AD_MOBILE_DISPLAY_WIDTH;
       const mh = Math.max(1, Math.round((a.mobileImage.height * mw) / a.mobileImage.width));
+      // `adapt-img` = the full column on phones (the old newsletter's 335 px square); the 300 px cap applies only where
+      // this block is ever shown without that rule. Outlook skips it (MSO conditional + mso-hide).
       mobile =
-        `<div class="ml-desk-hidden" data-ad-variant="mobile" style="display:none;float:left;overflow:hidden;width:0;max-height:0;line-height:0;mso-hide:all;">` +
-        link(`<img src="${esc(a.mobileImage.url)}" width="${mw}" height="${mh}" alt="${alt}" style="display:block;width:100%;max-width:${mw}px;height:auto;margin:0 auto;${imgBase}">`) +
-        `</div>`;
+        `<!--[if !mso]><!--><div class="ml-desk-hidden" data-ad-variant="mobile" style="display:none;float:left;overflow:hidden;width:0;max-height:0;line-height:0;mso-hide:all;">` +
+        link(`<img class="adapt-img" src="${esc(a.mobileImage.url)}" width="${mw}" height="${mh}" alt="${alt}" style="display:block;width:100%;max-width:${mw}px;height:auto;margin:0 auto;${imgBase}">`) +
+        `</div><!--<![endif]-->`;
     }
     return (
-      `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" data-ad-image="1" style="${WRAP}padding:16px 20px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+      `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" data-ad-image="1" style="${WRAP}${pad}background-color:${C.card};">` +
       desktop +
       mobile +
       `</td></tr>`
@@ -680,7 +699,7 @@ function adRow(a: RenderAd, href: string): string {
     ? `<p style="${WRAP}margin:0 0 12px 0;font-family:${FONT};font-size:16px;line-height:24px;color:${C.body};" class="ts-body">${esc(clean(a.body))}</p>`
     : '';
   return (
-    `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" style="${WRAP}padding:20px 20px;background-color:${C.card};border-top:1px solid ${C.rule};">` +
+    `<tr><td class="ts-card ts-pad" data-ad-slot="${a.slot}" style="${WRAP}${pad}background-color:${C.card};">` +
     `<p style="${WRAP}margin:0 0 8px 0;font-family:${FONT};font-size:12px;line-height:16px;letter-spacing:0.06em;text-transform:uppercase;color:${C.muted};" class="ts-muted">From Taxscan</p>` +
     `<h3 style="${WRAP}margin:0 0 6px 0;font-family:${FONT};font-size:18px;line-height:24px;font-weight:700;color:${C.text};" class="ts-text">${esc(clean(a.headline))}</h3>` +
     body +
@@ -714,6 +733,8 @@ type HtmlParts = {
   logoUrl: string | null;
   homeHref: string;
   ad: (slot: AdSlot) => string;
+  /** The 1600 x 840 default story picture (null: the brand block is drawn instead). */
+  defaultPic: string | null;
   /** The digest asset host, where the social icons are served (none → no icons row). */
   assetBaseUrl: string | null;
 };
@@ -733,39 +754,72 @@ export const STORY_TEXT_WIDTH = EMAIL_INNER_WIDTH - STORY_IMAGE_WIDTH - STORY_GA
  * assumption; `object-fit:cover` crops a picture of another shape instead of stretching it.
  */
 export const STORY_IMAGE_HEIGHT = Math.round(STORY_IMAGE_WIDTH / (1200 / 628));
+/** The white logo inside the brand block (440 x 106 file, drawn at 2x density). */
+const BRAND_LOGO_WIDTH = 160;
+const BRAND_LOGO_HEIGHT = 39;
+const BRAND_LOGO_PATH = '/email/taxscan-logo-white-440.png';
 
 /**
  * One story, laid out like the old newsletter's: picture left (280 px, `adapt-img` = full width on phones), a 20 px
- * gap, the text column right (560 px), both top-aligned; on phones (≤ 600 px) the row collapses to one column with
- * the picture first. Headline: Arial 16 px bold, line-height 150 %, black, linked, no underline. Summary: 16 px #333,
- * 15 px below the headline. "Read More": 13 px below the summary, a 38 px yellow square with 15 px bold black text
- * (VML roundrect for Outlook). A story without a picture is the text column alone, full width. Alt text = the headline.
+ * gap, the text column right (560 px), both top-aligned. Headline: Arial 16 px bold, line-height 24 px (exact in
+ * Outlook), black, linked, no underline. Summary: 16/24 #333, 15 px below the headline. "Read More": 13 px below the
+ * summary, a 96 x 38 yellow square with 15 px bold black text (a table-cell button, one link; full column, 43 px high on
+ * phones). Alt text = the headline.
+ *
+ * The row holds its shape WITHOUT the <style> block: it is two `display:inline-block` divs (100 % wide, capped at 280
+ * and 560 px) plus a 20 px spacer, so they sit side by side only when 860 px is there and stack on anything narrower
+ * (a phone, an app that drops <style>) with no media query; Outlook desktop gets an MSO-only 280/20/560 table. A MAIN
+ * story with no picture of its own shows the default picture, else the brand block (same 280 x 147 box), so every
+ * row keeps this shape. An ICYMI story ("In case you missed it") is text only: the same 560 px text column, left-aligned
+ * with the main text column on desktop (a 300 px spacer), full width on phones.
  */
-function itemRow(it: Prepared): string {
-  const summary = it.summary
-    ? `<p style="${WRAP}margin:15px 0 0 0;font-family:${FONT};font-size:16px;line-height:150%;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
-    : '';
+function itemRow(it: Prepared, defaultPic: string | null, logoWhiteUrl: string | null): string {
   const href = esc(it.href);
+  const summary = it.summary
+    ? `<p style="margin:15px 0 0 0;font-family:${FONT};font-size:16px;line-height:24px;mso-line-height-rule:exactly;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
+    : '';
   const text =
-    `<h2 style="${WRAP}margin:0;font-family:${FONT};font-size:16px;line-height:150%;font-weight:700;color:${C.ink};"><a href="${href}" class="ts-head" style="${WRAP}color:${C.ink};text-decoration:none;">${esc(it.title)}</a></h2>` +
+    `<h2 style="margin:0;font-family:${FONT};font-size:16px;line-height:24px;mso-line-height-rule:exactly;font-weight:700;color:${C.ink};"><a href="${href}" class="ts-head" style="color:${C.ink};text-decoration:none;">${esc(it.title)}</a></h2>` +
     summary +
-    `<div style="margin:13px 0 0 0;">${button(href, 'Read More', 120, 38)}</div>`;
-  const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}"`;
-  const pad = `${WRAP}padding:20px;background-color:${C.card};border-top:1px solid ${C.rule};`;
-  if (!it.imageUrl) return `${open} style="${pad}">${text}</td></tr>`;
+    `<div style="padding-top:13px;">${button(href, 'Read More', READ_MORE_WIDTH, BUTTON_HEIGHT)}</div>`;
+  const icymi = it.section === 'ICYMI';
+  const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}" style="${WRAP}padding:20px 20px 0 20px;background-color:${C.card};">`;
   const W = STORY_IMAGE_WIDTH;
-  const H = STORY_IMAGE_HEIGHT;
   const T = STORY_TEXT_WIDTH;
+  const col = (w: number, extra = '') => `display:inline-block;width:100%;max-width:${w}px;vertical-align:top;${extra}`;
+  const msoOpen = (first: number) => `<!--[if mso]><table width="${EMAIL_INNER_WIDTH}" cellpadding="0" cellspacing="0"><tr><td width="${first}" valign="top"><![endif]-->`;
+  const msoClose = `<!--[if mso]></td></tr></table><![endif]-->`;
+  const textDiv = `<div class="ts-stcol ts-sttext" style="${col(T)}">${text}</div>`;
+  if (icymi) {
+    // 300 px spacer (= picture + gap) so the text lines up with the main column's; empty, so stacked it takes no height.
+    return (
+      `${open}${msoOpen(W + STORY_GAP).replace('<![endif]-->', '&nbsp;<![endif]-->')}<!--[if mso]></td><td width="${T}" valign="top"><![endif]-->` +
+      `<!--[if !mso]><!--><div class="ts-stgap" style="display:inline-block;width:${W + STORY_GAP}px;height:0;vertical-align:top;"></div><!--<![endif]-->${textDiv}${msoClose}</td></tr>`
+    );
+  }
+  const pic = it.imageUrl ?? defaultPic;
+  const picHtml = pic
+    ? `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(pic)}" width="${W}" height="${STORY_IMAGE_HEIGHT}" alt="${esc(it.title)}" style="display:block;width:${W}px;max-width:100%;height:${STORY_IMAGE_HEIGHT}px;object-fit:cover;border:0;"></a>`
+    : brandBlock(href, it.title, logoWhiteUrl);
   return (
-    `${open} data-image="1" style="${pad}">` +
-    `<table role="presentation" class="ts-st" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;"><tr>` +
-    `<td class="ts-stcol ts-stpic" width="${W}" valign="top" style="width:${W}px;padding:0;vertical-align:top;">` +
-    `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(it.imageUrl)}" width="${W}" height="${H}" alt="${esc(it.title)}" style="display:block;width:${W}px;max-width:100%;height:${H}px;object-fit:cover;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:${FONT};font-size:14px;line-height:20px;color:${C.text};"></a>` +
-    `</td>` +
-    `<td class="ts-stgap" width="${STORY_GAP}" style="width:${STORY_GAP}px;font-size:0;line-height:0;">&nbsp;</td>` +
-    `<td class="ts-stcol ts-sttext" width="${T}" valign="top" style="width:${T}px;padding:0;vertical-align:top;">${text}</td>` +
-    `</tr></table>` +
-    `</td></tr>`
+    `${open}${msoOpen(W)}<div class="ts-stcol ts-stpic" style="${col(W)}">${picHtml}</div>` +
+    `<!--[if mso]></td><td width="${STORY_GAP}"></td><td width="${T}" valign="top"><![endif]-->` +
+    `<!--[if !mso]><!--><div class="ts-stgap" style="display:inline-block;width:${STORY_GAP}px;height:0;vertical-align:top;"></div><!--<![endif]-->` +
+    `${textDiv}${msoClose}</td></tr>`
+  );
+}
+
+/**
+ * The brand block a main story shows until a default picture is uploaded (decision A): the same 280 x 147 box as a
+ * picture, #3b3543 with the white Taxscan logo centred. A table, so the colour and the 147 px hold in Outlook too.
+ */
+function brandBlock(href: string, title: string, logoUrl: string | null): string {
+  const inner = logoUrl
+    ? `<img src="${esc(logoUrl)}" width="${BRAND_LOGO_WIDTH}" height="${BRAND_LOGO_HEIGHT}" alt="${esc(title)}" style="display:block;margin:0 auto;width:${BRAND_LOGO_WIDTH}px;height:${BRAND_LOGO_HEIGHT}px;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:14px;">`
+    : `<span style="font-family:${FONT};font-size:22px;line-height:30px;font-weight:700;letter-spacing:0.08em;color:${C.brandText};">TAXSCAN</span>`;
+  return (
+    `<table role="presentation" class="ts-brand" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.brand}" style="width:100%;max-width:${STORY_IMAGE_WIDTH}px;background-color:${C.brand};${solid(C.brand)}">` +
+    `<tr><td align="center" valign="middle" height="${STORY_IMAGE_HEIGHT}" style="height:${STORY_IMAGE_HEIGHT}px;padding:0;text-align:center;"><a href="${href}" style="display:block;text-decoration:none;color:${C.brandText};">${inner}</a></td></tr></table>`
   );
 }
 
@@ -832,32 +886,35 @@ export const BUILTIN_TEMPLATE_HTML =
   // Enhancement only: the layout works with this block stripped (Gmail app, Outlook).
   `<style>\n` +
   // Light only: the email has no dark palette, so a dark-mode app has nothing of ours to switch to. The header and the
-  // yellow buttons also carry a background-image (see `solid`), and Gmail's forced-colour hooks ([data-ogsb] background,
-  // [data-ogsc] text) put the brand colours back where an app recolours them anyway.
-  `:root{color-scheme:light;supported-color-schemes:light}\n` +
+  // yellow buttons also carry a background-image (see `solid`) — that is what protects them in the Gmail apps, which give
+  // no hook. `[data-ogsb]` / `[data-ogsc]` are Outlook.com / new Outlook's own forced-colour attributes (NOT Gmail's):
+  // they put the brand colours back where Outlook recolours them anyway.
+  `:root{color-scheme:light;supported-color-schemes:light}img{outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:${FONT};font-size:14px;color:${C.text}}\n` +
   `[data-ogsb] .ts-hdr{background-color:${C.brand}!important}[data-ogsb] .ts-btn{background-color:${C.button}!important}[data-ogsc] .ts-btn{color:${C.buttonText}!important}[data-ogsc] .ts-hdr-text{color:${C.brandText}!important}\n` +
   // The old newsletter's own pattern: a desktop-only block (.ml-mobile-hidden) and a phone-only block (.ml-desk-hidden, hidden
-  // by its inline style and shown here), and a story row that becomes one column (picture first) on phones.
+  // by its inline style and shown here). The story row already stacks by itself (inline-block columns); on phones this
+  // only tightens it: white edge to edge with 20 px text padding, a full-column Read More (43 px), full-width pictures.
   `@media only screen and (max-width:600px){` +
-  `.ts-pad{padding-left:10px!important;padding-right:10px!important}` +
+  `.ts-outer{padding:0!important}` +
+  `.ts-pad{padding-left:20px!important;padding-right:20px!important}` +
+  `.ts-hdr{padding:14px 10px 12px!important}.ts-logo{width:160px!important}` +
   `.ml-mobile-hidden{display:none!important}` +
   `.ml-desk-hidden{display:block!important;float:none!important;overflow:visible!important;width:auto!important;max-height:none!important;line-height:normal!important;text-align:center!important}` +
-  `.ts-stcol{display:block!important;width:100%!important}.ts-stgap{display:none!important}` +
+  `.ts-stcol{display:block!important;width:100%!important;max-width:100%!important}.ts-stgap{display:none!important}.ts-brand{max-width:100%!important}` +
   `.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}` +
   `.ts-sttext{padding-top:12px!important}` +
+  `.ts-btnt{width:100%!important}.ts-btn{display:block!important;width:auto!important;height:43px!important;line-height:43px!important}` +
   `}\n` +
   `</style>\n` +
   `</head>\n` +
   `<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:${C.page};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n` +
   `{{preheader}}\n` +
-  `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td align="center" style="padding:16px 8px;">\n` +
+  `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td class="ts-outer" align="center" style="padding:16px 8px;">\n` +
   `<!--[if mso]><table role="presentation" width="${EMAIL_WIDTH}" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="${EMAIL_WIDTH}"><![endif]-->\n` +
   `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${EMAIL_WIDTH}px;margin:0 auto;border-collapse:collapse;">\n` +
-  // The date, small, at the very top on the page colour (as the old newsletter shows it) — above the header bar.
-  `<tr><td class="ts-pad ts-date" align="left" style="${WRAP}padding:0 20px 8px 20px;font-family:${FONT};font-size:14px;line-height:20px;color:${C.muted};">{{date}}</td></tr>\n` +
   `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 20px 18px 20px;background-color:${C.brand};${solid(C.brand)}text-align:center;" bgcolor="${C.brand}">` +
   `<a href="{{home_url}}" style="display:inline-block;min-height:44px;text-decoration:none;color:${C.brandText};">{{logo}}</a>` +
-  `<p class="ts-hdr-text" style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest{{premium_badge}}</p>` +
+  `<p class="ts-hdr-text" style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest &middot; {{date}}{{premium_badge}}</p>` +
   `</td></tr>\n` +
   `{{stories}}\n` +
   `{{icymi}}\n` +
@@ -887,27 +944,29 @@ export function fillTemplate(html: string, values: Partial<Record<string, string
 function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
   const premium = p.audience === 'PREMIUM';
   const logo = p.logoUrl
-    ? `<img src="${esc(p.logoUrl)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" alt="Taxscan" style="display:block;margin:0 auto;width:${LOGO_WIDTH}px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:28px;line-height:${LOGO_HEIGHT}px;font-weight:700;letter-spacing:0.08em;">`
+    ? `<img class="ts-logo" src="${esc(p.logoUrl)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" alt="Taxscan" style="display:block;margin:0 auto;width:${LOGO_WIDTH}px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:28px;line-height:${LOGO_HEIGHT}px;font-weight:700;letter-spacing:0.08em;">`
     : `<span style="font-family:${FONT};font-size:28px;line-height:36px;font-weight:700;letter-spacing:0.08em;color:${C.brandText};">TAXSCAN</span>`;
   const badge = premium
     ? ` <span style="display:inline-block;margin-left:8px;padding:0 10px;border:1px solid ${C.brandText};border-radius:12px;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${C.brandText};vertical-align:middle;">Premium</span>`
     : '';
 
+  // The brand block's logo lives on the asset host; without one a text wordmark is drawn (unit tests).
+  const logoWhite = p.assetBaseUrl ? `${p.assetBaseUrl}${BRAND_LOGO_PATH}` : null;
   const stories: string[] = [];
   p.main.forEach((it, i) => {
-    stories.push(itemRow(it));
+    stories.push(itemRow(it, p.defaultPic, logoWhite));
     for (const s of AD_SLOTS) if (s.position === 'afterItem' && s.afterItem === i + 1) stories.push(p.ad(s)); // AD SLOT HOOK (task 9)
   });
   const icymi: string[] = [];
   if (p.icymi.length > 0) {
     icymi.push(sectionHeading('In case you missed it', 'icymi'));
-    for (const it of p.icymi) icymi.push(itemRow(it));
+    for (const it of p.icymi) icymi.push(itemRow(it, null, null));
   }
   const beforeFooter = AD_SLOTS.filter((s) => s.position === 'beforeFooter').map((s) => p.ad(s)); // AD SLOT HOOK (task 9)
 
   // Five fixed links, centred, small, each icon with alt text; no UTM. Needs the asset host for the icons.
   const social = p.assetBaseUrl
-    ? `<tr><td class="ts-card ts-pad" data-social="1" align="center" style="${WRAP}padding:20px 20px 4px 20px;background-color:${C.card};border-top:1px solid ${C.rule};text-align:center;">` +
+    ? `<tr><td class="ts-pad" data-social="1" align="center" style="${WRAP}padding:20px 20px 4px 20px;background-color:${C.page};text-align:center;">` +
       SOCIAL_LINKS.map(
         (l) =>
           `<a href="${esc(l.href)}" style="display:inline-block;margin:0 5px;text-decoration:none;"><img src="${esc(`${p.assetBaseUrl}/email/social-${l.key}.png`)}" width="${SOCIAL_ICON_SIZE}" height="${SOCIAL_ICON_SIZE}" alt="${esc(l.label)}" style="display:block;width:${SOCIAL_ICON_SIZE}px;height:${SOCIAL_ICON_SIZE}px;border:0;outline:none;text-decoration:none;font-family:${FONT};font-size:12px;color:${C.muted};"></a>`,
@@ -919,7 +978,7 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
   const footer =
     `<tr><td class="ts-pad" data-footer="1" style="${WRAP}padding:24px 20px 32px 20px;font-family:${FONT};font-size:14px;line-height:21px;color:${C.muted};" align="left">` +
     `<p style="${WRAP}margin:0 0 12px 0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">${esc(reason)} Questions or feedback? Write to <a href="${CONTACT_MAILTO}" class="ts-link" style="color:${C.link};text-decoration:underline;padding:9px 0;">${CONTACT_EMAIL}</a></p>` +
-    `<p style="${WRAP}margin:0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">Taxscan &middot; ${esc(p.postal)}</p>` +
+    `<p style="${WRAP}margin:0;font-size:14px;line-height:21px;color:${C.muted};" class="ts-muted">${esc(p.postal)}</p>` +
     `</td></tr>`;
 
   return {
@@ -1139,7 +1198,7 @@ function renderText(p: {
   out.push(
     '----',
     `${premium ? PREMIUM_REASON : FREE_REASON} ${CONTACT_LINE}`,
-    `Taxscan · ${t(p.postal)}`,
+    t(p.postal),
     textUrl(p.homeHref),
     '',
   );

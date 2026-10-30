@@ -197,6 +197,23 @@ export function worstCaseFixture(cfg: Pick<DigestEnv, 'maxItems' | 'rollforwardI
   return { items, ads };
 }
 
+/**
+ * The worst-case stories for DISPLAY (Templates -> Biggest case preview): the same text, but no picture URL, because
+ * the fixture's long made-up documents.taxscan.in addresses exist only to size the email and would 404. The renderer then
+ * shows the default story picture if one is set, else the brand block. The size check keeps using `worstCaseFixture`.
+ */
+export function worstCaseDisplayItems(items: FrozenItem[]): FrozenItem[] {
+  return items.map((i) => ({ ...i, imageUrl: null }));
+}
+
+/**
+ * The worst-case sample ads for DISPLAY: the fixture's banner/square URLs are made up (they only size the email) and
+ * would 404, so the preview draws them as text-only ads. The size check keeps using `worstCaseFixture`.
+ */
+export function worstCaseDisplayAds(ads: RenderAd[]): RenderAd[] {
+  return ads.map((a) => ({ ...a, image: null, mobileImage: null }));
+}
+
 /* ------------------------------------------------------------------ */
 /* Scanning a template                                                 */
 /* ------------------------------------------------------------------ */

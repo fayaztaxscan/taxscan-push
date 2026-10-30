@@ -88,6 +88,8 @@ export const BACKUP_TABLES = [
   // validation, so ~200 KB base64; a pool of a few dozen adds a few MB, which is
   // the price of a restore that can still draw every ad. Must precede DigestAd.
   'DigestAdImage',
+  // Single-value digest settings (the default story picture's image id). After DigestAdImage; no FK.
+  'DigestSetting',
   'DigestAd',
   // The run ledger: history, each past variant's provider campaign id and the
   // frozen html (≤ 30 days × 2 × ~50 KB, gzips ~10×). DigestItem is the 90-day
@@ -161,6 +163,8 @@ function delegateFor(table: BackupTable) {
       return prisma.digestTemplate;
     case 'DigestAdImage':
       return prisma.digestAdImage;
+    case 'DigestSetting':
+      return prisma.digestSetting;
     case 'DigestAd':
       return prisma.digestAd;
     case 'DigestRun':
