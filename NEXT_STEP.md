@@ -7,6 +7,29 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ PICKUP FOR THE NEXT SESSION (written 2026-10-29 19:20 IST):**
+1. **URGENT — CMS webhook fence (deadline 2026-10-30 13:28Z = 18:58 IST).** The CMS's first event
+   `evt_01M63XFAWNANZ9ZA7F9J06M3C6` is refused `step=fence` although Railway's HTTP log shows srcIp 148.113.0.114
+   (allowlisted). PR #85 logs `[audience] fence detail peer= peerIsCloudflare= cfConnectingIp= xff= xRealIp= remote=` on
+   each refusal; the CMS retries hourly from 19:36 IST (or the owner can re-activate CMS test reader 84239 for a new
+   event). Read the line (`railway logs -d -n 2000 … | grep 'fence detail'`), write the fix brief (walk XFF from the
+   right skipping Railway/internal hops; never trust a header from a non-Cloudflare peer), build, ship, then confirm
+   `[audience] event=… outcome=…` and tell `cms-platform-ea`. If it can't land in time, ask the CMS to re-queue.
+2. **Digest stage 2 — first REAL send 30 Oct**: Anagha approves 06:30–07:30 on Digests; it goes to the 3-person staff
+   list at 07:30. Check Digests shows Sent, and take her feedback (Zoho dark mode, the new look).
+3. **CMS reads LIVE since 29 Oct ~19:15**: `READS_SOURCE=cms`, `READS_CMS_FROM=2026-10-08` (CMS: earlier days
+   inflated by robots), history loaded via `POST /api/admin/cms-views/backfill` (41,849 rows). Confirm the routine
+   sync lines `[cms-views] synced …` (every 2 h at :17 IST) look healthy.
+4. Railway: Static Outbound IPs (208.77.246.240–.242, shared) broke `railway ssh` + the dashboard Console for
+   taxscan-push (Postgres ssh fine). The owner has a support message drafted. Use the admin endpoints instead.
+5. Owner's open items: the designer's ad banners at 1200 × 628; the real-Android white-T check; Anagha's phone
+   "Notify me". Later: a CmsArticleView retention rule; verify Mailercloud's webhook signature; Feed 1 to `all` +
+   Mailercloud writes (owner decides after the allowlist round trip works).
+
+**Also LIVE 29 Oct evening:** PR #83 digest polish; #84 backfill admin endpoint; #85 fence diagnostic. Digest
+`DIGEST_SEND_LIVE=true` (staff list only, approval on). CMS Feed 1 receiver ON (`AUDIENCE_SYNC_ENABLED`, Postgres only,
+Mailercloud writer dry-run; W/L/V secrets set, `CMS_FEED_ALLOWED_IPS=148.113.0.114`).
+
 **2026-10-29 — one long day, six releases (PRs #77–#82, all LIVE) + the digest trial started:**
 - **Two-session workflow** (owner): a planning session writes `docs/briefs/<date>-<name>.md`, a build session follows
   `docs/briefs/BUILD-SESSION.md` and reports in `.REPORT.md`; planning merges and ships on the owner's yes.
