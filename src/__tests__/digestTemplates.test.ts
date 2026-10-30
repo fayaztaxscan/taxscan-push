@@ -608,6 +608,9 @@ describe('previews: "Biggest case" never shows a made-up picture URL (brief item
     expect(none.status).toBe(200);
     expect(none.text).not.toContain('documents.taxscan.in/cms/media');
     expect(none.text).toContain('class="ts-brand"');
+    // Sample ads (empty pool) are drawn text-only: the fixture's made-up /email-assets/<digit x64> pictures never appear.
+    expect(none.text).not.toMatch(/email-assets\/(\d)\1{63}\./);
+    expect(none.text).toContain('Sample ad 1');
     const up = await request(app).post('/api/digest/default-story-image').set('Cookie', adminCookie).set('Content-Type', 'image/jpeg').send(jpeg1600());
     expect([200, 201]).toContain(up.status);
     const set = await request(app).get(path).set('Cookie', adminCookie);
@@ -616,6 +619,7 @@ describe('previews: "Biggest case" never shows a made-up picture URL (brief item
     expect(set.text).toContain(up.body.image.url);
     // The checklist's size figure is measured on the fixture itself, which keeps its long made-up URLs.
     expect(worstCaseFixture(cfg()).items.every((i) => (i.imageUrl ?? '').length > 120)).toBe(true);
+    expect(worstCaseFixture(cfg()).ads.every((a) => a.image !== null && a.mobileImage !== null)).toBe(true);
   });
 });
 

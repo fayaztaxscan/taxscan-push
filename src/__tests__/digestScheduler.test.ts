@@ -28,7 +28,7 @@ describe('parseDigestEnv defaults', () => {
     expect(d.cutoff).toBe('17:00');
     expect([d.maxItems, d.minItems, d.rollforwardItems]).toEqual([15, 5, 3]);
     expect(d.sanityMaxCandidates).toBe(150);
-    expect([d.maxHtmlKb, d.htmlWarnKb]).toEqual([90, 75]);
+    expect([d.maxHtmlKb, d.htmlWarnKb]).toEqual([90, 80]);
     expect([d.htmlRetentionDays, d.emailEventRetentionDays]).toEqual([30, 90]);
     expect(d.mailercloud.apiKey).toBe('');
     expect(d.audiences.free.excludeListIds).toEqual([]);

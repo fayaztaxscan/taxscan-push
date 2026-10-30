@@ -136,7 +136,7 @@ describe('4. ads at full content width, real aspect', () => {
   });
 });
 
-describe('size: the worst case stays under 75 KB', () => {
+describe('size: the worst case stays under the 80 KB warning', () => {
   it('both audiences; the figures', () => {
     const c = cfg();
     const f = worstCaseFixture(c);
@@ -144,7 +144,23 @@ describe('size: the worst case stays under 75 KB', () => {
     for (const audience of ['FREE', 'PREMIUM'] as const) {
       const r = renderDigest({ items: f.items, audience, runDate: RUN_DATE, cfg: c, ads: f.ads, assetBaseUrl: ASSET, mode: 'check' });
       out.push(`${audience}: html ${r.htmlBytes} B, budget ${r.budgetBytes} B`);
-      expect(r.budgetBytes).toBeLessThan(75 * 1024);
+      expect(r.budgetBytes).toBeLessThan(80 * 1024);
+    }
+    // eslint-disable-next-line no-console
+    console.info(out.join('\n'));
+  });
+
+  it('15 main stories, no ICYMI, 3 ads: also under the warning and well under the 90 KB refusal; the figures', () => {
+    const c = cfg();
+    const f = worstCaseFixture(c);
+    const main = f.items.map((i, n) => ({ ...i, section: 'MAIN' as const, rank: n + 1 }));
+    const out: string[] = [];
+    for (const audience of ['FREE', 'PREMIUM'] as const) {
+      const r = renderDigest({ items: main, audience, runDate: RUN_DATE, cfg: c, ads: f.ads, assetBaseUrl: ASSET, mode: 'check' });
+      out.push(`${audience} 15 main: html ${r.htmlBytes} B, budget ${r.budgetBytes} B`);
+      expect(main).toHaveLength(15);
+      expect(r.budgetBytes).toBeLessThan(80 * 1024);
+      expect(r.budgetBytes).toBeLessThan(c.maxHtmlKb * 1024 - 10 * 1024);
     }
     // eslint-disable-next-line no-console
     console.info(out.join('\n'));

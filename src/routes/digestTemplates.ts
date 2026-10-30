@@ -33,6 +33,7 @@ import {
   scheduleTemplate,
   templateAuditMeta,
   worstCaseFixture,
+  worstCaseDisplayAds,
   worstCaseDisplayItems,
   type MjmlCompiler,
   type TemplateValidation,
@@ -404,7 +405,7 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
       const recent = await recentItems(o.portal(), audience);
       if (recent.length > 0) items = recent;
     }
-    let ads: RenderAd[] = fixture.ads;
+    let ads: RenderAd[] = worstCaseDisplayAds(fixture.ads);
     try {
       const slots = slotsForMainCount(renderableMainCount(items));
       ads = pickAds({ slots, audience, items, at: now, pool: await loadAdPool(o.portal()) }).map((p) => toRenderAd(p, cfg.assetBaseUrl));

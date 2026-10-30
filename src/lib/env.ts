@@ -112,7 +112,7 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
     rollforwardItems: intFrom(src, 'DIGEST_ROLLFORWARD_ITEMS', 3),
     sanityMaxCandidates: intFrom(src, 'DIGEST_SANITY_MAX_CANDIDATES', 150),
     maxHtmlKb: intFrom(src, 'DIGEST_MAX_HTML_KB', 90),
-    htmlWarnKb: intFrom(src, 'DIGEST_HTML_WARN_KB', 75),
+    htmlWarnKb: intFrom(src, 'DIGEST_HTML_WARN_KB', 80),
     // Task 9: the per-email weight of distinct ad images; above it the build logs a warning.
     maxImageKb: intFrom(src, 'DIGEST_MAX_IMAGE_KB', 600),
     // Task 9: where ad images are served from (public /email-assets route). https only; no trailing slash.

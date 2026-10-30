@@ -1,15 +1,19 @@
 # REPORT: digest-polish-old-look
 
-**Status: UPDATE 30 Oct — size now PASSES after the owner chose the VML-button option (follow-up commit on this branch). Full suite green. See "Update" below; the earlier size table is kept as history.**
+**Status: follow-up 1 DONE — size passes, full suite green (1,718). The first-pass size table below is history.**
 Code commit: `3f06e48` on branch `build/digest-polish-old-look` (base origin/develop 50f3a5b + brief item F).
 
-## Update — owner chose the table-cell button (30 Oct)
-The 15 Outlook VML roundrect buttons were replaced by one-URL table-cell buttons (renderer.ts ~224–240; same 96x38 desktop / full-width phone). Alt = headline kept; no limit raised. Measured by me (planning-visible figures, worstCaseFixture = 12 main + 3 ICYMI + 3 ads):
-- FREE: html 68,110 B, budget 76,360 B. PREMIUM: html 68,539 B, budget 76,789 B. Warning is 76,800 B → **passes, but PREMIUM by only 11 bytes** — any added copy/ad/link will trip it again.
-- Not re-measured by me: the 15 main + 3 ads and the 15+3+3 direct cases.
-- Trade-off (as warned): in Outlook desktop the button is clickable on its text only, not the whole 96x38 box.
-- Results after the change: tsc clean, lint clean, **full suite: Test Suites: 84 passed, 84 total; Tests: 1717 passed, 1717 total** (incl. the 4 former size tests and the digestBuilder roll-forward).
-- Acceptance 4 (size) and 9 (suite): now PASS. A quick 375/1000 px re-render after the button change was done by the ui-developer; I did NOT re-inspect it myself — planning should look at the Outlook/phone button once.
+## Follow-up 1 (owner, 30 Oct: "go with recommendation, maximum delivery") — DONE
+1. **VML dropped** (Read More + ad CTAs): table-cell button, the `<a>` (display:block, #FEE620 bg incl. background-image, 15 px bold #000) fills the 96x38 cell, full width on phones; clickable on the whole box except Outlook for Windows (text only). Code: renderer.ts `button()`. (Landed in commit d732659.)
+2. **`DIGEST_HTML_WARN_KB` 75 → 80** (src/lib/env.ts); `DIGEST_MAX_HTML_KB` stays 90. digestScheduler default test, admin guide checklist line (v2.12) and EMAIL_DIGEST_DESIGN.md §5 updated.
+3. Alt = headline kept; `DIGEST_MAX_ITEMS`=15, cap still main + ICYMI together.
+4. **"Biggest case" sample ads** no longer use made-up picture URLs: `worstCaseDisplayAds()` (templates.ts) draws them text-only for display (route digestTemplates.ts); the size check still uses `worstCaseFixture`. Deviation: text-only rather than "default story picture / brand block", because an ad banner is 1720x400 / 1080x1080, not the 1600x840 story shape. Test: no `/email-assets/<digit x64>` in the preview, "Sample ad 1" present; fixture ads keep their images.
+5. **Size acceptance (budget = html + 150 B/link; warning 81,920 B, refusal 92,160 B):**
+   - Builder's real worst case (12 main + 3 ICYMI = 15 total, 3 ads): FREE html 68,110 / budget 76,360; PREMIUM html 68,539 / budget **76,789** → 5.1 KB under the 80 KB warning, 15.4 KB under the refusal.
+   - 15 main, no ICYMI, 3 ads: FREE 70,986 / 79,686; PREMIUM 71,424 / **80,124** → 1.8 KB under the warning, 12.0 KB under the refusal (test asserts ≥10 KB under 90 KB).
+   - Not a producible case: 15 main + 3 ICYMI + 3 ads through the renderer directly was 88,804 html / 98,404 budget before the button change (over the refusal); not re-measured.
+   - Test results after the final change: tsc clean, lint clean, **full suite once: Test Suites: 84 passed, 84 total; Tests: 1,718 passed, 1,718 total.** Admin SPA untouched this round (admin vue-tsc/build were clean at the earlier commit).
+- Not re-inspected by me: the 375/1000 px render after the button change (the ui-developer did it) — worth one look at the phone button and Outlook.
 
 ## History: size decision that was needed
 Budget = html bytes + 150/link. Warning 76,800; refusal 92,160. No limit raised.

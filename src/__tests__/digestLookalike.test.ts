@@ -443,7 +443,7 @@ describe('the footer says "Questions or feedback? Write to info@taxscan.in" (a r
     expect(withTemplate('mailto:info@taxscan.in').html).toContain('<a href="mailto:info@taxscan.in">x</a>');
   });
 
-  it('the worst case stays under the 75 KB warning with the new line (the figures)', () => {
+  it('the worst case stays under the warning with the new line (the figures)', () => {
     const c = cfg();
     const f = worstCaseFixture(c);
     const out: string[] = [];

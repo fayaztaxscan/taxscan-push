@@ -206,6 +206,14 @@ export function worstCaseDisplayItems(items: FrozenItem[]): FrozenItem[] {
   return items.map((i) => ({ ...i, imageUrl: null }));
 }
 
+/**
+ * The worst-case sample ads for DISPLAY: the fixture's banner/square URLs are made up (they only size the email) and
+ * would 404, so the preview draws them as text-only ads. The size check keeps using `worstCaseFixture`.
+ */
+export function worstCaseDisplayAds(ads: RenderAd[]): RenderAd[] {
+  return ads.map((a) => ({ ...a, image: null, mobileImage: null }));
+}
+
 /* ------------------------------------------------------------------ */
 /* Scanning a template                                                 */
 /* ------------------------------------------------------------------ */
