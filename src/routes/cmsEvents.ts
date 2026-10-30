@@ -19,7 +19,8 @@ import { checkRemovalBreaker, recordSyncActivity } from '../services/audience/br
  *
  * Checks, in this order, each stopping at the first failure:
  *  1. AUDIENCE_SYNC_ENABLED (and a valid audience config with a webhook secret);
- *  2. the IP fence: the client (`cmsClientIp`: CF-Connecting-IP only from a Cloudflare peer) must be
+ *  2. the IP fence: the client (`cmsClientIp`: positional X-Forwarded-For; CF-Connecting-IP only when one of Railway's last
+ *     two hops is Cloudflare) must be
  *     on CMS_FEED_ALLOWED_IPS — empty rejects everything;
  *  3. the raw body (express.raw; `Buffer.isBuffer`, ≤ 64 KB, no Content-Encoding) — HMAC needs the exact bytes;
  *  4. the three headers;
@@ -85,14 +86,14 @@ export function createIntegrationsRouter(opts: CmsEventsRouterOptions = {}): Rou
    * CMS shows which address it derived and why. Server / network addresses and proxy headers only (no body, no
    * secret, no signature); at most FENCE_DETAIL_PER_HOUR lines an hour, so a scanner can't fill the log.
    */
-  const logFenceDetail = (req: Request): void => {
+  const logFenceDetail = (req: Request, client: string | null): void => {
     const now = (opts.clock?.() ?? new Date()).getTime();
     while (fenceLogged.length > 0 && now - fenceLogged[0] >= 3_600_000) fenceLogged.shift();
     if (fenceLogged.length >= FENCE_DETAIL_PER_HOUR) return;
     fenceLogged.push(now);
     log(
       `fence detail peer=${flat(req.ip)} peerIsCloudflare=${isCloudflareIp(req.ip)} cfConnectingIp=${flat(req.header('cf-connecting-ip'))} ` +
-        `xff=${flat(req.header('x-forwarded-for'))} xRealIp=${flat(req.header('x-real-ip'))} remote=${flat(req.socket.remoteAddress)}`,
+        `xff=${flat(req.header('x-forwarded-for'))} xRealIp=${flat(req.header('x-real-ip'))} remote=${flat(req.socket.remoteAddress)} client=${flat(client ?? undefined)}`,
     );
   };
 
@@ -107,9 +108,9 @@ export function createIntegrationsRouter(opts: CmsEventsRouterOptions = {}): Rou
   const gate = (req: Request, res: Response, next: NextFunction): void => {
     const cfg = cfgOf();
     if (!audienceIngestReady(cfg)) return refuse(req, res, 'off');
-    const client = cmsClientIp(req.ip, req.header('cf-connecting-ip'));
+    const client = cmsClientIp(req.header('x-forwarded-for'), req.header('cf-connecting-ip'));
     if (!isCmsIpAllowed(client, cfg.cms.allowedIps)) {
-      logFenceDetail(req);
+      logFenceDetail(req, client);
       return refuse(req, res, 'fence');
     }
     next();

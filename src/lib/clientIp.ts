@@ -56,17 +56,24 @@ export function isCloudflareIp(ip: string | undefined | null): boolean {
 /**
  * The address the CMS webhook fence checks (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5.1, §8.2).
  *
- * `peerIp` is `req.ip`: under `trust proxy 1` in production, the `X-Forwarded-For` entry Railway's
- * own proxy appended — the machine that actually connected to Railway. Two ways in:
- *  - via push.taxscan.in, Cloudflare connected: the peer is a Cloudflare edge, and only then is
- *    Cloudflare's `CF-Connecting-IP` (the real client) believed;
- *  - straight to the Railway origin (taxscan-push-production.up.railway.app also answers): the peer
- *    is the client itself, and a `CF-Connecting-IP` header it sent is IGNORED — anyone can forge it.
+ * Reads the raw `X-Forwarded-For` positionally, because Railway now puts TWO hops in front of the app:
+ * its edge appends the machine that connected to it, then an inner hop appends the edge's own address. So the
+ * last entry (`hop1`) is Railway's inner hop and the one before it (`hop2`) is whoever reached the edge:
+ *  - via push.taxscan.in, `hop2` is a Cloudflare edge (`client, cloudflare, railway-edge`);
+ *  - the older single-hop shape had Cloudflare as `hop1` itself (`client, cloudflare`);
+ *  - straight to the Railway origin, `hop2` is the caller itself (or `hop1` when only one entry exists).
+ * `CF-Connecting-IP` (the real client) is believed ONLY when `hop1` or `hop2` is inside Cloudflare's ranges —
+ * anyone can forge that header. Otherwise the client is `hop2` (else `hop1`). Entries left of `hop2` are
+ * caller-supplied and never looked at. Every entry is canonicalised.
  * Returns the canonical client address, or null (missing / unparseable → the fence rejects).
  */
-export function cmsClientIp(peerIp: string | undefined | null, cfConnectingIp: string | undefined | null): string | null {
-  const peer = canonicalIp(peerIp);
-  if (peer === null) return null;
-  if (!isCloudflareIp(peer)) return peer;
-  return canonicalIp(cfConnectingIp);
+export function cmsClientIp(xForwardedFor: string | undefined | null, cfConnectingIp: string | undefined | null): string | null {
+  if (typeof xForwardedFor !== 'string') return null;
+  const entries = xForwardedFor.split(',').map((e) => e.trim());
+  const hop1 = canonicalIp(entries[entries.length - 1]);
+  if (hop1 === null) return null;
+  const hop2 = entries.length > 1 ? canonicalIp(entries[entries.length - 2]) : null;
+  if (isCloudflareIp(hop1) || (hop2 !== null && isCloudflareIp(hop2))) return canonicalIp(cfConnectingIp);
+  if (entries.length > 1) return hop2; // null when garbage → rejected
+  return hop1;
 }

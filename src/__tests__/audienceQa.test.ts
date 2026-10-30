@@ -319,6 +319,7 @@ describe('webhook route — adversarial', () => {
     const s = signCmsWebhook(SECRET, b.raw);
     return [
       ['Content-Type', 'application/json'],
+      ['X-Forwarded-For', '127.0.0.1'],
       ['X-CMS-Event-Id', b.eventId],
       ['X-CMS-Timestamp', s['X-CMS-Timestamp']],
       ['X-CMS-Signature', s['X-CMS-Signature']],
@@ -339,7 +340,7 @@ describe('webhook route — adversarial', () => {
     const b = fresh();
     const res = await request(plain())
       .post(CMS_WEBHOOK_PATH)
-      .set({ 'Content-Type': 'application/json', 'Content-Encoding': 'x-evil', 'X-CMS-Event-Id': b.eventId, ...signCmsWebhook(SECRET, b.raw) })
+      .set({ 'Content-Type': 'application/json', 'Content-Encoding': 'x-evil', 'X-Forwarded-For': '127.0.0.1', 'X-CMS-Event-Id': b.eventId, ...signCmsWebhook(SECRET, b.raw) })
       .send(b.raw);
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ code: 'UNAUTHORISED' });
@@ -363,25 +364,25 @@ describe('webhook route — adversarial', () => {
     expect(await account(b.accountId)).toBeNull();
     // The CMS's retry (a new signed timestamp) is applied, not answered as a duplicate.
     const s = signCmsWebhook(SECRET, b.raw, new Date(Date.now() + 1000));
-    const retry = await rawPost(plain(), [['Content-Type', 'application/json'], ['X-CMS-Event-Id', b.eventId], ['X-CMS-Timestamp', s['X-CMS-Timestamp']], ['X-CMS-Signature', s['X-CMS-Signature']]], Buffer.from(b.raw));
+    const retry = await rawPost(plain(), [['Content-Type', 'application/json'], ['X-Forwarded-For', '127.0.0.1'], ['X-CMS-Event-Id', b.eventId], ['X-CMS-Timestamp', s['X-CMS-Timestamp']], ['X-CMS-Signature', s['X-CMS-Signature']]], Buffer.from(b.raw));
     expect(retry.status).toBe(200);
     expect(await account(b.accountId)).toMatchObject({ status: 'active' });
   });
 
   it('erasure:true on a live (non-deletion) signed event → 422, nothing applied', async () => {
     const b = fresh({ erasure: true });
-    const res = await request(plain()).post(CMS_WEBHOOK_PATH).set({ 'Content-Type': 'application/json', 'X-CMS-Event-Id': b.eventId, ...signCmsWebhook(SECRET, b.raw) }).send(b.raw);
+    const res = await request(plain()).post(CMS_WEBHOOK_PATH).set({ 'Content-Type': 'application/json', 'X-Forwarded-For': '127.0.0.1', 'X-CMS-Event-Id': b.eventId, ...signCmsWebhook(SECRET, b.raw) }).send(b.raw);
     expect(res.status).toBe(422);
     expect(await account(b.accountId)).toBeNull();
   });
 
-  it('a direct caller forging an X-Forwarded-For chain that ends in a Cloudflare edge (Railway appends the real peer) → 401', async () => {
+  it('a direct caller forging an X-Forwarded-For chain that ends in a Cloudflare edge (Railway appends the real peer, then its own hop) → 401', async () => {
     const b = fresh();
-    // Railway appends the real peer (203.0.113.9) AFTER whatever the client sent.
+    // Railway's edge appends the real peer (203.0.113.9) AFTER whatever the client sent; an inner hop then appends the edge.
     const res = await request(proxied())
       .post(CMS_WEBHOOK_PATH)
       .set({ 'Content-Type': 'application/json', 'X-CMS-Event-Id': b.eventId, ...signCmsWebhook(SECRET, b.raw) })
-      .set('X-Forwarded-For', `${CMS_IP}, ${CF_EDGE}, 203.0.113.9`)
+      .set('X-Forwarded-For', `${CMS_IP}, ${CF_EDGE}, 203.0.113.9, 152.233.15.121`)
       .set('CF-Connecting-IP', CMS_IP)
       .send(b.raw);
     expect(res.status).toBe(401);

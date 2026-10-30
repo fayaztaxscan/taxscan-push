@@ -62,7 +62,7 @@ function body(key: keyof typeof CMS_EVENT_BODIES, over: Record<string, unknown> 
 
 function post(a: express.Express, raw: string | Buffer, eventId: string, opts: { secret?: string; now?: Date; headers?: Record<string, string | undefined> } = {}) {
   const signed = signCmsWebhook(opts.secret ?? SECRET, raw, opts.now ?? new Date());
-  const headers: Record<string, string | undefined> = { 'Content-Type': 'application/json', 'X-CMS-Event-Id': eventId, ...signed, ...opts.headers };
+  const headers: Record<string, string | undefined> = { 'Content-Type': 'application/json', 'X-CMS-Event-Id': eventId, 'X-Forwarded-For': ALLOWED, ...signed, ...opts.headers };
   let req = request(a).post(CMS_WEBHOOK_PATH);
   for (const [k, v] of Object.entries(headers)) if (v !== undefined) req = req.set(k, v);
   return req.send(raw);
@@ -96,6 +96,7 @@ describe('the contract vector (A.6 §8.1), byte for byte', () => {
     const a = createApp({ cmsEvents: { cfg, clock: () => new Date(1792640705 * 1000), failuresPerMin: 100_000, portal: PORTAL } });
     const headers = {
       'Content-Type': 'application/json',
+      'X-Forwarded-For': ALLOWED,
       'X-CMS-Event-Id': VECTOR_EVENT_ID,
       'X-CMS-Timestamp': '1792640705',
       'X-CMS-Signature': 'sha256=cec94bc31a9cf69b93b7a4866b594ed586ff84ac7edeeecfcdf13fa864104bab',
@@ -172,7 +173,7 @@ describe('the fence refusal logs what the fence saw (brief 2026-10-29-cms-fence-
     expect(res.status).toBe(401);
     const l = lines();
     expect(l).toHaveLength(1);
-    expect(l[0]).toBe('[audience] fence detail peer=10.1.2.3 peerIsCloudflare=false cfConnectingIp=148.113.0.114 xff=203.0.113.9, 10.1.2.3 xRealIp=10.9.9.9 remote=::ffff:127.0.0.1');
+    expect(l[0]).toBe('[audience] fence detail peer=10.1.2.3 peerIsCloudflare=false cfConnectingIp=148.113.0.114 xff=203.0.113.9, 10.1.2.3 xRealIp=10.9.9.9 remote=::ffff:127.0.0.1 client=203.0.113.9');
   });
 
   it('absent headers read "none"; a Cloudflare peer reads true; control characters are flattened', async () => {
@@ -225,7 +226,7 @@ describe('Cloudflare-aware client IP (behind trust proxy 1, as in production)', 
   };
 
   it('forged CF-Connecting-IP from a NON-Cloudflare peer (the Railway origin hit directly) → 401', async () => {
-    expect((await send(proxied(), `${CMS_IP}, 203.0.113.9`, CMS_IP)).status).toBe(401);
+    expect((await send(proxied(), `${CMS_IP}, 203.0.113.9, 152.233.15.121`, CMS_IP)).status).toBe(401);
   });
   it('a genuine Cloudflare peer + an allowed CF-Connecting-IP → accepted', async () => {
     const res = await send(proxied(), `${CMS_IP}, ${CF_EDGE}`, CMS_IP);
@@ -236,6 +237,15 @@ describe('Cloudflare-aware client IP (behind trust proxy 1, as in production)', 
     expect((await send(proxied(), `203.0.113.9, ${CF_EDGE}`, '203.0.113.9')).status).toBe(401);
     expect((await send(proxied(), `${CMS_IP}, ${CF_EDGE}`)).status).toBe(401);
     expect((await send(proxied(), `${CMS_IP}, ${CF_EDGE}`, 'not-an-ip')).status).toBe(401);
+  });
+  it('production two-hop shape (client, Cloudflare, Railway edge) + valid signature → accepted; other CF-Connecting-IP → fence', async () => {
+    const ok = await send(proxied(), `172.70.142.102, 152.233.15.121`, CMS_IP);
+    expect(ok.status).toBe(200);
+    expect(ok.body.outcome).toBe('applied');
+    expect((await send(proxied(), `172.70.142.102, 152.233.15.121`, '203.0.113.9')).status).toBe(401);
+  });
+  it('direct to origin with a forged left part and CF-Connecting-IP → refused', async () => {
+    expect((await send(proxied(), `${CMS_IP}, 203.0.113.9, 152.233.15.121`, CMS_IP)).status).toBe(401);
   });
   it('the CMS calling the Railway origin directly from an allowed address → accepted', async () => {
     expect((await send(proxied(), CMS_IP)).status).toBe(200);
@@ -255,10 +265,19 @@ describe('Cloudflare-aware client IP (behind trust proxy 1, as in production)', 
     expect(isCloudflareIp('::ffff:162.158.0.1')).toBe(true);
     expect(isCloudflareIp('203.0.113.9')).toBe(false);
     expect(isCloudflareIp('garbage')).toBe(false);
-    expect(cmsClientIp('203.0.113.9', CMS_IP)).toBe('203.0.113.9');
+    // production lines (29–30 Oct): client, Cloudflare edge, Railway inner hop
+    expect(cmsClientIp('172.70.142.102, 152.233.15.121', '148.113.0.114')).toBe('148.113.0.114');
+    expect(cmsClientIp('172.70.142.102, 79.127.228.17', '148.113.0.114')).toBe('148.113.0.114');
+    // old single-hop shape
     expect(cmsClientIp(CF_EDGE, CMS_IP)).toBe(CMS_IP);
+    expect(cmsClientIp(`1.2.3.4, ${CF_EDGE}`, CMS_IP)).toBe(CMS_IP);
+    // direct to origin: forged left part and forged CF-Connecting-IP are ignored
+    expect(cmsClientIp('148.113.0.114, 203.0.113.9, 152.233.15.121', '148.113.0.114')).toBe('203.0.113.9');
+    expect(cmsClientIp('203.0.113.9', CMS_IP)).toBe('203.0.113.9');
+    // fail closed
+    for (const bad of [undefined, null, '', ' , ', 'garbage', '203.0.113.9, garbage']) expect(cmsClientIp(bad, CMS_IP)).toBeNull();
+    expect(cmsClientIp('172.70.142.102, 152.233.15.121', undefined)).toBeNull();
     expect(cmsClientIp(CF_EDGE, undefined)).toBeNull();
-    expect(cmsClientIp(undefined, CMS_IP)).toBeNull();
   });
 });
 
