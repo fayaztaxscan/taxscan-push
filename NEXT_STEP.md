@@ -7,7 +7,9 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
-**▶ 2026-10-30 (PRs #86–#91 LIVE):**
+**▶ 2026-10-30 (PRs #86–#92 LIVE):**
+- **#92** digest polish (deploy ~13:40Z, migration `20261030150000_digest_setting`): old look on phones (335×43 Read More, full-width pictures/ads, compact header), Outlook hardening (VML dropped — Outlook/Windows clicks on text only), Default story picture on Templates (1600×840; brand block until Anagha uploads), 15 stories, date in header bar, ICYMI text-only, 24 px social row, footer no double "Taxscan", warn 80 KB (refusal 90). Worst case ≈80 KB; real ≈71 KB. Verified on prod: Templates card, preview header date, no double name.
+- **Deliverability gap (info, not briefed; owner did not ask):** Mailercloud sends List-Unsubscribe as mailto only, no RFC 8058 one-click; no Google Postmaster Tools on hello.taxscan.in. Raise before stage 3 (real readers).
 - **#91** Ads list note "N ads need new pictures" + tag explanations (verified on prod: 4 ads, 8 tag hints). Brief queued: `2026-10-30-digest-polish-old-look` (visual-review fixes + default story picture on Templates (Anagha supplies 1600×840) + 15 stories + date in header + ICYMI text-only + 24 px social row).
 - **#90** admin menu grouped (Dashboard │ PUSH │ EMAIL │ Reports │ Admin ▾), verified on prod (labels, active group, Admin dropdown Esc/outside-click). All six build worktrees + DBs cleaned.
 - **#89** (deploy 8bf47bd0, ~12:10Z; migrations `20261030120000_digest_ad_mobile_image` + `…140000_digest_subject_edited_audit`):
