@@ -305,6 +305,15 @@ writes rows that changed (normally tens). Before task 5 ships, measure one full 
 > Cloudflare's published ranges (`src/lib/cloudflareIps.ts`, source URLs + fetch date in the file, refreshed by
 > `npm run cloudflare:ips`, never fetched at runtime); otherwise the client is `req.ip` itself (the CMS calling the
 > origin directly). That address, in canonical form, must be on `CMS_FEED_ALLOWED_IPS`; empty rejects everything.
+> **Two hops behind Cloudflare (fixed 30 Oct 2026, brief 2026-10-30-cms-fence-fix).** Railway now has an edge hop
+> *and* an inner hop in front of the app, so `X-Forwarded-For` reads `client, cloudflare-edge, railway-edge` and
+> `req.ip` (under `trust proxy 1`) is the Railway hop, never Cloudflare — the first live CMS calls were all refused
+> at the fence. `cmsClientIp(xForwardedFor, cfConnectingIp)` therefore reads the raw header positionally: with
+> `hop1` = last entry and `hop2` = the one before it, `CF-Connecting-IP` is believed only if `hop1` (old single-hop
+> shape) or `hop2` (new shape) is a Cloudflare address; otherwise the client is `hop2` (else `hop1`) — the caller
+> Railway's edge saw — and a forged `CF-Connecting-IP` or forged left-hand entries are ignored. Never look left of
+> `hop2`; missing / unparseable → null (refused). The fence-detail log line also prints the derived `client=`.
+>
 > **The signature stays the primary control; the fence is defence in depth.** Optional extra hardening (owner /
 > devops, not code): a Cloudflare WAF rule that blocks `/api/integrations/*` unless the source IP is the CMS's
 > egress, and/or closing the Railway origin to non-Cloudflare traffic.
