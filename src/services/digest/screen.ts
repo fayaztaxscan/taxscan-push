@@ -1,6 +1,7 @@
 import type { DigestApproval, DigestAudience, DigestBuild, DigestSendState, SenderErrorKind } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, type DigestEnv } from '../../lib/env';
+import { env, type AudienceEnv, type DigestEnv } from '../../lib/env';
+import { checkAudienceGuard } from '../audience/guard';
 import { isQuietHours } from '../../lib/quietHours';
 import { authorityTier } from '../classify';
 import { digestRunState, type DigestRunState } from './runState';
@@ -249,6 +250,8 @@ export async function audienceEstimate(portal: string): Promise<Record<DigestAud
 
 export type DetailOptions = {
   cfg?: DigestEnv;
+  /** The audience config; `digestFromCms` adds each unfinished variant's send-guard result. Default: env. */
+  audience?: AudienceEnv;
   now?: Date;
   quiet?: { start: string; end: string };
   providerReady: boolean;
@@ -260,6 +263,7 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
   const cfg = opts.cfg ?? env.digest;
   const now = opts.now ?? new Date();
   const quiet = opts.quiet ?? { start: env.send.quietStart, end: env.send.quietEnd };
+  const aud = opts.audience ?? env.audience;
   const run = await prisma.digestRun.findUnique({
     where: { id: runId },
     include: {
@@ -352,6 +356,20 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
     items[a] = run.items.filter((it) => it.audience === null || it.audience === a).map(itemView);
   }
 
+  // Task 7: why a still-waiting variant is held by the audience guard (only while it could still be sent).
+  const guardHeld = new Map<DigestAudience, { check: string; plain: string }>();
+  if (aud.digestFromCms && run.runDate.getTime() === istDateOf(now).getTime()) {
+    for (const s of run.sends) {
+      if (s.state !== 'CREATED' && s.state !== 'PENDING' && s.state !== 'FAILED') continue;
+      try {
+        const g = await checkAudienceGuard(s.audience, run.portal, now, aud);
+        if (!g.ok) guardHeld.set(s.audience, { check: g.check, plain: g.plain });
+      } catch {
+        guardHeld.set(s.audience, { check: 'guard_unreadable', plain: 'the audience guard could not read its own state' });
+      }
+    }
+  }
+
   return {
     runId: run.id,
     runDate: runDateKey(run.runDate),
@@ -371,6 +389,8 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
     variants: sends.map((s) => ({
       audience: s.audience,
       state: s.state,
+      // CMS audience sync task 7: null = not held by the guard (or the guard is off).
+      audienceHold: guardHeld.get(s.audience) ?? null,
       subject: s.subject,
       preheader: s.preheader,
       htmlBytes: s.htmlBytes,

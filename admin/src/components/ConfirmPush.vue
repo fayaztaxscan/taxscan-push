@@ -18,6 +18,7 @@ withDefaults(
     detail?: string;
     confirmLabel?: string;
     cancelLabel?: string;
+    busyLabel?: string;
   }>(),
   {
     busy: false,
@@ -26,6 +27,7 @@ withDefaults(
       "It goes to all subscribers straight away, skipping the queue. A sent notification can't be recalled.",
     confirmLabel: 'Push now',
     cancelLabel: 'Cancel',
+    busyLabel: 'Sending…',
   },
 );
 const emit = defineEmits<{ confirm: []; cancel: [] }>();
@@ -47,7 +49,7 @@ onMounted(async () => {
         <div class="modal-actions">
           <button ref="cancelBtn" type="button" class="btn" @click="emit('cancel')">{{ cancelLabel }}</button>
           <button type="button" class="btn btn-primary" :disabled="busy" @click="emit('confirm')">
-            {{ busy ? 'Sending…' : confirmLabel }}
+            {{ busy ? busyLabel : confirmLabel }}
           </button>
         </div>
       </div>
