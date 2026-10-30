@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import type { DigestAudience, DigestTemplate } from '@prisma/client';
 import { z } from 'zod';
 import { requireBearerOrUser } from '../lib/auth';
@@ -33,10 +33,15 @@ import {
   scheduleTemplate,
   templateAuditMeta,
   worstCaseFixture,
+  worstCaseDisplayAds,
+  worstCaseDisplayItems,
   type MjmlCompiler,
   type TemplateValidation,
 } from '../services/digest/templates';
 import { requestClientIp } from '../lib/clientIp';
+import { ImageRejected, ROLE_MAX_BYTES, ROLE_SIZE, UPLOAD_LIMIT, roleSizeText } from '../services/digest/adImages';
+import { adImageTooLarge } from './digestAds';
+import { clearDefaultStoryImage, defaultStoryKey, getDefaultStoryImage, resolveDefaultStoryImageUrl, setDefaultStoryImage } from '../services/digest/defaultStoryImage';
 
 /**
  * Digest Templates (docs/EMAIL_DIGEST_DESIGN.md §6, §7 Templates, §9; task 10).
@@ -394,12 +399,13 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
     const cfg = o.cfg();
     const now = o.clock();
     const fixture = worstCaseFixture(cfg);
-    let items: FrozenItem[] = fixture.items;
+    // The fixture's picture URLs are made up (they size the email); a preview must never point at them.
+    let items: FrozenItem[] = worstCaseDisplayItems(fixture.items);
     if (req.query.data !== 'worst') {
       const recent = await recentItems(o.portal(), audience);
       if (recent.length > 0) items = recent;
     }
-    let ads: RenderAd[] = fixture.ads;
+    let ads: RenderAd[] = worstCaseDisplayAds(fixture.ads);
     try {
       const slots = slotsForMainCount(renderableMainCount(items));
       ads = pickAds({ slots, audience, items, at: now, pool: await loadAdPool(o.portal()) }).map((p) => toRenderAd(p, cfg.assetBaseUrl));
@@ -407,10 +413,12 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
       if (!(err instanceof AdSlotError)) throw err;
     }
     try {
+      const defaultStoryImageUrl = await resolveDefaultStoryImageUrl(o.portal(), cfg.assetBaseUrl);
       const r = renderDigest({
         items,
         audience,
         runDate: now,
+        defaultStoryImageUrl,
         cfg: { ...cfg, postalAddress: cfg.postalAddress || 'Postal address (DIGEST_POSTAL_ADDRESS)' },
         ads,
         template: { html },
@@ -423,6 +431,60 @@ export function createDigestTemplatesRouter(o: DigestTemplatesRouterOptions): Ro
       throw err;
     }
   }
+
+  // ---- Default story picture (brief digest-polish-old-look, decision A). ADMIN + PUBLISHER (STAFF). ----
+  // Exactly 1600 x 840 px, JPEG/PNG, <= 250 KB; bytes in DigestAdImage, choice in DigestSetting.
+  // Audit: DIGEST_TEMPLATE_SAVED, resourceType 'DigestSetting', resourceId = the setting key, metadata.setting = 'defaultStoryImage'.
+  const storyAudit = (req: Request, action: 'set' | 'removed', meta: Record<string, unknown>) =>
+    recordAudit({
+      userId: req.user?.id ?? null,
+      action: 'DIGEST_TEMPLATE_SAVED',
+      resourceType: 'DigestSetting',
+      resourceId: defaultStoryKey(o.portal()),
+      metadata: { setting: 'defaultStoryImage', action, ...meta },
+      ipAddress: requestClientIp(req),
+    });
+  const storyPayload = async () => ({
+    image: await getDefaultStoryImage(o.portal(), o.cfg().assetBaseUrl),
+    required: { width: ROLE_SIZE.story.width, height: ROLE_SIZE.story.height, maxKb: ROLE_MAX_BYTES / 1024, text: roleSizeText('story') },
+  });
+
+  router.get('/default-story-image', STAFF, async (_req, res, next) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(await storyPayload());
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Upload = set or replace. The ONLY body over the global JSON limit here (like POST /ad-images).
+  router.post('/default-story-image', STAFF, express.raw({ type: () => true, limit: UPLOAD_LIMIT }), async (req, res, next) => {
+    try {
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const filename = typeof req.header('x-filename') === 'string' ? decodeURIComponent(req.header('x-filename') as string).slice(0, 200) : undefined;
+      const { stored, previousId } = await setDefaultStoryImage(o.portal(), buf, { contentType: req.header('content-type'), filename }, req.user?.id ?? null);
+      await storyAudit(req, 'set', { imageId: stored.id, width: stored.width, height: stored.height, size: stored.size, replaced: previousId !== null && previousId !== stored.id });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(previousId === null ? 201 : 200).json(await storyPayload());
+    } catch (err) {
+      if (err instanceof ImageRejected) return res.status(400).json({ error: err.code, message: err.message });
+      if (err instanceof URIError) return res.status(400).json({ error: 'bad_filename', message: 'The file name could not be read.' });
+      return next(err);
+    }
+  });
+
+  router.delete('/default-story-image', STAFF, async (req, res, next) => {
+    try {
+      const removed = await clearDefaultStoryImage(o.portal());
+      if (removed) await storyAudit(req, 'removed', { imageId: removed });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(await storyPayload());
+    } catch (err) {
+      return next(err);
+    }
+  });
+  router.use(adImageTooLarge);
 
   return router;
 }

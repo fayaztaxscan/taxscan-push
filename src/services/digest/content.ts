@@ -1,5 +1,6 @@
 import { env } from '../../lib/env';
 import { assetUrl } from './adImages';
+import { resolveDefaultStoryImageUrl } from './defaultStoryImage';
 import { loadAdPool, pickAds, type Placement } from './ads';
 import { builtinTemplate, resolveTemplate } from './templates';
 import { redactError } from './sender';
@@ -41,7 +42,10 @@ export const renderDigestContent: BuildContent = async ({ runDate, audience, ite
   // Task 10: the layout comes from resolveTemplate() — an override in its window, else the
   // ACTIVE template, else the built-in one — judged at the build instant like the ads.
   const template = await resolveTemplate(audience, at ?? new Date(), { portal: portal ?? env.rss.portal });
-  const render = (html: string) => renderDigest({ items, audience, runDate, cfg: c, ads, template: { html }, assetBaseUrl: c.assetBaseUrl });
+  // Decision A (brief digest-polish-old-look): the default story picture is read ONCE, here at the build, and
+  // lands in the rendered html that is frozen with the send — a later upload/removal never changes a built run.
+  const defaultStoryImageUrl = await resolveDefaultStoryImageUrl(portal ?? env.rss.portal, c.assetBaseUrl);
+  const render = (html: string) => renderDigest({ items, audience, runDate, cfg: c, ads, template: { html }, assetBaseUrl: c.assetBaseUrl, defaultStoryImageUrl });
   let r: ReturnType<typeof renderDigest>;
   let templateId = template.id;
   let templateFallback: TemplateFallback | undefined;

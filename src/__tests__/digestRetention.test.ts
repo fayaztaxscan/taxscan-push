@@ -186,7 +186,7 @@ describe('html nulled after 30 days', () => {
 describe('backup includes the digest tables', () => {
   it('EmailSuppression, templates, ads and images (bytes as base64) are exported in FK order', async () => {
     expect(BACKUP_TABLES).toEqual(
-      expect.arrayContaining(['EmailSuppression', 'DigestTemplate', 'DigestAdImage', 'DigestAd', 'DigestRun', 'DigestSend', 'DigestItem', 'DigestAdPlacement', 'EmailEvent']),
+      expect.arrayContaining(['EmailSuppression', 'DigestTemplate', 'DigestAdImage', 'DigestSetting', 'DigestAd', 'DigestRun', 'DigestSend', 'DigestItem', 'DigestAdPlacement', 'EmailEvent']),
     );
     const idx = (t: string) => BACKUP_TABLES.indexOf(t as never);
     expect(idx('DigestAdImage')).toBeLessThan(idx('DigestAd'));

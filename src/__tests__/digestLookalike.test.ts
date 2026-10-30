@@ -58,33 +58,53 @@ function item(o: Partial<FrozenItem> = {}): FrozenItem {
 const stories = (k: number, img: (i: number) => string | null): FrozenItem[] => Array.from({ length: k }, (_, i) => item({ imageUrl: img(i) })).map((it, i) => ({ ...it, rank: i + 1 }));
 const render = (items: FrozenItem[], over: Partial<Parameters<typeof renderDigest>[0]> = {}) =>
   renderDigest({ items, audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), assetBaseUrl: ASSET, ...over });
-const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${rank}"[\\s\\S]*?</td></tr>`).exec(html)![0];
+// A row ends at `</td></tr>` + newline (the story markup holds `</td></tr>` inside its MSO table and brand block).
+const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${rank}"[\\s\\S]*?</td></tr>(?=\n)`).exec(html)![0];
 
 /* ------------------------------------------------------------------ */
 /* Acceptance 1: the picture beside a story                             */
 /* ------------------------------------------------------------------ */
 
-describe('a story with a picture is a two-column row; without one, plain text', () => {
+describe('a story is always a picture + text row (its own picture, else the default, else the brand block)', () => {
   it('imageUrl → picture left (the ORIGINAL url, 280 px), 20 px gap, text 560 px, alt = headline; phones stack', () => {
     const its = stories(5, (i) => (i === 0 ? PIC : null));
     const r = render(its);
     const row = rowOf(r.html, 1);
-    expect(row).toContain('data-image="1"');
     expect(row).toContain(`<img class="ts-pic adapt-img" src="${PIC}" width="280" height="147"`);
     expect(row).toContain('alt="GST Registration Cancelled Over ₹8.87 Lakh ITC &amp; more'); // alt = the (escaped) headline
-    expect(row).toMatch(/<td class="ts-stcol ts-stpic" width="280" valign="top"/);
-    expect(row).toMatch(/<td class="ts-stgap" width="20"/);
-    expect(row).toMatch(/<td class="ts-stcol ts-sttext" width="560" valign="top"/);
+    expect(row).toContain('<div class="ts-stcol ts-stpic" style="display:inline-block;width:100%;max-width:280px;vertical-align:top;">');
+    expect(row).toContain('<div class="ts-stgap" style="display:inline-block;width:20px;');
+    expect(row).toContain('<div class="ts-stcol ts-sttext" style="display:inline-block;width:100%;max-width:560px;vertical-align:top;">');
     expect((row.match(/<a /g) ?? []).length).toBe(3); // picture link, headline, Read more — one href
     expect(new Set([...row.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).size).toBe(1);
     expect(r.html).toContain('@media only screen and (max-width:600px){');
-    expect(r.html).toContain('.ts-stcol{display:block!important;width:100%!important}.ts-stgap{display:none!important}');
+    expect(r.html).toContain('.ts-stcol{display:block!important;width:100%!important;max-width:100%!important}.ts-stgap{display:none!important}');
     expect(r.html).toContain('.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}');
-    // The second story has no picture: today's single column.
+    // The second story has no picture and no default is set: the brand block, in the same row shape.
     const plain = rowOf(r.html, 2);
-    expect(plain).not.toContain('<img');
-    expect(plain).not.toContain('data-image');
+    expect(plain).toContain('class="ts-brand"');
+    expect(plain).toContain('class="ts-stcol ts-stpic"');
     expect(plain).toContain('>Read More</a>');
+  });
+
+  it('a default picture (decision A) fills every story without one; a story\'s own picture wins; ICYMI never shows one', () => {
+    const DEFAULT = `${ASSET}/email-assets/${'d'.repeat(64)}.jpg`;
+    const its = [...stories(5, (i) => (i === 0 ? PIC : null)), ...stories(2, () => PIC).map((it, i) => ({ ...it, rank: 6 + i, section: 'ICYMI' as const, articleKey: `icy${i}` }))];
+    const html = render(its, { defaultStoryImageUrl: DEFAULT }).html;
+    expect(rowOf(html, 1)).toContain(`src="${PIC}"`);
+    for (const n of [2, 3, 4, 5]) {
+      const row = rowOf(html, n);
+      expect(row).toContain(`<img class="ts-pic adapt-img" src="${DEFAULT}" width="280" height="147"`);
+      expect(row).not.toContain('ts-brand');
+    }
+    for (const n of [6, 7]) expect(rowOf(html, n)).not.toContain('<img');
+    // An address that is not on the asset host / allowlist is ignored (the brand block is drawn).
+    expect(rowOf(render(its, { defaultStoryImageUrl: 'https://evil.example/x.jpg' }).html, 2)).toContain('ts-brand');
+    // Nothing set: the brand block, #3b3543 + the white logo, in the same 280 x 147 box.
+    const brand = rowOf(render(its).html, 2);
+    expect(brand).toMatch(/<table role="presentation" class="ts-brand" width="100%"[^>]*bgcolor="#3b3543"[^>]*max-width:280px/);
+    expect(brand).toContain('height="147"');
+    expect(brand).toContain(`src="${ASSET}/email/taxscan-logo-white-440.png"`);
   });
 
   it('a picture URL that is not exactly documents.taxscan.in .jpg/.jpeg/.png renders text-only', () => {
@@ -102,7 +122,8 @@ describe('a story with a picture is a two-column row; without one, plain text', 
     for (const u of bad) {
       expect(isAllowedArticleImage(u)).toBe(false);
       const row = rowOf(render(stories(5, (i) => (i === 0 ? u : null))).html, 1);
-      expect([u, row.includes('<img')]).toEqual([u, false]);
+      expect([u, row.includes(u)]).toEqual([u, false]); // never drawn: the story shows the brand block instead
+      expect(row).toContain('ts-brand');
     }
     for (const ok of [PIC, 'https://documents.taxscan.in/a/b.JPEG', 'https://documents.taxscan.in/a/b.png']) expect(isAllowedArticleImage(ok)).toBe(true);
   });
@@ -306,6 +327,9 @@ describe('the social icons row: exactly the five fixed links', () => {
     );
     expect(imgs.every((t) => Number(t.attrs.find((a) => a.name === 'width')!.value) >= 24 && Number(t.attrs.find((a) => a.name === 'width')!.value) <= 32)).toBe(true);
     expect(row).toContain('text-align:center');
+    expect(row).not.toContain('border-top'); // no rule above the strip
+    expect(row).toContain('background-color:#f2f3f5'); // the light-grey strip
+    expect(imgs.every((t) => t.attrs.find((a) => a.name === 'width')!.value === '24' && t.attrs.find((a) => a.name === 'height')!.value === '24')).toBe(true);
     expect(r.html.indexOf('data-social="1"')).toBeLessThan(r.html.indexOf('data-footer="1"'));
     expect(SOCIAL_LINKS.map((l) => l.href)).toEqual(FIVE);
   });
@@ -419,7 +443,7 @@ describe('the footer says "Questions or feedback? Write to info@taxscan.in" (a r
     expect(withTemplate('mailto:info@taxscan.in').html).toContain('<a href="mailto:info@taxscan.in">x</a>');
   });
 
-  it('the worst case stays under the 75 KB warning with the new line (the figures)', () => {
+  it('the worst case stays under the warning with the new line (the figures)', () => {
     const c = cfg();
     const f = worstCaseFixture(c);
     const out: string[] = [];

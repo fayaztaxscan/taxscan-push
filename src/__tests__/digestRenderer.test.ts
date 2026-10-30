@@ -172,8 +172,8 @@ describe('3. visible date from runDate in IST', () => {
   });
   it('a date inside a headline is never used as the visible date', () => {
     const r = render({ items: [item({ title: 'Circular dated Oct 15 2026 explained' }), ...items(4)] });
-    expect(r.html).toContain('>22 October 2026</td>'); // the date line above the header bar
-    expect(r.html).toContain('>Daily Digest</p>');
+    expect(r.html).toContain('Daily Digest &middot; 22 October 2026</p>'); // the date sits in the header bar
+    expect(r.html).not.toContain('Oct 15 2026</p>');
   });
 });
 
@@ -433,16 +433,16 @@ describe('15. item content', () => {
   it('headline link, 1–2 line summary, Read more; no label above the headline; nothing else', () => {
     const long = 'word '.repeat(100);
     const r = render({ items: [item({ excerpt: long, authority: null, category: 'GST' }), ...items(4)] });
-    const first = /<td [^>]*data-item="1"[\s\S]*?<\/td><\/tr>/.exec(r.html)![0];
+    const first = /<td [^>]*data-item="1"[\s\S]*?<\/td><\/tr>(?=\n)/.exec(r.html)![0];
     expect(first).not.toContain('>GST<'); // no category / authority label above the headline (owner, 29 Oct)
     expect(first).not.toContain('ts-label');
     const summary = /class="ts-body">([^<]*)</.exec(first)![1];
     expect(summary.length).toBeLessThanOrEqual(220);
     expect(summary.length).toBeGreaterThan(150);
     expect(summary.endsWith('…')).toBe(true);
-    expect((first.match(/<a /g) ?? []).length).toBe(2); // headline + "Read More", same href
+    expect((first.match(/<a /g) ?? []).length).toBe(3); // the brand block's link (no picture, no asset host here), the headline and "Read More": one href
     expect(first).not.toMatch(/<img|capturedAt|readRate|article:/);
-    const second = /<td [^>]*data-item="2"[\s\S]*?<\/td><\/tr>/.exec(r.html)![0];
+    const second = /<td [^>]*data-item="2"[\s\S]*?<\/td><\/tr>(?=\n)/.exec(r.html)![0];
     expect(second).not.toContain('>Supreme Court<');
   });
 });
@@ -479,10 +479,11 @@ describe('QA follow-ups', () => {
     expect(WRAP).toContain('overflow-wrap:anywhere');
     const textTags = [
       ...(r.html.match(/<td [^>]*(data-item|data-heading|data-footer)=[^>]*>/g) ?? []),
-      ...(r.html.match(/<(p|h2) [^>]*>/g) ?? []).filter((t) => !t.startsWith('<p style="margin:0 0 12px 0;">')),
-      ...(r.html.match(/<a [^>]*class="ts-head"[^>]*>/g) ?? []),
+      // A story's own h2 / summary / headline link inherit both properties from their cell (they are inherited properties),
+      // so only the elements that are NOT inside a story row repeat them.
+      ...(r.html.match(/<(p|h2) [^>]*>/g) ?? []).filter((t) => !t.startsWith('<p style="margin:0 0 12px 0;">') && !/^<(h2 style="margin:0;font-family|p style="margin:15px 0 0 0;)/.test(t)),
     ];
-    expect(textTags.length).toBeGreaterThan(20);
+    expect(textTags.length).toBeGreaterThan(10);
     for (const t of textTags) expect(t).toContain(WRAP);
     expect(r.html).toContain('max-width:600px');
   });
@@ -524,7 +525,7 @@ describe('QA follow-ups', () => {
     expect(r.preheader).toContain('Second ruling');
     expect(r.subject + r.preheader + r.text).not.toMatch(bad);
     expect(r.html.replace(/&zwnj;/g, '')).not.toMatch(bad);
-    expect(r.html).toContain('Taxscan &middot; Kochi 682001');
+    expect(r.html).toContain('>Kochi 682001</p>');
   });
 
   it('4. a link with an explicit non-default port is refused; default ports pass', () => {
@@ -544,7 +545,7 @@ describe('QA follow-ups', () => {
     const footer = /<td [^>]*data-footer="1"[\s\S]*?<\/td>/.exec(r.html)![0];
     expect(footer).not.toMatch(/[\r\n]/);
     expect(footer).toContain('Line one Line two Kochi');
-    expect(r.text).toContain('Taxscan · Line one Line two Kochi\n');
+    expect(r.text).toContain('\nLine one Line two Kochi\n');
   });
 
   it('6. under the limit by raw bytes but over it with the per-link allowance → refused', () => {
