@@ -32,6 +32,7 @@ import {
 } from '../services/staffPush';
 import { prisma } from '../lib/prisma';
 import { DEFAULT_NOTIFICATION_BADGE, DEFAULT_NOTIFICATION_ICON } from '../services/send';
+import { requestClientIp } from '../lib/clientIp';
 
 const endpointField = z
   .string()
@@ -89,7 +90,7 @@ function publicDevice(d: { id: string; label: string | null; createdAt: Date; la
 }
 
 function ip(req: Request): string | null {
-  return req.ip ?? null;
+  return requestClientIp(req);
 }
 
 export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router {

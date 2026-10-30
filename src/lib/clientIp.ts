@@ -1,4 +1,5 @@
 import { BlockList, isIP } from 'node:net';
+import type { Request } from 'express';
 import { CLOUDFLARE_IPV4, CLOUDFLARE_IPV6 } from './cloudflareIps';
 
 /**
@@ -54,7 +55,9 @@ export function isCloudflareIp(ip: string | undefined | null): boolean {
 }
 
 /**
- * The address the CMS webhook fence checks (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5.1, §8.2).
+ * The real client address behind Cloudflare and Railway (docs/CMS_AUDIENCE_SYNC_DESIGN.md §5.1, §8.2; SECURITY.md).
+ * Used by the CMS webhook fence, the rate limiters and the audit log — never `req.ip`, which under `trust proxy 1`
+ * is Railway's inner hop and is shared by every reader.
  *
  * Reads the raw `X-Forwarded-For` positionally, because Railway now puts TWO hops in front of the app:
  * its edge appends the machine that connected to it, then an inner hop appends the edge's own address. So the
@@ -67,7 +70,7 @@ export function isCloudflareIp(ip: string | undefined | null): boolean {
  * caller-supplied and never looked at. Every entry is canonicalised.
  * Returns the canonical client address, or null (missing / unparseable → the fence rejects).
  */
-export function cmsClientIp(xForwardedFor: string | undefined | null, cfConnectingIp: string | undefined | null): string | null {
+export function clientIpFrom(xForwardedFor: string | undefined | null, cfConnectingIp: string | undefined | null): string | null {
   if (typeof xForwardedFor !== 'string') return null;
   const entries = xForwardedFor.split(',').map((e) => e.trim());
   const hop1 = canonicalIp(entries[entries.length - 1]);
@@ -76,4 +79,20 @@ export function cmsClientIp(xForwardedFor: string | undefined | null, cfConnecti
   if (isCloudflareIp(hop1) || (hop2 !== null && isCloudflareIp(hop2))) return canonicalIp(cfConnectingIp);
   if (entries.length > 1) return hop2; // null when garbage → rejected
   return hop1;
+}
+
+/** The CMS webhook fence's derivation: `clientIpFrom` on the raw headers, a missing `X-Forwarded-For` refused everywhere. */
+export const cmsClientIp = clientIpFrom;
+
+/**
+ * The client address of a request, for rate-limit keys and audit rows. `clientIpFrom` on the raw headers; with NO
+ * `X-Forwarded-For` at all (a dev/test server with no proxy) the socket's own address, canonicalised — but only
+ * outside production, where a missing header means the request did not come through Railway and is `null`.
+ * Reads `process.env.NODE_ENV` (not `env`) because `env.ts` imports this module.
+ */
+export function requestClientIp(req: Pick<Request, 'header' | 'socket'>): string | null {
+  const xff = req.header('x-forwarded-for');
+  if (typeof xff === 'string' && xff.trim() !== '') return clientIpFrom(xff, req.header('cf-connecting-ip'));
+  if (process.env.NODE_ENV === 'production') return null;
+  return canonicalIp(req.socket?.remoteAddress);
 }

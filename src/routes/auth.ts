@@ -14,6 +14,7 @@ import { makeLoginLimiter } from '../lib/rateLimit';
 import { passwordIssue } from '../lib/passwordPolicy';
 import { recordAudit } from '../lib/audit';
 import { hashInviteToken } from '../lib/invites';
+import { requestClientIp } from '../lib/clientIp';
 
 const BCRYPT_COST = 12;
 
@@ -46,7 +47,7 @@ export function createAuthRouter(
       }
       const email = parsed.data.email.toLowerCase().trim();
       const password = parsed.data.password;
-      const ipAddress = req.ip ?? null;
+      const ipAddress = requestClientIp(req);
       const now = new Date();
 
       // Verify the password FIRST: a correct, active credential always succeeds
@@ -119,7 +120,7 @@ export function createAuthRouter(
       await recordAudit({
         userId: req.user!.id,
         action: 'LOGOUT',
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
       return res.status(204).end();
     } catch (err) {
@@ -182,7 +183,7 @@ export function createAuthRouter(
       await recordAudit({
         userId: u.id,
         action: 'PASSWORD_CHANGED',
-        ipAddress: req.ip ?? null,
+        ipAddress: requestClientIp(req),
       });
 
       return res.status(204).end();
@@ -229,7 +230,7 @@ export function createAuthRouter(
         return res.status(400).json({ error: 'invalid_request', issues: parsed.error.issues });
       }
       const now = new Date();
-      const ipAddress = req.ip ?? null;
+      const ipAddress = requestClientIp(req);
 
       const invite = await prisma.userInvite.findUnique({
         where: { tokenHash: hashInviteToken(parsed.data.token) },

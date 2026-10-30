@@ -7,6 +7,22 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-10-30 (PRs #86–#87 LIVE):**
+- **#86 CMS webhook fence fixed** (deploy 83324b62, 09:02Z). Railway now puts two hops in front of the app
+  (`xff=<cloudflare>, <railway hop 152.233.x / 79.127.x>`), so `req.ip` was never Cloudflare. `cmsClientIp` reads the
+  last two XFF hops; CF-Connecting-IP believed only when one is Cloudflare. The CMS retry at 09:18Z was accepted:
+  `evt_01M63XFAWNANZ9ZA7F9J06M3C6 outcome=stale_seq` (the first full load already had a newer state). Told the CMS.
+- **#87 CMS audience tasks 7–8** (deploy 0f5f1d2f, 09:37Z): `audienceGuard` + derived targets behind
+  `DIGEST_AUDIENCE_FROM_CMS` (off), Audience card + ADMIN Resume on Digests, breaker alert no longer claims a hold
+  while the guard is off. **Owner: review the first-load counts on the card, then Resume** (breaker `first_load`,
+  opened 29 Oct 23:00Z; writes stay dry-run).
+- **Digest stage 2:** first real send 30 Oct 07:30 IST — FREE + PREMIUM SENT to staff list hgvfXF. Anagha's feedback pending.
+- **Stage-3 switch-on order must include:** clear `DIGEST_PREMIUM_LIST_IDS`/segments before `DIGEST_AUDIENCE_FROM_CMS`
+  (derived Premium keeps configured lists alongside the tag); flag on today would hold BOTH versions (breaker open,
+  drift never run, no Premium tags while dry-run).
+- **Follow-up (not briefed):** with Railway's extra hop every `req.ip`-keyed rate limiter keys on a few Railway edge
+  addresses — readers may share a bucket. Next brief candidate. Tasks 9–10 (backup v3/retention, docs/guide) next.
+
 **▶ PICKUP FOR THE NEXT SESSION (written 2026-10-29 19:20 IST):**
 1. **URGENT — CMS webhook fence (deadline 2026-10-30 13:28Z = 18:58 IST).** The CMS's first event
    `evt_01M63XFAWNANZ9ZA7F9J06M3C6` is refused `step=fence` although Railway's HTTP log shows srcIp 148.113.0.114
