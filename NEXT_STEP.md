@@ -7,7 +7,8 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
-**▶ 2026-10-30 (PRs #86–#90 LIVE):**
+**▶ 2026-10-30 (PRs #86–#91 LIVE):**
+- **#91** Ads list note "N ads need new pictures" + tag explanations (verified on prod: 4 ads, 8 tag hints). Brief queued: `2026-10-30-digest-polish-old-look` (visual-review fixes + default story picture on Templates (Anagha supplies 1600×840) + 15 stories + date in header + ICYMI text-only + 24 px social row).
 - **#90** admin menu grouped (Dashboard │ PUSH │ EMAIL │ Reports │ Admin ▾), verified on prod (labels, active group, Admin dropdown Esc/outside-click). All six build worktrees + DBs cleaned.
 - **#89** (deploy 8bf47bd0, ~12:10Z; migrations `20261030120000_digest_ad_mobile_image` + `…140000_digest_subject_edited_audit`):
   built-in digest = the old Mailercloud format (900 px, 280+560, 16 px heads, ~220-char summaries, date above header);
