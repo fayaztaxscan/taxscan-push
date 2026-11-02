@@ -5,7 +5,8 @@ import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { env } from '../lib/env';
 import { prisma } from '../lib/prisma';
-import { postToLinkedIn, type LinkedInResult } from '../services/linkedin/client';
+import { postToLinkedIn, uploadImage, type LinkedInResult } from '../services/linkedin/client';
+import type { CmsArticle } from '../services/linkedin/post';
 import { runLinkedInTick, retryNow, startLinkedInWorker, resetLinkedInStops, loginProblem, authKey, pushOutOfQuietHours, UNKNOWN_ERROR, MAX_PER_TICK, type WorkerDeps } from '../services/linkedin/worker';
 
 /**
@@ -33,7 +34,7 @@ const posted = (id = 'urn:li:share:1'): LinkedInResult => ({ kind: 'posted', pos
 const retry429: LinkedInResult = { kind: 'retry', status: 429, error: 'HTTP 429' };
 const auth401: LinkedInResult = { kind: 'auth', status: 401, error: 'HTTP 401' };
 
-let calls: { orgUrn: string; accessToken: string; commentary: string; title: string; link: string }[] = [];
+let calls: { orgUrn: string; accessToken: string; commentary: string; title: string; link: string; description?: string; thumbnail?: string }[] = [];
 let script: (n: number) => LinkedInResult | Promise<LinkedInResult> = () => posted();
 const post: NonNullable<WorkerDeps['post']> = async (r) => {
   calls.push(r);
@@ -195,6 +196,134 @@ describe('H. manual sends post like pacer sends; test sends never do (follow-up 
     }
     await runLinkedInTick(deps());
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('I. the link card carries the article\'s picture and a description (fail-open)', () => {
+  const COVER = 'https://documents.taxscan.in/cms/media/cover-1.jpg';
+  const EXCERPT = `${'An editor\'s one-line summary of the ruling. '.repeat(8)}`.trim(); // ~350 characters
+  const cmsWith = (over: Partial<CmsArticle> = {}): NonNullable<WorkerDeps['fetchCms']> => async () => ({ keywords: [], courts: [], category: null, coverImageUrl: COVER, excerpt: EXCERPT, ...over });
+  const okImage: NonNullable<WorkerDeps['fetchImage']> = async () => ({ ok: true, bytes: new Uint8Array([0xff, 0xd8, 1, 2]), contentType: 'image/jpeg' });
+  const outcomeLine = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+  let imageCalls = 0;
+  let uploadCalls = 0;
+  const countingImage = (inner: NonNullable<WorkerDeps['fetchImage']>): NonNullable<WorkerDeps['fetchImage']> => async (u) => (imageCalls++, inner(u));
+  const countingUpload = (inner: NonNullable<WorkerDeps['uploadImage']>): NonNullable<WorkerDeps['uploadImage']> => async (r) => (uploadCalls++, inner(r));
+  beforeEach(() => {
+    imageCalls = 0;
+    uploadCalls = 0;
+  });
+
+  it('1: the CMS gives cover + excerpt → fetch → register → upload → the post carries thumbnail and the excerpt cut to ≤ 200; the line says image=ok', async () => {
+    await camp('thumb-happy', at(NOW, -5), { extra: { body: 'The campaign body.' } });
+    await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: countingImage(okImage), uploadImage: countingUpload(async () => ({ kind: 'ok', urn: 'urn:li:image:C9ZZ' })) }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].thumbnail).toBe('urn:li:image:C9ZZ');
+    expect(calls[0].description!.length).toBeLessThanOrEqual(200);
+    expect(calls[0].description!.endsWith('…')).toBe(true);
+    expect(EXCERPT.startsWith(calls[0].description!.slice(0, -1))).toBe(true);
+    expect(outcomeLine()).toMatch(/outcome=posted hashtags=fallback image=ok/);
+    expect((await rowsOf())[0].status).toBe('POSTED');
+    expect([imageCalls, uploadCalls]).toEqual([1, 1]);
+  });
+
+  it.each([['http_404'], ['timeout'], ['type'], ['size'], ['network']] as const)('2: the picture fetch fails (%s) → posted WITHOUT a thumbnail, description kept, image=none:%s, status POSTED, no retry', async (reason) => {
+    await camp(`thumb-fetch-${reason}`, at(NOW, -5));
+    await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: async () => ({ ok: false, reason }), uploadImage: countingUpload(async () => ({ kind: 'ok', urn: 'urn:li:image:NOPE' })) }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].thumbnail).toBeUndefined();
+    expect(calls[0].description).toBeTruthy();
+    expect(outcomeLine()).toContain(`outcome=posted hashtags=fallback image=none:${reason}`);
+    expect(uploadCalls).toBe(0);
+    expect((await rowsOf())[0]).toMatchObject({ status: 'POSTED', attempts: 1 });
+  });
+
+  it('3: registering or uploading fails → posted without a thumbnail (image=none:<reason>); a 401 from the registration is an auth-stop with NO post call', async () => {
+    await camp('thumb-upload-soft', at(NOW, -5));
+    await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: async () => ({ kind: 'soft', reason: 'init_http_500' }) }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].thumbnail).toBeUndefined();
+    expect(outcomeLine()).toContain('image=none:init_http_500');
+    expect((await rowsOf())[0].status).toBe('POSTED');
+
+    await prisma.linkedInPost.deleteMany({ where: { page: PAGE } });
+    calls = [];
+    logSpy.mockClear();
+    await camp('thumb-upload-put', at(NOW, -4));
+    await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: async () => ({ kind: 'soft', reason: 'put_http_500' }) }));
+    expect(calls[calls.length - 1].thumbnail).toBeUndefined();
+    expect(outcomeLine()).toContain('image=none:put_http_500');
+
+    await prisma.linkedInPost.deleteMany({ where: { page: PAGE } });
+    await prisma.campaign.deleteMany({ where: { portal: PORTAL } });
+    calls = [];
+    logSpy.mockClear();
+    resetLinkedInStops();
+    await camp('thumb-upload-auth', at(NOW, -3));
+    const t = await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: async () => ({ kind: 'auth', status: 401, error: 'HTTP 401 (image upload)' }) }));
+    expect(t.authStopped).toBe(true);
+    expect(calls).toHaveLength(0); // the token is bad for everything: the post is not attempted
+    expect(outcomeLine()).toMatch(/outcome=auth_stop status=401 image=/);
+    expect(await loginProblem(PAGE)).toMatchObject({ status: 401 });
+    expect(mails).toHaveLength(1); // the same once-a-day admin alert as for the post's own 401
+  });
+
+  it('4: a disallowed host (http, another domain) → no fetch at all, image=none:host, still posted', async () => {
+    const globalFetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no network in tests'));
+    try {
+      for (const [i, url] of ['http://documents.taxscan.in/cms/media/x.jpg', 'https://cdn.example.org/x.jpg'].entries()) {
+        await prisma.linkedInPost.deleteMany({ where: { page: PAGE } });
+        calls = [];
+        logSpy.mockClear();
+        await prisma.campaign.deleteMany({ where: { portal: PORTAL } });
+        await camp(`thumb-host-${i}`, at(NOW, -5));
+        await runLinkedInTick(deps({ fetchCms: cmsWith({ coverImageUrl: url }), uploadImage: countingUpload(async () => ({ kind: 'ok', urn: 'urn:li:image:NOPE' })) }));
+        expect(calls).toHaveLength(1);
+        expect(calls[0].thumbnail).toBeUndefined();
+        expect(outcomeLine()).toContain('image=none:host');
+      }
+      expect(globalFetch).not.toHaveBeenCalled();
+      expect(uploadCalls).toBe(0);
+    } finally {
+      globalFetch.mockRestore();
+    }
+  });
+
+  it('5: the CMS fetch failed → no picture attempt; the description falls back to the campaign body', async () => {
+    await camp('thumb-nocms', at(NOW, -5), { extra: { body: 'The campaign body line.' } });
+    await runLinkedInTick(deps({ fetchCms: async () => null, fetchImage: countingImage(okImage), uploadImage: countingUpload(async () => ({ kind: 'ok', urn: 'urn:li:image:NOPE' })) }));
+    expect([imageCalls, uploadCalls]).toEqual([0, 0]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].thumbnail).toBeUndefined();
+    expect(calls[0].description).toBe('The campaign body line.');
+    expect(outcomeLine()).toContain('image=none:no_cover');
+  });
+
+  it('a retryable post failure after a successful upload retries the whole attempt (a fresh upload is fine, never a loop inside one attempt)', async () => {
+    await camp('thumb-retry', at(NOW, -5));
+    let uploads = 0;
+    const d = deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: async () => ({ kind: 'ok', urn: `urn:li:image:U${++uploads}` }) });
+    script = () => retry429;
+    await runLinkedInTick(d);
+    expect(uploads).toBe(1); // one upload in the attempt, then the 429
+    expect((await rowsOf())[0]).toMatchObject({ status: 'PENDING', attempts: 1 });
+    script = () => posted();
+    await runLinkedInTick({ ...d, now: () => at(NOW, 1) });
+    expect(uploads).toBe(2);
+    expect(calls[calls.length - 1].thumbnail).toBe('urn:li:image:U2');
+    expect((await rowsOf())[0].status).toBe('POSTED');
+  });
+
+  it('6: the token never appears in the logs, the rows or the mails across the new calls (the real upload code, a server that echoes it)', async () => {
+    await camp('thumb-secrets', at(NOW, -5));
+    const echo = (async (url: string) => {
+      if (String(url).includes('/rest/images')) return { status: 200, ok: true, headers: new Headers(), json: async () => ({ value: { uploadUrl: 'https://www.linkedin.com/dms-uploads/x', image: 'urn:li:image:C1' } }) } as unknown as Response;
+      return { status: 500, ok: false, headers: new Headers(), json: async () => ({ message: `Bearer ${TOKEN} ${TOKEN}` }) } as unknown as Response; // the PUT fails and echoes the token
+    }) as unknown as typeof fetch;
+    await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: (r) => uploadImage(r, echo) }));
+    const everything = JSON.stringify({ logs: [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errSpy.mock.calls], rows: await rowsOf(), mails, calls: calls.map((c) => ({ ...c, accessToken: undefined })) });
+    expect(everything).not.toContain(TOKEN);
+    expect(outcomeLine()).toContain('image=none:put_http_500');
   });
 });
 
