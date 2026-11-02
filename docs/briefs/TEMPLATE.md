@@ -27,6 +27,7 @@ Each one must PASS in the REPORT.
 ## Constraints
 - Flag: `<NAME>` default off (or "no flag — reason").
 - Migrations: <none | additive only, name prefix …>
+- Full suite: <no — area tests: `<pattern>` | yes — touches <schema / auth / send path / config / useApi>>
 - Docs that ship with it: <none | admin guide page …>
 - <Anything the code must not do.>
 

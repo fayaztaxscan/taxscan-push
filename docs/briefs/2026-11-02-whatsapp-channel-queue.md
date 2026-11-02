@@ -102,6 +102,7 @@ Each one must PASS in the REPORT.
 ## Constraints
 - Flag: `WHATSAPP_QUEUE_ENABLED`, default off.
 - Migrations: additive only (one new table + its enum).
+- Full suite: yes — touches the Prisma schema (a new migration).
 - The request path reads Postgres only. Count nothing per campaign from `Event`; this screen needs no delivery stats.
 - Docs that ship with it: admin guide section + `docs/BACKUPS.md` exclusion line + `.env.example` entry.
 

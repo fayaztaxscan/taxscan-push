@@ -81,8 +81,12 @@ more than half the machine.** That means:
   and stop.
 
 ## 4. Verify
-- `npx tsc -p tsconfig.json --noEmit`, `npm run lint`, then the new tests, then the **full suite once** under `nice`.
-  Run `npm run build:admin` only if the SPA changed.
+- `npx tsc -p tsconfig.json --noEmit`, `npm run lint`, the new tests, then **every test file for the area you touched**
+  (e.g. all `digest*` tests for a digest change), under `nice`. Run `npm run build:admin` only if the SPA changed.
+- **No full suite per build** (owner's standing rule, 2 Nov 2026). The full suite runs once per release (§6).
+  **Exception — run the full suite once anyway** when the brief says `Full suite: yes`, or the change touches a shared
+  foundation: the Prisma schema / a migration, auth / sessions / roles, the push send path or pacer
+  (`send.ts`, `pacer.ts`, `executeCampaign`), config / env loading, or the admin's shared `useApi`. Say which applied.
 - Every acceptance test in the brief must pass, or be marked FAILED in the REPORT with its output.
 - Known flaky test: eventRetention "lifetime totals" under parallel workers. Re-run it alone before calling it
   a failure, and say you did.
@@ -95,7 +99,7 @@ more than half the machine.** That means:
    - Files changed (one line each, what and why).
    - Migrations added (name + what they do; additive or not).
    - Flags/env added (name, default).
-   - Test result lines, copied verbatim: tsc, lint, new tests, full suite (`Tests: N passed, N total`).
+   - Test result lines, copied verbatim: tsc, lint, new tests, area tests, and the full suite only if it ran (`Tests: N passed, N total`).
    - Each acceptance test → PASS / FAILED (+ output).
    - Agents run (role, what for).
    - Deviations from the brief, and why.
@@ -109,3 +113,18 @@ git worktree remove ../taxscan-push-worktrees/<name>
 dropdb taxscan_push_build_<name>; dropdb taxscan_push_build_<name>_shadow
 git branch -D build/<name>; git push origin --delete build/<name>
 ```
+
+## 6. Release check (owner's standing rule, 2 Nov 2026)
+Production moves at most **twice a day: ~13:00 IST (lunch) and ~18:00 IST (evening)**, clear of the digest window
+(06:15–08:30), quiet hours and the 02:20 backup. Before each release the owner tells this session
+`Release check` (no brief). Then:
+1. A fresh worktree off `origin/develop` (`../taxscan-push-worktrees/release`) with its own DB
+   `taxscan_push_build_release` (+ `_shadow`) and the minimal `.env`; migrate it.
+2. `npx tsc -p tsconfig.json --noEmit`, `npm run lint`, `npm run build:admin`, then the **full suite once** under `nice`.
+   The known flaky test may be re-run alone (say so).
+3. Commit nothing. Tell the owner, verbatim:
+   `RELEASE CHECK <passed|FAILED>: develop <short hash> — tsc ok, lint ok, admin build ok, Tests: N passed, N total`
+   (on failure: the failing test names + first error lines).
+4. Clean up: remove the worktree and drop both release DBs.
+Planning opens the `develop` → `main` PR only for the hash that passed, and only on the owner's yes. An urgent fix may
+go outside the two windows when the owner says so; it still gets a release check.
