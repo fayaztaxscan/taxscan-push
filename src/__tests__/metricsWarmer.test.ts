@@ -76,18 +76,32 @@ describe('metrics warmer', () => {
   });
 
   it('keeps the live parts live even while totals are cached', async () => {
+    // The active-subscriber figure is a GLOBAL status count that other test files change at the same moment (they create and
+    // expire subscribers in this shared database), so "before + 1" is not a stable thing to assert. Pin the contract itself:
+    // each build runs the status query again, and the cached lifetime totals are NOT re-read in between.
     process.env.METRICS_HEAVY_REFRESH_MS = String(60 * 60 * 1000);
+    const original = prisma.subscriber.groupBy.bind(prisma.subscriber) as (args: unknown) => Promise<unknown>;
+    let active = 7;
+    const statusQueries: number[] = [];
+    const spy = jest.spyOn(prisma.subscriber, 'groupBy').mockImplementation(((args: { by?: string[] }) => {
+      if (Array.isArray(args?.by) && args.by.length === 1 && args.by[0] === 'status') {
+        statusQueries.push(active);
+        return Promise.resolve([{ status: 'ACTIVE', _count: { _all: active } }]);
+      }
+      return original(args); // anything else (the warmer's own passes) is untouched
+    }) as never);
     try {
       startMetricsWarmer();
-      const before = (await buildMetrics()).activeSubscribers;
-      const s = await prisma.subscriber.create({
-        data: { portal: 'taxscan', endpoint: `https://push.example/live-${uniq()}`, p256dh: 'p', auth: 'a', topics: ['all'] },
-      });
-      subscriberIds.push(s.id);
-      const after = (await buildMetrics()).activeSubscribers;
-      // Active subscribers is a request-path query, not a cached aggregate.
-      expect(after).toBe(before + 1);
+      const first = await buildMetrics();
+      expect(first.activeSubscribers).toBe(7);
+      const totalsBefore = first.subscribersBySource;
+      active = 8; // a subscriber arrives after the first build
+      const second = await buildMetrics();
+      expect(second.activeSubscribers).toBe(8); // live: the status count is re-read on the request path
+      expect(statusQueries).toEqual([7, 8]); // exactly one status query per build
+      expect(second.subscribersBySource).toEqual(totalsBefore); // cached: the lifetime totals did not move
     } finally {
+      spy.mockRestore();
       delete process.env.METRICS_HEAVY_REFRESH_MS;
     }
   });

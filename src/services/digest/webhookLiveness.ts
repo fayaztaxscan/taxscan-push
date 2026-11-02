@@ -132,9 +132,15 @@ export type WebhookHealth = {
   noAddressCount: number;
 };
 
-/** True when an opt-out without an address arrived in the last 24 h — the banner's trigger. */
+/**
+ * True when an opt-out without an address arrived in the last 24 h — the banner's trigger. "As of `now`": an event stamped AFTER
+ * `now` has not arrived yet (it only happens when `now` is a fixed past instant, as in the digest tests, while another test
+ * file's real-time events sit in the shared table), so it never counts.
+ */
 export function noAddressRecently(h: Pick<WebhookHealth, 'lastNoAddressAt'>, now: Date): boolean {
-  return h.lastNoAddressAt !== null && now.getTime() - Date.parse(h.lastNoAddressAt) < 24 * 60 * 60 * 1000;
+  if (h.lastNoAddressAt === null) return false;
+  const age = now.getTime() - Date.parse(h.lastNoAddressAt);
+  return age >= 0 && age < 24 * 60 * 60 * 1000;
 }
 
 const WEBHOOKS_OFF: WebhookHealth = { enabled: false, alive: null, lastEventAt: null, lastNoAddressAt: null, noAddressCount: 0 };
@@ -148,7 +154,7 @@ export async function webhookHealth(opts: { portal: string; now?: Date; cfg?: Di
     const last = await prisma.emailEvent.findFirst({ orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } });
     // At most one row per IST day per event name, so this stays a handful of rows.
     const noAddrRows = await prisma.emailEvent.findMany({
-      where: { type: 'NO_ADDRESS', receivedAt: { gte: new Date(now.getTime() - STATUS_LOOKBACK_MS) } },
+      where: { type: 'NO_ADDRESS', receivedAt: { gte: new Date(now.getTime() - STATUS_LOOKBACK_MS), lte: now } },
       orderBy: { receivedAt: 'desc' },
       select: { receivedAt: true, meta: true },
     });

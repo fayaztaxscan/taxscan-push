@@ -92,18 +92,33 @@ describe('event retention — parity (the numbers must not move)', () => {
     expect(camp.rolledFirstSentAt?.getTime()).toBe(daysAgo(45).getTime());
   });
 
-  it('lifetime totals on the Dashboard are identical before and after a sweep', async () => {
+  it('lifetime totals are conserved by a sweep: every event it deletes lands in the roll-up, per type, and the Dashboard totals include that roll-up', async () => {
     const c = await seedCampaign('lifetime');
     const s = await seedSubscriber();
     await addEvents(c.id, s.id, [['SENT', 50], ['SENT', 50], ['CLICKED', 50], ['FAILED', 50], ['SENT', 3]]);
 
-    const before = (await buildMetrics(NOW)).totals;
-    await sweepEventRetention({ now: NOW, retentionDays: 30, batchSize: 1000 });
-    const after = (await buildMetrics(NOW)).totals;
+    // The Dashboard's lifetime figure is live + rolled-up over the WHOLE table, and other test files add and remove events
+    // while this one runs, so "totals before == totals after" is not stable here. What the sweep guarantees, and what makes
+    // the totals identical, is exact and nobody else can disturb it: the roll-up (only the sweeper writes it) grows by
+    // precisely the rows the sweep deleted, per type. Live + rolled-up therefore only moves when someone else writes events.
+    const rollup = async () => new Map((await prisma.eventRollup.findMany({ select: { type: true, count: true } })).map((r) => [r.type, r.count]));
+    const before = await rollup();
+    const swept = await sweepEventRetention({ now: NOW, retentionDays: 30, batchSize: 1000 });
+    const after = await rollup();
 
-    expect(after.sent).toBe(before.sent);
-    expect(after.clicked).toBe(before.clicked);
-    expect(after.failed).toBe(before.failed);
+    for (const type of ['SENT', 'CLICKED', 'FAILED'] as const) {
+      expect((after.get(type) ?? 0) - (before.get(type) ?? 0)).toBe(swept.deleted[type] ?? 0);
+    }
+    // our own old rows were part of it (other files' old rows may be too)
+    expect(swept.deleted.SENT ?? 0).toBeGreaterThanOrEqual(2);
+    expect(swept.deleted.CLICKED ?? 0).toBeGreaterThanOrEqual(1);
+    expect(swept.deleted.FAILED ?? 0).toBeGreaterThanOrEqual(1);
+    // the one recent SENT is untouched, and the Dashboard totals read the roll-up (they can only be at least as large)
+    expect(await prisma.event.count({ where: { campaignId: c.id, type: 'SENT' } })).toBe(1);
+    const totals = (await buildMetrics(NOW)).totals;
+    expect(totals.sent).toBeGreaterThanOrEqual(after.get('SENT') ?? 0);
+    expect(totals.clicked).toBeGreaterThanOrEqual(after.get('CLICKED') ?? 0);
+    expect(totals.failed).toBeGreaterThanOrEqual(after.get('FAILED') ?? 0);
   });
 
   it('the Campaigns list shows the same figures for a fully rolled-up campaign', async () => {

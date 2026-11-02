@@ -2,6 +2,8 @@ import bcrypt from 'bcrypt';
 import cron from 'node-cron';
 import request from 'supertest';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { User } from '@prisma/client';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
@@ -43,12 +45,19 @@ type Call = { url: string; body: URLSearchParams };
 let calls: Call[] = [];
 let introDays: number | null = 40;
 let introActive = true;
+/** How the token inspector fails when `introDays` is null. */
+let introFail: 'http_500' | 'http_401' | 'no_expires_at' | 'network' = 'http_500';
 let refreshReply: (n: number) => { status: number; json: Record<string, unknown> } = () => ({ status: 200, json: { access_token: SECRETS.newAccess, expires_in: 5_184_000, refresh_token: SECRETS.envRefresh, refresh_token_expires_in: 30_000_000 } });
 const response = (status: number, json: unknown) => ({ status, json: async () => json }) as unknown as Response;
 const fetchMock = (async (url: string, init: RequestInit) => {
   const body = new URLSearchParams(String(init.body));
   calls.push({ url, body });
-  if (url === INTROSPECT_URL) return introDays === null ? response(500, {}) : response(200, { active: introActive, status: introActive ? 'active' : 'expired', expires_at: Math.floor(at(introDays).getTime() / 1000) });
+  if (url === INTROSPECT_URL && introDays === null) {
+    if (introFail === 'network') throw new Error('socket hang up');
+    if (introFail === 'no_expires_at') return response(200, { active: true, status: 'active' });
+    return response(introFail === 'http_401' ? 401 : 500, { error: `echo ${SECRETS.clientSecret}` });
+  }
+  if (url === INTROSPECT_URL) return response(200, { active: introActive, status: introActive ? 'active' : 'expired', expires_at: Math.floor(at(introDays ?? 0).getTime() / 1000) });
   const r = refreshReply(calls.filter((c) => c.url === ACCESS_TOKEN_URL).length);
   return response(r.status, r.json);
 }) as unknown as typeof fetch;
@@ -89,6 +98,7 @@ beforeEach(async () => {
   logs.length = 0;
   introDays = 40;
   introActive = true;
+  introFail = 'http_500';
   refreshReply = () => ({ status: 200, json: { access_token: SECRETS.newAccess, expires_in: 5_184_000, refresh_token: SECRETS.envRefresh, refresh_token_expires_in: 30_000_000 } });
   configure();
   resetTokenCache();
@@ -162,7 +172,7 @@ describe('2. renewal', () => {
     introDays = 20;
     await runTokenCheck(deps());
     expect(refreshCalls()).toHaveLength(0);
-    expect(logs.join('\n')).toMatch(new RegExp(`\\[linkedin-token\\] page=${PAGE} access_left_days=20 refresh_left_days=\\S+ action=none`));
+    expect(logs.join('\n')).toMatch(new RegExp(`\\[linkedin-token\\] page=${PAGE} access_left_days=20 \\(source=linkedin\\) refresh_left_days=\\S+ introspect=ok action=none`));
     introDays = 13;
     await runTokenCheck(deps());
     expect(refreshCalls()).toHaveLength(1);
@@ -200,7 +210,7 @@ describe('2. renewal', () => {
     expect(used).toEqual([SECRETS.newAccess]);
     await prisma.linkedInPost.deleteMany({ where: { campaignId: c.id } });
   });
-  it('introspection unavailable → the stored expiry from the last renewal is used; with neither, nothing is done', async () => {
+  it('introspection unavailable → the stored expiry from the last renewal is used; with neither, the expiry is estimated (never unknown)', async () => {
     introDays = 13;
     await runTokenCheck(deps()); // renews, stores accessExpiresAt = now + 60 days
     calls = [];
@@ -209,15 +219,107 @@ describe('2. renewal', () => {
     expect(refreshCalls()).toHaveLength(1);
     await prisma.linkedInToken.deleteMany({ where: { page: PAGE } });
     calls = [];
-    await runTokenCheck(deps()); // no stored expiry, no introspection: unknown
+    await runTokenCheck(deps()); // no stored expiry, no introspection: estimated from when the token was first seen
     expect(refreshCalls()).toHaveLength(0);
-    expect(logs.join('\n')).toContain('access_left_days=unknown');
+    expect(logs.join('\n')).not.toContain('access_left_days=unknown');
+    expect(logs.join('\n')).toMatch(/\(source=estimate\)/);
   });
   it('an expired / revoked token (introspection says inactive) is renewed at once', async () => {
     introDays = 30;
     introActive = false;
     await runTokenCheck(deps());
     expect(refreshCalls()).toHaveLength(1);
+  });
+});
+
+describe('A. the expiry is never unknown', () => {
+  const failures: ['http_401' | 'no_expires_at' | 'network', string][] = [['http_401', 'http_401'], ['no_expires_at', 'no_expires_at'], ['network', 'network']];
+  it.each(failures)('A1: the inspector fails (%s) → the reason is in the log line; expiry = the row\'s createdAt + 60 days, source "estimate"; at 13 days left a renewal is attempted', async (mode, reason) => {
+    introDays = null;
+    introFail = mode;
+    await runTokenCheck(deps());
+    let r = (await row())!;
+    expect(r.accessExpiresSource).toBe('estimate');
+    expect(r.accessExpiresAt!.getTime()).toBe(r.createdAt.getTime() + 60 * DAY);
+    expect(refreshCalls()).toHaveLength(0);
+    expect(logs.join('\n')).toMatch(new RegExp(`\\[linkedin-token\\] page=${PAGE} access_left_days=\\d+ \\(source=estimate\\) refresh_left_days=\\S+ introspect=${reason} action=none`));
+    // 13 days before the estimate: renew
+    await runTokenCheck(deps(new Date(r.createdAt.getTime() + 47 * DAY)));
+    expect(refreshCalls()).toHaveLength(1);
+    r = (await row())!;
+    expect(r.accessExpiresSource).toBe('renewal');
+  });
+  it('A2: a 200 with expires_at → source "linkedin" and the estimate is replaced; a successful renewal → source "renewal", date = now + expires_in', async () => {
+    introDays = null;
+    introFail = 'no_expires_at';
+    await runTokenCheck(deps());
+    expect((await row())!.accessExpiresSource).toBe('estimate');
+    introDays = 25;
+    await runTokenCheck(deps());
+    const r = (await row())!;
+    expect(r).toMatchObject({ accessExpiresSource: 'linkedin' });
+    expect(r.accessExpiresAt!.getTime()).toBe(at(25).getTime());
+    expect(logs.join('\n')).toMatch(/\(source=linkedin\) refresh_left_days=\S+ introspect=ok action=none/);
+    introDays = 13;
+    await runTokenCheck(deps());
+    const renewed = (await row())!;
+    expect(renewed.accessExpiresSource).toBe('renewal');
+    expect(renewed.accessExpiresAt!.getTime()).toBe(NOW.getTime() + 5_184_000 * 1000);
+    // a later estimate never overwrites a real date: the inspector is down again, the renewal's date stays
+    introDays = null;
+    await runTokenCheck(deps(at(1)));
+    expect(await row()).toMatchObject({ accessExpiresSource: 'renewal' });
+    expect((await row())!.accessExpiresAt!.getTime()).toBe(NOW.getTime() + 5_184_000 * 1000);
+  });
+  it('A3: LINKEDIN_ACCESS_TOKEN_TTL_DAYS changes the estimate; invalid or missing → 60', async () => {
+    introDays = null;
+    env.linkedin.tokenRefresh.accessTtlDays = 30;
+    await runTokenCheck(deps());
+    const r = (await row())!;
+    expect(r.accessExpiresAt!.getTime()).toBe(r.createdAt.getTime() + 30 * DAY);
+    env.linkedin.tokenRefresh.accessTtlDays = 60;
+    await runTokenCheck(deps()); // the estimate is recomputed with the new lifetime (no real date exists)
+    expect((await row())!.accessExpiresAt!.getTime()).toBe(r.createdAt.getTime() + 60 * DAY);
+    const parse = async (v: string | undefined): Promise<number> => {
+      const old = process.env.LINKEDIN_ACCESS_TOKEN_TTL_DAYS;
+      if (v === undefined) delete process.env.LINKEDIN_ACCESS_TOKEN_TTL_DAYS;
+      else process.env.LINKEDIN_ACCESS_TOKEN_TTL_DAYS = v;
+      let out = 0;
+      await jest.isolateModulesAsync(async () => {
+        out = (await import('../lib/env')).env.linkedin.tokenRefresh.accessTtlDays;
+      });
+      if (old === undefined) delete process.env.LINKEDIN_ACCESS_TOKEN_TTL_DAYS;
+      else process.env.LINKEDIN_ACCESS_TOKEN_TTL_DAYS = old;
+      return out;
+    };
+    expect(await parse('30')).toBe(30);
+    expect(await parse(undefined)).toBe(60);
+    for (const bad of ['', 'abc', '0', '-5', '12.5', '400', '1e2x']) expect(await parse(bad)).toBe(60);
+  });
+  it('A4: tokenStatus reports the source, and the screen says "about" only for an estimate', async () => {
+    introDays = null;
+    await runTokenCheck(deps());
+    expect((await tokenStatus(PAGE, NOW))!.validUntilSource).toBe('estimate');
+    introDays = 30;
+    await runTokenCheck(deps());
+    expect((await tokenStatus(PAGE, NOW))!.validUntilSource).toBe('linkedin');
+    introDays = 13;
+    await runTokenCheck(deps());
+    expect((await tokenStatus(PAGE, NOW))!.validUntilSource).toBe('renewal');
+    // the screen's wording is a one-line template (admin/src/views/LinkedIn.vue); pin it so a change can't drop the rule
+    const vue = readFileSync(path.join(__dirname, '../../admin/src/views/LinkedIn.vue'), 'utf8');
+    expect(vue).toContain("t.validUntilSource === 'estimate' ? 'about ' : ''");
+  });
+  it('the failure email says "about" while the date is an estimate', async () => {
+    introDays = null;
+    await runTokenCheck(deps());
+    const r = (await row())!;
+    refreshReply = () => ({ status: 503, json: {} });
+    await runTokenCheck(deps(new Date(r.createdAt.getTime() + 49 * DAY)));
+    expect(mails).toHaveLength(1);
+    expect(mails[0].subject).toMatch(/\(about 11 days left\)/);
+    expect(mails[0].text).toContain('about 11 days left');
+    expect(mails[0].text).toContain('until about');
   });
 });
 
@@ -364,6 +466,7 @@ describe('7. no secret leaves the server', () => {
       api: list.body,
     });
     const plaintexts = [...Object.values(SECRETS), KEY, `${SECRETS.envRefresh}-2`];
+    expect(logs.join('\n')).toMatch(/introspect=ok/);
     for (const s of plaintexts) {
       expect(everything).not.toContain(s);
       expect(backup).not.toContain(s);
@@ -374,7 +477,7 @@ describe('7. no secret leaves the server', () => {
     introDays = 6;
     await runTokenCheck(deps());
     const t = (await tokenStatus(PAGE, NOW))!;
-    expect(Object.keys(t).sort()).toEqual(['autoRenew', 'refreshUntil', 'renewalFailed', 'renewedAt', 'status', 'validUntil']);
+    expect(Object.keys(t).sort()).toEqual(['autoRenew', 'refreshUntil', 'renewalFailed', 'renewedAt', 'status', 'validUntil', 'validUntilSource']);
     expect(t.status).toBe('ok');
     introDays = 10;
     await prisma.linkedInToken.updateMany({ where: { page: PAGE }, data: { accessExpiresAt: at(10) } });
