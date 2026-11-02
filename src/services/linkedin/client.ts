@@ -163,3 +163,50 @@ export async function uploadImage(r: { orgUrn: string; accessToken: string; byte
     clearTimeout(t2);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Is the uploaded picture ready? (the upload is asynchronous)         */
+/* ------------------------------------------------------------------ */
+
+export const IMAGE_POLLS = 4;
+export const IMAGE_POLL_GAP_MS = 1500;
+const STATUS_TIMEOUT_MS = 10_000;
+
+export type ImageReady = { ok: true } | { ok: false; reason: 'processing' | 'processing_failed' | 'status_network' | `status_${number}` };
+
+/**
+ * After the PUT the image is WAITING_UPLOAD / PROCESSING until LinkedIn has made it (AVAILABLE). Posting before that can be
+ * rejected (a 4xx about the thumbnail), so look at `GET /rest/images/<urn>` (LinkedIn "Images API": the `status` field) up to
+ * 4 times, 1.5 s apart (about 4.5 s of waiting). Anything but AVAILABLE, or any error from the status call, means "post without
+ * the thumbnail": the reason is a fixed word, never a body.
+ */
+export async function waitForImage(
+  r: { urn: string; accessToken: string },
+  fetchImpl: FetchLike = fetch,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((res) => setTimeout(res, ms)),
+): Promise<ImageReady> {
+  if (!IMAGE_URN.test(r.urn)) return { ok: false, reason: 'status_network' };
+  for (let i = 0; i < IMAGE_POLLS; i += 1) {
+    if (i > 0) await sleep(IMAGE_POLL_GAP_MS);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), STATUS_TIMEOUT_MS);
+    try {
+      const res = await fetchImpl(`https://api.linkedin.com/rest/images/${r.urn}`, {
+        method: 'GET',
+        signal: ctrl.signal,
+        headers: { Authorization: `Bearer ${r.accessToken}`, 'LinkedIn-Version': env.linkedin.apiVersion, 'X-Restli-Protocol-Version': '2.0.0' },
+      });
+      if (!res.ok) return { ok: false, reason: `status_${res.status}` };
+      const j = (await res.json()) as { status?: unknown };
+      if (j.status === 'AVAILABLE') return { ok: true };
+      if (j.status === 'PROCESSING_FAILED') return { ok: false, reason: 'processing_failed' };
+      // WAITING_UPLOAD / PROCESSING / anything unexpected: look again
+    } catch (err) {
+      void err; // a timeout and a network error are the same to the caller: no verdict on the picture
+      return { ok: false, reason: 'status_network' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { ok: false, reason: 'processing' };
+}

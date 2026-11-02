@@ -49,3 +49,27 @@ git worktree remove ../taxscan-push-worktrees/linkedin-article-thumbnail
 dropdb taxscan_push_build_linkedin_article_thumbnail; dropdb taxscan_push_build_linkedin_article_thumbnail_shadow
 git branch -D build/linkedin-article-thumbnail; git push origin --delete build/linkedin-article-thumbnail
 ```
+
+---
+
+# Follow-up 1 (planning review): wait for the image, and a post rejected because of the thumbnail still goes out
+
+- **Same branch** `build/linkedin-article-thumbnail`, one more code commit (hash in `git log`).
+
+## Files changed
+- `src/services/linkedin/client.ts` — `waitForImage()`: after the PUT, `GET https://api.linkedin.com/rest/images/<urn>` (same headers; the raw URN in the path, as the Images API page shows) up to **4 looks, 1.5 s apart** (about 4.5 s of waiting; the clock is injectable). `status` AVAILABLE → ok; WAITING_UPLOAD / PROCESSING / anything else → look again; after the 4th look still not ready → `processing`; PROCESSING_FAILED → `processing_failed`; a non-OK answer → `status_<code>`; a network error / timeout → `status_network`; a malformed URN → `status_network` (no call). The reasons are fixed words, never a body.
+- `src/services/linkedin/worker.ts` — after a successful upload the thumbnail is attached only if the image is ready, else the post goes out without it with `image=none:<reason>`. If the post WITH a thumbnail comes back `failed` (a client error that is not 401 / 403 / 429), the same attempt repeats the post once without `thumbnail` and logs `image=dropped:<status>`; the repeat's verdict is the attempt's (T3b: if it fails too, the row is FAILED with the repeat's error). New injectable dep `waitImage`.
+- `docs/LINKEDIN_POSTING.md` — steps 4, 6, 7 and the log line.
+- Tests: `linkedinWorker.test.ts` — "follow-up 1" block (T1–T5 plus the cases below); every other worker scenario that uploads a picture now gets an injected "ready" (`deps()` default), so no test can reach LinkedIn's status endpoint.
+
+## Results (verbatim)
+- tsc clean; lint clean. Area tests `src/__tests__/linkedin*`: `Test Suites: 4 passed, 4 total` / `Tests: 97 passed, 97 total`. No full suite (area tests only, as asked); each file in one jest process.
+
+## Acceptance
+- T1 PASS (the status stays PROCESSING for all 4 looks: exactly 4 GETs, posted without a thumbnail, `image=none:processing`, status POSTED). T2 PASS (PROCESSING then AVAILABLE: 2 looks, thumbnail attached, `image=ok`). T3 PASS (422 with the thumbnail, then success without: exactly 2 post calls, the second without `thumbnail` but with the same description and commentary, `image=dropped:422`, POSTED, attempts 1, no error). T4 PASS (a 500 with the thumbnail: the normal retry, exactly 1 post call, the row PENDING; also a 429 and a network error are not repeated). T5 PASS (a 401: auth-stop, 1 post call, no repeat).
+- Also covered: an error from the status call (`status_404`) and a failed processing → no thumbnail; the repeat failing too → FAILED with the repeat's error (2 calls only); a client error on a post that had NO thumbnail is not repeated; `waitForImage` itself (never more than 4 looks, the 1.5 s gaps, the headers, fixed reasons, the token never echoed).
+
+## Worth remembering
+- A post that dropped its picture because of a client error is the one case where the same attempt makes two post calls. If the FIRST call had in fact created the post (it should not on a 4xx) a duplicate could appear; LinkedIn documents 4xx as "not created", and the unique `LinkedInPost` row still prevents any second automatic post.
+- `PROCESSING_FAILED` is reported as `image=none:processing_failed` (the brief names only `processing` and `status_<code>`).
+- Still unverified against real LinkedIn: the first live post will show `image=ok` / `none:…` / `dropped:…` in the log line.

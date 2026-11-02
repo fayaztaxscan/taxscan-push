@@ -9,7 +9,7 @@ import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { istDay } from '../whatsapp/queue';
-import { postToLinkedIn, uploadImage, type LinkedInResult } from './client';
+import { postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
 import { fetchCoverImage } from './image';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
 import { refreshActiveTokens } from './token';
@@ -47,6 +47,8 @@ export type WorkerDeps = {
   /** The cover-picture fetch and the Images API upload (tests mock them). */
   fetchImage?: typeof fetchCoverImage;
   uploadImage?: typeof uploadImage;
+  /** Waits for the uploaded image to be AVAILABLE (tests mock it or pass a fake clock). */
+  waitImage?: typeof waitForImage;
   fetchCms?: (slug: string) => Promise<CmsArticle | null>;
   emailSender?: EmailSender;
   isEmailConfigured?: () => boolean;
@@ -193,16 +195,27 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       else {
         const up = await (d.uploadImage ?? uploadImage)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, bytes: img.bytes, contentType: img.contentType });
         if (up.kind === 'ok') {
-          thumbnail = up.urn;
-          image = 'ok';
+          // The upload is asynchronous: only attach the picture once LinkedIn says it is AVAILABLE, else post without it.
+          const ready = await (d.waitImage ?? waitForImage)({ urn: up.urn, accessToken: cfg.accessToken });
+          if (ready.ok) {
+            thumbnail = up.urn;
+            image = 'ok';
+          } else image = `none:${ready.reason}`;
         } else if (up.kind === 'auth') {
           uploadAuth = { kind: 'auth', status: up.status, error: up.error };
         } else image = `none:${up.reason}`;
       }
     }
-    const result: LinkedInResult =
-      uploadAuth ??
-      (await (d.post ?? postToLinkedIn)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, commentary: post.commentary, title: post.title, link: post.link, description: post.description, ...(thumbnail ? { thumbnail } : {}) }));
+    const send = (withThumbnail: boolean) =>
+      (d.post ?? postToLinkedIn)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, commentary: post.commentary, title: post.title, link: post.link, description: post.description, ...(withThumbnail && thumbnail ? { thumbnail } : {}) });
+    let result: LinkedInResult = uploadAuth ?? (await send(true));
+    // A post REJECTED with a client error while it carried a thumbnail (a 4xx that is not 401 / 403 / 429: our `failed` verdict)
+    // is repeated ONCE, right away, without the thumbnail. Safe: a 4xx means LinkedIn did not create the first post. A picture
+    // must never stop a post. 2xx, 5xx, 429 and network errors are NOT repeated here (they follow the normal retry rules).
+    if (thumbnail && result.kind === 'failed') {
+      image = `dropped:${result.status ?? 'unknown'}`;
+      result = await send(false);
+    }
     if (result.kind === 'posted') {
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'POSTED', linkedinPostId: result.postId === 'unknown' ? null : result.postId, postedAt: now, error: null, nextAttemptAt: null } });
       if (result.postId === 'unknown') await prisma.linkedInPost.update({ where: { id: row.id }, data: { error: 'posted, but LinkedIn returned no post id — check the page' } });
