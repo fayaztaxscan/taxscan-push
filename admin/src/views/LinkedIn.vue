@@ -25,6 +25,15 @@ type ListResponse = {
   rows: Row[];
   counts: Counts;
   login: { since: string; status: number | null } | null;
+  token?: TokenInfo;
+};
+type TokenInfo = {
+  validUntil: string | null;
+  refreshUntil: string | null;
+  autoRenew: boolean;
+  renewalFailed: boolean;
+  renewedAt: string | null;
+  status: 'ok' | 'amber' | 'red';
 };
 type Filter = 'all' | 'waiting' | 'posted' | 'failed' | 'skipped';
 
@@ -45,6 +54,7 @@ const filter = ref<Filter>('all');
 const rows = ref<Row[]>([]);
 const counts = ref<Counts>({ waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 });
 const login = ref<ListResponse['login']>(null);
+const token = ref<TokenInfo | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const note = ref<string | null>(null);
@@ -103,6 +113,19 @@ const loginText = computed(() => {
   return `LinkedIn rejected the access token${st} since ${when}. Posting is stopped until a new token is set in Railway or the app restarts.`;
 });
 
+function longDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+}
+const tokenText = computed(() => {
+  const t = token.value;
+  if (!t) return '';
+  const parts = [t.validUntil ? `Token valid until ${longDate(t.validUntil)}` : 'Token expiry not read yet'];
+  parts.push(t.autoRenew ? 'renews automatically' : 'renewal is not fully set up');
+  if (t.refreshUntil) parts.push(`yearly sign-in due by ${longDate(t.refreshUntil)}`);
+  if (t.renewalFailed) parts.push('last renewal failed');
+  return parts.join(' · ');
+});
+
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
@@ -111,6 +134,7 @@ async function load(): Promise<void> {
     rows.value = data.rows;
     counts.value = data.counts;
     login.value = data.login;
+    token.value = data.token ?? null;
   } catch (e) {
     error.value = apiErrorMessage(e);
   } finally {
@@ -214,6 +238,8 @@ onMounted(load);
       unless a post fails.
     </p>
 
+    <p v-if="token" class="li-token" :class="'t-' + token.status" data-testid="li-token">{{ tokenText }}</p>
+
     <div v-if="login" class="banner warn" role="alert">{{ loginText }}</div>
 
     <div class="li-controls">
@@ -312,6 +338,20 @@ onMounted(load);
 </template>
 
 <style scoped>
+.li-token {
+  font-size: 13px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.li-token.t-amber {
+  color: var(--warn);
+  font-weight: 600;
+}
+.li-token.t-red {
+  color: var(--danger);
+  font-weight: 600;
+}
 .li-controls {
   display: flex;
   flex-wrap: wrap;

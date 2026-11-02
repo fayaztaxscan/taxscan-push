@@ -610,8 +610,25 @@ export const env = {
     })(),
     apiVersion: (process.env.LINKEDIN_API_VERSION ?? '').trim() || '202603',
     pages: {
-      taxscan: { orgUrn: (process.env.LINKEDIN_TAXSCAN_ORG_URN ?? '').trim(), accessToken: (process.env.LINKEDIN_TAXSCAN_ACCESS_TOKEN ?? '').trim() },
-    } as Record<string, { orgUrn: string; accessToken: string }>,
+      taxscan: {
+        orgUrn: (process.env.LINKEDIN_TAXSCAN_ORG_URN ?? '').trim(),
+        accessToken: (process.env.LINKEDIN_TAXSCAN_ACCESS_TOKEN ?? '').trim(),
+        // The refresh token (about a year) and, if LinkedIn doesn't report it, when it expires (ISO).
+        refreshToken: (process.env.LINKEDIN_TAXSCAN_REFRESH_TOKEN ?? '').trim(),
+        refreshExpiresAt: (() => {
+          const t = Date.parse(process.env.LINKEDIN_TAXSCAN_REFRESH_EXPIRES_AT ?? '');
+          return Number.isNaN(t) ? null : new Date(t);
+        })(),
+      },
+    } as Record<string, { orgUrn: string; accessToken: string; refreshToken?: string; refreshExpiresAt?: Date | null }>,
+    // Automatic renewal of the access token with the refresh token (docs/LINKEDIN_POSTING.md "Token renewal"). Default off.
+    // One LinkedIn app serves every page (client id / secret); the key encrypts the renewed token in Postgres (32 bytes, base64).
+    tokenRefresh: {
+      enabled: process.env.LINKEDIN_TOKEN_REFRESH_ENABLED === 'true',
+      clientId: (process.env.LINKEDIN_CLIENT_ID ?? '').trim(),
+      clientSecret: (process.env.LINKEDIN_CLIENT_SECRET ?? '').trim(),
+      key: (process.env.LINKEDIN_TOKEN_KEY ?? '').trim(),
+    },
   },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),

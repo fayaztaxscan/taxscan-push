@@ -129,6 +129,10 @@ to keep.
 `Subscriber` (live rows only), `User`, `ReportRecipient`, `Campaign` and
 `FeedItem` — about 1 MB — to an S3-compatible bucket.
 
+**`LinkedInToken` (the renewed LinkedIn access token, encrypted) is deliberately NOT in the export** — a credential, and useless without
+`LINKEDIN_TOKEN_KEY`. After a restore the `LINKEDIN_<PAGE>_ACCESS_TOKEN` env value is used and the next daily renewal re-creates the row
+(see `docs/LINKEDIN_POSTING.md`, "Token renewal").
+
 **`LinkedInPost` (the LinkedIn page posting log) is deliberately NOT in the export either.** After a restore keep
 `LINKEDIN_POSTING_ENABLED` off and set `LINKEDIN_POST_FROM` to the restore time before switching it back on; with the rows
 gone, anything pushed earlier would otherwise post to LinkedIn a second time. See `docs/LINKEDIN_POSTING.md`.
