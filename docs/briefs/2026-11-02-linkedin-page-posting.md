@@ -169,3 +169,25 @@ Each one must PASS in the REPORT.
 2. In the same sitting: set `sheet_to_linkedin` `"enabled": false` in `taxscan-automation/config.json` and push, set
    `LINKEDIN_POST_FROM` to the current time (UTC ISO), then `LINKEDIN_POSTING_ENABLED=true`.
 3. Watch the first `[linkedin] … outcome=posted` line and the post on the page.
+
+---
+
+## Follow-up 1 (owner, 2 Nov): manually composed pushes go to LinkedIn too, but test sends never do
+
+> Owner: "even the manually composed one should go to linked like it goes for push notification."
+
+**In:**
+1. Make it explicit (code comment + test): the worker selects by `status = SENT` + `portal` + article URL, **whoever
+   sent it**. So Compose "Send now", a scheduled Compose send (run later by the sweeper), Queue/Review "Push now" and
+   Breaking all post, exactly like the pacer's sends. Don't filter on `createdByUserId`, `sendQueue` or Breaking.
+2. **Exclude test sends.** A campaign whose `target` is ONLY the test-segment topic (`env.testSegmentTopic`, used by
+   ADMIN `/api/admin/subscribers/:id/test-segment`) must never post to LinkedIn. "Test on this device" creates no
+   Campaign, so nothing to do there. Apply the same exclusion to the WhatsApp queue (`getQueue` / `markArticle`) with
+   one shared predicate, e.g. `isPublicArticleCampaign()` in `src/services/social/`.
+3. Compose sends to a non-article taxscan.in URL (home page, a section page) or to academy/shop stay excluded, as before.
+
+**Acceptance tests:**
+H1. Seeded SENT campaigns: (a) pacer send, (b) Compose send with `createdByUserId`, target All, (c) Compose send to a
+    topic, (d) a scheduled Compose send marked SENT by the sweeper → all four post, in `lastSentAt` order.
+H2. A SENT Compose campaign targeted only at the test-segment topic → not posted, and not on the WhatsApp list.
+H3. The WhatsApp tests still pass with the shared predicate.
