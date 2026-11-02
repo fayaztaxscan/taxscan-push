@@ -183,17 +183,25 @@ async function postForm(url: string, form: Record<string, string>, f: FetchLike)
   }
 }
 
-/** When the token expires, per LinkedIn's token inspector. null = unavailable (the stored expiry is used). */
-export async function introspect(token: string, f: FetchLike = fetch): Promise<{ active: boolean; expiresAt: Date | null } | null> {
+/** Why the token inspector gave (or didn't give) an expiry. Never a response body, never a secret. */
+export type IntrospectReason = 'ok' | 'no_expires_at' | 'network' | `http_${number}`;
+export type Introspection = { active: boolean | null; expiresAt: Date | null; reason: IntrospectReason };
+
+/**
+ * When the token expires, per LinkedIn's token inspector (POST /oauth/v2/introspectToken, form client_id / client_secret / token;
+ * `expires_at` is documented as OPTIONAL, and a client mismatch answers 200 with active:false). Always returns a verdict with a
+ * reason: `ok` (an expiry came back), `no_expires_at` (200 without one), `http_<status>` or `network`.
+ */
+export async function introspect(token: string, f: FetchLike = fetch): Promise<Introspection> {
   const tr = env.linkedin.tokenRefresh;
   try {
     const r = await postForm(INTROSPECT_URL, { client_id: tr.clientId, client_secret: tr.clientSecret, token }, f);
-    if (r.status !== 200 || !r.json) return null;
+    if (r.status !== 200 || !r.json) return { active: null, expiresAt: null, reason: `http_${r.status}` };
     const exp = typeof r.json.expires_at === 'number' ? new Date(r.json.expires_at * 1000) : null;
     const active = r.json.active === false || r.json.status === 'expired' || r.json.status === 'revoked' ? false : true;
-    return { active, expiresAt: exp };
+    return { active, expiresAt: exp, reason: exp ? 'ok' : 'no_expires_at' };
   } catch {
-    return null;
+    return { active: null, expiresAt: null, reason: 'network' };
   }
 }
 
@@ -296,11 +304,28 @@ async function checkPage(page: string, key: Buffer, d: TokenDeps, now: Date): Pr
 
   // 1. when does the active token expire?
   const intro = await introspect(active, f);
-  const accessExpiresAt = intro?.expiresAt ?? row.accessExpiresAt ?? null;
-  const accessLeft = intro && intro.active === false ? -1 : daysLeft(accessExpiresAt, now);
+  // LinkedIn's date wins; else the stored one (a renewal's, or an earlier inspector date); else ESTIMATE it from when this env
+  // token was first seen (the row's createdAt) plus the access-token lifetime, so the expiry is never unknown.
+  type Source = 'linkedin' | 'stored' | 'estimate';
+  let accessExpiresAt: Date;
+  let source: Source;
+  if (intro.expiresAt) {
+    accessExpiresAt = intro.expiresAt;
+    source = 'linkedin';
+  } else if (row.accessExpiresAt && row.accessExpiresSource !== 'estimate') {
+    accessExpiresAt = row.accessExpiresAt;
+    source = 'stored';
+  } else {
+    accessExpiresAt = new Date(row.createdAt.getTime() + env.linkedin.tokenRefresh.accessTtlDays * DAY_MS);
+    source = 'estimate';
+  }
+  const accessLeft = intro.active === false ? -1 : daysLeft(accessExpiresAt, now);
   const refreshExpiresAt = row.refreshExpiresAt ?? cfg.refreshExpiresAt ?? null;
   const refreshLeft = daysLeft(refreshExpiresAt, now);
-  row = await prisma.linkedInToken.update({ where: { id: row.id }, data: { lastCheckAt: now, ...(intro?.expiresAt ? { accessExpiresAt: intro.expiresAt } : {}) } });
+  row = await prisma.linkedInToken.update({
+    where: { id: row.id },
+    data: { lastCheckAt: now, accessExpiresAt, accessExpiresSource: source === 'stored' ? row.accessExpiresSource ?? 'linkedin' : source },
+  });
 
   let action: PageCheck['action'] = 'none';
   const state = await readState(page);
@@ -321,6 +346,7 @@ async function checkPage(page: string, key: Buffer, d: TokenDeps, now: Date): Pr
           data: {
             accessTokenEnc: encryptSecret(r.accessToken, key),
             accessExpiresAt: new Date(now.getTime() + r.expiresInS * 1000),
+            accessExpiresSource: 'renewal',
             ...(r.refreshExpiresInS !== null ? { refreshExpiresAt: new Date(now.getTime() + r.refreshExpiresInS * 1000) } : {}),
             ...(r.refreshToken && r.refreshToken !== refreshToken ? { refreshTokenEnc: encryptSecret(r.refreshToken, key) } : {}),
             renewedAt: now,
@@ -344,8 +370,9 @@ async function checkPage(page: string, key: Buffer, d: TokenDeps, now: Date): Pr
       if (failure.permanent) next.blockedFp = sha256(`${cfg.accessToken}|${cfg.refreshToken ?? ''}`);
       const today = istDay(now);
       if (state.failAlertDay !== today) {
-        const left = accessLeft < 0 ? 'The current access token has EXPIRED' : `The current access token has ${accessLeft} day${accessLeft === 1 ? '' : 's'} left`;
-        const sent = await mail('failed', `LinkedIn token could not be renewed (${accessLeft < 0 ? 'expired' : `${accessLeft} days left`})`, `Taxscan Push could not renew the ${page} LinkedIn access token automatically. ${left}${accessExpiresAt ? ` (until ${fmtDate(accessExpiresAt)})` : ''}. ${lastError}\n\nPosts keep going out until it expires.`, d);
+        const about = source === 'estimate' ? 'about ' : '';
+        const left = accessLeft < 0 ? 'The current access token has EXPIRED' : `The current access token has ${about}${accessLeft} day${accessLeft === 1 ? '' : 's'} left`;
+        const sent = await mail('failed', `LinkedIn token could not be renewed (${accessLeft < 0 ? 'expired' : `${source === 'estimate' ? 'about ' : ''}${accessLeft} days left`})`, `Taxscan Push could not renew the ${page} LinkedIn access token automatically. ${left} (${source === 'estimate' ? 'until about' : 'until'} ${fmtDate(accessExpiresAt)}${source === 'estimate' ? '; an estimate, LinkedIn did not give the date' : ''}). ${lastError}\n\nPosts keep going out until it expires.`, d);
         if (sent) next.failAlertDay = today;
       }
       await writeState(page, next);
@@ -366,7 +393,7 @@ async function checkPage(page: string, key: Buffer, d: TokenDeps, now: Date): Pr
   const accessLeftNow = daysLeft(after?.accessExpiresAt ?? accessExpiresAt, now);
   const refreshLeftNow = daysLeft(after?.refreshExpiresAt ?? refreshExpiresAt, now);
   // eslint-disable-next-line no-console
-  console.log(`[linkedin-token] page=${page} access_left_days=${fmtDays(accessLeftNow)} refresh_left_days=${fmtDays(refreshLeftNow)} action=${action}`);
+  console.log(`[linkedin-token] page=${page} access_left_days=${fmtDays(accessLeftNow)} (source=${action === 'renewed' ? 'renewal' : source}) refresh_left_days=${fmtDays(refreshLeftNow)} introspect=${intro.reason} action=${action}`);
   return { page, accessLeftDays: accessLeftNow, refreshLeftDays: refreshLeftNow, action };
 }
 
@@ -400,6 +427,8 @@ export async function runTokenCheck(d: TokenDeps = {}): Promise<TokenRunResult> 
 
 export type TokenStatus = {
   validUntil: string | null;
+  /** Where validUntil came from: 'linkedin' | 'renewal' | 'estimate' (the screen says "about" only for an estimate). */
+  validUntilSource: 'linkedin' | 'renewal' | 'estimate' | null;
   refreshUntil: string | null;
   autoRenew: boolean;
   renewalFailed: boolean;
@@ -420,6 +449,7 @@ export async function tokenStatus(page: string, nowDate: Date = new Date()): Pro
   const status: TokenStatus['status'] = renewalFailed ? 'red' : (a !== null && a < RENEW_WITHIN_DAYS) || (r !== null && r < YEARLY_WARN_DAYS) ? 'amber' : 'ok';
   return {
     validUntil: validUntil ? validUntil.toISOString() : null,
+    validUntilSource: validUntil ? ((row?.accessExpiresSource as TokenStatus['validUntilSource']) ?? 'linkedin') : null,
     refreshUntil: refreshUntil ? refreshUntil.toISOString() : null,
     autoRenew: renewalConfigProblem() === null,
     renewalFailed,

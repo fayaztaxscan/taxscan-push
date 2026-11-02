@@ -88,6 +88,8 @@ more than half the machine.** That means:
   foundation: the Prisma schema / a migration, auth / sessions / roles, the push send path or pacer
   (`send.ts`, `pacer.ts`, `executeCampaign`), config / env loading, or the admin's shared `useApi`. Say which applied.
 - Every acceptance test in the brief must pass, or be marked FAILED in the REPORT with its output.
+- **Never run the same test file in two jest processes against one database** (2 Nov): files share a cleanup prefix and
+  delete each other's rows, which looks like a flake. For a stress run, loop the file in ONE process beside a full suite of the OTHER files.
 - Known flaky test: eventRetention "lifetime totals" under parallel workers. Re-run it alone before calling it
   a failure, and say you did.
 

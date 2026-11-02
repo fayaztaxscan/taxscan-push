@@ -233,9 +233,10 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
   const postFrom = (d.postFrom === undefined ? env.linkedin.postFrom : d.postFrom) as Date;
   const portals = d.portals ?? PORTAL_TO_PAGE;
 
-  // 1. In-flight rows with no result after 10 minutes: unknown, never re-posted.
+  // 1. In-flight rows with no result after 10 minutes: unknown, never re-posted. Only the pages THIS tick handles: a row of a page
+  //    it does not post for is not its to judge (in production that is every page; it matters when ticks of different pages overlap).
   const stale = await prisma.linkedInPost.updateMany({
-    where: { status: 'PENDING', nextAttemptAt: null, updatedAt: { lt: new Date(now.getTime() - STALE_MS) } },
+    where: { page: { in: [...new Set(Object.values(portals))] }, status: 'PENDING', nextAttemptAt: null, updatedAt: { lt: new Date(now.getTime() - STALE_MS) } },
     data: { status: 'FAILED', error: UNKNOWN_ERROR },
   });
   out.staleClosed = stale.count;

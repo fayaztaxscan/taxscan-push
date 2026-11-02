@@ -7,6 +7,10 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-11-02 merged to develop (`878e853`, not on main):** token-expiry-and-flaky-tests — expiry estimate (first seen + 60 d; prod renews ~18 Dec), `introspect=<reason>` in the check line; flaky tests fixed at causes (digest webhook read now `lte: now`; LinkedIn stale-close scoped to its pages; metricsWarmer + eventRetention assert invariants). **Open for a later brief:** Dashboard lifetime totals read live + rolled in two queries — a sweep commit between them can double-count/miss for ≤5 min; two more metricsWarmer tests use the fragile global 'before + 1' pattern.
+
+**▶ 2026-11-02 PR #96 LIVE 16:48 IST:** LinkedIn token auto-renewal ON (all values set; refresh token verified 401-on-API = refresh, access token verified 403 = valid; refresh expires ~2027-11-02). First LinkedIn post 2 Nov ~16:40 (`hashtags=cms`). **GAP:** first check logged `access_left_days=unknown` (introspection returned nothing; env token has no stored expiry) → code does nothing → token would silently expire ~1 Jan. Fix proposed: log introspection status; estimate expiry = first-seen + 60 d; screen says "about". Bundle with the flaky-tests fix (digestTick complaint-rate pair, metricsWarmer, linkedinToken). Awaiting owner OK.
+
 **▶ 2026-11-02 merged to develop (not on main):** linkedin-token-refresh (`80c80d8`, flag `LINKEDIN_TOKEN_REFRESH_ENABLED` off). Flaky watch list grows: metricsWarmer "keeps the live parts live" (release check 4c0a963) and one unexplained linkedinToken "resume after login stop" failure in the build's first full run (passes 3/3 + 4/4 alone). Worth a flaky-tests brief.
 
 **▶ 2026-11-02 PR #95 LIVE ~15:40 IST:** LinkedIn posting + SOCIAL menu/channel marks/WhatsApp nudge, both flags OFF; migrations applied; boot `[linkedin] disabled`, `[whatsapp-nudge] disabled`. Next: LinkedIn switch-over (token + URN + POST_FROM + flag; owner/social lead), nudge flag + staff opt-in on phone.

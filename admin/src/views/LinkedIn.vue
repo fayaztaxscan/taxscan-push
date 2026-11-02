@@ -29,6 +29,7 @@ type ListResponse = {
 };
 type TokenInfo = {
   validUntil: string | null;
+  validUntilSource: 'linkedin' | 'renewal' | 'estimate' | null;
   refreshUntil: string | null;
   autoRenew: boolean;
   renewalFailed: boolean;
@@ -119,7 +120,7 @@ function longDate(iso: string): string {
 const tokenText = computed(() => {
   const t = token.value;
   if (!t) return '';
-  const parts = [t.validUntil ? `Token valid until ${longDate(t.validUntil)}` : 'Token expiry not read yet'];
+  const parts = [t.validUntil ? `Token valid until ${t.validUntilSource === 'estimate' ? 'about ' : ''}${longDate(t.validUntil)}` : 'Token expiry not read yet'];
   parts.push(t.autoRenew ? 'renews automatically' : 'renewal is not fully set up');
   if (t.refreshUntil) parts.push(`yearly sign-in due by ${longDate(t.refreshUntil)}`);
   if (t.renewalFailed) parts.push('last renewal failed');

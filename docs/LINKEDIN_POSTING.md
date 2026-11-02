@@ -88,7 +88,11 @@ manual job left is the **yearly sign-in**, announced by email 30 days ahead.
 **How it works.** At 10:15 IST every day (and ~2 minutes after boot) each configured page is checked:
 1. When does the token in use expire? LinkedIn's token inspector: `POST https://www.linkedin.com/oauth/v2/introspectToken` (form
    `client_id`, `client_secret`, `token`; the answer has `active`, `status` and `expires_at`, epoch seconds). If that is unavailable the
-   expiry stored at the last renewal is used; with neither, nothing is done and the log says `access_left_days=unknown`.
+   expiry stored at the last renewal is used; with neither, the expiry is **estimated** as the moment the app first saw this env token
+   (the `LinkedInToken` row's `createdAt`) plus `LINKEDIN_ACCESS_TOKEN_TTL_DAYS` (default 60), so renewal still starts ~14 days before it. The
+   estimate is marked (`accessExpiresSource = estimate`), shown on the LinkedIn screen as "valid until **about** …", and replaced as soon
+   as LinkedIn or a renewal gives a real date. The log line says why the inspector gave nothing:
+   `[linkedin-token] page=taxscan access_left_days=N (source=linkedin|stored|estimate|renewal) refresh_left_days=M introspect=ok|no_expires_at|http_<status>|network action=…`.
 2. **14 days or less left (or the token is inactive) → renew:** `POST https://www.linkedin.com/oauth/v2/accessToken`
    (`application/x-www-form-urlencoded`: `grant_type=refresh_token`, `refresh_token`, `client_id`, `client_secret`). The answer holds the
    new `access_token`, `expires_in`, the refresh token (the same one, or a new one, which is then used from then on) and
@@ -133,6 +137,7 @@ a week. The refresh token's expiry comes from `refresh_token_expires_in` (after 
 | `LINKEDIN_TAXSCAN_REFRESH_TOKEN` | — | the refresh token (about a year) |
 | `LINKEDIN_TOKEN_KEY` | — | 32 bytes, base64: encrypts the stored token |
 | `LINKEDIN_TAXSCAN_REFRESH_EXPIRES_AT` | — | optional ISO time, if LinkedIn doesn't report the refresh token's expiry |
+| `LINKEDIN_ACCESS_TOKEN_TTL_DAYS` | 60 | the access token's lifetime (1–365), used only to estimate the expiry when LinkedIn gives no date |
 
 The renewal does NOT write back into Railway variables and has no sign-in page of its own: the yearly sign-in stays in LinkedIn's OAuth tools.
 

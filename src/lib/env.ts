@@ -628,6 +628,11 @@ export const env = {
       clientId: (process.env.LINKEDIN_CLIENT_ID ?? '').trim(),
       clientSecret: (process.env.LINKEDIN_CLIENT_SECRET ?? '').trim(),
       key: (process.env.LINKEDIN_TOKEN_KEY ?? '').trim(),
+      // The access token's lifetime, used to ESTIMATE its expiry when LinkedIn's token inspector gives no date (default 60).
+      accessTtlDays: (() => {
+        const n = Number((process.env.LINKEDIN_ACCESS_TOKEN_TTL_DAYS ?? '').trim());
+        return Number.isInteger(n) && n >= 1 && n <= 365 ? n : 60;
+      })(),
     },
   },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
