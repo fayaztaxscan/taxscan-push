@@ -243,11 +243,12 @@ describe('6. alt text on every image', () => {
     const r = renderDigest({ items: worstCase(), audience: 'PREMIUM', runDate: RUN_DATE, cfg: cfg() });
     for (const tag of r.html.match(/<img\b[^>]*>/gi) ?? []) expect(tag).toMatch(/\balt="[^"]+"/);
   });
-  it('with a logo image: it carries alt="Taxscan"', () => {
-    const r = render({ logoUrl: 'https://www.taxscan.in/logo.png' });
+  it('with the header banner (an asset host): it is the one image, with alt="Taxscan"', () => {
+    const r = render({ assetBaseUrl: 'https://push.taxscan.in' });
     const imgs = r.html.match(/<img\b[^>]*>/gi) ?? [];
-    expect(imgs).toHaveLength(1);
-    expect(imgs[0]).toContain('alt="Taxscan"');
+    const banners = imgs.filter((t) => t.includes('/email/taxscan-header-1800x220.png'));
+    expect(banners).toHaveLength(1);
+    expect(banners[0]).toContain('alt="Taxscan"');
     for (const tag of imgs) expect(tag).toMatch(/\balt="[^"]+"/);
   });
   it('an off-allowlist logo is refused', () => {

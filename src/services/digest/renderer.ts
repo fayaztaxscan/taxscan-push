@@ -216,6 +216,9 @@ export function isSocialUrl(url: string): boolean {
  * `taxscan-logo-white-440.png` stays in `public/email/` because sent mail references it.
  */
 export const LOGO_PATH = '/email/taxscan-logo-on-dark-440.png';
+/** The built-in header: ONE 1800×220 image (2× of 900×110), #3b3543 edge to edge with the white logo centred. */
+export const HEADER_BANNER_PATH = '/email/taxscan-header-1800x220.png';
+const HEADER_TEXT = '#111111';
 export const LOGO_WIDTH = 220;
 export const LOGO_HEIGHT = 53;
 
@@ -224,7 +227,12 @@ const BUTTON_HEIGHT = 38;
 /** "Read More" is 96 px wide (the old newsletter's VML button is 95). */
 const READ_MORE_WIDTH = 96;
 
-/** A flat colour as a background-image too: apps that force-invert colours recolour `background-color` but leave an image alone. */
+/**
+ * A flat colour as a background-image too: apps that force-invert colours recolour `background-color` but leave an image alone.
+ * Only the brand block (a picture placeholder, no text to keep readable) uses it. The header and the buttons do NOT (owner,
+ * 2 Nov 2026): pinning their background left the text recoloured alone — white on yellow, dark on purple — so dark-mode apps
+ * now recolour background and text together, as they do for the old hand-made newsletter.
+ */
 const solid = (hex: string) => `background-image:linear-gradient(${hex},${hex});`;
 
 /**
@@ -237,7 +245,7 @@ function button(href: string, label: string, widthPx: number, heightPx = BUTTON_
   const text = esc(label);
   return (
     `<table class="ts-btnt" width="${widthPx}" cellpadding="0" cellspacing="0"><tr><td align="center" width="${widthPx}" height="${heightPx}" bgcolor="${C.button}">` +
-    `<a href="${href}" class="ts-btn" style="display:block;height:${heightPx}px;line-height:${heightPx}px;text-align:center;background-color:${C.button};${solid(C.button)}font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;">${text}</a>` +
+    `<a href="${href}" class="ts-btn" style="display:block;height:${heightPx}px;line-height:${heightPx}px;text-align:center;background-color:${C.button};font-family:${FONT};font-size:15px;font-weight:700;color:${C.buttonText};text-decoration:none;">${text}</a>` +
     `</td></tr></table>`
   );
 }
@@ -799,7 +807,7 @@ function itemRow(it: Prepared, defaultPic: string | null, logoWhiteUrl: string |
   }
   const pic = it.imageUrl ?? defaultPic;
   const picHtml = pic
-    ? `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(pic)}" width="${W}" height="${STORY_IMAGE_HEIGHT}" alt="${esc(it.title)}" style="display:block;width:${W}px;max-width:100%;height:${STORY_IMAGE_HEIGHT}px;object-fit:cover;border:0;"></a>`
+    ? `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(pic)}" width="${W}" height="${STORY_IMAGE_HEIGHT}" alt="${esc(it.title)}" style="display:block;width:100%;max-width:${W}px;height:auto;aspect-ratio:1200/628;object-fit:cover;border:0;"></a>`
     : brandBlock(href, it.title, logoWhiteUrl);
   return (
     `${open}${msoOpen(W)}<div class="ts-stcol ts-stpic" style="${col(W)}">${picHtml}</div>` +
@@ -854,6 +862,7 @@ export const TEMPLATE_PLACEHOLDERS = {
   subject: 'The subject line (the lead headline), escaped — e.g. inside <title>.',
   date: 'The digest date, “22 October 2026”.',
   home_url: 'taxscan.in with the digest UTM, for a header link.',
+  header: 'The built-in header: the Taxscan banner image, then “Daily Digest · date” (and the Premium badge) on white (table rows).',
   logo: 'The Taxscan wordmark (or logo image).',
   premium_badge: 'A “Premium” badge in the Premium digest, nothing in the Free one.',
   audience: '“Free” or “Premium”.',
@@ -861,7 +870,7 @@ export const TEMPLATE_PLACEHOLDERS = {
 export type TemplatePlaceholder = keyof typeof TEMPLATE_PLACEHOLDERS;
 export const REQUIRED_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['preheader', 'stories', 'icymi', 'ad_slot_3', 'footer'];
 /** Placeholders that expand to table rows. */
-export const ROW_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['stories', 'icymi', 'ad_slot_3', 'social', 'footer'];
+export const ROW_PLACEHOLDERS: readonly TemplatePlaceholder[] = ['header', 'stories', 'icymi', 'ad_slot_3', 'social', 'footer'];
 /** `{{name}}` in a template (the provider's own merge tags use the same braces). */
 export const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
 
@@ -885,19 +894,17 @@ export const BUILTIN_TEMPLATE_HTML =
   `<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n` +
   // Enhancement only: the layout works with this block stripped (Gmail app, Outlook).
   `<style>\n` +
-  // Light only: the email has no dark palette, so a dark-mode app has nothing of ours to switch to. The header and the
-  // yellow buttons also carry a background-image (see `solid`) — that is what protects them in the Gmail apps, which give
-  // no hook. `[data-ogsb]` / `[data-ogsc]` are Outlook.com / new Outlook's own forced-colour attributes (NOT Gmail's):
-  // they put the brand colours back where Outlook recolours them anyway.
+  // Light only: the email has no dark palette, so a dark-mode app has nothing of ours to switch to. We do NOT pin the
+  // yellow buttons' colours against it (no background-image trick, no Outlook `[data-ogsb]` / `[data-ogsc]` rules; owner,
+  // 2 Nov 2026): the app recolours the button's background and text together, so the label stays readable. The header is a
+  // picture, which apps leave alone.
   `:root{color-scheme:light;supported-color-schemes:light}img{outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:${FONT};font-size:14px;color:${C.text}}\n` +
-  `[data-ogsb] .ts-hdr{background-color:${C.brand}!important}[data-ogsb] .ts-btn{background-color:${C.button}!important}[data-ogsc] .ts-btn{color:${C.buttonText}!important}[data-ogsc] .ts-hdr-text{color:${C.brandText}!important}\n` +
   // The old newsletter's own pattern: a desktop-only block (.ml-mobile-hidden) and a phone-only block (.ml-desk-hidden, hidden
   // by its inline style and shown here). The story row already stacks by itself (inline-block columns); on phones this
   // only tightens it: white edge to edge with 20 px text padding, a full-column Read More (43 px), full-width pictures.
   `@media only screen and (max-width:600px){` +
   `.ts-outer{padding:0!important}` +
   `.ts-pad{padding-left:20px!important;padding-right:20px!important}` +
-  `.ts-hdr{padding:14px 10px 12px!important}.ts-logo{width:160px!important}` +
   `.ml-mobile-hidden{display:none!important}` +
   `.ml-desk-hidden{display:block!important;float:none!important;overflow:visible!important;width:auto!important;max-height:none!important;line-height:normal!important;text-align:center!important}` +
   `.ts-stcol{display:block!important;width:100%!important;max-width:100%!important}.ts-stgap{display:none!important}.ts-brand{max-width:100%!important}` +
@@ -912,10 +919,7 @@ export const BUILTIN_TEMPLATE_HTML =
   `<table role="presentation" class="ts-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.page};"><tr><td class="ts-outer" align="center" style="padding:16px 8px;">\n` +
   `<!--[if mso]><table role="presentation" width="${EMAIL_WIDTH}" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="${EMAIL_WIDTH}"><![endif]-->\n` +
   `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${EMAIL_WIDTH}px;margin:0 auto;border-collapse:collapse;">\n` +
-  `<tr><td class="ts-pad ts-hdr" align="center" style="${WRAP}padding:22px 20px 18px 20px;background-color:${C.brand};${solid(C.brand)}text-align:center;" bgcolor="${C.brand}">` +
-  `<a href="{{home_url}}" style="display:inline-block;min-height:44px;text-decoration:none;color:${C.brandText};">{{logo}}</a>` +
-  `<p class="ts-hdr-text" style="${WRAP}margin:10px 0 0 0;font-family:${FONT};font-size:15px;line-height:22px;color:${C.brandText};">Daily Digest &middot; {{date}}{{premium_badge}}</p>` +
-  `</td></tr>\n` +
+  `{{header}}\n` +
   `{{stories}}\n` +
   `{{icymi}}\n` +
   `{{ad_slot_3}}\n` +
@@ -949,6 +953,18 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
   const badge = premium
     ? ` <span style="display:inline-block;margin-left:8px;padding:0 10px;border:1px solid ${C.brandText};border-radius:12px;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${C.brandText};vertical-align:middle;">Premium</span>`
     : '';
+
+  // The built-in header: one banner picture (it carries its own #3b3543, so apps leave it alone), then the date line on the
+  // white card. Without an asset host (unit renders) a #3b3543 row with a white wordmark stands in for the picture.
+  const darkBadge = premium
+    ? ` <span style="display:inline-block;margin-left:8px;padding:0 10px;border:1px solid ${HEADER_TEXT};border-radius:12px;font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${HEADER_TEXT};vertical-align:middle;">Premium</span>`
+    : '';
+  const bannerRow = p.assetBaseUrl
+    ? `<tr><td align="center" style="padding:0;font-size:0;line-height:0;"><a href="${esc(p.homeHref)}" style="display:block;text-decoration:none;"><img class="ts-banner" src="${esc(`${p.assetBaseUrl}${HEADER_BANNER_PATH}`)}" width="${EMAIL_WIDTH}" alt="Taxscan" style="display:block;width:100%;max-width:${EMAIL_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none;background-color:${C.brand};color:${C.brandText};font-family:${FONT};font-size:28px;line-height:56px;font-weight:700;letter-spacing:0.08em;"></a></td></tr>`
+    : `<tr><td align="center" bgcolor="${C.brand}" style="padding:22px 20px;background-color:${C.brand};text-align:center;"><a href="${esc(p.homeHref)}" style="text-decoration:none;font-family:${FONT};font-size:28px;line-height:36px;font-weight:700;letter-spacing:0.08em;color:${C.brandText};">TAXSCAN</a></td></tr>`;
+  const header =
+    bannerRow +
+    `<tr><td class="ts-card ts-pad" data-header="1" align="center" style="${WRAP}padding:14px 20px;background-color:${C.card};text-align:center;"><p class="ts-hdr-text" style="${WRAP}margin:0;font-family:${FONT};font-size:15px;line-height:22px;color:${HEADER_TEXT};">Daily Digest &middot; ${esc(p.dateText)}${darkBadge}</p></td></tr>`;
 
   // The brand block's logo lives on the asset host; without one a text wordmark is drawn (unit tests).
   const logoWhite = p.assetBaseUrl ? `${p.assetBaseUrl}${BRAND_LOGO_PATH}` : null;
@@ -991,6 +1007,7 @@ function templateValues(p: HtmlParts): Record<TemplatePlaceholder, string> {
     subject: esc(p.subject),
     date: esc(p.dateText),
     home_url: esc(p.homeHref),
+    header,
     logo,
     premium_badge: badge,
     audience: premium ? 'Premium' : 'Free',

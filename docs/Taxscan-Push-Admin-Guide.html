@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.12 &nbsp;·&nbsp; Updated 30 October 2026
+    &nbsp;·&nbsp; Version 2.14 &nbsp;·&nbsp; Updated 2 November 2026
   </div>
 </div>
 
@@ -124,8 +124,9 @@
   <li><span class="n">8</span> The other screens — Campaigns, Reports, Reads &amp; Surfaces</li>
   <li><span class="n">9</span> The email digest — the Digests screen</li>
   <li><span class="n">10</span> Digest ads and templates</li>
-  <li><span class="n">11</span> Quick reference card</li>
-  <li><span class="n">12</span> Frequently asked questions</li>
+  <li><span class="n">11</span> The WhatsApp channel</li>
+  <li><span class="n">12</span> Quick reference card</li>
+  <li><span class="n">13</span> Frequently asked questions</li>
 </ol>
 </section>
 
@@ -165,7 +166,7 @@ you want to. This guide shows you how.</p>
   </tbody>
 </table>
 <div class="box tip"><span class="box-t">Tip — finding your way around the top menu</span>
-  The top menu is grouped by channel: <strong>Dashboard</strong>; <strong>PUSH</strong> (Compose, Review, Queue, Campaigns);
+  The top menu is grouped by channel: <strong>Dashboard</strong>; <strong>PUSH</strong> (Compose, Review, Queue, Campaigns, and WhatsApp when it is switched on);
   <strong>EMAIL</strong> (Digests, Ads, Templates); then <strong>Reports</strong>. Administrators also see an
   <strong>Admin</strong> menu (Users, Activity) &mdash; click it to open, press <em>Esc</em> to close. The group you are
   in is highlighted. On a phone the same groups appear as headings inside the ☰ menu.</div>
@@ -414,6 +415,7 @@ notification will look before sending it to anyone.</p>
   <tbody>
     <tr><td><strong>Queue</strong></td><td>Articles already approved to send, waiting their automatic slot — listed in the order they'll go out. Click <strong>Push now</strong> on any one, then confirm, to send it immediately instead of waiting its turn. At night (11 pm – 7 am) it only goes as Breaking. If the article has been deleted from the site, it is archived instead of sent.</td></tr>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
+    <tr><td><strong>WhatsApp</strong></td><td>Every pushed article as a ready-to-post WhatsApp message, with Copy, Share, Posted and Skip. See section 11.</td></tr>
     <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
     <tr><td><strong>Digests</strong></td><td>The daily email digest: preview, approve, hold or send it, and its last 14 days. See section 9. <span class="muted">Ads and Templates (open to everyone signed in) are in section 10.</span></td></tr>
     <tr><td><strong>Activity</strong> <span class="muted">(Admins only)</span></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
@@ -762,9 +764,9 @@ version <strong>will not go out</strong> until it is fixed — a slot is never s
 
 <h3>The Templates screen</h3>
 <p><strong>In use now</strong> shows what each version's next digest is built with. Until an editor activates a template,
-both use the <strong>built-in template</strong>: close to today's hand-made digest — a dark header bar with the white
-Taxscan logo, Arial throughout, dark headlines, blue links and square yellow buttons. <em>New template</em> starts from a
-copy of it. Its layout is the old Mailercloud newsletter's: a wide (900 px) email whose stories have the picture on the left and the text beside it (one column on phones), and the date in the header bar (<em>Daily Digest · 30 October 2026</em>). The <em>In case you missed it</em> stories are text only (no pictures), lined up with the story text. <strong>Preview built-in</strong> beside each version shows that built-in layout the way readers get it (recent stories or the biggest case, at phone, tablet or desktop width), whether or not a template is active — handy for comparing a draft with the default. Templates are <strong>plain email HTML</strong> with placeholders the digest fills:</p>
+both use the <strong>built-in template</strong>: close to today's hand-made digest — a dark banner picture with the white
+Taxscan logo across the top, Arial throughout, dark headlines, blue links and square yellow buttons. <em>New template</em> starts from a
+copy of it. Its layout is the old Mailercloud newsletter's: a wide (900 px) email whose stories have the picture on the left and the text beside it (one column on phones, each picture as wide as the text), and the date just below the banner on white (<em>Daily Digest · 30 October 2026</em>, with the <em>Premium</em> badge in the Premium version). In a phone's dark mode the mail app recolours the yellow buttons and their text together, so they stay readable; the banner is a picture, so it looks the same in every app. The <em>In case you missed it</em> stories are text only (no pictures), lined up with the story text. <strong>Preview built-in</strong> beside each version shows that built-in layout the way readers get it (recent stories or the biggest case, at phone, tablet or desktop width), whether or not a template is active — handy for comparing a draft with the default. Templates are <strong>plain email HTML</strong> with placeholders the digest fills:</p>
 <table>
   <thead><tr><th style="width:34%">Placeholder</th><th>What goes there</th></tr></thead>
   <tbody>
@@ -773,7 +775,7 @@ copy of it. Its layout is the old Mailercloud newsletter's: a wide (900 px) emai
     <tr><td><code>{{icymi}}</code> <span class="pill">required</span></td><td>The <em>In case you missed it</em> stories, when there are any.</td></tr>
     <tr><td><code>{{ad_slot_3}}</code> <span class="pill">required</span></td><td>The ad above the footer.</td></tr>
     <tr><td><code>{{footer}}</code> <span class="pill">required</span></td><td>Why the reader gets this email, the contact line and the postal address. Always the system's own text; it can be placed, never changed or removed.</td></tr>
-    <tr><td>Optional</td><td><code>{{subject}}</code>, <code>{{date}}</code>, <code>{{home_url}}</code>, <code>{{logo}}</code>, <code>{{premium_badge}}</code>, <code>{{audience}}</code>.</td></tr>
+    <tr><td>Optional</td><td><code>{{subject}}</code>, <code>{{date}}</code>, <code>{{home_url}}</code>, <code>{{header}}</code> (the built-in banner plus the date line), <code>{{logo}}</code>, <code>{{premium_badge}}</code>, <code>{{audience}}</code>.</td></tr>
   </tbody>
 </table>
 <p><strong>No unsubscribe link of your own.</strong> Mailercloud adds its own working unsubscribe footer ("Manage preferences … Unsubscribe") to every campaign, so the digest draws none, and a template that contains <code>{{unsubscribe_link}}</code> is refused (it would arrive as a dead link).</p>
@@ -812,7 +814,29 @@ you missed it</em>, and 3 ads). <strong>Activate</strong> stays greyed out while
 
 <!-- 11 -->
 <section class="page-break">
-<h2>11 &nbsp;Quick reference card</h2>
+<h2>11 &nbsp;The WhatsApp channel</h2>
+<p>The <strong>WhatsApp</strong> screen (menu: <strong>PUSH</strong>, after Campaigns) lists every Taxscan article we pushed, in
+the order it was pushed, each with a ready-made WhatsApp post: the headline in bold, one short line, and the link. A person
+posts it to the channel &mdash; nothing is sent to WhatsApp automatically. The screen appears only when an administrator has
+switched the feature on.</p>
+<ul>
+  <li><strong>Pick the day</strong> with <em>Today</em>, <em>Yesterday</em> or the date box (up to 14 days back). The chips
+      <strong>To do · Posted · Skipped · All</strong> show how many items each holds; the screen opens on <strong>To do</strong>.</li>
+  <li><strong>Copy</strong> puts the whole post on your clipboard (the button says <em>Copied</em> for two seconds); paste it into
+      the channel. On a phone, <strong>Share</strong> opens the share sheet with the same post, so you can pick WhatsApp directly.</li>
+  <li><strong>Copy and Share do not mark anything.</strong> After you have posted it, press <strong>Posted</strong>. Press
+      <strong>Skip</strong> for anything you don't want on the channel. Each marked item shows who marked it and when;
+      <strong>Back to To do</strong> undoes a mistake.</li>
+  <li>An article pushed twice shows once, at its first position, with <em>pushed again</em> and the later time.</li>
+</ul>
+<div class="box warn"><span class="box-t">Don't edit the link</span>
+  The link carries WhatsApp tracking (<code>utm_source=taxscan-whatsapp</code>) so our analytics can tell channel visits from
+  readers who forward links themselves. Post the text exactly as copied; change the wording around it if you must, never the link.</div>
+</section>
+
+<!-- 12 -->
+<section class="page-break">
+<h2>12 &nbsp;Quick reference card</h2>
 
 <h3>Daily checklist</h3>
 <ul>
@@ -858,9 +882,9 @@ you missed it</em>, and 3 ads). <strong>Activate</strong> stays greyed out while
 </table>
 </section>
 
-<!-- 12 -->
+<!-- 13 -->
 <section class="page-break">
-<h2>12 &nbsp;Frequently asked questions</h2>
+<h2>13 &nbsp;Frequently asked questions</h2>
 
 <h3>Why didn't my article go out immediately?</h3>
 <p>To protect readers, the system sends about one notification every 45 minutes. Your article is in the queue and
@@ -963,7 +987,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.12 · Updated 30 October 2026
+  Taxscan Push · Admin User Guide · Version 2.14 · Updated 2 November 2026
 </p>
 </section>
 

@@ -229,7 +229,7 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
-**30 Oct (PRs #86–#89 LIVE):** #89 = built-in digest in the old Mailercloud format + desktop/mobile ad images (1720×400 / 1080×1080) + Edit subject before approval (unverified on a real draft) + our dead unsubscribe link removed (Mailercloud's footer is the unsubscribe). Earlier: CMS webhook fence reads Railway's two-hop X-Forwarded-For (the CMS event now lands; Feed 1 end-to-end applied); rate limiters + audit IPs use the same real-client derivation (`requestClientIp`, never `req.ip`); audience tasks 7–8 — send guard + derived targets behind `DIGEST_AUDIENCE_FROM_CMS` (off), Audience card + ADMIN Resume on Digests. Breaker `first_load` awaits the owner's review. Detail: `NEXT_STEP.md` top block.
+**30 Oct (PRs #86–#92 LIVE):** #90 grouped menu; #91 Ads picture hints; #92 digest polish (old look on phones, default story picture on Templates, 15 stories, warn 80 KB). Earlier: #89 = built-in digest in the old Mailercloud format + desktop/mobile ad images (1720×400 / 1080×1080) + Edit subject before approval (unverified on a real draft) + our dead unsubscribe link removed (Mailercloud's footer is the unsubscribe). Earlier: CMS webhook fence reads Railway's two-hop X-Forwarded-For (the CMS event now lands; Feed 1 end-to-end applied); rate limiters + audit IPs use the same real-client derivation (`requestClientIp`, never `req.ip`); audience tasks 7–8 — send guard + derived targets behind `DIGEST_AUDIENCE_FROM_CMS` (off), Audience card + ADMIN Resume on Digests. Breaker `first_load` awaits the owner's review. Detail: `NEXT_STEP.md` top block.
 
 **Evening 29 Oct (PRs #83–#85):** digest STAGE 2 live sends to the staff list (approval on); CMS Feed 1 receiver ON (Postgres only); CMS reads ON (`READS_SOURCE=cms`, from 8 Oct). (Fence fix shipped 30 Oct, PR #86.)
 
@@ -368,6 +368,11 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
   at a time. Project roles live in `.claude/agents/` (software-architect, product-manager,
   backend-developer, ui-developer, qa-verifier, devops-engineer, record-keeper, authz-sweeper,
   audience-strategist); default pipeline Architect → Developer → QA. Agents never push or merge.
+- **Testing + release rhythm (owner's standing rule, 2026-11-02).** A build runs tsc, lint, its new tests and the test
+  files of the area it touched, with **no full suite** unless it touches a shared foundation (schema/migration, auth,
+  send path/pacer, config/env, `useApi`). The **full suite runs once per release** (`Release check`,
+  `docs/briefs/BUILD-SESSION.md` §6) on `origin/develop`. Production moves at most **twice a day, ~13:00 and ~18:00
+  IST**, only for a develop hash that passed, on the owner's yes; urgent fixes outside the windows on the owner's say.
 - **Two-session workflow (owner, 2026-10-29).** A **planning** session talks with the owner, reads code + prod
   read-only, writes one brief per change (`docs/briefs/<date>-<name>.md`, from `docs/briefs/TEMPLATE.md`),
   reviews each build's `.REPORT.md`, merges `build/<name>` → `develop`, and moves to `main` only on the owner's

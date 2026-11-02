@@ -199,11 +199,12 @@ model User {
   updatedAt             DateTime  @updatedAt
   lastLoginAt           DateTime?
 
-  sessions    UserSession[]
-  auditLogs   AuditLog[]
-  campaigns   Campaign[]
-  invitesSent UserInvite[]            @relation("InvitesSent")
-  pushDevices StaffPushSubscription[]
+  sessions      UserSession[]
+  auditLogs     AuditLog[]
+  campaigns     Campaign[]
+  invitesSent   UserInvite[]            @relation("InvitesSent")
+  pushDevices   StaffPushSubscription[]
+  whatsappPosts WhatsAppPost[]
 }
 
 // A staff member's own browser or phone, opted in from the admin ("Notify me on
@@ -897,4 +898,27 @@ model AudienceSyncState {
   drift            Json? // last nightly drift check: {at, sampled, mismatched, premiumOurs, premiumMailercloud}
   alerts           Json      @default("{}") // {kind: {raisedAt, day, emailedAt, emailAttempts, …counts}} — audience alerts, once per kind per IST day
   updatedAt        DateTime  @updatedAt
+}
+
+enum WhatsAppPostStatus {
+  POSTED
+  SKIPPED
+}
+
+/// The team's mark on one article in the WhatsApp channel queue (docs/briefs/2026-11-02-whatsapp-channel-queue.md).
+/// One row per ARTICLE (`articleKey`, the taxscan trailing id), so a re-push can't reappear as To do.
+/// To do = no row (an undo deletes it). Short-lived "who posted what"; deliberately NOT in the R2 backup.
+model WhatsAppPost {
+  id            String             @id @default(cuid())
+  portal        String
+  articleKey    String
+  /// The first push's campaign.
+  campaignId    String
+  status        WhatsAppPostStatus
+  actedByUserId String?
+  actedBy       User?              @relation(fields: [actedByUserId], references: [id], onDelete: SetNull)
+  actedAt       DateTime
+  createdAt     DateTime           @default(now())
+
+  @@unique([portal, articleKey])
 }

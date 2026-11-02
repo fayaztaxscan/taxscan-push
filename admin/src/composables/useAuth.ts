@@ -6,6 +6,8 @@ export type UserSummary = {
   role: 'ADMIN' | 'PUBLISHER';
   passwordResetRequired: boolean;
   lastLoginAt: string | null;
+  /** Server switches the menu needs (the endpoints answer 404 when off). */
+  features?: { whatsappQueue?: boolean };
 };
 
 export class AuthError extends Error {

@@ -1090,8 +1090,10 @@ agents.
       activates a template, and "New template" starts from a copy of the built-in one. The template id is frozen on
       `DigestSend.templateId` (null = built-in). The renderer always fills a template: the built-in path and a
       custom one are the same code.
-    - **Built-in look (owner, 23 Oct 2026):** close to today's hand-made digest — a solid #3b3543 header bar (kept
-      in dark mode) with the new white logo centred (220 px, alt "Taxscan", `public/email/taxscan-logo-white-440.png`
+    - **Built-in look (owner, 23 Oct 2026):** close to today's hand-made digest — a #3b3543 header banner picture
+      (`public/email/taxscan-header-1800x220.png`, 2 Nov: the white logo centred; the "Daily Digest · date" line sits below it
+      on white) — **in dark mode the apps recolour the buttons and text together; we no longer pin the button or header colours
+      (2 Nov 2026, owner)**. Logo files (220 px, alt "Taxscan", `public/email/taxscan-logo-white-440.png`, still used by sent mail)
       served at `/email/…` with CORP cross-origin and a one-year immutable cache; a changed asset needs a new file
       name), Arial throughout, headlines #111111 not underlined, body #333333, links #1376c8, square yellow
       (#FEE620) buttons with bold dark text and an Outlook VML fallback for "Read more" and ad CTAs. The worst case

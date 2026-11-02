@@ -597,6 +597,8 @@ export const env = {
       30,
     ),
   },
+  // WhatsApp channel queue (brief 2026-11-02): a screen listing pushed articles as ready-to-copy posts. Default off = 404.
+  whatsapp: { queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true' },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
   // CMS audience sync — see parseAudienceEnv above. Every flag default off.
