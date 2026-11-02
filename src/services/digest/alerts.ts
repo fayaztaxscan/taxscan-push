@@ -926,6 +926,7 @@ export async function pushDigestAlerts(
         continue;
       }
       const r = await pushToActiveStaff(payload, {
+        kind: 'digest',
         ...(deps.transport ? { transport: deps.transport } : {}),
         ...(deps.devices ? { devices: deps.devices } : {}),
       });

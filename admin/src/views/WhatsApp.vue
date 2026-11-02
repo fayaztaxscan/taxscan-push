@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { apiErrorMessage, useApi } from '../composables/useApi';
+import WhatsAppNudgeCard from '../components/WhatsAppNudgeCard.vue';
 
 type Status = 'TODO' | 'POSTED' | 'SKIPPED';
 type Row = {
@@ -36,7 +38,9 @@ function istDay(offsetDays: number): string {
 const maxDate = istDay(0);
 const minDate = istDay(-14);
 
-const date = ref<string>(maxDate);
+// ?date=YYYY-MM-DD (the Campaigns Channels marks link here); anything outside the 14-day window falls back to today.
+const qDate = String(useRoute().query.date ?? '');
+const date = ref<string>(/^\d{4}-\d{2}-\d{2}$/.test(qDate) && qDate >= minDate && qDate <= maxDate ? qDate : maxDate);
 const filter = ref<Filter>('todo');
 const rows = ref<Row[]>([]);
 const counts = ref<QueueResponse['counts']>({ todo: 0, posted: 0, skipped: 0, all: 0 });
@@ -209,6 +213,8 @@ onBeforeUnmount(() => {
     <p class="muted wa-rule" style="font-size: 13px; margin: 4px 0 12px">
       Post in this order. Skip anything you don't want on the channel. Links carry WhatsApp tracking — don't edit them.
     </p>
+
+    <WhatsAppNudgeCard />
 
     <div class="wa-controls">
       <div class="wa-days">

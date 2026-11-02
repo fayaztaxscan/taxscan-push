@@ -2,6 +2,10 @@ import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
 import { readsPath, readsForPaths } from './reads';
 import { safeErrorLog } from '../lib/httpErrors';
+import { articleKey } from './reports';
+import { isPublicArticleCampaign } from './social/publicCampaign';
+import { PAGE_TAXSCAN, PORTAL_TO_PAGE } from './linkedin/pages';
+import { istDay } from './whatsapp/queue';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -26,6 +30,21 @@ export type CampaignCreator = {
   email: string;
   role: 'ADMIN' | 'PUBLISHER';
 } | null;
+/**
+ * Where an article went besides the push (brief 2026-11-02-social-menu-channels-nudge). `null` = not applicable: the channel's
+ * switch is off, or the row isn't eligible (not SENT, not a public taxscan article, test-segment-only, other portal; for
+ * LinkedIn also pushed before LINKEDIN_POST_FROM).
+ */
+export type CampaignChannels = {
+  whatsapp: 'TODO' | 'POSTED' | 'SKIPPED' | null;
+  linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
+};
+/** The words behind a mark's tooltip; only present where there is something to say. */
+export type CampaignChannelDetails = {
+  whatsapp?: { by: string | null; at: string };
+  linkedin?: { error: string | null; at: string | null; postUrl: string | null };
+};
+
 export type CampaignStat = {
   id: string;
   title: string;
@@ -55,6 +74,11 @@ export type CampaignStat = {
   pushReads?: number | null;
   /** Only with READS_SOURCE=cms: which source(s) the numbers came from (absent otherwise: the payload is unchanged). */
   readsFrom?: ('ga' | 'cms')[];
+  /** Only from listCampaigns, and only when WhatsApp or LinkedIn is switched on. */
+  channels?: CampaignChannels;
+  channelDetails?: CampaignChannelDetails;
+  /** The IST day (YYYY-MM-DD) of this push, for the link from a channel mark to that channel's screen. */
+  channelDay?: string | null;
 };
 
 export type SubscriberSource =
@@ -93,6 +117,10 @@ const campaignSelect = {
   scheduledAt: true,
   createdByUserId: true,
   createdBy: { select: { id: true, email: true, role: true } },
+  // the social channels' eligibility (listCampaigns' Channels column)
+  portal: true,
+  target: true,
+  lastSentAt: true,
 } as const;
 
 // ---- Per-campaign stats: rolled-up + live ----
@@ -516,6 +544,7 @@ export async function listCampaigns(
   // Reads: the one reads module (GA only by default; the CMS from READS_CMS_FROM with READS_SOURCE=cms).
   const cmsMode = env.cmsViews.source === 'cms';
   const [stats, reads] = await Promise.all([campaignStats(ids), readsForPaths(uniquePaths, { portal: env.rss.portal })]);
+  const channels = await channelsFor(campaigns);
   return campaigns.map((c) => {
     const { sent, clicked, failed, sentAt } = stats.get(c.id) ?? { sent: 0, clicked: 0, failed: 0, sentAt: null };
     const path = pathByCampaign.get(c.id);
@@ -539,6 +568,51 @@ export async function listCampaigns(
       reads: r ? r.views : null,
       pushReads: r ? r.pushViews : null,
       ...(cmsMode && r ? { readsFrom: [...(r.usedGa ? (['ga'] as const) : []), ...(r.usedCms ? (['cms'] as const) : [])] } : {}),
+      ...(channels ? channels.get(c.id) ?? {} : {}),
     };
   });
+}
+
+/**
+ * The Channels column: per campaign, where its article went on WhatsApp and LinkedIn. ONE batched query per channel for
+ * the whole page (`articleKey IN (…)`), never one per row, and nothing from Event. A re-push shares its article's marks.
+ * Returns null when neither channel is switched on (the payload is then unchanged).
+ */
+async function channelsFor(
+  campaigns: { id: string; url: string; status: string; portal: string; target: unknown; lastSentAt: Date | null }[],
+): Promise<Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }> | null> {
+  const waOn = env.whatsapp.queueEnabled;
+  const liOn = env.linkedin.enabled;
+  if (!waOn && !liOn) return null;
+  const eligible = campaigns.filter((c) => c.status === 'SENT' && isPublicArticleCampaign(c));
+  const keyOf = new Map(eligible.map((c) => [c.id, articleKey(c)]));
+  const keys = [...new Set(keyOf.values())];
+  const waPortal = env.rss.portal;
+  const [wa, li] = await Promise.all([
+    waOn && keys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: keys } }, include: { actedBy: { select: { email: true } } } }) : [],
+    liOn && keys.length ? prisma.linkedInPost.findMany({ where: { page: PAGE_TAXSCAN, articleKey: { in: keys } } }) : [],
+  ]);
+  const waBy = new Map(wa.map((p) => [p.articleKey, p]));
+  const liBy = new Map(li.map((p) => [p.articleKey, p]));
+  const from = env.linkedin.postFrom;
+  const out = new Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }>();
+  for (const c of campaigns) {
+    const key = keyOf.get(c.id);
+    const channels: CampaignChannels = { whatsapp: null, linkedin: null };
+    const details: CampaignChannelDetails = {};
+    if (key) {
+      if (waOn && c.portal === waPortal) {
+        const p = waBy.get(key);
+        channels.whatsapp = p ? p.status : 'TODO';
+        if (p) details.whatsapp = { by: p.actedBy?.email ?? null, at: p.actedAt.toISOString() };
+      }
+      if (liOn && PORTAL_TO_PAGE[c.portal] === PAGE_TAXSCAN && c.lastSentAt && from && c.lastSentAt >= from) {
+        const p = liBy.get(key);
+        channels.linkedin = p ? p.status : 'PENDING';
+        if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
+      }
+    }
+    out.set(c.id, { channels, channelDetails: details, channelDay: c.lastSentAt ? istDay(c.lastSentAt) : null });
+  }
+  return out;
 }

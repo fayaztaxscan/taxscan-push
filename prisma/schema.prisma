@@ -230,6 +230,9 @@ model StaffPushSubscription {
   lastFailureAt DateTime?
   // Consecutive failed deliveries (reset on success). 404/410 deletes the row instead.
   failureCount  Int       @default(0)
+  // What this device is signed up for: 'digest' (the digest approval alerts: every device before kinds existed) and/or
+  // 'whatsapp' (the "articles waiting" nudge). A device first enabled from the WhatsApp card holds ['whatsapp'] only.
+  kinds         String[]  @default(["digest"])
 
   @@index([userId])
 }

@@ -598,7 +598,8 @@ export const env = {
     ),
   },
   // WhatsApp channel queue (brief 2026-11-02): a screen listing pushed articles as ready-to-copy posts. Default off = 404.
-  whatsapp: { queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true' },
+  // nudgeEnabled: a 5-minute tick that tells opted-in staff devices when articles are waiting for WhatsApp (needs queueEnabled).
+  whatsapp: { queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true', nudgeEnabled: process.env.WHATSAPP_NUDGE_ENABLED === 'true' },
   // LinkedIn page posting (docs/LINKEDIN_POSTING.md). Default off. `postFrom` is REQUIRED when enabled (the worker refuses to
   // start without a valid one; nothing pushed before it is ever posted). One entry per page; only `taxscan` for now.
   linkedin: {

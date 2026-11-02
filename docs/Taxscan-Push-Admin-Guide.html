@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.15 &nbsp;·&nbsp; Updated 2 November 2026
+    &nbsp;·&nbsp; Version 2.16 &nbsp;·&nbsp; Updated 2 November 2026
   </div>
 </div>
 
@@ -167,8 +167,9 @@ you want to. This guide shows you how.</p>
   </tbody>
 </table>
 <div class="box tip"><span class="box-t">Tip — finding your way around the top menu</span>
-  The top menu is grouped by channel: <strong>Dashboard</strong>; <strong>PUSH</strong> (Compose, Review, Queue, Campaigns, and WhatsApp and LinkedIn when they are switched on);
-  <strong>EMAIL</strong> (Digests, Ads, Templates); then <strong>Reports</strong>. Administrators also see an
+  The top menu is grouped by channel: <strong>Dashboard</strong>; <strong>PUSH</strong> (Compose, Review, Queue, Campaigns);
+  <strong>SOCIAL</strong> (WhatsApp and LinkedIn &mdash; each appears only when it is switched on, and the whole group is
+  hidden when neither is); <strong>EMAIL</strong> (Digests, Ads, Templates); then <strong>Reports</strong>. Administrators also see an
   <strong>Admin</strong> menu (Users, Activity) &mdash; click it to open, press <em>Esc</em> to close. The group you are
   in is highlighted. On a phone the same groups appear as headings inside the ☰ menu.</div>
 <div class="box tip"><span class="box-t">Tip — changing your password</span>
@@ -431,6 +432,13 @@ notification will look before sending it to anyone.</p>
   only for people who also need to manage the team.</div>
 
 <h3>The Campaigns screen — the columns explained</h3>
+<p>When WhatsApp or LinkedIn is switched on, a <strong>Channels</strong> column shows where else each article went, as small
+labelled marks (never colour alone). <strong>WA</strong> is WhatsApp: <strong>WA&nbsp;✓</strong> posted, <strong>WA&nbsp;–</strong>
+skipped, <strong>WA&nbsp;…</strong> still to do. <strong>in</strong> is LinkedIn: <strong>in&nbsp;✓</strong> posted,
+<strong>in&nbsp;✕</strong> failed, <strong>in&nbsp;…</strong> waiting. No mark means the channel does not apply to that row (it is
+switched off, or the item is not a Taxscan article). Hover a mark &mdash; or touch and hold on a phone &mdash; for the full
+wording, such as <em>WhatsApp: posted by anagha at 10:42</em> or <em>LinkedIn: failed &mdash; the reason</em>. Click a mark to open
+that channel's screen on the day the article was pushed. The Channels column is not sortable.</p>
 <p>Every column is sortable — click the heading. The four that tell you how a notification performed:</p>
 <table>
   <thead><tr><th style="width:16%">Column</th><th>What it counts</th></tr></thead>
@@ -817,7 +825,7 @@ you missed it</em>, and 3 ads). <strong>Activate</strong> stays greyed out while
 <!-- 11 -->
 <section class="page-break">
 <h2>11 &nbsp;The WhatsApp channel</h2>
-<p>The <strong>WhatsApp</strong> screen (menu: <strong>PUSH</strong>, after Campaigns) lists every Taxscan article we pushed, in
+<p>The <strong>WhatsApp</strong> screen (menu: <strong>SOCIAL</strong>) lists every Taxscan article we pushed, in
 the order it was pushed, each with a ready-made WhatsApp post: the headline in bold, one short line, and the link. A person
 posts it to the channel &mdash; nothing is sent to WhatsApp automatically. The screen appears only when an administrator has
 switched the feature on.</p>
@@ -831,6 +839,16 @@ switched the feature on.</p>
       <strong>Back to To do</strong> undoes a mistake.</li>
   <li>An article pushed twice shows once, at its first position, with <em>pushed again</em> and the later time.</li>
 </ul>
+<h3>Get notified on your phone</h3>
+<p>If an administrator has switched the nudge on, the WhatsApp screen shows a card, <em>Notify me on this device when articles
+are waiting</em>. Tap <strong>Notify me on this device</strong> and then <strong>Allow</strong> when the browser asks; the card
+then says <strong>On for this device</strong>. <strong>Send a test</strong> shows what it looks like and <strong>Turn off</strong>
+stops it. Do this once on each phone or computer you want it on (iPhone and iPad: add Taxscan Push to the Home Screen first, as
+described in section 9). It is separate from the digest notifications: turning one off leaves the other as it was.</p>
+<p>The notification reads <em>&ldquo;WhatsApp: 3 articles waiting&rdquo;</em> with the newest waiting headline underneath;
+tapping it opens this screen. You get <strong>one notification at most every 10 minutes</strong>, a new one replaces the old one
+rather than stacking, and <strong>nothing between 11 pm and 7 am</strong> &mdash; anything that arrived overnight (a Breaking push) is
+announced once, at 7 am. Once everything is marked Posted or Skipped, no more notifications come.</p>
 <div class="box warn"><span class="box-t">Don't edit the link</span>
   The link carries WhatsApp tracking (<code>utm_source=taxscan-whatsapp</code>) so our analytics can tell channel visits from
   readers who forward links themselves. Post the text exactly as copied; change the wording around it if you must, never the link.</div>
@@ -843,7 +861,7 @@ switched the feature on.</p>
 the push. One post per article, in the order it was pushed &mdash; an article that is pushed again, or re-sent by the morning
 catch-up, is never posted twice. The post is the headline, a few hashtags and the article link as a preview card. The hashtags
 come from the article itself (its court or tribunal, its category and the editors' own keywords, with <code>#taxscan</code> last),
-so they differ from post to post. The <strong>LinkedIn</strong> screen (menu: <strong>PUSH</strong>, after WhatsApp) shows what
+so they differ from post to post. The <strong>LinkedIn</strong> screen (menu: <strong>SOCIAL</strong>, after WhatsApp) shows what
 happened to each one; it appears only when an administrator has switched the feature on. Normally there is nothing to do.</p>
 <table>
   <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
@@ -1023,7 +1041,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.15 · Updated 2 November 2026
+  Taxscan Push · Admin User Guide · Version 2.16 · Updated 2 November 2026
 </p>
 </section>
 
