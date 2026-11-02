@@ -7,6 +7,8 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-11-02 merged to develop (not on main):** linkedin-token-refresh (`80c80d8`, flag `LINKEDIN_TOKEN_REFRESH_ENABLED` off). Flaky watch list grows: metricsWarmer "keeps the live parts live" (release check 4c0a963) and one unexplained linkedinToken "resume after login stop" failure in the build's first full run (passes 3/3 + 4/4 alone). Worth a flaky-tests brief.
+
 **▶ 2026-11-02 PR #95 LIVE ~15:40 IST:** LinkedIn posting + SOCIAL menu/channel marks/WhatsApp nudge, both flags OFF; migrations applied; boot `[linkedin] disabled`, `[whatsapp-nudge] disabled`. Next: LinkedIn switch-over (token + URN + POST_FROM + flag; owner/social lead), nudge flag + staff opt-in on phone.
 
 **▶ 2026-11-02 X (Twitter): ON HOLD (owner).** X API is pay-per-use since Feb 2026: ~$0.015/post, ~$0.20/post WITH a link (third-party figures, verify in console). Every push ≈ $120/mo; top ~5/day ≈ $30/mo. Planning's suggestion if revived: 1-month top-stories trial with a reads-per-₹ stop rule, reusing the LinkedIn channel design. Don't re-propose unprompted.
