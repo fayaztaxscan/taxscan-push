@@ -232,7 +232,7 @@ Guide → v1.3. Suite **382**.
 **2 Nov (PR #93 LIVE, ~13:45 IST; guide v2.14; suite 1,740):** built-in digest — buttons + header no longer pin their
 background (dark mode recolours background + text together), header = one banner image
 `/email/taxscan-header-1800x220.png` with "Daily Digest · date" below on white (`{{header}}` placeholder), phone pictures
-fill the column. **WhatsApp channel queue** (PUSH → WhatsApp, behind `WHATSAPP_QUEUE_ENABLED`, OFF until the owner sets it):
+fill the column. **WhatsApp channel queue** (PUSH → WhatsApp, behind `WHATSAPP_QUEUE_ENABLED` — **ON since 2 Nov ~13:55 IST**):
 pushed taxscan.in articles in push order with ready post text, Copy/Share/Posted/Skip, links tagged
 `taxscan-whatsapp / social / whatsapp-channel / <article id>`; table `WhatsAppPost`, not in the backup. No official
 WhatsApp Channel API exists — posting stays manual by design. New standing rule: area tests per build, one full-suite

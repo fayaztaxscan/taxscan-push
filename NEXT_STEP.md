@@ -8,8 +8,8 @@ status changes so a fresh Claude session can pick up cleanly.
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
 **▶ 2026-11-02 (PR #93 LIVE):** digest dark-mode colours + banner header + phone pictures full width; WhatsApp channel
-queue (flag `WHATSAPP_QUEUE_ENABLED` off). Verified: deploy up, migrations applied, healthz 200, banner 200, WhatsApp API
-404 (flag off). Open: owner sets the flag + tries Share into WhatsApp on a real phone; next staff digest checked in dark
+queue (`WHATSAPP_QUEUE_ENABLED` **ON** since ~13:55 IST; API 401 without login = live). Verified: deploy up, migrations applied, healthz 200, banner 200, WhatsApp API
+404 (flag off). Open: owner tries Share into WhatsApp on a real phone; next staff digest checked in dark
 mode (iPhone Mail + Zoho); ask CMS for a WhatsApp views count; owner runs the two builds' clean-up commands.
 
 **▶ 2026-10-30 (PRs #86–#92 LIVE):**
