@@ -83,6 +83,10 @@ export function pushServiceHost(endpoint: string): string {
   }
 }
 
+/** What a staff device can sign up for. A device with none left is deleted. */
+export type StaffPushKind = 'digest' | 'whatsapp';
+export const STAFF_PUSH_KINDS: readonly StaffPushKind[] = ['digest', 'whatsapp'];
+
 export type StaffSubscriptionInput = { endpoint: string; keys: { p256dh: string; auth: string } };
 
 /** A device dropped at the per-user limit: id, label and push-service host — never the endpoint. */
@@ -100,12 +104,16 @@ export async function upsertStaffDevice(
   userId: string,
   sub: StaffSubscriptionInput,
   label: string,
+  kind: StaffPushKind = 'digest',
 ): Promise<{ device: StaffPushSubscription; created: boolean; movedFromUserId: string | null; evicted: EvictedDevice[] }> {
-  const existing = await prisma.staffPushSubscription.findUnique({ where: { endpoint: sub.endpoint }, select: { userId: true } });
+  const existing = await prisma.staffPushSubscription.findUnique({ where: { endpoint: sub.endpoint }, select: { userId: true, kinds: true } });
+  // A new device holds only the kind it was enabled for; an existing one gains it. A browser taken over by another login starts afresh.
+  const sameUser = existing !== null && existing.userId === userId;
+  const kinds = sameUser && existing ? [...new Set([...existing.kinds, kind])] : [kind];
   const device = await prisma.staffPushSubscription.upsert({
     where: { endpoint: sub.endpoint },
-    create: { userId, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, label },
-    update: { userId, p256dh: sub.keys.p256dh, auth: sub.keys.auth, label, failureCount: 0 },
+    create: { userId, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, label, kinds: [kind] },
+    update: { userId, p256dh: sub.keys.p256dh, auth: sub.keys.auth, label, failureCount: 0, kinds },
   });
   // Bound the rows per user (a browser that rotates its endpoint leaves the old one behind
   // until a send prunes it): keep the most recently updated MAX_DEVICES_PER_USER.
@@ -156,10 +164,13 @@ export async function staffDeviceSummaries(userIds: string[]): Promise<Map<strin
   return out;
 }
 
-/** Devices that may receive a staff push: their user is active (both roles may approve). */
-export async function activeStaffDevices(): Promise<StaffPushSubscription[]> {
+/**
+ * Devices that may receive a staff push of `kind`: their user is active (ADMIN or PUBLISHER) and the device signed up for
+ * that kind. Digest alerts use 'digest', the WhatsApp nudge 'whatsapp'; a device with both gets both.
+ */
+export async function activeStaffDevices(kind: StaffPushKind = 'digest'): Promise<StaffPushSubscription[]> {
   return prisma.staffPushSubscription.findMany({
-    where: { user: { isActive: true, role: { in: ['ADMIN', 'PUBLISHER'] } } },
+    where: { kinds: { has: kind }, user: { isActive: true, role: { in: ['ADMIN', 'PUBLISHER'] } } },
     orderBy: { createdAt: 'asc' },
   });
 }
@@ -210,9 +221,9 @@ export type FanOutResult = { devices: number; delivered: number; pruned: number;
 /** One notification to every active staff device, one at a time (a handful of devices). */
 export async function pushToActiveStaff(
   payload: PushPayload,
-  opts: { transport?: StaffPushTransport; devices?: () => Promise<StaffPushSubscription[]> } = {},
+  opts: { transport?: StaffPushTransport; devices?: () => Promise<StaffPushSubscription[]>; kind?: StaffPushKind } = {},
 ): Promise<FanOutResult> {
-  const devices = await (opts.devices ?? activeStaffDevices)();
+  const devices = await (opts.devices ?? (() => activeStaffDevices(opts.kind ?? 'digest')))();
   const results: DeviceResult[] = [];
   for (const d of devices) results.push(await pushToStaffDevice(d, payload, opts.transport ?? defaultTransport));
   return {

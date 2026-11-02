@@ -10,6 +10,8 @@ import { apiErrorMessage, useApi } from './useApi';
  * screen calls from the button tap — that tap is the soft prompt.
  */
 
+export type StaffPushKind = 'digest' | 'whatsapp';
+
 export type StaffPushState = 'checking' | 'unsupported' | 'ios-home-screen' | 'blocked' | 'off' | 'on';
 
 const STAFF_SW = '/admin/sw-staff.js';
@@ -75,7 +77,15 @@ function keyMatches(sub: PushSubscription, appKey: Uint8Array): boolean {
   return !!have && have.length === appKey.length && have.every((b, i) => b === appKey[i]);
 }
 
-type Status = { sending: boolean; digestEnabled: boolean; staffPushEnabled: boolean; vapidPublicKey: string; devices: number };
+type Status = {
+  sending: boolean;
+  digestEnabled: boolean;
+  staffPushEnabled: boolean;
+  /** Is the WhatsApp "articles waiting" nudge running on the server (queue + nudge flags + kill switch)? */
+  whatsappNudge?: boolean;
+  vapidPublicKey: string;
+  devices: number;
+};
 type SubscribeReply = { evicted?: Array<{ id: string; label: string | null }>; deviceLimit?: number } | null | undefined;
 
 /** "Your oldest device (Chrome on Windows) was turned off — at most 10 devices per person." */
@@ -89,7 +99,12 @@ export function evictedNotice(r: SubscribeReply): string {
     : `Your oldest devices (${names}) were turned off — at most ${limit} devices per person.`;
 }
 
-export function useStaffPush() {
+/**
+ * `kind` is what this card signs the device up for: the Digests card is 'digest' (the default), the WhatsApp
+ * screen's card is 'whatsapp'. One browser subscription serves both; the server keeps a list of kinds per device,
+ * so turning one kind off leaves the other on.
+ */
+export function useStaffPush(kind: StaffPushKind = 'digest') {
   const api = useApi();
   const state = ref<StaffPushState>('checking');
   const busy = ref(false);
@@ -112,6 +127,11 @@ export function useStaffPush() {
       status.value = await api.get<Status>('/api/staff-push/status');
     } catch {
       status.value = null;
+    }
+    // The WhatsApp card shows nothing at all unless the server says the nudge is running: no further requests.
+    if (kind === 'whatsapp' && status.value?.whatsappNudge !== true) {
+      state.value = 'checking';
+      return;
     }
     if (isIos() && !isStandalone()) {
       state.value = 'ios-home-screen';
@@ -140,7 +160,7 @@ export function useStaffPush() {
         return;
       }
       // On only if the server still has it (an admin may have removed this device).
-      const r = await api.post<{ on: boolean }>('/api/staff-push/devices/check', { endpoint: sub.endpoint });
+      const r = await api.post<{ on: boolean }>('/api/staff-push/devices/check', { endpoint: sub.endpoint, kind });
       state.value = r.on ? 'on' : 'off';
     } catch {
       state.value = 'off';
@@ -178,10 +198,12 @@ export function useStaffPush() {
       const json = sub.toJSON();
       const saved = await api.post<SubscribeReply>('/api/staff-push/devices', {
         subscription: { endpoint: json.endpoint, keys: json.keys },
+        kind,
         ...(replacesEndpoint && replacesEndpoint !== json.endpoint ? { replacesEndpoint } : {}),
       });
       state.value = 'on';
-      notice.value = 'Notifications are on for this device.';
+      notice.value =
+        kind === 'whatsapp' ? 'WhatsApp notifications are on for this device.' : 'Notifications are on for this device.';
       warning.value = evictedNotice(saved) || null;
       try {
         status.value = await api.get<Status>('/api/staff-push/status');
@@ -203,11 +225,16 @@ export function useStaffPush() {
     try {
       const sub = await currentSubscription();
       if (sub) {
-        await api.post('/api/staff-push/devices/remove', { endpoint: sub.endpoint });
-        await sub.unsubscribe().catch(() => false);
+        const r = await api.post<{ removed?: boolean; kept?: boolean } | null>('/api/staff-push/devices/remove', {
+          endpoint: sub.endpoint,
+          kind,
+        });
+        // Another kind still uses this browser subscription (e.g. digest alerts): leave it in place.
+        if (!r?.kept) await sub.unsubscribe().catch(() => false);
       }
       state.value = 'off';
-      notice.value = 'Notifications are off for this device.';
+      notice.value =
+        kind === 'whatsapp' ? 'WhatsApp notifications are off for this device.' : 'Notifications are off for this device.';
     } catch (e) {
       error.value = apiErrorMessage(e);
     } finally {
@@ -226,7 +253,7 @@ export function useStaffPush() {
         state.value = 'off';
         return;
       }
-      await api.post('/api/staff-push/devices/test', { endpoint: sub.endpoint });
+      await api.post('/api/staff-push/devices/test', { endpoint: sub.endpoint, kind });
       notice.value = 'Test sent. It should appear on this device in a few seconds.';
     } catch (e) {
       const status = (e as { status?: number }).status;

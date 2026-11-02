@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
+import { useRoute } from 'vue-router';
 import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
 
 type Status = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
@@ -37,7 +38,9 @@ function istDay(offsetDays: number): string {
 const maxDate = istDay(0);
 const minDate = istDay(-14);
 
-const date = ref<string>(maxDate);
+// ?date=YYYY-MM-DD (the Campaigns Channels marks link here); anything outside the 14-day window falls back to today.
+const qDate = String(useRoute().query.date ?? '');
+const date = ref<string>(/^\d{4}-\d{2}-\d{2}$/.test(qDate) && qDate >= minDate && qDate <= maxDate ? qDate : maxDate);
 const filter = ref<Filter>('all');
 const rows = ref<Row[]>([]);
 const counts = ref<Counts>({ waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 });

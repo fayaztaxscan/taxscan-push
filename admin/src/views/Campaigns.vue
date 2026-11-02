@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { useApi } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
@@ -29,9 +30,21 @@ type Campaign = {
   reads: number | null;
   /** Reads from sessions that arrived via our push notification. */
   pushReads: number | null;
+  /** Present only while WhatsApp or LinkedIn is switched on; null per channel = not applicable to this row. */
+  channels?: {
+    whatsapp: 'TODO' | 'POSTED' | 'SKIPPED' | null;
+    linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
+  };
+  channelDetails?: {
+    whatsapp?: { by: string | null; at: string };
+    linkedin?: { error: string | null; at: string; postUrl: string | null };
+  };
+  /** IST day (YYYY-MM-DD) of the push: which day to open on the channel screen. */
+  channelDay?: string | null;
 };
 
 const api = useApi();
+const router = useRouter();
 const { user: meUser } = useAuth();
 
 const campaigns = ref<Campaign[]>([]);
@@ -151,6 +164,67 @@ async function load(): Promise<void> {
   }
 }
 
+// ---- Channels column (WhatsApp / LinkedIn marks) ----
+// Shown only when the server sent `channels` on at least one row, i.e. a switch is on.
+const showChannels = computed(() => campaigns.value.some((c) => c.channels !== undefined));
+const colCount = computed(() => (showChannels.value ? 13 : 12));
+
+type Mark = { key: 'whatsapp' | 'linkedin'; short: string; label: string; state: string };
+
+function fmtTime(iso: string | undefined): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+/** "anagha@taxscan.in" -> "anagha": the name part of the email. */
+function namePart(email: string | null | undefined): string {
+  return email ? email.split('@')[0] : '';
+}
+function marksFor(c: Campaign): Mark[] {
+  const out: Mark[] = [];
+  const ch = c.channels;
+  if (!ch) return out;
+  const d = c.channelDetails;
+  if (ch.whatsapp) {
+    const s = ch.whatsapp;
+    const at = fmtTime(d?.whatsapp?.at);
+    const who = namePart(d?.whatsapp?.by);
+    out.push({
+      key: 'whatsapp',
+      state: s,
+      short: s === 'POSTED' ? 'WA ✓' : s === 'SKIPPED' ? 'WA –' : 'WA …',
+      label:
+        s === 'POSTED'
+          ? `WhatsApp: posted${who ? ' by ' + who : ''}${at ? ' at ' + at : ''}`
+          : s === 'SKIPPED'
+            ? 'WhatsApp: skipped'
+            : 'WhatsApp: waiting to be posted',
+    });
+  }
+  if (ch.linkedin) {
+    const s = ch.linkedin;
+    const at = fmtTime(d?.linkedin?.at);
+    const err = d?.linkedin?.error;
+    out.push({
+      key: 'linkedin',
+      state: s,
+      short: s === 'POSTED' ? 'in ✓' : s === 'FAILED' ? 'in ✕' : s === 'SKIPPED' ? 'in –' : 'in …',
+      label:
+        s === 'POSTED'
+          ? `LinkedIn: posted${at ? ' at ' + at : ''}`
+          : s === 'FAILED'
+            ? `LinkedIn: failed${err ? ' — ' + err : ''}`
+            : s === 'SKIPPED'
+              ? 'LinkedIn: skipped'
+              : 'LinkedIn: waiting',
+    });
+  }
+  return out;
+}
+function openChannel(c: Campaign, m: Mark): void {
+  const query = c.channelDay ? { date: c.channelDay } : undefined;
+  void router.push({ path: m.key === 'whatsapp' ? '/whatsapp' : '/linkedin', query });
+}
+
 function fmtReads(n: number | null): string {
   if (n === null) return '—';
   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
@@ -262,6 +336,9 @@ onMounted(load);
             <th class="th-sort" @click="setSort('deliveryRate')">
               Delivery<span class="sort-ind">{{ sortInd('deliveryRate') }}</span>
             </th>
+            <th v-if="showChannels" title="Whether the article was also posted to WhatsApp and LinkedIn. Click a mark to open that screen.">
+              Channels
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -310,9 +387,25 @@ onMounted(load);
                 {{ pct(c.deliveryRate) }}
               </span>
             </td>
+            <td v-if="showChannels" class="cell-full cell-channels" :class="{ 'cell-hide-sm': marksFor(c).length === 0 }" data-label="Channels">
+              <span class="ch-marks">
+                <button
+                  v-for="m in marksFor(c)"
+                  :key="m.key"
+                  type="button"
+                  class="ch-mark"
+                  :class="['ch-' + m.key, 'st-' + m.state]"
+                  :title="m.label"
+                  :aria-label="m.label"
+                  @click.stop="openChannel(c, m)"
+                >
+                  {{ m.short }}
+                </button>
+              </span>
+            </td>
           </tr>
           <tr v-if="campaigns.length === 0 && !loading">
-            <td colspan="12" class="muted" style="text-align: center; padding: 24px">
+            <td :colspan="colCount" class="muted" style="text-align: center; padding: 24px">
               {{ showOnlyMine ? "You haven't sent any campaigns yet." : 'No campaigns yet.' }}
             </td>
           </tr>
@@ -357,7 +450,43 @@ onMounted(load);
   font-size: 11px;
   font-weight: 600;
 }
+.ch-marks {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  white-space: nowrap;
+}
+.ch-mark {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+.ch-mark:hover {
+  border-color: var(--primary);
+}
+.ch-mark.st-POSTED {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #bbf7d0;
+}
+.ch-mark.st-FAILED {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fecaca;
+}
 @media (max-width: 720px) {
+  .ch-mark {
+    min-height: 44px;
+    min-width: 56px;
+    font-size: 13px;
+  }
   .sort-sm {
     display: flex;
     align-items: center;
