@@ -52,6 +52,8 @@ import { safeErrorLog } from '../lib/httpErrors';
  *   devices. A few rows, and worthless without the VAPID private key; after a
  *   restore each approver taps "Notify me on this device" once. Keeping push
  *   endpoints out of the R2 copy is also one less credential-like value off-site.
+ * - `LinkedInToken` (brief 2026-11-02-linkedin-token-refresh) — the renewed LinkedIn access token, ENCRYPTED. A credential,
+ *   and useless without LINKEDIN_TOKEN_KEY; after a restore the env token is used and the next daily renewal re-creates the row.
  * - `AuditLog` — append-only compliance record with its own retention sweeper
  *   and an immutability trigger. Re-inserting it elsewhere would misrepresent
  *   when those rows were written.

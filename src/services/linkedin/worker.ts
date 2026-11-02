@@ -11,6 +11,7 @@ import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { istDay } from '../whatsapp/queue';
 import { postToLinkedIn, type LinkedInResult } from './client';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
+import { refreshActiveTokens } from './token';
 import { buildPost, fetchCmsArticle, type CmsArticle } from './post';
 
 /**
@@ -226,6 +227,7 @@ export function startupProblem(d: Pick<WorkerDeps, 'postFrom' | 'portals'> = {})
 export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
   const now = (d.now ?? (() => new Date()))();
   const out: TickResult = { posted: 0, retried: 0, failed: 0, staleClosed: 0, authStopped: false, refused: null };
+  await refreshActiveTokens().catch(() => undefined); // the renewed token, if any, is the one in use
   const problem = startupProblem(d);
   if (problem) return { ...out, refused: problem };
   const postFrom = (d.postFrom === undefined ? env.linkedin.postFrom : d.postFrom) as Date;
@@ -313,6 +315,7 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
 /** Retry one FAILED row now: one post, then answer. */
 export async function retryNow(id: string, d: WorkerDeps = {}): Promise<{ ok: true; status: 'POSTED' | 'FAILED' | 'PENDING' } | { ok: false; reason: 'not_found' | 'not_failed' | 'not_configured' }> {
   const now = (d.now ?? (() => new Date()))();
+  await refreshActiveTokens().catch(() => undefined);
   const row = await prisma.linkedInPost.findUnique({ where: { id } });
   if (!row) return { ok: false, reason: 'not_found' };
   if (!pageConfig(row.page)) return { ok: false, reason: 'not_configured' };

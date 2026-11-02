@@ -1,5 +1,6 @@
 import { env } from '../../lib/env';
 import { withSocialUtm } from '../social/utm';
+import { cachedAccessToken } from './token';
 
 /**
  * LinkedIn pages, keyed by name (brief 2026-11-02-linkedin-page-posting). Adding the Shopscan / Academy page later =
@@ -19,7 +20,11 @@ export function withLinkedInUtm(url: string, page: string, content: string): str
 }
 
 export type PageConfig = { orgUrn: string; accessToken: string };
+/**
+ * The page's org URN and the access token IN USE: the renewed (stored) one while it matches the env token, else the env token
+ * (see `activeAccessToken` in token.ts; the worker resolves it at the start of each tick).
+ */
 export function pageConfig(page: string): PageConfig | null {
   const c = env.linkedin.pages[page];
-  return c && c.orgUrn && c.accessToken ? c : null;
+  return c && c.orgUrn && c.accessToken ? { orgUrn: c.orgUrn, accessToken: cachedAccessToken(page) ?? c.accessToken } : null;
 }
