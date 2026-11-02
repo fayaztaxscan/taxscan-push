@@ -32,6 +32,10 @@ export type CmsArticle = {
   keywords: string[];
   courts: { name: string; shortName: string }[];
   category: string | null;
+  /** The cover picture's URL (`cover_image_url`), for the link card's thumbnail. */
+  coverImageUrl?: string | null;
+  /** The editor's one-line summary (`excerpt`), for the link card's description. */
+  excerpt?: string | null;
 };
 
 export const MAX_HASHTAGS = 6;
@@ -227,21 +231,45 @@ export function parseCmsArticle(raw: unknown): CmsArticle | null {
         .filter((c): c is { name: string | null; shortName: string | null } => !!c && (!!c.name || !!c.shortName))
         .map((c) => ({ name: c.name ?? '', shortName: c.shortName ?? '' }))
     : [];
-  return { keywords, courts, category: str(o.category_name) };
+  return { keywords, courts, category: str(o.category_name), coverImageUrl: str(o.cover_image_url), excerpt: str(o.excerpt) };
 }
 
 /* ------------------------------------------------------------------ */
 /* One post, ready to send                                             */
 /* ------------------------------------------------------------------ */
 
-export type PostPayload = { commentary: string; title: string; link: string; hashtags: string[]; hashtagSource: 'cms' | 'fallback' };
+/** The link card's description is cut at a word boundary to at most this many characters (the ellipsis included). */
+export const DESCRIPTION_MAX = 200;
+
+/** Whitespace-collapsed, cut at a word boundary to ≤ 200 characters with "…". A plain string (not little-text commentary). */
+export function cardDescription(text: string | null | undefined): string {
+  const flat = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (flat.length <= DESCRIPTION_MAX) return flat;
+  const room = DESCRIPTION_MAX - 1; // one character for the ellipsis
+  const cut = flat.slice(0, room + 1);
+  const at = cut.lastIndexOf(' ');
+  const head = (at > 0 ? cut.slice(0, at) : flat.slice(0, room)).replace(/[\s.,;:!?-]+$/, '');
+  return `${head}…`;
+}
+
+export type PostPayload = {
+  commentary: string;
+  title: string;
+  link: string;
+  hashtags: string[];
+  hashtagSource: 'cms' | 'fallback';
+  /** The card's one-line description: the CMS excerpt, else the campaign body (≤ 200 characters). May be empty. */
+  description: string;
+  /** The CMS cover picture's URL, or null (the CMS fetch failed or has none). Never scraped from the page. */
+  coverImageUrl: string | null;
+};
 
 /**
  * Everything a post needs, built from the campaign (and, fail-open, the CMS). Null when the URL is not a taxscan.in
  * article or the final link is off `ALLOWED_PUSH_HOSTS`.
  */
 export async function buildPost(
-  c: { id: string; title: string; url: string; authority: string | null; categories: string[] },
+  c: { id: string; title: string; url: string; authority: string | null; categories: string[]; body?: string | null },
   page: string,
   fetchCms: (slug: string) => Promise<CmsArticle | null> = (s) => fetchCmsArticle(s),
 ): Promise<PostPayload | null> {
@@ -258,5 +286,13 @@ export async function buildPost(
   const cms = slug ? await fetchCms(slug).catch(() => null) : null;
   const { tags, source } = hashtagsFor({ cms, authority: c.authority, categories: c.categories });
   const title = c.title.replace(/\s+/g, ' ').trim();
-  return { commentary: buildCommentary(title, tags), title, link, hashtags: tags, hashtagSource: source };
+  return {
+    commentary: buildCommentary(title, tags),
+    title,
+    link,
+    hashtags: tags,
+    hashtagSource: source,
+    description: cardDescription(cms?.excerpt || c.body),
+    coverImageUrl: cms?.coverImageUrl ?? null,
+  };
 }

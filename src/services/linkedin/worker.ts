@@ -9,7 +9,8 @@ import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { istDay } from '../whatsapp/queue';
-import { postToLinkedIn, type LinkedInResult } from './client';
+import { postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
+import { fetchCoverImage } from './image';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
 import { refreshActiveTokens } from './token';
 import { buildPost, fetchCmsArticle, type CmsArticle } from './post';
@@ -43,6 +44,11 @@ export type WorkerDeps = {
   now?: () => Date;
   /** The LinkedIn call (tests mock it). */
   post?: typeof postToLinkedIn;
+  /** The cover-picture fetch and the Images API upload (tests mock them). */
+  fetchImage?: typeof fetchCoverImage;
+  uploadImage?: typeof uploadImage;
+  /** Waits for the uploaded image to be AVAILABLE (tests mock it or pass a fake clock). */
+  waitImage?: typeof waitForImage;
   fetchCms?: (slug: string) => Promise<CmsArticle | null>;
   emailSender?: EmailSender;
   isEmailConfigured?: () => boolean;
@@ -178,11 +184,42 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       log(page, row.campaignId, 'failed', 'reason=link');
       return 'failed';
     }
-    const result: LinkedInResult = await (d.post ?? postToLinkedIn)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, commentary: post.commentary, title: post.title, link: post.link });
+    // The card's picture (fail-open): any problem fetching or uploading it posts WITHOUT a thumbnail. Only a 401 / 403 from the
+    // upload registration counts as a login error, exactly like the post's own, and then no post call is made.
+    let thumbnail: string | undefined;
+    let image = 'none:no_cover';
+    let uploadAuth: LinkedInResult | null = null;
+    if (post.coverImageUrl) {
+      const img = await (d.fetchImage ?? fetchCoverImage)(post.coverImageUrl);
+      if (!img.ok) image = `none:${img.reason}`;
+      else {
+        const up = await (d.uploadImage ?? uploadImage)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, bytes: img.bytes, contentType: img.contentType });
+        if (up.kind === 'ok') {
+          // The upload is asynchronous: only attach the picture once LinkedIn says it is AVAILABLE, else post without it.
+          const ready = await (d.waitImage ?? waitForImage)({ urn: up.urn, accessToken: cfg.accessToken });
+          if (ready.ok) {
+            thumbnail = up.urn;
+            image = 'ok';
+          } else image = `none:${ready.reason}`;
+        } else if (up.kind === 'auth') {
+          uploadAuth = { kind: 'auth', status: up.status, error: up.error };
+        } else image = `none:${up.reason}`;
+      }
+    }
+    const send = (withThumbnail: boolean) =>
+      (d.post ?? postToLinkedIn)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, commentary: post.commentary, title: post.title, link: post.link, description: post.description, ...(withThumbnail && thumbnail ? { thumbnail } : {}) });
+    let result: LinkedInResult = uploadAuth ?? (await send(true));
+    // A post REJECTED with a client error while it carried a thumbnail (a 4xx that is not 401 / 403 / 429: our `failed` verdict)
+    // is repeated ONCE, right away, without the thumbnail. Safe: a 4xx means LinkedIn did not create the first post. A picture
+    // must never stop a post. 2xx, 5xx, 429 and network errors are NOT repeated here (they follow the normal retry rules).
+    if (thumbnail && result.kind === 'failed') {
+      image = `dropped:${result.status ?? 'unknown'}`;
+      result = await send(false);
+    }
     if (result.kind === 'posted') {
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'POSTED', linkedinPostId: result.postId === 'unknown' ? null : result.postId, postedAt: now, error: null, nextAttemptAt: null } });
       if (result.postId === 'unknown') await prisma.linkedInPost.update({ where: { id: row.id }, data: { error: 'posted, but LinkedIn returned no post id — check the page' } });
-      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource}`);
+      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource} image=${image}`);
       if (await readAuthState(page)) await clearAuthState(page); // it works again
       return 'posted';
     }
@@ -190,17 +227,17 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       // not a real attempt: put the row back as a retry that is due as soon as posting resumes
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { attempts: Math.max(0, row.attempts - 1), nextAttemptAt: now, error: clip(result.error) } });
       await handleAuthStop(page, result.status, d, now);
-      log(page, row.campaignId, 'auth_stop', `status=${result.status ?? ''}`);
+      log(page, row.campaignId, 'auth_stop', `status=${result.status ?? ''} image=${image}`);
       return 'auth_stop';
     }
     if (result.kind === 'retry' && row.attempts < MAX_ATTEMPTS) {
       const due = pushOutOfQuietHours(new Date(now.getTime() + RETRY_DELAYS_MIN[row.attempts - 1] * 60_000), quietOf(d));
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { nextAttemptAt: due, error: clip(result.error) } });
-      log(page, row.campaignId, 'retry', `attempt=${row.attempts} next=${due.toISOString()}`);
+      log(page, row.campaignId, 'retry', `attempt=${row.attempts} next=${due.toISOString()} image=${image}`);
       return 'retry';
     }
     await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'FAILED', nextAttemptAt: null, error: clip(result.error) } });
-    log(page, row.campaignId, 'failed', `attempts=${row.attempts}`);
+    log(page, row.campaignId, 'failed', `attempts=${row.attempts} image=${image}`);
     return 'failed';
   } catch (err) {
     console.error('[linkedin] attempt failed', safeErrorLog(err));

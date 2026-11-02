@@ -58,6 +58,36 @@ worker, and the screen's Retry, which makes one post and answers).
   never duplicated); other params and the fragment survive; the final URL passes `isAllowedPushUrl`. The helper is
   `src/services/social/utm.ts`, shared with WhatsApp.
 
+## The link card's picture and description
+The Posts API does **not** scrape the link for `content.article`: a thumbnail appears only when the post supplies
+`content.article.thumbnail`, an image URN uploaded through the **Images API** (brief `docs/briefs/2026-11-02-linkedin-article-thumbnail.md`).
+So, in each attempt, after the CMS article is read for the hashtags (`src/services/linkedin/post.ts`, `image.ts`, `client.ts`):
+1. **Source:** the CMS article's `cover_image_url` (and `excerpt`). If the CMS fetch failed there is no picture; the page is never scraped.
+2. **Fetch the picture (`fetchCoverImage`):** https only, exact host `documents.taxscan.in` / `www.taxscan.in` / `taxscan.in` (no userinfo, no
+   port), **no redirects**, 10 s for the whole fetch including the body, at most 5 MB (the read stops at the cap), `content-type` image/jpeg,
+   image/png or image/gif only.
+3. **Upload (`uploadImage`, LinkedIn "Images API", checked 2 Nov 2026):** `POST https://api.linkedin.com/rest/images?action=initializeUpload`
+   (same `LinkedIn-Version` / `X-Restli-Protocol-Version` / Bearer headers) with `{"initializeUploadRequest":{"owner":"<org URN>"}}` →
+   `value.uploadUrl` and `value.image` (`urn:li:image:…`); then `PUT` the bytes to `uploadUrl` **with the Bearer token** (the image upload
+   call requires it; a 200 / 201 answer). The upload URL must be https on `linkedin.com` / `licdn.com`, or the token is not sent to it.
+4. **Wait until the image is ready:** the upload is asynchronous (WAITING_UPLOAD → PROCESSING → AVAILABLE). After the PUT the worker looks at
+   `GET https://api.linkedin.com/rest/images/<urn>` (same headers; the `status` field) up to 4 times, 1.5 s apart. Only AVAILABLE attaches the
+   thumbnail; still processing → `image=none:processing`, a failed processing → `image=none:processing_failed`, an error from the status call →
+   `image=none:status_<code>` (or `status_network`): the post then goes out without it.
+5. **Post** with `content.article = { source, title, description, thumbnail: <image URN> }`. The **description** is the CMS `excerpt`, else the
+   campaign body: whitespace-collapsed, ≤ 200 characters at a word boundary with "…", a plain string (not escaped like the commentary).
+6. **A post rejected because of the picture still goes out:** if the post WITH a thumbnail gets a client error that is not 401 / 403 / 429 (the
+   `failed` verdict: 400 / 409 / 422 …), the same attempt repeats the post once, right away, WITHOUT the thumbnail (description kept) and logs
+   `image=dropped:<status>`. Safe because a 4xx means LinkedIn did not create the first post. The repeat's verdict is the attempt's. A 2xx, 5xx, 429
+   or network error is never repeated here (the normal retry rules apply, with the thumbnail), and a 401 / 403 is an auth-stop with no repeat.
+7. **Fail-open:** any failure in 2–4 (timeout, 4xx/5xx, wrong type, too big, a bad answer, the image not ready) posts WITHOUT `thumbnail` (the description is kept) and
+   the outcome line says why: `image=ok`, or `image=none:<reason>` with `host`, `redirect`, `timeout`, `network`, `type`, `size`, `http_<n>`,
+   `init_http_<n>` / `init_network` / `init_timeout` / `init_bad_answer`, `put_http_<n>` / `put_network` / `put_timeout`, or `no_cover`. A picture
+   problem is never a post failure, never a retry, never an auth-stop, **except** a 401 / 403 from the registration: that is handled like the post's
+   own 401 / 403 (the token is bad for everything), and no post call is made. A retried attempt uploads again (images are cheap); there is no loop
+   inside one attempt. Time budget per attempt: CMS 5 s + picture 10 s + registration 15 s + upload 15 s + post 15 s, far inside the 10-minute stale window.
+Log line: `[linkedin] page=taxscan campaign=… outcome=posted hashtags=cms|fallback image=ok|none:<reason>|dropped:<status>`.
+
 ## Pages (keyed for later)
 `LinkedInPost.page` is a plain string. Page `taxscan` reads `LINKEDIN_TAXSCAN_ORG_URN` + `LINKEDIN_TAXSCAN_ACCESS_TOKEN`
 (`src/services/linkedin/pages.ts`, `PORTAL_TO_PAGE`). **Adding Shopscan or Academy = their two env variables + one mapping

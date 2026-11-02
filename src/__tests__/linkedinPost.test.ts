@@ -80,7 +80,7 @@ describe('2. hashtags from the CMS\'s editorial data (the three 2 Nov articles, 
     const res = (status: number, body: string, headers: Record<string, string> = {}) => ({ ok: status < 400, status, headers: new Headers(headers), arrayBuffer: async () => new TextEncoder().encode(body).buffer }) as unknown as Response;
     const calls: string[] = [];
     const f = (r: Response | Error) => (async (url: string) => { calls.push(url); if (r instanceof Error) throw r; return r; }) as unknown as typeof fetch;
-    expect(await fetchCmsArticle('a-slug', f(res(200, ok)))).toEqual({ keywords: ['NFAC'], courts: [{ name: 'Income Tax Appellate Tribunal', shortName: 'ITAT' }], category: 'Income Tax' });
+    expect(await fetchCmsArticle('a-slug', f(res(200, ok)))).toEqual({ keywords: ['NFAC'], courts: [{ name: 'Income Tax Appellate Tribunal', shortName: 'ITAT' }], category: 'Income Tax', coverImageUrl: null, excerpt: null });
     expect(calls[0]).toBe('https://api.taxscan.in/api/v1/articles/a-slug');
     expect(await fetchCmsArticle('a-slug', f(res(404, 'x')))).toBeNull();
     expect(await fetchCmsArticle('a-slug', f(res(500, 'x')))).toBeNull();
