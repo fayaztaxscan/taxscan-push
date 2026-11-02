@@ -46,10 +46,39 @@ after the push; hashtags from our own authority/category data; about 20 posts a 
      backslash-escaped in plain text, or LinkedIn cuts the text at the first unescaped one. Taxscan headlines contain
      `[Read Order]` and `(2)`. The hashtags themselves must still render as hashtags. Check LinkedIn's current docs for
      the hashtag form (plain `#Tag` vs `{hashtag|\#|Tag}`), and note what you used in the REPORT.
-4. **Hashtags** (one function, unit-tested, ≤ 5): from `Campaign.authority` (e.g. Supreme Court → `#SupremeCourt`,
-   Bombay High Court → `#BombayHighCourt`, ITAT → `#ITAT`, CESTAT → `#CESTAT`), then the first category tag (e.g.
-   Income Tax → `#IncomeTax`, GST → `#GST`, Customs → `#Customs`), then `#TaxNews #taxscan`. CamelCase, letters and
-   digits only, no duplicates (case-insensitive). No page fetch, no keyword extraction.
+4. **Hashtags: per-article, from the CMS's own editorial data** (owner 2 Nov: "I don't want to end up using only common
+   repeated hashtags"). One pure function (unit-tested) + one fetch.
+   - **Source:** the public CMS article API `GET https://api.taxscan.in/api/v1/articles/<slug>` (slug = last URL path
+     segment; no auth; the site itself uses it). Read `keywords` (editor-set phrases, e.g. `ITAT Panaji`, `NFAC`,
+     `Land Acquisition Act`, `Section 270A`), `courts[]` (`name`, `shortName`, e.g. `ITAT`, `SC`, `TELANGAN-HC`) and
+     `category_name`. The fetch runs in the worker just before posting: 5 s timeout, one attempt, response capped at
+     2 MB, host must be `api.taxscan.in`. **Fail-open:** if it fails, use the fallback below and log `hashtags=fallback`.
+     Never block or delay the post for it.
+   - **Order and limits (max 6, each unique, case-insensitive):**
+     1. **Court:** `courts[0]`. `SC` → `#SupremeCourt`. A clean acronym shortName (`^[A-Z]{2,8}$`, e.g. ITAT, CESTAT,
+        ICAI, NCLAT, GSTAT) → `#<shortName>`. Otherwise CamelCase of `name` (e.g. `Telangana High Court` →
+        `#TelanganaHighCourt`). **Prefer a bench keyword** when one starts with the acronym (`ITAT Panaji` →
+        `#ITATPanaji`).
+     2. **Category:** `category_name` → CamelCase (`Income Tax` → `#IncomeTax`, `GST` → `#GST`). Skip `Other Taxations`.
+     3. **Up to 3 editorial keywords, in the editor's order**, after these rules:
+        - A **section phrase** (`Section 270A`, `Section 57(iv) of the Income Tax Act`, `Section 69 CGST Act`) →
+          `#Section<number+letters>`, plus the act's acronym when the phrase names CGST/IGST/SGST/FEMA/PMLA/IBC/CGST
+          (e.g. `#Section69CGST`, `#Section270A`, `#Section57`).
+        - Otherwise keep a keyword only if it is ≤ 3 words and ≤ 24 characters once CamelCased (drops long SEO phrases
+          like `ICAI disciplinary action against auditor`).
+        - Skip a keyword that repeats the court or category, and a short stop-list of generic ones (`Income Tax Act`,
+          `Interest`, `Assessing Officer`, `Tax`, `Order`, `Judgment`, `Result Date`, `Disciplinary action`, `Latest
+          Judgments`; keep the list in one constant, easy to extend).
+        - Acronyms stay upper case (GST, ITC, NFAC, ICAI, DGGI, CBDT, CBIC, TDS, TCS, AO …); CamelCase otherwise;
+          letters and digits only.
+     4. **`#taxscan`** last, always. No `#TaxNews` or other fixed tags.
+   - **Fallback (CMS unavailable or no keywords):** court from `Campaign.authority`, category from `Campaign.categories`,
+     plus `#taxscan`.
+   - Examples from real 2 Nov articles (use them as fixtures):
+     - ITAT Panaji, Land Acquisition interest → `#ITATPanaji #IncomeTax #NFAC #LandAcquisitionAct #Section57 #taxscan`
+     - ICAI revaluation reserve → `#ICAI #CashFlowStatement #CharteredAccountant #RevaluationReserve #taxscan`
+       (`ICAI` keyword deduped against the court, `Institute of Chartered Accountants of India` too long)
+     - Telangana HC GST arrest → `#TelanganaHighCourt #GST #GSTArrest #Section69CGST #DGGIInvestigation #taxscan`
 5. **UTMs (owner: required):** `utm_source=taxscan-linkedin`, `utm_medium=social`, `utm_campaign=linkedin-<page>`
    (`linkedin-taxscan` now; later `linkedin-shopscan`, `linkedin-academy`), and `utm_content=` the id, else the slug
    (same rule as WhatsApp). SET, never duplicate. The final URL passes `isAllowedPushUrl`. Put the constants beside the
@@ -83,6 +112,8 @@ after the push; hashtags from our own authority/category data; about 20 posts a 
 - Any change to the push send path, pacer, Compose or the WhatsApp screen beyond sharing the UTM helper.
 - Images/uploads to LinkedIn (the article card comes from the link), editing or deleting posts, comments, analytics
   pulls from LinkedIn.
+- Scraping article pages or keyword extraction (the old script's approach: since the CMS move it picks the site's
+  menu — `#FinanceAndEconomicOffences #Budget #SignIn`, author names — on nearly every post).
 - Token refresh / OAuth flow in the app (the token is set by the owner in Railway). Only the alert.
 - Changes to the `taxscan-automation` repo (the switch-over step is the owner's, see below).
 
@@ -90,7 +121,8 @@ after the push; hashtags from our own authority/category data; about 20 posts a 
 Each one must PASS in the REPORT.
 1. Commentary for the headline `CBDT Sets Cost Inflation Index at 384 for FY 2026-27 [Read Notification]` with
    authority/category is the expected exact string, with the reserved characters escaped and the hashtags well-formed.
-2. Hashtags: ≤ 5, no duplicates, CamelCase, letters and digits only; unknown authority/category → just `#TaxNews #taxscan`.
+2. Hashtags: the three examples above come out exactly as written, from recorded CMS API fixtures. Max 6, no duplicates,
+   letters and digits only. A CMS timeout/404/500 → the fallback, and the post still goes out. No `#TaxNews` anywhere.
 3. UTM link: exactly one each of `utm_source=taxscan-linkedin`, `utm_medium=social`, `utm_campaign=linkedin-taxscan`,
    `utm_content=<id|slug>`, for both URL shapes. Other params survive.
 4. Worker (LinkedIn HTTP mocked): it posts SENT taxscan articles after `LINKEDIN_POST_FROM` in `lastSentAt` order, at
@@ -122,6 +154,8 @@ Each one must PASS in the REPORT.
 - No new npm dependency (use `fetch`).
 
 ## Context the builder needs
+- The CMS article API is public and read-only. Use plain `fetch`, no auth header, and never send any of our secrets
+  to it.
 - The current LinkedIn poster, for reference only: `fayaztaxscan/taxscan-automation`, `main.py` `post_to_linkedin()`
   (same endpoint, payload and headers). It posts headline + hashtags with an article card, and doesn't escape the
   commentary.
