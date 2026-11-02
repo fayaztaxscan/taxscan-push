@@ -7,6 +7,11 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-11-02 (PR #93 LIVE):** digest dark-mode colours + banner header + phone pictures full width; WhatsApp channel
+queue (flag `WHATSAPP_QUEUE_ENABLED` off). Verified: deploy up, migrations applied, healthz 200, banner 200, WhatsApp API
+404 (flag off). Open: owner sets the flag + tries Share into WhatsApp on a real phone; next staff digest checked in dark
+mode (iPhone Mail + Zoho); ask CMS for a WhatsApp views count; owner runs the two builds' clean-up commands.
+
 **▶ 2026-10-30 (PRs #86–#92 LIVE):**
 - **#92** digest polish (deploy ~13:40Z, migration `20261030150000_digest_setting`): old look on phones (335×43 Read More, full-width pictures/ads, compact header), Outlook hardening (VML dropped — Outlook/Windows clicks on text only), Default story picture on Templates (1600×840; brand block until Anagha uploads), 15 stories, date in header bar, ICYMI text-only, 24 px social row, footer no double "Taxscan", warn 80 KB (refusal 90). Worst case ≈80 KB; real ≈71 KB. Verified on prod: Templates card, preview header date, no double name.
 - **Deliverability gap (info, not briefed; owner did not ask):** Mailercloud sends List-Unsubscribe as mailto only, no RFC 8058 one-click; no Google Postmaster Tools on hello.taxscan.in. Raise before stage 3 (real readers).
