@@ -7,6 +7,8 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-11-02 (PR #94 LIVE ~14:10 IST):** WhatsApp list fix — taxscan URLs now have no trailing id; queue accepts both shapes. Owner to confirm rows appear. Check anything else assuming `-<id>` (reads.ts external_id path) in a later review.
+
 **▶ 2026-11-02 (PR #93 LIVE):** digest dark-mode colours + banner header + phone pictures full width; WhatsApp channel
 queue (`WHATSAPP_QUEUE_ENABLED` **ON** since ~13:55 IST; API 401 without login = live). Verified: deploy up, migrations applied, healthz 200, banner 200, WhatsApp API
 404 (flag off). Open: owner tries Share into WhatsApp on a real phone; next staff digest checked in dark

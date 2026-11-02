@@ -229,6 +229,9 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
+**2 Nov, PR #94 LIVE (~14:10 IST):** the WhatsApp list was empty — **current taxscan.in article URLs no longer end in
+a numeric id** (`/<section>/<slug>`), so anything requiring `-<id>` drops them. `articleKey()` falls back to the URL
+(reports/digest fine); the WhatsApp queue now accepts both shapes (`utm_content` = id, else slug).
 **2 Nov (PR #93 LIVE, ~13:45 IST; guide v2.14; suite 1,740):** built-in digest — buttons + header no longer pin their
 background (dark mode recolours background + text together), header = one banner image
 `/email/taxscan-header-1800x220.png` with "Daily Digest · date" below on white (`{{header}}` placeholder), phone pictures
