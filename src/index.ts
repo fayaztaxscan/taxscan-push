@@ -23,6 +23,8 @@ import { startDigestRetentionSweeper } from './sweepers/digestRetention';
 import { startBackupCron } from './services/backup';
 import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
+import { startLinkedInWorker } from './services/linkedin/worker';
+import { startWhatsAppNudge } from './services/whatsapp/nudge';
 import { startAudienceSync } from './services/audience/boot';
 import { createMockDigestSender } from './services/digest/mockSender';
 import { mockSendersEnabled } from './lib/mockSenderGuard';
@@ -78,4 +80,6 @@ app.listen(env.port, () => {
   startMetricsWarmer();
   startDigestScheduler(undefined, undefined, mockDigestSender ? { sender: mockDigestSender } : {});
   startAudienceSync();
+  startLinkedInWorker();
+  startWhatsAppNudge();
 });

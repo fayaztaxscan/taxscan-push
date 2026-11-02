@@ -52,9 +52,9 @@ describe('staff devices stay out of every reader door (QA of 0032030)', () => {
     expect(matching(/pushDevices\s*:\s*(true|\{)/)).toEqual([]);
   });
 
-  it('only the digest alert pass, the staff routes, Users and the mock switch import the staff-push service', () => {
+  it('only the digest alert pass, the WhatsApp nudge, the staff routes, Users and the mock switch import the staff-push service', () => {
     expect(matching(/from\s+['"][./]*(?:services\/)?staffPush['"]/)).toEqual(
-      ['src/index.ts', 'src/routes/staffPush.ts', 'src/routes/users.ts', 'src/services/digest/alerts.ts'].sort(),
+      ['src/index.ts', 'src/routes/staffPush.ts', 'src/routes/users.ts', 'src/services/digest/alerts.ts', 'src/services/whatsapp/nudge.ts'].sort(),
     );
   });
 

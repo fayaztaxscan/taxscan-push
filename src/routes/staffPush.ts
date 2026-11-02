@@ -28,6 +28,8 @@ import {
   staffDeviceLabel,
   staffPushTransport,
   upsertStaffDevice,
+  STAFF_PUSH_KINDS,
+  type StaffPushKind,
   type StaffPushTransport,
 } from '../services/staffPush';
 import { prisma } from '../lib/prisma';
@@ -46,7 +48,11 @@ const endpointField = z
     }
   }, 'endpoint must be an https URL');
 
+const KindSchema = z.enum(STAFF_PUSH_KINDS as unknown as [StaffPushKind, ...StaffPushKind[]]);
+
 const SubscribeSchema = z.object({
+  // What this device signs up for. The Digests card sends nothing (= 'digest'); the WhatsApp card sends 'whatsapp'.
+  kind: KindSchema.optional(),
   subscription: z.object({
     endpoint: endpointField,
     keys: z.object({ p256dh: z.string().min(1).max(200), auth: z.string().min(1).max(100) }),
@@ -54,7 +60,8 @@ const SubscribeSchema = z.object({
   // pushsubscriptionchange: the browser's previous endpoint for this device, removed if it is mine.
   replacesEndpoint: endpointField.optional(),
 });
-const EndpointSchema = z.object({ endpoint: endpointField });
+// `kind` (optional): check / remove / test concerns that kind only. Without it: the device as a whole (as before kinds existed).
+const EndpointSchema = z.object({ endpoint: endpointField, kind: KindSchema.optional() });
 
 export type StaffPushRouterOptions = {
   cfg?: DigestEnv;
@@ -85,8 +92,8 @@ function perUserLimiter(windowMs: number, max: number, message: string): Request
   });
 }
 
-function publicDevice(d: { id: string; label: string | null; createdAt: Date; lastSuccessAt: Date | null }) {
-  return { id: d.id, label: d.label, createdAt: d.createdAt, lastSuccessAt: d.lastSuccessAt };
+function publicDevice(d: { id: string; label: string | null; createdAt: Date; lastSuccessAt: Date | null; kinds: string[] }) {
+  return { id: d.id, label: d.label, createdAt: d.createdAt, lastSuccessAt: d.lastSuccessAt, kinds: d.kinds };
 }
 
 function ip(req: Request): string | null {
@@ -117,6 +124,8 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
         sending: cfg().enabled && killSwitch,
         digestEnabled: cfg().enabled,
         staffPushEnabled: killSwitch,
+        // Is the WhatsApp "articles waiting" nudge running? When false, the WhatsApp card says nothing about nudges.
+        whatsappNudge: env.whatsapp.queueEnabled && env.whatsapp.nudgeEnabled && killSwitch,
         vapidPublicKey: env.vapid.publicKey,
         devices,
       });
@@ -131,6 +140,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
       if (!parsed.success) return res.status(400).json({ error: 'invalid_request' });
       const userId = req.user!.id;
       const { subscription, replacesEndpoint } = parsed.data;
+      const kind: StaffPushKind = parsed.data.kind ?? 'digest';
       const label = staffDeviceLabel(req.header('user-agent'));
       // Drop the caller's own dead row BEFORE storing the new one, so a user at the device
       // limit doesn't lose another (live) device to eviction for a row that is going anyway.
@@ -142,7 +152,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
           replaced = true;
         }
       }
-      const r = await upsertStaffDevice(userId, subscription, label);
+      const r = await upsertStaffDevice(userId, subscription, label, kind);
       // A refresh of an unchanged device is not news; a new device (or one taken over
       // from another login on the same browser) is.
       if (r.created || r.movedFromUserId) {
@@ -154,6 +164,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
           metadata: {
             deviceId: r.device.id,
             label,
+            kind,
             pushService: pushServiceHost(subscription.endpoint),
             ...(r.movedFromUserId ? { movedFromUserId: r.movedFromUserId } : {}),
             ...(replaced ? { replacedOldEndpoint: true } : {}),
@@ -187,7 +198,9 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
       const parsed = EndpointSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: 'invalid_request' });
       const d = await findOwnDevice(req.user!.id, parsed.data.endpoint);
-      return res.json(d ? { on: true, device: publicDevice(d) } : { on: false });
+      // With a kind: is THIS kind on for the device? Without: is the device known at all (as before).
+      const on = d !== null && (!parsed.data.kind || d.kinds.includes(parsed.data.kind));
+      return res.json(on && d ? { on: true, device: publicDevice(d) } : { on: false, ...(d ? { device: publicDevice(d) } : {}) });
     } catch (err) {
       return next(err);
     }
@@ -199,13 +212,28 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
       if (!parsed.success) return res.status(400).json({ error: 'invalid_request' });
       const d = await findOwnDevice(req.user!.id, parsed.data.endpoint);
       if (!d) return res.json({ removed: false });
+      const kind = parsed.data.kind;
+      const left = kind ? d.kinds.filter((k) => k !== kind) : [];
+      if (kind && left.length > 0) {
+        // one kind off, another still on: keep the device
+        await prisma.staffPushSubscription.update({ where: { id: d.id }, data: { kinds: left } });
+        await recordAudit({
+          userId: req.user!.id,
+          action: 'STAFF_PUSH_UNSUBSCRIBED',
+          resourceType: 'staff_push_device',
+          resourceId: d.id,
+          metadata: { deviceId: d.id, label: d.label, kind, remaining: left, pushService: pushServiceHost(d.endpoint) },
+          ipAddress: ip(req),
+        });
+        return res.json({ removed: true, kept: true, device: { ...publicDevice(d), kinds: left } });
+      }
       await prisma.staffPushSubscription.deleteMany({ where: { id: d.id } });
       await recordAudit({
         userId: req.user!.id,
         action: 'STAFF_PUSH_UNSUBSCRIBED',
         resourceType: 'staff_push_device',
         resourceId: d.id,
-        metadata: { deviceId: d.id, label: d.label, pushService: pushServiceHost(d.endpoint) },
+        metadata: { deviceId: d.id, label: d.label, ...(kind ? { kind } : {}), pushService: pushServiceHost(d.endpoint) },
         ipAddress: ip(req),
       });
       return res.json({ removed: true });
@@ -228,8 +256,8 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
         d,
         {
           title: 'Notifications are on',
-          body: 'This device will get the digest approval alerts.',
-          url: `${base}/admin/digests`,
+          body: parsed.data.kind === 'whatsapp' ? 'This device will get a nudge when articles are waiting for WhatsApp.' : 'This device will get the digest approval alerts.',
+          url: `${base}${parsed.data.kind === 'whatsapp' ? '/admin/whatsapp' : '/admin/digests'}`,
           icon,
           badge: DEFAULT_NOTIFICATION_BADGE,
           tag: 'taxscan-staff-test',

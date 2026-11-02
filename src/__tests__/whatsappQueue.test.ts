@@ -44,7 +44,7 @@ async function cookieFor(u: User): Promise<string> {
 }
 
 const camps: Record<string, string> = {};
-async function seed(key: string, o: { id: number; at: Date; slug?: string; host?: string; status?: 'SENT' | 'DRAFT'; title?: string; body?: string; portal?: string; url?: string }) {
+async function seed(key: string, o: { id: number; at: Date; slug?: string; host?: string; status?: 'SENT' | 'DRAFT'; title?: string; body?: string; portal?: string; url?: string; extra?: Record<string, unknown> }) {
   const url = o.url ?? `https://${o.host ?? 'www.taxscan.in'}/${o.slug ?? 'gst'}/story-${key}-${o.id}`;
   const c = await prisma.campaign.create({
     data: {
@@ -57,7 +57,8 @@ async function seed(key: string, o: { id: number; at: Date; slug?: string; host?
       lastSentAt: o.at,
       authority: 'Supreme Court',
       categories: ['GST', 'Top Stories'],
-    },
+      ...(o.extra ?? {}),
+    } as never,
   });
   camps[key] = c.id;
   return c;
@@ -81,6 +82,9 @@ beforeAll(async () => {
   await seed('noid', { id: 0, at: ist(14, 0), url: 'https://www.taxscan.in/income-tax/interest-on-enhanced-compensation-is-not-taxable-itat-read-order' });
   await prisma.campaign.create({ data: { portal: PORTAL, title: 'Story noid again', body: 'x', url: 'https://www.taxscan.in/income-tax/interest-on-enhanced-compensation-is-not-taxable-itat-read-order', target: {}, status: 'SENT', lastSentAt: ist(19, 30) } });
   await seed('otherportal', { id: 100012, at: ist(13, 15), portal: `${PORTAL}-x` });
+  // H2 (LinkedIn follow-up 1): a Compose send aimed ONLY at the test-segment topic is not on the list; a real topic is
+  await seed('testonly', { id: 100030, at: ist(15, 0), extra: { target: { type: 'topics', topics: [env.testSegmentTopic] } } });
+  await seed('testreal', { id: 100031, at: ist(15, 5), extra: { createdByUserId: undefined, target: { type: 'topics', topics: [env.testSegmentTopic, 'gst'] } } });
   // the day before and the day after
   await seed('before', { id: 100020, at: ist(23, 59, -1) });
   await seed('after', { id: 100021, at: ist(0, 0, 1) });
@@ -106,9 +110,9 @@ describe('3. the queue for an IST day', () => {
     const res = await get(app());
     expect(res.status).toBe(200);
     expect(res.body.date).toBe('2026-11-02');
-    expect(res.body.rows.map((r: { headline: string }) => r.headline)).toEqual(['Story early', 'Story mid', 'Story noid', 'Story late']);
-    expect(res.body.rows.map((r: { pushedTime: string }) => r.pushedTime)).toEqual(['00:00', '12:30', '14:00', '23:59']);
-    expect(res.body.counts).toEqual({ todo: 4, posted: 0, skipped: 0, all: 4 });
+    expect(res.body.rows.map((r: { headline: string }) => r.headline)).toEqual(['Story early', 'Story mid', 'Story noid', 'Story testreal', 'Story late']);
+    expect(res.body.rows.map((r: { pushedTime: string }) => r.pushedTime)).toEqual(['00:00', '12:30', '14:00', '15:05', '23:59']);
+    expect(res.body.counts).toEqual({ todo: 5, posted: 0, skipped: 0, all: 5 });
     const row = res.body.rows[1];
     expect(row).toMatchObject({ authority: 'Supreme Court', category: 'GST', status: 'TODO', actedBy: null, actedAt: null });
     expect(row.text).toContain('*Story mid*');
@@ -165,10 +169,10 @@ describe('5. Posted / Skipped / undo', () => {
     expect(rows.find((r: { articleKey: string }) => r.articleKey === 'article:100002')).toMatchObject({ status: 'SKIPPED', actedBy: { id: publisher.id } });
     expect(await prisma.whatsAppPost.count({ where: { portal: PORTAL, articleKey: 'article:100002' } })).toBe(1);
     expect((await mark(a, camps.mid, 'POSTED')).status).toBe(200);
-    expect((await get(a)).body.counts).toEqual({ todo: 3, posted: 1, skipped: 0, all: 4 });
+    expect((await get(a)).body.counts).toEqual({ todo: 4, posted: 1, skipped: 0, all: 5 });
     expect((await mark(a, camps.mid, 'TODO')).status).toBe(200);
     expect(await prisma.whatsAppPost.count({ where: { portal: PORTAL } })).toBe(0);
-    expect((await get(a)).body.counts.todo).toBe(4);
+    expect((await get(a)).body.counts.todo).toBe(5);
   });
   it('G1: a no-id article can be marked Posted and Skipped, and undone', async () => {
     const a = app();
@@ -193,6 +197,7 @@ describe('5. Posted / Skipped / undo', () => {
     expect((await mark(a, camps.draft, 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.home, 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.section, 'POSTED')).status).toBe(404);
+    expect((await mark(a, camps.testonly, 'POSTED')).status).toBe(404); // H2: a test send is never on the list
     expect((await mark(a, camps.otherportal, 'POSTED')).status).toBe(404);
     expect((await mark(a, 'nope', 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.mid, 'DONE')).status).toBe(400);
@@ -217,6 +222,6 @@ describe('6. roles and the flag', () => {
   });
   it('/api/auth/me tells the SPA whether the menu item shows (the configured flag; off by default)', async () => {
     const me = await request(loginApp).get('/api/auth/me').set('Cookie', adminCookie);
-    expect(me.body.features).toEqual({ whatsappQueue: env.whatsapp.queueEnabled });
+    expect(me.body.features).toEqual({ whatsappQueue: env.whatsapp.queueEnabled, linkedinPosting: env.linkedin.enabled });
   });
 });
