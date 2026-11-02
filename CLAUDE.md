@@ -229,6 +229,15 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
+**2 Nov (PR #93 LIVE, ~13:45 IST; guide v2.14; suite 1,740):** built-in digest — buttons + header no longer pin their
+background (dark mode recolours background + text together), header = one banner image
+`/email/taxscan-header-1800x220.png` with "Daily Digest · date" below on white (`{{header}}` placeholder), phone pictures
+fill the column. **WhatsApp channel queue** (PUSH → WhatsApp, behind `WHATSAPP_QUEUE_ENABLED` — **ON since 2 Nov ~13:55 IST**):
+pushed taxscan.in articles in push order with ready post text, Copy/Share/Posted/Skip, links tagged
+`taxscan-whatsapp / social / whatsapp-channel / <article id>`; table `WhatsAppPost`, not in the backup. No official
+WhatsApp Channel API exists — posting stays manual by design. New standing rule: area tests per build, one full-suite
+**Release check** per release, production ~13:00 / ~18:00 IST.
+
 **30 Oct (PRs #86–#92 LIVE):** #90 grouped menu; #91 Ads picture hints; #92 digest polish (old look on phones, default story picture on Templates, 15 stories, warn 80 KB). Earlier: #89 = built-in digest in the old Mailercloud format + desktop/mobile ad images (1720×400 / 1080×1080) + Edit subject before approval (unverified on a real draft) + our dead unsubscribe link removed (Mailercloud's footer is the unsubscribe). Earlier: CMS webhook fence reads Railway's two-hop X-Forwarded-For (the CMS event now lands; Feed 1 end-to-end applied); rate limiters + audit IPs use the same real-client derivation (`requestClientIp`, never `req.ip`); audience tasks 7–8 — send guard + derived targets behind `DIGEST_AUDIENCE_FROM_CMS` (off), Audience card + ADMIN Resume on Digests. Breaker `first_load` awaits the owner's review. Detail: `NEXT_STEP.md` top block.
 
 **Evening 29 Oct (PRs #83–#85):** digest STAGE 2 live sends to the staff list (approval on); CMS Feed 1 receiver ON (Postgres only); CMS reads ON (`READS_SOURCE=cms`, from 8 Oct). (Fence fix shipped 30 Oct, PR #86.)

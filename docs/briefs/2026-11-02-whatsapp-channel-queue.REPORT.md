@@ -56,3 +56,29 @@ git worktree remove ../taxscan-push-worktrees/whatsapp-channel-queue
 dropdb taxscan_push_build_whatsapp_channel_queue; dropdb taxscan_push_build_whatsapp_channel_queue_shadow
 git branch -D build/whatsapp-channel-queue; git push origin --delete build/whatsapp-channel-queue
 ```
+
+---
+
+# Follow-up 1 (live bug: today's taxscan.in links have no trailing id → empty list)
+
+- **Branch:** `build/whatsapp-channel-queue` fast-forwarded to `origin/develop` (the first build was already merged), then one code commit `1664874`.
+
+## Files changed
+- `src/services/whatsapp/postText.ts` — `articleIdOf` replaced by `articleContentOf(c)`: host `taxscan.in`/`www.taxscan.in` (http/https) and a path with ≥ 2 segments, or a trailing numeric id (≥ 4 digits). Returns `utm_content`: the numeric id when present, else the last path segment cut to 100 characters (`UTM_CONTENT_MAX`). Home page, section index pages (`/income-tax`), academy/shop and other hosts → null.
+- `src/services/whatsapp/utm.ts` — second argument renamed `content` (the id or the slug); SET behaviour unchanged.
+- `src/services/whatsapp/queue.ts` — `getQueue` and `markArticle` use `articleContentOf`. Identity is still `articleKey()` (the id, else the URL); `articleKey` itself untouched.
+- Tests: `whatsappPostText.test.ts` (G2, G4 added), `whatsappQueue.test.ts` (G1 fixtures in both URL shapes, G3 clone collapse, mark a no-id article; the home fixture is now the real home page, plus a section page).
+
+## Results (verbatim)
+- tsc clean; lint clean.
+- Area tests (`whatsapp*`, `reports*`): `Test Suites: 4 passed, 4 total` / `Tests: 59 passed, 59 total`.
+- No full suite (brief: area tests only; the release check covers the rest). No migration, no new flag, no schema/auth/env change.
+
+## Acceptance
+- G1 PASS (both URL shapes listed in push order and markable Posted / Skipped / undo). G2 PASS (no-id → `utm_content=<slug>`, ≤ 100 chars; id URL keeps the id). G3 PASS (two pushes of the same no-id URL → one row, "pushed again 19:30"). G4 PASS (`/`, `/income-tax`, `/income-tax/`, `taxscan.in/gst`, academy, shop, other hosts, ftp excluded). G5 PASS.
+
+## Worth remembering
+- A no-id article's `articleKey` is its full URL (query string included), so the same slug with a different query string is a different row; fine for push URLs, which don't carry one.
+- Any two-segment taxscan.in path counts as an article (e.g. a `/tag/gst` page would, if the pacer ever pushed one). The pacer only pushes feed articles, so none is expected.
+- Rows already marked under `article:<id>` keys are unaffected; no-id articles get their URL as the key (no row existed for them, as the list was empty).
+- Not browser-checked: no UI change. Prod already has the flag on; the fix applies on deploy.
