@@ -8,6 +8,7 @@ import { isPublicArticleCampaign } from '../services/social/publicCampaign';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PORTAL_TO_PAGE, PAGE_TAXSCAN } from '../services/linkedin/pages';
 import { loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
+import { tokenStatus } from '../services/linkedin/token';
 
 /**
  * LinkedIn page posting screen API (brief 2026-11-02-linkedin-page-posting). ADMIN or PUBLISHER (or the bearer).
@@ -96,6 +97,8 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
         rows,
         counts: { waiting: n('WAITING') + n('RETRYING'), posted: n('POSTED'), failed: n('FAILED'), skipped: n('SKIPPED'), notPosted: n('NOT_POSTED'), all: rows.length },
         login: await loginProblem(pageOf()),
+        // dates and a status only (never a token); absent while renewal is switched off
+        ...(await tokenStatus(pageOf(), now).then((t) => (t ? { token: t } : {}))),
       });
     } catch (err) {
       console.error('[linkedin] list failed', safeErrorLog(err));

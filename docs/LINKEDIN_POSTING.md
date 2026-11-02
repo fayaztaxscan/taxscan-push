@@ -80,8 +80,64 @@ entry; no schema change.** (The screen shows the first mapped page; a page switc
    first avoids a double post.)
 3. Watch the first `[linkedin] page=taxscan campaign=… outcome=posted` log line and the post on the page.
 
+## Token renewal
+(brief `docs/briefs/2026-11-02-linkedin-token-refresh.md`; `src/services/linkedin/token.ts`.) The page's **access token lasts about 60
+days and its refresh token about a year**. With `LINKEDIN_TOKEN_REFRESH_ENABLED=true` the app renews the access token itself, so the only
+manual job left is the **yearly sign-in**, announced by email 30 days ahead.
+
+**How it works.** At 10:15 IST every day (and ~2 minutes after boot) each configured page is checked:
+1. When does the token in use expire? LinkedIn's token inspector: `POST https://www.linkedin.com/oauth/v2/introspectToken` (form
+   `client_id`, `client_secret`, `token`; the answer has `active`, `status` and `expires_at`, epoch seconds). If that is unavailable the
+   expiry stored at the last renewal is used; with neither, nothing is done and the log says `access_left_days=unknown`.
+2. **14 days or less left (or the token is inactive) → renew:** `POST https://www.linkedin.com/oauth/v2/accessToken`
+   (`application/x-www-form-urlencoded`: `grant_type=refresh_token`, `refresh_token`, `client_id`, `client_secret`). The answer holds the
+   new `access_token`, `expires_in`, the refresh token (the same one, or a new one, which is then used from then on) and
+   `refresh_token_expires_in` (seconds remaining; the refresh token's own lifetime does NOT restart on renewal).
+3. The new token is stored **encrypted** in `LinkedInToken` (AES-256-GCM, `v1:<iv>:<tag>:<ciphertext>`, a fresh IV per value, key
+   `LINKEDIN_TOKEN_KEY`) and is the token the worker and Retry use from the next tick. A renewal also ends a login stop and clears the
+   LinkedIn screen's amber banner, without a restart.
+4. One log line per page per run: `[linkedin-token] page=taxscan access_left_days=N refresh_left_days=M action=none|renewed|failed`.
+
+**Which token is used** (`activeAccessToken`): the stored one while its `envFingerprint` equals the SHA-256 of the current
+`LINKEDIN_<PAGE>_ACCESS_TOKEN` env value; otherwise the env token (and a stored row that no longer matches is dropped). So **pasting a new
+token into Railway wins at once**. With renewal off, or the key missing / not 32 bytes, the env token is used and posting is unaffected.
+
+**Failures** (all go to the active ADMIN users by email, **once per IST day**, saying how many days the current token has left):
+- a **400 / 401** from LinkedIn (the refresh token is invalid, expired or revoked): no further refresh calls until the env values change
+  (`LINKEDIN_<PAGE>_ACCESS_TOKEN` / `_REFRESH_TOKEN`), then it tries again;
+- a **5xx / timeout / network error**: tried again at the next daily run.
+`LinkedInToken.lastError` holds a short, secret-free reason; the LinkedIn screen shows it as "last renewal failed" (red).
+
+**The yearly sign-in.** Within 30 days of the refresh token's expiry an email "Yearly LinkedIn sign-in due by <date>" goes out, at most once
+a week. The refresh token's expiry comes from `refresh_token_expires_in` (after the first renewal) or `LINKEDIN_<PAGE>_REFRESH_EXPIRES_AT`
+(ISO) if you set it. To sign in again (about 5 minutes):
+1. LinkedIn Developer Portal → the app (`taxscan_post_app`) → Tools → **OAuth 2.0 tools**: create a token with the same scopes
+   (`w_organization_social`), signed in as an admin of the Taxscan page.
+2. Copy the **access** token, then run: `railway variable set LINKEDIN_TAXSCAN_ACCESS_TOKEN="$(pbpaste)" -s taxscan-push`
+3. Copy the **refresh** token, then run: `railway variable set LINKEDIN_TAXSCAN_REFRESH_TOKEN="$(pbpaste)" -s taxscan-push`
+   (secrets go through the clipboard; never type or paste them anywhere else). If LinkedIn reports no expiry, also set
+   `LINKEDIN_TAXSCAN_REFRESH_EXPIRES_AT` to a year from now (ISO).
+
+**Setting it up (once).**
+1. A key: `openssl rand -base64 32`, then `railway variable set LINKEDIN_TOKEN_KEY="$(pbpaste)" -s taxscan-push` (copy it first; keep it in the
+   password manager: without it a stored token can't be read, and the env token is used instead).
+2. The LinkedIn app's `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET` (one app serves every page), and `LINKEDIN_TAXSCAN_REFRESH_TOKEN`
+   (the refresh token that came with the current access token).
+3. `LINKEDIN_TOKEN_REFRESH_ENABLED=true`. If anything above is missing the log says `[linkedin-token] refusing to start: <which variable>`
+   and nothing is renewed; posting keeps working with the env token.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LINKEDIN_TOKEN_REFRESH_ENABLED` | off | the daily renewal; off = the env token only, no cron, the screen shows no token line |
+| `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` | — | the LinkedIn app's credentials |
+| `LINKEDIN_TAXSCAN_REFRESH_TOKEN` | — | the refresh token (about a year) |
+| `LINKEDIN_TOKEN_KEY` | — | 32 bytes, base64: encrypts the stored token |
+| `LINKEDIN_TAXSCAN_REFRESH_EXPIRES_AT` | — | optional ISO time, if LinkedIn doesn't report the refresh token's expiry |
+
+The renewal does NOT write back into Railway variables and has no sign-in page of its own: the yearly sign-in stays in LinkedIn's OAuth tools.
+
 ## Backups and restores
-`LinkedInPost` is **not** in the R2 export (the small `linkedin:auth:<page>` banner row lives in `DigestSetting`, which is; a restored stale one is harmless and clears on the first successful post). After a restore keep
+`LinkedInPost` and `LinkedInToken` (the encrypted renewed token) are **not** in the R2 export (the small `linkedin:auth:<page>` banner row and `linkedin:token:state:<page>` markers live in `DigestSetting`, which is; a restored stale one is harmless). After a restore the env token is used and the next daily renewal re-creates the `LinkedInToken` row. After a restore keep
 `LINKEDIN_POSTING_ENABLED` **off**, and set `LINKEDIN_POST_FROM` to the restore time before switching it back on (the
 `LinkedInPost` rows are gone, so without that, recent articles would post twice). See `docs/BACKUPS.md`.
 
