@@ -7,6 +7,8 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-11-02 PR #98 LIVE 18:09 IST:** LinkedIn link-card cover picture (Images API, wait AVAILABLE, drop-and-repeat on a client error) + description; SOCIAL shows right after login. To verify: next LinkedIn post `image=ok` + picture on the page; Abhirami logs out/in → SOCIAL visible. Note: 2 Nov staff digest was SKIPPED (nobody approved before 17:00).
+
 **▶ 2026-11-02 PR #97 LIVE 17:33 IST:** first check showed `introspect=http_401` → LinkedIn `invalid_client`: the Client ID had been typed from a screenshot (misread). Re-set ID + secret via clipboard → `introspect=ok source=linkedin access_left_days=59 refresh_left_days=364`. Token renewal now fully working. (A manual `curl -d` test still says invalid_client because it doesn't URL-encode the secret — use `--data-urlencode`.) Next: build linkedin-article-thumbnail.
 
 **▶ 2026-11-02 merged to develop (`878e853`, not on main):** token-expiry-and-flaky-tests — expiry estimate (first seen + 60 d; prod renews ~18 Dec), `introspect=<reason>` in the check line; flaky tests fixed at causes (digest webhook read now `lte: now`; LinkedIn stale-close scoped to its pages; metricsWarmer + eventRetention assert invariants). **Open for a later brief:** Dashboard lifetime totals read live + rolled in two queries — a sweep commit between them can double-count/miss for ≤5 min; two more metricsWarmer tests use the fragile global 'before + 1' pattern.
