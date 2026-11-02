@@ -129,6 +129,10 @@ to keep.
 `Subscriber` (live rows only), `User`, `ReportRecipient`, `Campaign` and
 `FeedItem` — about 1 MB — to an S3-compatible bucket.
 
+**`LinkedInPost` (the LinkedIn page posting log) is deliberately NOT in the export either.** After a restore keep
+`LINKEDIN_POSTING_ENABLED` off and set `LINKEDIN_POST_FROM` to the restore time before switching it back on; with the rows
+gone, anything pushed earlier would otherwise post to LinkedIn a second time. See `docs/LINKEDIN_POSTING.md`.
+
 **`WhatsAppPost` (the WhatsApp channel queue's Posted / Skipped marks) is deliberately NOT in the export.** It holds only
 "who marked which article, when" for a short-lived working list; losing it means a day's list shows To do again, and
 every article is still in `Campaign`. (Added 2026-11-02; the export format is unchanged.)

@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { articleKey } from '../reports';
-import { buildPostText, articleContentOf } from './postText';
+import { buildPostText } from './postText';
+import { isPublicArticleCampaign } from '../social/publicCampaign';
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -67,13 +68,13 @@ export async function getQueue(portal: string, day: string): Promise<QueueResult
   const since = new Date(start.getTime() - MAX_DAYS_BACK * DAY_MS);
   const sent = await prisma.campaign.findMany({
     where: { portal, status: 'SENT', lastSentAt: { gte: since }, url: { startsWith: 'http' } },
-    select: { id: true, title: true, body: true, url: true, authority: true, categories: true, lastSentAt: true },
+    select: { id: true, title: true, body: true, url: true, target: true, authority: true, categories: true, lastSentAt: true },
     orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
   });
   type C = (typeof sent)[number];
   const byKey = new Map<string, { first: C; later: C | null }>();
   for (const c of sent) {
-    if (!c.lastSentAt || !articleContentOf(c)) continue;
+    if (!c.lastSentAt || !isPublicArticleCampaign(c)) continue;
     const k = articleKey(c);
     const e = byKey.get(k);
     if (!e) byKey.set(k, { first: c, later: null });
@@ -120,8 +121,8 @@ export type MarkResult = { ok: true; status: QueueStatus } | { ok: false; reason
  * marking any push of it (the first or a re-push) is the same mark.
  */
 export async function markArticle(portal: string, campaignId: string, status: QueueStatus, userId: string | null, now: Date): Promise<MarkResult> {
-  const c = await prisma.campaign.findFirst({ where: { id: campaignId, portal, status: 'SENT' }, select: { id: true, url: true, title: true, body: true } });
-  if (!c || !articleContentOf(c)) return { ok: false, reason: 'not_found' };
+  const c = await prisma.campaign.findFirst({ where: { id: campaignId, portal, status: 'SENT' }, select: { id: true, url: true, title: true, body: true, target: true } });
+  if (!c || !isPublicArticleCampaign(c)) return { ok: false, reason: 'not_found' };
   const key = articleKey(c);
   if (status === 'TODO') {
     await prisma.whatsAppPost.deleteMany({ where: { portal, articleKey: key } });

@@ -922,3 +922,33 @@ model WhatsAppPost {
 
   @@unique([portal, articleKey])
 }
+
+enum LinkedInPostStatus {
+  PENDING
+  POSTED
+  FAILED
+  SKIPPED
+}
+
+/// One article's post to a LinkedIn page (docs/LINKEDIN_POSTING.md). Keyed by PAGE, so the Shopscan / Academy pages
+/// are configuration later. The row is created (PENDING, in flight = nextAttemptAt null) BEFORE the API call, so a crash
+/// mid-call can't double-post; unique (page, articleKey) makes an article post once. NOT in the R2 backup.
+model LinkedInPost {
+  id             String             @id @default(cuid())
+  page           String
+  articleKey     String
+  /// The first push's campaign.
+  campaignId     String
+  status         LinkedInPostStatus @default(PENDING)
+  linkedinPostId String?
+  /// ≤ 240 characters; never the token or the request body.
+  error          String?
+  attempts       Int                @default(0)
+  nextAttemptAt  DateTime?
+  postedAt       DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([page, articleKey])
+  @@index([status, nextAttemptAt])
+}
