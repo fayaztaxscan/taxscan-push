@@ -7,6 +7,8 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**▶ 2026-11-02 X (Twitter): ON HOLD (owner).** X API is pay-per-use since Feb 2026: ~$0.015/post, ~$0.20/post WITH a link (third-party figures, verify in console). Every push ≈ $120/mo; top ~5/day ≈ $30/mo. Planning's suggestion if revived: 1-month top-stories trial with a reads-per-₹ stop rule, reusing the LinkedIn channel design. Don't re-propose unprompted.
+
 **▶ 2026-11-02 LinkedIn:** old poster PAUSED in taxscan-automation (commit 8fb2f7a, `sheet_to_linkedin` enabled=false;
 sheet sync still runs) — **no LinkedIn posts until our build ships + is switched on.** Build running: brief
 `2026-11-02-linkedin-page-posting` (CMS keywords → hashtags). Current LinkedIn token is the owner's account; renewal
