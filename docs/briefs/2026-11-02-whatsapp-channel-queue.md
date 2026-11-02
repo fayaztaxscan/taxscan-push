@@ -113,3 +113,31 @@ Each one must PASS in the REPORT.
   behaviour of `withUtm`, not `appendUtm`'s "keep existing".
 - "Recently pushed" must read `Campaign.lastSentAt` (memory rule), never group Events.
 - Phone tables: `class="stack"` + `data-label` (see Campaigns.vue).
+
+---
+
+## Follow-up 1 (2 Nov, live bug): today's taxscan.in links have no trailing id → the list is empty
+
+**Found on prod 2 Nov 13:37 IST:** the WhatsApp screen shows "Nothing pushed yet today" (All 0) although the pacer pushed
+articles. Current taxscan.in article URLs no longer end in a numeric id, e.g.
+`https://www.taxscan.in/income-tax/interest-received-on-enhanced-compensation-us-28-of-land-acquisition-act-is-not-taxable-us-562viii-rws-57iv-of-it-act-itat-read-order`.
+`articleIdOf()` (`src/services/whatsapp/postText.ts`) returns null for those, so `getQueue` and `markArticle` drop every row.
+
+**In:**
+1. `articleIdOf` → replace with a "is this a taxscan.in article" test that does NOT need an id: host `taxscan.in` /
+   `www.taxscan.in`, a path with at least two segments (`/<section>/<slug>`) or a trailing numeric id. The site home,
+   section index pages and academy/shop stay excluded.
+2. Identity stays `articleKey()` (`src/services/reports.ts`): the id when present, otherwise the URL. Don't change
+   `articleKey` itself; the coverage reports depend on it.
+3. `utm_content` = the numeric id when present, otherwise the last path segment (the slug), cut to 100 characters.
+4. `markArticle` accepts the same articles.
+
+**Acceptance tests:**
+G1. Fixtures use BOTH URL shapes: the current no-id shape (the example above) and the old `…-1451580` shape. Both appear
+    on the list, in push order, and can be marked.
+G2. A no-id URL's link carries `utm_content=<slug>`. An id URL keeps `utm_content=<id>`.
+G3. Two pushes of the same no-id URL collapse to one row with "pushed again".
+G4. `https://www.taxscan.in/`, `https://www.taxscan.in/income-tax` (a section page) and academy/shop links are excluded.
+G5. The WhatsApp tests + the reports tests that use `articleKey` pass.
+
+**Full suite:** no (area tests: `whatsapp*`, `reports*`). The release check covers the rest.
