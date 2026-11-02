@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseDigestEnv, type DigestEnv } from '../lib/env';
 import type { FrozenItem } from '../services/digest/builder';
-import { renderDigest, LOGO_PATH, STORY_IMAGE_WIDTH, STORY_IMAGE_HEIGHT, AD_IMAGE_DISPLAY_WIDTH, type RenderAd } from '../services/digest/renderer';
+import { renderDigest, BUILTIN_TEMPLATE_HTML, HEADER_BANNER_PATH, LOGO_PATH, STORY_IMAGE_WIDTH, STORY_IMAGE_HEIGHT, AD_IMAGE_DISPLAY_WIDTH, type RenderAd } from '../services/digest/renderer';
 import { worstCaseFixture } from '../services/digest/templates';
 
 const RUN_DATE = new Date(Date.UTC(2026, 9, 29));
@@ -66,24 +66,83 @@ describe('1. brand colours hold in every mode', () => {
     expect(html).not.toContain('prefers-color-scheme');
     expect(html).not.toContain('#111214'); // the old dark page colour
   });
-  it('the header carries background-color AND the gradient fallback, plus Gmail forced-colour hooks', () => {
-    expect(html).toMatch(/class="ts-pad ts-hdr"[^>]*background-color:#3b3543;background-image:linear-gradient\(#3b3543,#3b3543\);/);
-    expect(html).toContain('[data-ogsb] .ts-hdr{background-color:#3b3543!important}');
-    expect(html).toContain('[data-ogsc] .ts-hdr-text{color:#ffffff!important}');
+  it('dark mode recolours background and text together: no pinned yellow or purple, no Outlook forced-colour rules (owner, 2 Nov)', () => {
+    expect(html).not.toContain('linear-gradient(#FEE620');
+    expect(html).not.toContain('linear-gradient(#3b3543,#3b3543);text-align'); // no header cell pins its colour
+    expect(html).not.toContain('[data-ogsb]');
+    expect(html).not.toContain('[data-ogsc]');
+    expect(html).not.toContain('class="ts-pad ts-hdr"'); // no coloured header cell any more
+    expect(html).not.toContain('.ts-hdr{');
+    // the brand block (a picture placeholder, no text) keeps its own pin
+    expect(render(items(5, null)).html).toMatch(/class="ts-brand"[^>]*background-image:linear-gradient\(#3b3543,#3b3543\)/);
   });
-  it('every Read more / CTA button carries both too', () => {
+  it('light mode is unchanged: every Read more / CTA button is #000000 on #FEE620, in a #FEE620 cell', () => {
     const btns = html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBeGreaterThan(0);
-    for (const b of btns) expect(b).toContain('background-color:#FEE620;background-image:linear-gradient(#FEE620,#FEE620);');
+    for (const b of btns) {
+      expect(b).toContain('background-color:#FEE620;');
+      expect(b).toContain('color:#000000;');
+    }
+    expect((html.match(/bgcolor="#FEE620"/g) ?? []).length).toBe(btns.length);
   });
   it('the logo is the on-dark PNG, which exists, is 440×106 and has no transparency', () => {
     expect(LOGO_PATH).toBe('/email/taxscan-logo-on-dark-440.png');
-    expect(html).toContain(`<img class="ts-logo" src="${ASSET}/email/taxscan-logo-on-dark-440.png" width="220" height="53"`);
+    // a custom template using {{logo}} still draws it exactly as before (F5)
+    const custom = renderDigest({ items: items(5, null), audience: 'FREE', runDate: RUN_DATE, cfg: cfg(), assetBaseUrl: ASSET, template: { html: BUILTIN_TEMPLATE_HTML.replace('{{header}}', '<tr><td>{{logo}}</td></tr>') } });
+    expect(custom.html).toContain(`<img class="ts-logo" src="${ASSET}/email/taxscan-logo-on-dark-440.png" width="220" height="53"`);
     const png = fs.readFileSync(path.join(__dirname, '../../public/email/taxscan-logo-on-dark-440.png'));
     expect(png.readUInt32BE(16)).toBe(440);
     expect(png.readUInt32BE(20)).toBe(106);
     expect(png[25]).toBe(2); // colour type 2 = RGB, no alpha channel
     expect(fs.existsSync(path.join(__dirname, '../../public/email/taxscan-logo-white-440.png'))).toBe(true); // sent mail uses it
+  });
+});
+
+describe('1b. the header is one banner picture, the date line sits below it on white (follow-up 1)', () => {
+  const free = render(items(5, PIC)).html;
+  const premium = renderDigest({ items: items(5, PIC), audience: 'PREMIUM', runDate: RUN_DATE, cfg: cfg(), assetBaseUrl: ASSET, ads: [ad(1, 800, 210), ad(2, 1200, 628), ad(3, 1200, 628)] }).html;
+  const bannerFile = path.join(__dirname, '../../public/email/taxscan-header-1800x220.png');
+  it('F1: a single <img> ending /email/taxscan-header-1800x220.png, width 900, alt Taxscan, in a link home, on a row with no colour', () => {
+    expect(HEADER_BANNER_PATH).toBe('/email/taxscan-header-1800x220.png');
+    for (const html of [free, premium]) {
+      const banners = html.match(/<img class="ts-banner"[^>]*>/g) ?? [];
+      expect(banners).toHaveLength(1);
+      expect(banners[0]).toContain(`src="${ASSET}/email/taxscan-header-1800x220.png"`);
+      expect(banners[0]).toContain(' width="900" alt="Taxscan"');
+      expect(banners[0]).toContain('style="display:block;width:100%;max-width:900px;height:auto;');
+      const row = /<tr><td align="center" style="padding:0;font-size:0;line-height:0;"><a href="https:\/\/www\.taxscan\.in\/[^"]*" style="display:block;text-decoration:none;"><img class="ts-banner"[^>]*><\/a><\/td><\/tr>/.exec(html);
+      expect(row).not.toBeNull();
+      expect(row![0]).not.toMatch(/bgcolor|background-color:#3b3543;[^"]*"><a/); // the picture carries the colour, not the row
+    }
+  });
+  it('F2: the PNG is exactly 1800×220, ≤ 25 KB, and its corners are #3b3543', () => {
+    const png = fs.readFileSync(bannerFile);
+    expect(png.readUInt32BE(16)).toBe(1800);
+    expect(png.readUInt32BE(20)).toBe(220);
+    expect(png.length).toBeLessThanOrEqual(25 * 1024);
+    // palette PNG: the first PLTE entry is the background (the corner pixel is index 0 of a solid fill)
+    const plte = png.indexOf('PLTE');
+    expect(plte).toBeGreaterThan(0);
+    expect(png[25]).toBe(3);
+    const entries = png.readUInt32BE(plte - 4) / 3;
+    const colours = Array.from({ length: entries }, (_, i) => png.subarray(plte + 4 + i * 3, plte + 7 + i * 3).toString('hex'));
+    expect(colours).toContain('3b3543');
+  });
+  it('F3: the date line comes after the banner, #111111 on the white card; the Premium badge is #111111 and only in Premium', () => {
+    for (const html of [free, premium]) {
+      const line = /<td class="ts-card ts-pad" data-header="1"[^>]*padding:14px 20px;background-color:#ffffff;[^>]*><p class="ts-hdr-text"[^>]*color:#111111;">Daily Digest &middot; [^<]*(<span[^>]*>Premium<\/span>)?<\/p>/.exec(html);
+      expect(line).not.toBeNull();
+      expect(html.indexOf('ts-banner')).toBeLessThan(html.indexOf('data-header="1"'));
+      expect(html.indexOf('data-header="1"')).toBeLessThan(html.indexOf('data-item="1"'));
+    }
+    expect(premium).toMatch(/border:1px solid #111111;[^"]*color:#111111;[^"]*">Premium<\/span>/);
+    expect(free).not.toContain('>Premium</span>');
+  });
+  it('F5: a custom template using {{logo}} / {{premium_badge}} renders the old markup unchanged', () => {
+    const t = (a: 'FREE' | 'PREMIUM') =>
+      renderDigest({ items: items(5, null), audience: a, runDate: RUN_DATE, cfg: cfg(), assetBaseUrl: ASSET, ads: [ad(1, 800, 210), ad(2, 1200, 628), ad(3, 1200, 628)], template: { html: BUILTIN_TEMPLATE_HTML.replace('{{header}}', '<tr><td>{{logo}} Daily Digest &middot; {{date}}{{premium_badge}}</td></tr>') } }).html;
+    expect(t('FREE')).toContain(`<img class="ts-logo" src="${ASSET}/email/taxscan-logo-on-dark-440.png" width="220" height="53" alt="Taxscan" style="display:block;margin:0 auto;width:220px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:#ffffff;font-family:Arial,'Helvetica Neue',Helvetica,sans-serif;font-size:28px;line-height:53px;font-weight:700;letter-spacing:0.08em;">`);
+    expect(t('PREMIUM')).toContain(`border:1px solid #ffffff;border-radius:12px;font-family:Arial,'Helvetica Neue',Helvetica,sans-serif;font-size:14px;line-height:20px;font-weight:700;color:#ffffff;vertical-align:middle;">Premium</span>`);
   });
 });
 
@@ -93,11 +152,13 @@ describe('2. pictures keep their size in every app', () => {
     expect(STORY_IMAGE_WIDTH).toBe(280);
     expect(STORY_IMAGE_HEIGHT).toBe(147);
     expect(row).toMatch(/<img class="ts-pic adapt-img"[^>]* width="280" height="147" /);
-    expect(row).toContain('style="display:block;width:280px;max-width:100%;height:147px;object-fit:cover;');
+    // fluid inline: it fills its column (280 px on desktop, the full column when the column stacks), always 1.91:1
+    expect(row).toContain('style="display:block;width:100%;max-width:280px;height:auto;aspect-ratio:1200/628;object-fit:cover;');
   });
-  it('stripping <style> (Zoho-like) leaves the picture at those sizes', () => {
+  it('stripping <style> (Zoho-like) keeps the fluid inline sizes (the column itself stays capped at 280 px without a media query)', () => {
     const stripped = render(items(10, PIC)).html.replace(/<style>[\s\S]*?<\/style>/, '');
-    expect(rowOf(stripped, 1)).toContain('width:280px;max-width:100%;height:147px');
+    expect(rowOf(stripped, 1)).toContain('width:100%;max-width:280px;height:auto;aspect-ratio:1200/628');
+    expect(rowOf(stripped, 1)).toContain('class="ts-stcol ts-stpic" style="display:inline-block;width:100%;max-width:280px;');
   });
   it('phones: the stylesheet makes it full width at its natural aspect', () => {
     expect(render(items(10, PIC)).html).toContain('.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}');

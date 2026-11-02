@@ -49,9 +49,12 @@ function cfg(over: NodeJS.ProcessEnv = {}): DigestEnv {
 let n = 0;
 const newPortal = () => `${PORTAL_PREFIX}${RUN}-${++n}`;
 
+/** The built-in layout with the pre-banner header (logo + date line), for tests of the `{{logo}}`/`{{date}}` rules. */
+const LEGACY_HEADER = BUILTIN_TEMPLATE_HTML.replace('{{header}}', '<tr><td>{{logo}} Daily Digest &middot; {{date}}{{premium_badge}}</td></tr>');
+
 /** The built-in layout with a visible marker (and a sentinel comment) — a valid template. */
 const marked = (marker: string, extra = '') =>
-  BUILTIN_TEMPLATE_HTML.replace('Daily Digest &middot; {{date}}{{premium_badge}}', `${marker} &middot;{{premium_badge}}`).replace('</body>', `<!-- ${SENTINEL} -->${extra}</body>`);
+  BUILTIN_TEMPLATE_HTML.replace('{{header}}', `<tr><td>{{logo}} ${marker} &middot;{{premium_badge}}</td></tr>`).replace('</body>', `<!-- ${SENTINEL} -->${extra}</body>`);
 
 const check = (html: string | null, audience: DigestAudience = 'FREE', c = cfg(), compileError: string | null = null) =>
   validateTemplate({ audience, compiledHtml: html, compileError }, { cfg: c, now: NOW });
@@ -273,7 +276,7 @@ describe('checklist: every rule, red and green', () => {
   it('placeholders: missing, twice, unknown, a row placeholder outside a table / inside a cell, preheader in <head>', () => {
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{footer}}', ''), 'placeholders').problems).toContain('{{footer}} is missing.');
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{stories}}', '{{stories}}\n{{stories}}'), 'placeholders').problems).toContain('{{stories}} appears 2 times; it must appear exactly once.');
-    expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{date}}', '{{date}} {{reader_name}}'), 'placeholders').problems).toContain('{{reader_name}} is not a placeholder this digest fills.');
+    expect(checkOf(LEGACY_HEADER.replace('{{date}}', '{{date}} {{reader_name}}'), 'placeholders').problems).toContain('{{reader_name}} is not a placeholder this digest fills.');
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{icymi}}', '<tr><td>{{icymi}}</td></tr>'), 'placeholders').problems.join(' ')).toMatch(/\{\{icymi\}\} must sit directly inside a <table>.*inside a <td>/);
     expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('<title>{{subject}}</title>', '<title>{{subject}}</title>{{preheader}}').replace('</style>\n</head>\n<body class="ts-bg" style="margin:0;padding:0;width:100%;background-color:#f2f3f5;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">\n{{preheader}}', '</style>\n</head>\n<body>'), 'placeholders').problems).toContain('{{preheader}} must be in <body>, not <head>.');
     // Optional placeholders may be left out ...
@@ -322,7 +325,7 @@ describe('checklist: every rule, red and green', () => {
   });
 
   it('alt text: an image without alt, or with an empty one → red', () => {
-    const img = (attrs: string) => checkOf(BUILTIN_TEMPLATE_HTML.replace('{{logo}}', `<img src="https://www.taxscan.in/logo.png" ${attrs}>`), 'alt_text');
+    const img = (attrs: string) => checkOf(LEGACY_HEADER.replace('{{logo}}', `<img src="https://www.taxscan.in/logo.png" ${attrs}>`), 'alt_text');
     expect(img('').problems.join(' ')).toMatch(/www\.taxscan\.in\/logo\.png\) has no alt text/);
     expect(img('alt=" "').ok).toBe(false);
     expect(img('alt="Taxscan"').ok).toBe(true);
@@ -342,7 +345,7 @@ describe('checklist: every rule, red and green', () => {
   it('Premium: a subscription link or "Subscribe now" in the Premium template → red; the same in the Free one is fine', () => {
     const withSub = BUILTIN_TEMPLATE_HTML.replace('</body>', '<a href="https://www.taxscan.in/subscribe?plan=1">Join</a></body>');
     expect(checkOf(withSub, 'premium_no_subscription', 'PREMIUM').problems.join(' ')).toMatch(/offers a subscription/);
-    expect(checkOf(BUILTIN_TEMPLATE_HTML.replace('{{date}}', '{{date}} · Subscribe now'), 'premium_no_subscription', 'PREMIUM').ok).toBe(false);
+    expect(checkOf(LEGACY_HEADER.replace('{{date}}', '{{date}} · Subscribe now'), 'premium_no_subscription', 'PREMIUM').ok).toBe(false);
     expect(checkOf(withSub, 'premium_no_subscription', 'FREE')).toMatchObject({ ok: true, note: 'Not applicable to the Free template.' });
     expect(checkOf(BUILTIN_TEMPLATE_HTML, 'premium_no_subscription', 'PREMIUM').ok).toBe(true);
   });
@@ -665,10 +668,10 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
   const ads = [1, 3].map((slot) => ({ slot, adId: `a${slot}`, kind: 'HOUSE', headline: 'Course', body: null, ctaText: 'Enrol now', linkUrl: 'https://academy.taxscan.in/c', altText: 'Course', image: null }));
   const r = renderDigest({ items: its, audience: 'FREE', runDate: NOW, cfg: cfg(), ads, assetBaseUrl: 'https://push.taxscan.in' });
 
-  it('a solid #3b3543 header bar (also in dark mode) with the white logo centred, 220 px, alt text; Arial throughout', () => {
-    expect(r.html).toMatch(/<td class="ts-pad ts-hdr" align="center" style="[^"]*background-color:#3b3543;[^"]*" bgcolor="#3b3543">/);
-    expect(r.html).toMatch(/<img class="ts-logo" src="https:\/\/push\.taxscan\.in\/email\/taxscan-logo-on-dark-440\.png" width="220" height="53" alt="Taxscan"/);
-    expect(r.html).toContain('.ts-hdr{background-color:#3b3543!important}');
+  it('a header banner picture (#3b3543 with the white logo centred), alt text, then the date line on white; Arial throughout', () => {
+    expect(r.html).toMatch(/<img class="ts-banner" src="https:\/\/push\.taxscan\.in\/email\/taxscan-header-1800x220\.png" width="900" alt="Taxscan"/);
+    expect(r.html).toMatch(/<p class="ts-hdr-text"[^>]*color:#111111;">Daily Digest &middot; /);
+    expect(r.html).not.toContain('ts-hdr{');
     expect(r.html).not.toContain('#9b1c1c');
     const fonts = new Set([...r.html.matchAll(/font-family:([^;"]+)/g)].map((m) => m[1]));
     expect([...fonts].every((f) => /^Arial/.test(f))).toBe(true);
@@ -676,10 +679,11 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
   it('square yellow buttons with bold dark text in a table cell (Outlook paints the cell; one link, no VML), for stories and ads', () => {
     const btns = r.html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBe(7); // 5 stories + 2 ads
-    for (const b of btns) expect(b).toMatch(/display:block;height:38px;line-height:38px;text-align:center;background-color:#FEE620;background-image:linear-gradient\(#FEE620,#FEE620\);[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
+    for (const b of btns) expect(b).toMatch(/display:block;height:38px;line-height:38px;text-align:center;background-color:#FEE620;font-family:[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
     expect((r.html.match(/<td align="center" width="\d+" height="38" bgcolor="#FEE620"/g) ?? []).length).toBe(7);
     expect(r.html).not.toContain('v:rect');
-    expect(r.html).toContain('[data-ogsb] .ts-btn{background-color:#FEE620!important}[data-ogsc] .ts-btn{color:#000000!important}');
+    expect(r.html).not.toContain('linear-gradient(#FEE620');
+    expect(r.html).not.toMatch(/data-ogs[bc]/);
   });
   it('headlines #000000 (the old newsletter\'s), not underlined; body #333333; other links #1376c8', () => {
     expect(r.html).toMatch(/class="ts-head" style="[^"]*color:#000000;text-decoration:none;"/);
