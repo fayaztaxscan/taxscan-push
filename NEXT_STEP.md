@@ -7,6 +7,19 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**⏳ PENDING (2026-11-02 evening) — the single list (mirrors memory `project_taxscan_push_state`):**
+1. 3 Nov: approve the digest 06:30–17:00 (2 Nov skipped); Anagha's Zoho dark-mode screenshots → if Read More still
+   unreadable, brief purple #3b3543 button + white text.
+2. Next LinkedIn post: `image=ok` + picture on the page. Abhirami: log out/in → SOCIAL visible.
+3. WhatsApp poster opts in to the nudge on their phone; team waits for the preview card before sending.
+4. Anagha: 1080×1080 squares for ads tagged "Needs mobile square"; default story picture (1600×840).
+5. Unverified since 31 Oct: digest Edit subject on a real draft; CMS sync dry-run counts.
+6. ~5 Nov: soft-prompt v1 vs v2 comparison. ~mid-Dec: LinkedIn token auto-renews (watch the log). ~2 Nov 2027: yearly sign-in.
+7. Later briefs: Dashboard lifetime-totals race; two metricsWarmer 'before+1' tests; CMS whatsapp/linkedin views; reads.ts
+   `-<id>` review; clone channel-mark link.
+8. Digest stage-3 prerequisites, audience tasks 9–10, Postgres password window, VAPID decision, owner's long-standing items
+   (see CLAUDE.md "Open next steps"). X posting ON HOLD.
+
 **▶ 2026-11-02 PR #98 LIVE 18:09 IST:** LinkedIn link-card cover picture (Images API, wait AVAILABLE, drop-and-repeat on a client error) + description; SOCIAL shows right after login. To verify: next LinkedIn post `image=ok` + picture on the page; Abhirami logs out/in → SOCIAL visible. Note: 2 Nov staff digest was SKIPPED (nobody approved before 17:00).
 
 **▶ 2026-11-02 PR #97 LIVE 17:33 IST:** first check showed `introspect=http_401` → LinkedIn `invalid_client`: the Client ID had been typed from a screenshot (misread). Re-set ID + secret via clipboard → `introspect=ok source=linkedin access_left_days=59 refresh_left_days=364`. Token renewal now fully working. (A manual `curl -d` test still says invalid_client because it doesn't URL-encode the secret — use `--data-urlencode`.) Next: build linkedin-article-thumbnail.
