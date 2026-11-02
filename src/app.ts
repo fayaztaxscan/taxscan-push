@@ -10,6 +10,7 @@ import { createAuthRouter } from './routes/auth';
 import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
 import { createWhatsAppRouter, type WhatsAppRouterOptions } from './routes/whatsapp';
+import { createLinkedInRouter, type LinkedInRouterOptions } from './routes/linkedin';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
 import { createIntegrationsRouter, type CmsEventsRouterOptions } from './routes/cmsEvents';
@@ -39,6 +40,8 @@ export type CreateAppOptions = {
   digest?: DigestRouterOptions;
   // WhatsApp channel queue — tests inject the flag, clock and portal.
   whatsapp?: WhatsAppRouterOptions;
+  // LinkedIn page posting screen — tests inject the flag, clock, portals and the LinkedIn call.
+  linkedin?: LinkedInRouterOptions;
   // Provider webhooks (Mailercloud) — tests inject config, clock, rate limit.
   webhooks?: WebhookRouterOptions;
   // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
@@ -103,6 +106,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/audit', createAuditRouter());
   app.use('/api/digest', createDigestRouter(opts.digest));
   app.use('/api/whatsapp', createWhatsAppRouter(opts.whatsapp));
+  app.use('/api/linkedin', createLinkedInRouter(opts.linkedin));
   app.use('/api/staff-push', createStaffPushRouter(opts.staffPush));
   app.use(
     '/api',

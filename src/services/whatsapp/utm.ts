@@ -1,3 +1,5 @@
+import { withSocialUtm } from '../social/utm';
+
 /**
  * UTMs for links posted to the WhatsApp channel (brief 2026-11-02-whatsapp-channel-queue). One place for the constants.
  *
@@ -10,15 +12,9 @@ export const WA_UTM_MEDIUM = 'social';
 export const WA_UTM_CAMPAIGN = 'whatsapp-channel';
 
 /**
- * The article URL with our UTMs SET, never duplicated: any existing utm_* (the push's own, a stale copy) is dropped
- * first, other query params and the fragment survive. `content` is `utm_content`: the trailing taxscan id, else the slug.
+ * The article URL with our UTMs SET, never duplicated (the shared helper does it; WhatsApp and LinkedIn build links the
+ * same way). `content` is `utm_content`: the trailing taxscan id, else the slug.
  */
 export function withWhatsAppUtm(url: string, content: string): string {
-  const u = new URL(url);
-  for (const k of [...u.searchParams.keys()]) if (k.toLowerCase().startsWith('utm_')) u.searchParams.delete(k);
-  u.searchParams.set('utm_source', WA_UTM_SOURCE);
-  u.searchParams.set('utm_medium', WA_UTM_MEDIUM);
-  u.searchParams.set('utm_campaign', WA_UTM_CAMPAIGN);
-  u.searchParams.set('utm_content', content);
-  return u.toString();
+  return withSocialUtm(url, { source: WA_UTM_SOURCE, medium: WA_UTM_MEDIUM, campaign: WA_UTM_CAMPAIGN, content });
 }

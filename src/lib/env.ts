@@ -599,6 +599,19 @@ export const env = {
   },
   // WhatsApp channel queue (brief 2026-11-02): a screen listing pushed articles as ready-to-copy posts. Default off = 404.
   whatsapp: { queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true' },
+  // LinkedIn page posting (docs/LINKEDIN_POSTING.md). Default off. `postFrom` is REQUIRED when enabled (the worker refuses to
+  // start without a valid one; nothing pushed before it is ever posted). One entry per page; only `taxscan` for now.
+  linkedin: {
+    enabled: process.env.LINKEDIN_POSTING_ENABLED === 'true',
+    postFrom: (() => {
+      const t = Date.parse(process.env.LINKEDIN_POST_FROM ?? '');
+      return Number.isNaN(t) ? null : new Date(t);
+    })(),
+    apiVersion: (process.env.LINKEDIN_API_VERSION ?? '').trim() || '202603',
+    pages: {
+      taxscan: { orgUrn: (process.env.LINKEDIN_TAXSCAN_ORG_URN ?? '').trim(), accessToken: (process.env.LINKEDIN_TAXSCAN_ACCESS_TOKEN ?? '').trim() },
+    } as Record<string, { orgUrn: string; accessToken: string }>,
+  },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
   // CMS audience sync — see parseAudienceEnv above. Every flag default off.
