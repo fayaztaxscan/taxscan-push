@@ -233,7 +233,7 @@ Guide → v1.3. Suite **382**.
 `docs/LINKEDIN_POSTING.md`; flag `LINKEDIN_POSTING_ENABLED` OFF + required `LINKEDIN_POST_FROM`; every pushed taxscan.in
 article incl. manual sends, never test-segment-only; hashtags from the CMS public article API keywords/courts; UTMs
 `taxscan-linkedin / social / linkedin-taxscan`); old poster in taxscan-automation PAUSED. **SOCIAL menu** (WhatsApp,
-LinkedIn), **Channels marks on Campaigns**, opt-in **WhatsApp nudge** (`WHATSAPP_NUDGE_ENABLED` OFF; staff devices have
+LinkedIn), **Channels marks on Campaigns**, opt-in **WhatsApp nudge** (`WHATSAPP_NUDGE_ENABLED` **ON since 2 Nov ~16:00 IST**; staff devices have
 `kinds`, existing = digest). Nav hamburger below 1350 px. One shared rule `isPublicArticleCampaign()` (`src/services/social/`).
 **2 Nov, PR #94 LIVE (~14:10 IST):** the WhatsApp list was empty — **current taxscan.in article URLs no longer end in
 a numeric id** (`/<section>/<slug>`), so anything requiring `-<id>` drops them. `articleKey()` falls back to the URL
