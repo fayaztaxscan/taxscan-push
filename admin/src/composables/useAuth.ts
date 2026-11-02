@@ -28,6 +28,20 @@ const user = ref<UserSummary | null>(null);
 const ready = ref(false);
 let inFlightCheck: Promise<void> | null = null;
 
+/**
+ * GET /api/auth/me → the full user (with the feature switches the menu and route guards need), or null on ANY failure.
+ * Never throws and never touches `user`: callers decide what a failure means (page load: signed out; right after a login:
+ * keep the user the login gave us).
+ */
+async function readMe(): Promise<UserSummary | null> {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    return res.ok ? ((await res.json()) as UserSummary) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useAuth() {
   const isAuthed = computed(() => !!user.value);
 
@@ -35,14 +49,7 @@ export function useAuth() {
     if (inFlightCheck) return inFlightCheck;
     inFlightCheck = (async () => {
       try {
-        const res = await fetch('/api/auth/me', { credentials: 'include' });
-        if (res.ok) {
-          user.value = (await res.json()) as UserSummary;
-        } else {
-          user.value = null;
-        }
-      } catch {
-        user.value = null;
+        user.value = await readMe();
       } finally {
         ready.value = true;
         inFlightCheck = null;
@@ -70,9 +77,14 @@ export function useAuth() {
     if (!res.ok) {
       throw new AuthError(res.status, 'Login failed. Please try again.');
     }
-    const data = await res.json();
-    user.value = data.user as UserSummary;
+    const data = (await res.json()) as { user: UserSummary };
+    user.value = data.user;
     ready.value = true;
+    // POST /api/auth/login answers { id, email, role } only: no feature switches. Read /me once so the menu (SOCIAL) and the
+    // /whatsapp + /linkedin route guards see them without a reload. If /me fails, keep the login's user: the menu just lacks
+    // SOCIAL (as before), and nothing is shown to the user.
+    const me = await readMe();
+    if (me) user.value = me;
   }
 
   async function logout(): Promise<void> {
@@ -131,7 +143,7 @@ export function useAuth() {
     if (!res.ok) {
       throw new AuthError(res.status, 'Could not load this invitation. Please try again.');
     }
-    return res.json();
+    return (await res.json()) as { email: string; role: 'ADMIN' | 'PUBLISHER'; expiresAt: string };
   }
 
   /** Accepts an invite: sets the user's chosen password and logs them in. */
