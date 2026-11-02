@@ -44,8 +44,8 @@ async function cookieFor(u: User): Promise<string> {
 }
 
 const camps: Record<string, string> = {};
-async function seed(key: string, o: { id: number; at: Date; slug?: string; host?: string; status?: 'SENT' | 'DRAFT'; title?: string; body?: string; portal?: string }) {
-  const url = `https://${o.host ?? 'www.taxscan.in'}/${o.slug ?? 'gst'}/story-${key}-${o.id}`;
+async function seed(key: string, o: { id: number; at: Date; slug?: string; host?: string; status?: 'SENT' | 'DRAFT'; title?: string; body?: string; portal?: string; url?: string }) {
+  const url = o.url ?? `https://${o.host ?? 'www.taxscan.in'}/${o.slug ?? 'gst'}/story-${key}-${o.id}`;
   const c = await prisma.campaign.create({
     data: {
       portal: o.portal ?? PORTAL,
@@ -75,7 +75,11 @@ beforeAll(async () => {
   await seed('mid', { id: 100002, at: ist(12, 30) });
   await seed('academy', { id: 100010, at: ist(13, 0), host: 'academy.taxscan.in' });
   await seed('draft', { id: 100011, at: ist(13, 5), status: 'DRAFT' });
-  await seed('home', { id: 0, at: ist(13, 10) }); // no article id: slug "story-home-0" is not 4+ digits
+  await seed('home', { id: 0, at: ist(13, 10), url: 'https://www.taxscan.in/' }); // not an article
+  await seed('section', { id: 0, at: ist(13, 11), url: 'https://www.taxscan.in/income-tax' }); // a section page: not an article
+  // today's shape: no trailing id (G1); pushed twice (G3)
+  await seed('noid', { id: 0, at: ist(14, 0), url: 'https://www.taxscan.in/income-tax/interest-on-enhanced-compensation-is-not-taxable-itat-read-order' });
+  await prisma.campaign.create({ data: { portal: PORTAL, title: 'Story noid again', body: 'x', url: 'https://www.taxscan.in/income-tax/interest-on-enhanced-compensation-is-not-taxable-itat-read-order', target: {}, status: 'SENT', lastSentAt: ist(19, 30) } });
   await seed('otherportal', { id: 100012, at: ist(13, 15), portal: `${PORTAL}-x` });
   // the day before and the day after
   await seed('before', { id: 100020, at: ist(23, 59, -1) });
@@ -102,9 +106,9 @@ describe('3. the queue for an IST day', () => {
     const res = await get(app());
     expect(res.status).toBe(200);
     expect(res.body.date).toBe('2026-11-02');
-    expect(res.body.rows.map((r: { headline: string }) => r.headline)).toEqual(['Story early', 'Story mid', 'Story late']);
-    expect(res.body.rows.map((r: { pushedTime: string }) => r.pushedTime)).toEqual(['00:00', '12:30', '23:59']);
-    expect(res.body.counts).toEqual({ todo: 3, posted: 0, skipped: 0, all: 3 });
+    expect(res.body.rows.map((r: { headline: string }) => r.headline)).toEqual(['Story early', 'Story mid', 'Story noid', 'Story late']);
+    expect(res.body.rows.map((r: { pushedTime: string }) => r.pushedTime)).toEqual(['00:00', '12:30', '14:00', '23:59']);
+    expect(res.body.counts).toEqual({ todo: 4, posted: 0, skipped: 0, all: 4 });
     const row = res.body.rows[1];
     expect(row).toMatchObject({ authority: 'Supreme Court', category: 'GST', status: 'TODO', actedBy: null, actedAt: null });
     expect(row.text).toContain('*Story mid*');
@@ -135,6 +139,15 @@ describe('4. a re-push collapses into the first push', () => {
     expect(mids[0].pushedAgainTime).toBe('18:45');
     expect(res.body.rows.findIndex((r: { articleKey: string }) => r.articleKey === 'article:100002')).toBe(1);
   });
+  it('G3: two pushes of the same no-id URL are one row, with "pushed again"; G1: both URL shapes are listed in push order', async () => {
+    const rows = (await get(app())).body.rows;
+    const noid = rows.filter((r: { headline: string }) => r.headline === 'Story noid');
+    expect(noid).toHaveLength(1);
+    expect(noid[0]).toMatchObject({ pushedTime: '14:00', pushedAgainTime: '19:30', status: 'TODO' });
+    expect(noid[0].articleKey).toMatch(/^https:\/\/www\.taxscan\.in\/income-tax\//);
+    expect(noid[0].text).toContain('utm_content=interest-on-enhanced-compensation-is-not-taxable-itat-read-order');
+    expect(rows.some((r: { articleKey: string }) => r.articleKey.startsWith('article:'))).toBe(true);
+  });
 });
 
 describe('5. Posted / Skipped / undo', () => {
@@ -152,10 +165,19 @@ describe('5. Posted / Skipped / undo', () => {
     expect(rows.find((r: { articleKey: string }) => r.articleKey === 'article:100002')).toMatchObject({ status: 'SKIPPED', actedBy: { id: publisher.id } });
     expect(await prisma.whatsAppPost.count({ where: { portal: PORTAL, articleKey: 'article:100002' } })).toBe(1);
     expect((await mark(a, camps.mid, 'POSTED')).status).toBe(200);
-    expect((await get(a)).body.counts).toEqual({ todo: 2, posted: 1, skipped: 0, all: 3 });
+    expect((await get(a)).body.counts).toEqual({ todo: 3, posted: 1, skipped: 0, all: 4 });
     expect((await mark(a, camps.mid, 'TODO')).status).toBe(200);
     expect(await prisma.whatsAppPost.count({ where: { portal: PORTAL } })).toBe(0);
-    expect((await get(a)).body.counts.todo).toBe(3);
+    expect((await get(a)).body.counts.todo).toBe(4);
+  });
+  it('G1: a no-id article can be marked Posted and Skipped, and undone', async () => {
+    const a = app();
+    expect((await mark(a, camps.noid, 'POSTED')).status).toBe(200);
+    expect((await get(a)).body.rows.find((r: { headline: string }) => r.headline === 'Story noid')).toMatchObject({ status: 'POSTED', actedBy: { id: admin.id } });
+    expect((await mark(a, camps.noid, 'SKIPPED')).status).toBe(200);
+    expect((await get(a)).body.counts.skipped).toBe(1);
+    expect((await mark(a, camps.noid, 'TODO')).status).toBe(200);
+    expect(await prisma.whatsAppPost.count({ where: { portal: PORTAL } })).toBe(0);
   });
   it('a later push of a Posted article does not bring it back as To do', async () => {
     const a = app();
@@ -170,6 +192,7 @@ describe('5. Posted / Skipped / undo', () => {
     expect((await mark(a, camps.academy, 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.draft, 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.home, 'POSTED')).status).toBe(404);
+    expect((await mark(a, camps.section, 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.otherportal, 'POSTED')).status).toBe(404);
     expect((await mark(a, 'nope', 'POSTED')).status).toBe(404);
     expect((await mark(a, camps.mid, 'DONE')).status).toBe(400);

@@ -11,14 +11,14 @@ export const WA_UTM_CAMPAIGN = 'whatsapp-channel';
 
 /**
  * The article URL with our UTMs SET, never duplicated: any existing utm_* (the push's own, a stale copy) is dropped
- * first, other query params and the fragment survive. `articleId` is the trailing taxscan id (`utm_content`).
+ * first, other query params and the fragment survive. `content` is `utm_content`: the trailing taxscan id, else the slug.
  */
-export function withWhatsAppUtm(url: string, articleId: string): string {
+export function withWhatsAppUtm(url: string, content: string): string {
   const u = new URL(url);
   for (const k of [...u.searchParams.keys()]) if (k.toLowerCase().startsWith('utm_')) u.searchParams.delete(k);
   u.searchParams.set('utm_source', WA_UTM_SOURCE);
   u.searchParams.set('utm_medium', WA_UTM_MEDIUM);
   u.searchParams.set('utm_campaign', WA_UTM_CAMPAIGN);
-  u.searchParams.set('utm_content', articleId);
+  u.searchParams.set('utm_content', content);
   return u.toString();
 }

@@ -1,18 +1,37 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
-import { articleKey } from '../reports';
 import { withWhatsAppUtm } from './utm';
 
 /** The short line is cut at a word boundary to at most this many characters (the ellipsis included). */
 export const SHORT_LINE_MAX = 160;
 
-/** taxscan.in / www.taxscan.in only: academy and shop links are never WhatsApp posts. */
-const TAXSCAN_ARTICLE_HOST = /^https?:\/\/(www\.)?taxscan\.in\//i;
+/** `utm_content` is the numeric id, else the slug cut to this many characters. */
+export const UTM_CONTENT_MAX = 100;
+const TRAILING_ID = /-(\d{4,})$/;
 
-/** The trailing taxscan id of an article URL ("…-1451580" → "1451580"), or null when it isn't a taxscan.in article. */
-export function articleIdOf(c: { id: string; url: string }): string | null {
-  if (!TAXSCAN_ARTICLE_HOST.test(c.url.trim())) return null;
-  const k = articleKey(c);
-  return k.startsWith('article:') ? k.slice('article:'.length) : null;
+/**
+ * Is this a taxscan.in article, and what is its `utm_content`? null when it isn't one.
+ *
+ * An article = host `taxscan.in` / `www.taxscan.in` (academy and shop are never WhatsApp posts) and a path with at
+ * least two segments (`/<section>/<slug>`, the current shape: no trailing id) or a trailing numeric id (the old
+ * `…-1451580` shape). The home page and section index pages (`/income-tax`) are not articles. The content is the
+ * numeric id when there is one, otherwise the last path segment (the slug), cut to 100 characters.
+ * Identity (which pushes are the same article) stays `articleKey()`.
+ */
+export function articleContentOf(c: { url: string }): string | null {
+  let u: URL;
+  try {
+    u = new URL(c.url.trim());
+  } catch {
+    return null;
+  }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || !/^(www\.)?taxscan\.in$/i.test(u.hostname)) return null;
+  const segs = u.pathname.split('/').filter(Boolean);
+  if (segs.length === 0) return null;
+  const last = segs[segs.length - 1];
+  const id = TRAILING_ID.exec(last)?.[1];
+  if (id) return id;
+  if (segs.length < 2) return null;
+  return last.slice(0, UTM_CONTENT_MAX);
 }
 
 /** WhatsApp's own formatting characters (* _ ~ `) removed from the headline so it can't break the bold. */
@@ -45,11 +64,11 @@ export function shortLine(body: string): string {
  * taxscan article or fails the `ALLOWED_PUSH_HOSTS` check on the final link.
  */
 export function buildPostText(c: { id: string; title: string; body: string; url: string }): string | null {
-  const id = articleIdOf(c);
-  if (!id) return null;
+  const content = articleContentOf(c);
+  if (!content) return null;
   let link: string;
   try {
-    link = withWhatsAppUtm(c.url, id);
+    link = withWhatsAppUtm(c.url, content);
   } catch {
     return null;
   }

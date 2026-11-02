@@ -1,6 +1,6 @@
 import { prisma } from '../../lib/prisma';
 import { articleKey } from '../reports';
-import { buildPostText, articleIdOf } from './postText';
+import { buildPostText, articleContentOf } from './postText';
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -73,7 +73,7 @@ export async function getQueue(portal: string, day: string): Promise<QueueResult
   type C = (typeof sent)[number];
   const byKey = new Map<string, { first: C; later: C | null }>();
   for (const c of sent) {
-    if (!c.lastSentAt || !articleIdOf(c)) continue;
+    if (!c.lastSentAt || !articleContentOf(c)) continue;
     const k = articleKey(c);
     const e = byKey.get(k);
     if (!e) byKey.set(k, { first: c, later: null });
@@ -121,7 +121,7 @@ export type MarkResult = { ok: true; status: QueueStatus } | { ok: false; reason
  */
 export async function markArticle(portal: string, campaignId: string, status: QueueStatus, userId: string | null, now: Date): Promise<MarkResult> {
   const c = await prisma.campaign.findFirst({ where: { id: campaignId, portal, status: 'SENT' }, select: { id: true, url: true, title: true, body: true } });
-  if (!c || !articleIdOf(c)) return { ok: false, reason: 'not_found' };
+  if (!c || !articleContentOf(c)) return { ok: false, reason: 'not_found' };
   const key = articleKey(c);
   if (status === 'TODO') {
     await prisma.whatsAppPost.deleteMany({ where: { portal, articleKey: key } });
