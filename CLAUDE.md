@@ -229,6 +229,12 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
+**2 Nov, PR #95 LIVE (~15:40 IST; guide v2.16; suite 1,806):** **LinkedIn page posting** (`src/services/linkedin/`,
+`docs/LINKEDIN_POSTING.md`; flag `LINKEDIN_POSTING_ENABLED` OFF + required `LINKEDIN_POST_FROM`; every pushed taxscan.in
+article incl. manual sends, never test-segment-only; hashtags from the CMS public article API keywords/courts; UTMs
+`taxscan-linkedin / social / linkedin-taxscan`); old poster in taxscan-automation PAUSED. **SOCIAL menu** (WhatsApp,
+LinkedIn), **Channels marks on Campaigns**, opt-in **WhatsApp nudge** (`WHATSAPP_NUDGE_ENABLED` OFF; staff devices have
+`kinds`, existing = digest). Nav hamburger below 1350 px. One shared rule `isPublicArticleCampaign()` (`src/services/social/`).
 **2 Nov, PR #94 LIVE (~14:10 IST):** the WhatsApp list was empty — **current taxscan.in article URLs no longer end in
 a numeric id** (`/<section>/<slug>`), so anything requiring `-<id>` drops them. `articleKey()` falls back to the URL
 (reports/digest fine); the WhatsApp queue now accepts both shapes (`utm_content` = id, else slug).
