@@ -157,7 +157,7 @@ describe('1. the old newsletter’s layout', () => {
   });
   it('keeps light-only metas, the Outlook.com hooks, preheader, social row, footer lines', () => {
     expect(r.html).toContain('<meta name="color-scheme" content="light">');
-    expect(r.html).toContain('[data-ogsb] .ts-hdr{background-color:#3b3543!important}');
+    expect(r.html).not.toContain('[data-ogsb]'); // Outlook recolours like every other app (owner, 2 Nov)
     expect(r.html).toContain('data-social="1"');
     expect(r.html).toContain('Questions or feedback? Write to');
     expect(r.html).toContain('Kochi, Kerala 682001');
