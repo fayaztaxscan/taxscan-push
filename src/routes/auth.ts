@@ -136,6 +136,8 @@ export function createAuthRouter(
       role: u.role,
       lastLoginAt: u.lastLoginAt,
       passwordResetRequired: u.passwordResetRequired,
+      // Switches the SPA needs for its menu (the endpoints themselves answer 404 when off).
+      features: { whatsappQueue: env.whatsapp.queueEnabled },
     });
   });
 

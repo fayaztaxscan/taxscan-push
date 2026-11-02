@@ -16,7 +16,7 @@ function closeMenu() {
 }
 
 // Channel groups. The active route's group label is emphasised.
-const PUSH_PATHS = ['/compose', '/review', '/queue', '/campaigns'];
+const PUSH_PATHS = ['/compose', '/review', '/queue', '/campaigns', '/whatsapp'];
 const EMAIL_PATHS = ['/digests', '/ads', '/templates'];
 const ADMIN_PATHS = ['/users', '/activity'];
 function inGroup(paths: string[]): boolean {
@@ -26,6 +26,8 @@ const pushActive = computed(() => inGroup(PUSH_PATHS));
 const emailActive = computed(() => inGroup(EMAIL_PATHS));
 const adminActive = computed(() => inGroup(ADMIN_PATHS));
 const isAdmin = computed(() => user.value?.role === 'ADMIN');
+// WhatsApp channel queue: shown only while the server flag is on (/api/auth/me → features).
+const showWhatsApp = computed(() => user.value?.features?.whatsappQueue === true);
 
 // Admin disclosure (desktop). Closes on Escape (focus back to the button),
 // outside click and route change.
@@ -84,6 +86,7 @@ async function onLogout() {
       <router-link to="/review" @click="closeMenu">Review</router-link>
       <router-link to="/queue" @click="closeMenu">Queue</router-link>
       <router-link to="/campaigns" @click="closeMenu">Campaigns</router-link>
+      <router-link v-if="showWhatsApp" to="/whatsapp" @click="closeMenu">WhatsApp</router-link>
       <span class="nav-label" :class="{ active: emailActive }" data-group="email">Email</span>
       <router-link to="/digests" @click="closeMenu">Digests</router-link>
       <router-link to="/ads" @click="closeMenu">Ads</router-link>

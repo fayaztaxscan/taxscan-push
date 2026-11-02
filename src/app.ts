@@ -9,6 +9,7 @@ import { createApiRouter } from './routes/api';
 import { createAuthRouter } from './routes/auth';
 import { createUsersRouter } from './routes/users';
 import { createAuditRouter } from './routes/audit';
+import { createWhatsAppRouter, type WhatsAppRouterOptions } from './routes/whatsapp';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
 import { createIntegrationsRouter, type CmsEventsRouterOptions } from './routes/cmsEvents';
@@ -36,6 +37,8 @@ export type CreateAppOptions = {
   isUrlDead?: (url: string) => Promise<boolean>;
   // Email digest routes — tests inject config/clock/portal.
   digest?: DigestRouterOptions;
+  // WhatsApp channel queue — tests inject the flag, clock and portal.
+  whatsapp?: WhatsAppRouterOptions;
   // Provider webhooks (Mailercloud) — tests inject config, clock, rate limit.
   webhooks?: WebhookRouterOptions;
   // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
@@ -99,6 +102,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/users', createUsersRouter({ emailSender: opts.emailSender }));
   app.use('/api/audit', createAuditRouter());
   app.use('/api/digest', createDigestRouter(opts.digest));
+  app.use('/api/whatsapp', createWhatsAppRouter(opts.whatsapp));
   app.use('/api/staff-push', createStaffPushRouter(opts.staffPush));
   app.use(
     '/api',

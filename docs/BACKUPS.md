@@ -129,6 +129,10 @@ to keep.
 `Subscriber` (live rows only), `User`, `ReportRecipient`, `Campaign` and
 `FeedItem` — about 1 MB — to an S3-compatible bucket.
 
+**`WhatsAppPost` (the WhatsApp channel queue's Posted / Skipped marks) is deliberately NOT in the export.** It holds only
+"who marked which article, when" for a short-lived working list; losing it means a day's list shows To do again, and
+every article is still in `Campaign`. (Added 2026-11-02; the export format is unchanged.)
+
 **EXPIRED subscribers are excluded**, and that is safe rather than merely
 smaller. A row expires when the push service answers 404/410, which means the
 endpoint has been *permanently* retired and can never be presented again, so
