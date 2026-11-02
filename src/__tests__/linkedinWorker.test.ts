@@ -211,6 +211,20 @@ describe('5. crash safety', () => {
     await runLinkedInTick(deps({ now: () => new Date(later.getTime() + 5 * MIN) }));
     expect(calls).toHaveLength(0);
   });
+  it('a tick only closes stale in-flight rows of ITS OWN pages (another page, or another test file, is left alone)', async () => {
+    // Regression for an intermittent failure in linkedinToken.test.ts: the stale-row recovery used to be table-wide, so with a fixed
+    // future clock a tick in one file closed an in-flight row that belonged to another file's page while its post was in the air.
+    const other = await prisma.linkedInPost.create({ data: { page: `${PAGE}-other`, articleKey: `other-${RUN}`, campaignId: 'c-other', status: 'PENDING', attempts: 1 } });
+    const mine = await prisma.linkedInPost.create({ data: { page: PAGE, articleKey: `mine-${RUN}`, campaignId: 'c-mine', status: 'PENDING', attempts: 1 } });
+    try {
+      const t = await runLinkedInTick(deps({ now: () => new Date(Date.now() + 11 * MIN) }));
+      expect(t.staleClosed).toBe(1);
+      expect((await prisma.linkedInPost.findUnique({ where: { id: mine.id } }))!.status).toBe('FAILED');
+      expect((await prisma.linkedInPost.findUnique({ where: { id: other.id } }))!.status).toBe('PENDING');
+    } finally {
+      await prisma.linkedInPost.deleteMany({ where: { id: { in: [other.id, mine.id] } } });
+    }
+  });
   it('a row that is only a minute old is left alone (still in flight)', async () => {
     const c = await camp('fresh', at(NOW, -30));
     await prisma.linkedInPost.create({ data: { page: PAGE, articleKey: c.url, campaignId: c.id, status: 'PENDING', attempts: 1 } });

@@ -960,17 +960,20 @@ model LinkedInPost {
 /// (`v1:<iv>:<tag>:<ciphertext>`, key LINKEDIN_TOKEN_KEY). Used only while `envFingerprint` equals the SHA-256 of the current
 /// LINKEDIN_<PAGE>_ACCESS_TOKEN env value: a token pasted into Railway wins and drops this row. NOT in the R2 backup.
 model LinkedInToken {
-  id               String    @id @default(cuid())
-  page             String    @unique
-  accessTokenEnc   String
-  refreshTokenEnc  String?
-  envFingerprint   String
-  accessExpiresAt  DateTime?
-  refreshExpiresAt DateTime?
-  renewedAt        DateTime?
-  lastCheckAt      DateTime?
+  id                  String    @id @default(cuid())
+  page                String    @unique
+  accessTokenEnc      String
+  refreshTokenEnc     String?
+  envFingerprint      String
+  accessExpiresAt     DateTime?
+  /// Where `accessExpiresAt` came from: 'linkedin' (token inspector), 'renewal' (a renewal's expires_in) or 'estimate'
+  /// (createdAt + LINKEDIN_ACCESS_TOKEN_TTL_DAYS, used only while LinkedIn gives no date). A real date always replaces an estimate.
+  accessExpiresSource String?
+  refreshExpiresAt    DateTime?
+  renewedAt           DateTime?
+  lastCheckAt         DateTime?
   /// ≤ 240 characters; never a secret.
-  lastError        String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  lastError           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
