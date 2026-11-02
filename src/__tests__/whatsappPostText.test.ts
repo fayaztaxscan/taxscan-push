@@ -1,4 +1,4 @@
-import { buildPostText, cleanHeadline, shortLine, articleIdOf, SHORT_LINE_MAX } from '../services/whatsapp/postText';
+import { buildPostText, cleanHeadline, shortLine, articleContentOf, SHORT_LINE_MAX } from '../services/whatsapp/postText';
 import { withWhatsAppUtm, WA_UTM_SOURCE, WA_UTM_MEDIUM, WA_UTM_CAMPAIGN } from '../services/whatsapp/utm';
 
 /** Brief 2026-11-02-whatsapp-channel-queue, acceptance 1 and 2. */
@@ -37,7 +37,28 @@ describe('1. the post text', () => {
     expect(buildPostText(c({ url: 'https://www.taxscan.in/' }))).toBeNull();
     expect(buildPostText(c({ url: 'https://academy.taxscan.in/course-123456' }))).toBeNull();
     expect(buildPostText(c({ url: 'not a url' }))).toBeNull();
-    expect(articleIdOf(c())).toBe('1451580');
+    expect(articleContentOf(c())).toBe('1451580');
+  });
+  it('G4: the home page, a section page and academy / shop are excluded; a no-id /<section>/<slug> is an article', () => {
+    for (const url of ['https://www.taxscan.in/', 'https://www.taxscan.in', 'https://www.taxscan.in/income-tax', 'https://www.taxscan.in/income-tax/', 'https://taxscan.in/gst', 'https://academy.taxscan.in/a/b', 'https://shop.taxscan.in/products/some-book-123456', 'https://example.com/a/b', 'ftp://www.taxscan.in/a/b']) {
+      expect(articleContentOf({ url })).toBeNull();
+      expect(buildPostText(c({ url }))).toBeNull();
+    }
+    expect(articleContentOf({ url: 'https://www.taxscan.in/income-tax/some-ruling-itat' })).toBe('some-ruling-itat');
+    expect(articleContentOf({ url: 'https://taxscan.in/gst/x-1234' })).toBe('1234');
+    expect(articleContentOf({ url: 'https://www.taxscan.in/gst-1451580' })).toBe('1451580'); // one segment, but an old id
+  });
+});
+
+describe('G2. utm_content: the id when there is one, else the slug (≤ 100 characters)', () => {
+  const NOID = 'https://www.taxscan.in/income-tax/interest-received-on-enhanced-compensation-us-28-of-land-acquisition-act-is-not-taxable-us-562viii-rws-57iv-of-it-act-itat-read-order';
+  it('a no-id URL carries utm_content=<slug>; an id URL keeps utm_content=<id>', () => {
+    const t = buildPostText(c({ url: NOID }))!;
+    const link = new URL(t.split('\n\n').pop()!);
+    expect(link.searchParams.getAll('utm_content')).toEqual([NOID.split('/').pop()!.slice(0, 100)]);
+    expect(link.searchParams.get('utm_content')!.length).toBeLessThanOrEqual(100);
+    expect(link.searchParams.get('utm_source')).toBe('taxscan-whatsapp');
+    expect(new URL(buildPostText(c())!.split('\n\n').pop()!).searchParams.get('utm_content')).toBe('1451580');
   });
 });
 
