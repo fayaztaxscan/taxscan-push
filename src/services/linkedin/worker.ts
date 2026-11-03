@@ -9,7 +9,7 @@ import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { istDay } from '../whatsapp/queue';
-import { postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
+import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
 import { fetchCoverImage } from './image';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
 import { refreshActiveTokens } from './token';
@@ -200,6 +200,10 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
           if (ready.ok) {
             thumbnail = up.urn;
             image = 'ok';
+          } else if (isUnverifiedImage(ready.reason)) {
+            // The status call itself failed (not a PROCESSING_FAILED verdict): attach anyway; a post rejected for the picture is repeated without it.
+            thumbnail = up.urn;
+            image = 'ok:unverified';
           } else image = `none:${ready.reason}`;
         } else if (up.kind === 'auth') {
           uploadAuth = { kind: 'auth', status: up.status, error: up.error };

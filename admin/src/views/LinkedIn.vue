@@ -127,9 +127,9 @@ const tokenText = computed(() => {
   return parts.join(' · ');
 });
 
-async function load(): Promise<void> {
+async function load(keepError = false): Promise<void> {
   loading.value = true;
-  error.value = null;
+  if (!keepError) error.value = null;
   try {
     const data = await api.get<ListResponse>(`/api/linkedin/posts?date=${encodeURIComponent(date.value)}`);
     rows.value = data.rows;
@@ -187,7 +187,7 @@ async function confirmRetry(): Promise<void> {
     const status = (e as { status?: number })?.status;
     if (status === 409) {
       error.value = 'This post changed in the meantime — the list has been refreshed.';
-      await load();
+      await load(true);
     } else {
       error.value = apiErrorMessage(e);
     }
@@ -206,7 +206,7 @@ async function skip(r: Row): Promise<void> {
     await load();
   } catch (e) {
     error.value = apiErrorMessage(e);
-    await load();
+    await load(true);
   } finally {
     busyId.value = null;
   }
@@ -225,14 +225,14 @@ function statusText(r: Row): string {
   return STATUS_LABEL[r.status];
 }
 
-onMounted(load);
+onMounted(() => load());
 </script>
 
 <template>
   <main class="page page-wide">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">LinkedIn page</h1>
-      <button class="btn" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+      <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
     </div>
     <p class="muted" style="font-size: 13px; margin: 4px 0 12px">
       Every article we push is posted to the Taxscan LinkedIn page automatically, a few minutes later. Nothing to do
