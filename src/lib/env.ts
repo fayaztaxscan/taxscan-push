@@ -442,6 +442,11 @@ export const env = {
    */
   softPrompt: {
     v2: process.env.SOFT_PROMPT_V2 === 'true',
+    /**
+     * 2026-11-03: the scroll trigger counts only a real reader's scroll (a trusted input, a full window scrolled, a page at
+     * least two windows tall, a visible tab). Off = today's rule byte for byte. Served to the SDK via /api/config.
+     */
+    realScroll: process.env.SOFT_PROMPT_REAL_SCROLL === 'true',
   },
   linkCheck: {
     enabled: process.env.LINK_CHECK_ENABLED === 'true',

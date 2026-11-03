@@ -16,7 +16,13 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 
 type Trigger = { kind: string; ms?: number; ratio?: number };
-type Internals = { promptTriggers: (isLanding: boolean, variant: string) => Trigger[] };
+type ScrollState = { ratio: number; scrollTop: number; clientHeight: number; scrollHeight: number; sawInput: boolean };
+type Internals = {
+  promptTriggers: (isLanding: boolean, variant: string) => Trigger[];
+  scrollShouldShow: (realScroll: boolean, s: ScrollState) => boolean;
+  isRealScrollInput: (type: string, isTrusted: boolean, key?: string) => boolean;
+  visibleOk: (realScroll: boolean, visibilityState: string) => boolean;
+};
 
 function loadSdk(): Internals {
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'taxscan-push.js'), 'utf8');
@@ -66,6 +72,56 @@ describe('SDK prompt arming (promptTriggers)', () => {
   });
 });
 
+describe('SDK real-scroll rules (SOFT_PROMPT_REAL_SCROLL)', () => {
+  const { scrollShouldShow, isRealScrollInput, visibleOk } = loadSdk();
+  // A 800px window on a 4000px page, scrolled to 2800px (70%).
+  const base: ScrollState = { ratio: 0.6, scrollTop: 2800, clientHeight: 800, scrollHeight: 4000, sawInput: true };
+
+  it('flag off: today\'s rule exactly (ratio only, no input needed, tiny pages pass)', () => {
+    expect(scrollShouldShow(false, { ...base, sawInput: false })).toBe(true);
+    // 1.2 windows tall, scrolled to the bottom: ratio 1.0 passes today.
+    expect(scrollShouldShow(false, { ratio: 0.6, scrollTop: 160, clientHeight: 800, scrollHeight: 960, sawInput: false })).toBe(true);
+    expect(scrollShouldShow(false, { ...base, scrollTop: 1000 })).toBe(false); // 31% < 60%
+    expect(scrollShouldShow(false, { ...base, scrollHeight: 800 })).toBe(false); // nothing to scroll
+  });
+
+  it('flag on: no show without a prior trusted input', () => {
+    expect(scrollShouldShow(true, { ...base, sawInput: false })).toBe(false);
+  });
+
+  it('flag on: after input, shows at >=60% AND >=1 window AND page >=2 windows', () => {
+    expect(scrollShouldShow(true, base)).toBe(true);
+    expect(scrollShouldShow(true, { ...base, scrollTop: 1500 })).toBe(false); // 47% < 60%
+    // 60% reached but under one window scrolled: 1.9-window page, top 700 < 800... ratio 700/(1520-800)=0.97
+    expect(scrollShouldShow(true, { ratio: 0.6, scrollTop: 700, clientHeight: 800, scrollHeight: 1520, sawInput: true })).toBe(false);
+    // exactly 2 windows tall, scrolled one full window (= bottom): allowed
+    expect(scrollShouldShow(true, { ratio: 0.6, scrollTop: 800, clientHeight: 800, scrollHeight: 1600, sawInput: true })).toBe(true);
+  });
+
+  it('flag on: a page 1.2 windows tall never shows by scroll', () => {
+    for (let top = 0; top <= 160; top += 20) {
+      expect(scrollShouldShow(true, { ratio: 0.6, scrollTop: top, clientHeight: 800, scrollHeight: 960, sawInput: true })).toBe(false);
+    }
+  });
+
+  it('counts only trusted wheel / touchmove / pointerdown and scroll keys', () => {
+    expect(isRealScrollInput('wheel', true)).toBe(true);
+    expect(isRealScrollInput('touchmove', true)).toBe(true);
+    expect(isRealScrollInput('pointerdown', true)).toBe(true);
+    for (const k of ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', ' ', 'Home', 'End']) expect(isRealScrollInput('keydown', true, k)).toBe(true);
+    expect(isRealScrollInput('keydown', true, 'a')).toBe(false);
+    expect(isRealScrollInput('wheel', false)).toBe(false); // dispatchEvent / script
+    expect(isRealScrollInput('scroll', true)).toBe(false);
+  });
+
+  it('hidden tab: flag on blocks every trigger until visible; flag off never blocks', () => {
+    expect(visibleOk(true, 'hidden')).toBe(false);
+    expect(visibleOk(true, 'prerender')).toBe(false);
+    expect(visibleOk(true, 'visible')).toBe(true);
+    expect(visibleOk(false, 'hidden')).toBe(true);
+  });
+});
+
 describe('funnel tracking API', () => {
   const app = createApp();
   const created: string[] = [];
@@ -105,5 +161,16 @@ describe('funnel tracking API', () => {
     const res = await request(app).get('/api/config').expect(200);
     expect(res.body.promptVariant).toBe(process.env.SOFT_PROMPT_V2 === 'true' ? 'v2' : 'v1');
     expect(typeof res.body.vapidPublicKey).toBe('string');
+  });
+
+  it('/api/config carries promptRealScroll (boolean, off unless SOFT_PROMPT_REAL_SCROLL)', async () => {
+    const res = await request(app).get('/api/config').expect(200);
+    expect(res.body.promptRealScroll).toBe(process.env.SOFT_PROMPT_REAL_SCROLL === 'true');
+    expect(typeof res.body.promptRealScroll).toBe('boolean');
+  });
+
+  it('/api/track trigger enum is unchanged: no new value for the real-scroll rule', async () => {
+    await request(app).post('/api/track').send({ type: 'PROMPT_SHOWN', meta: { trigger: 'real-scroll' } }).expect(400);
+    await request(app).post('/api/track').send({ type: 'PROMPT_SHOWN', meta: { trigger: 'scroll-real' } }).expect(400);
   });
 });

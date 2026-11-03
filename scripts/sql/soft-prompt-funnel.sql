@@ -22,6 +22,12 @@
 -- per day — v2 can convert a smaller share of a much larger number of prompts.
 -- At ~17 grants a week, read differences of a few grants as noise.
 --
+-- SOFT_PROMPT_REAL_SCROLL switch date: <placeholder - fill in when the flag is turned on>.
+-- From that date the scroll trigger needs a real user input, a full window scrolled, a
+-- page >= 2 windows tall and a visible tab (dwell also waits for a visible tab), so
+-- desktop first-page "scroll" prompts-shown drop sharply by design; compare grants/day,
+-- not shown/day, across the date.
+--
 -- Event."createdAt" is stored as UTC without a time zone; bounds below convert
 -- the IST days to UTC.
 
