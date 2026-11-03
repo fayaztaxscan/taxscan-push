@@ -175,10 +175,22 @@ const STATUS_TIMEOUT_MS = 10_000;
 export type ImageReady = { ok: true } | { ok: false; reason: 'processing' | 'processing_failed' | 'status_network' | `status_${number}` };
 
 /**
+ * True when the status call itself failed in a way that says nothing about the picture: a 4xx other than 401 / 403 (the
+ * poll's own request was refused) or a network error. The worker still attaches the image then and relies on the
+ * drop-and-repeat if LinkedIn rejects the post. 401 / 403, 5xx, processing and processing_failed are not "unverified".
+ */
+export function isUnverifiedImage(reason: string): boolean {
+  if (reason === 'status_network') return true;
+  const m = /^status_(\d{3})$/.exec(reason);
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n >= 400 && n < 500 && n !== 401 && n !== 403;
+}
+
+/**
  * After the PUT the image is WAITING_UPLOAD / PROCESSING until LinkedIn has made it (AVAILABLE). Posting before that can be
  * rejected (a 4xx about the thumbnail), so look at `GET /rest/images/<urn>` (LinkedIn "Images API": the `status` field) up to
- * 4 times, 1.5 s apart (about 4.5 s of waiting). Anything but AVAILABLE, or any error from the status call, means "post without
- * the thumbnail": the reason is a fixed word, never a body.
+ * 4 times, 1.5 s apart (about 4.5 s of waiting). Anything but AVAILABLE is a verdict with a fixed reason word, never a body; the worker decides (see `isUnverifiedImage`).
  */
 export async function waitForImage(
   r: { urn: string; accessToken: string },
@@ -191,7 +203,7 @@ export async function waitForImage(
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), STATUS_TIMEOUT_MS);
     try {
-      const res = await fetchImpl(`https://api.linkedin.com/rest/images/${r.urn}`, {
+      const res = await fetchImpl(`https://api.linkedin.com/rest/images/${encodeURIComponent(r.urn)}`, {
         method: 'GET',
         signal: ctrl.signal,
         headers: { Authorization: `Bearer ${r.accessToken}`, 'LinkedIn-Version': env.linkedin.apiVersion, 'X-Restli-Protocol-Version': '2.0.0' },

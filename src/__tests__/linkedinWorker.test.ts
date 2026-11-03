@@ -5,7 +5,7 @@ import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { env } from '../lib/env';
 import { prisma } from '../lib/prisma';
-import { postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from '../services/linkedin/client';
+import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from '../services/linkedin/client';
 import type { CmsArticle } from '../services/linkedin/post';
 import { runLinkedInTick, retryNow, startLinkedInWorker, resetLinkedInStops, loginProblem, authKey, pushOutOfQuietHours, UNKNOWN_ERROR, MAX_PER_TICK, type WorkerDeps } from '../services/linkedin/worker';
 
@@ -319,7 +319,7 @@ describe('I. the link card carries the article\'s picture and a description (fai
       const s = statusFetch(['PROCESSING']);
       await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: upload(), waitImage: wait(s.f) }));
       expect(s.urls).toHaveLength(4);
-      expect(s.urls[0]).toBe('https://api.linkedin.com/rest/images/urn:li:image:C9ZZ');
+      expect(s.urls[0]).toBe('https://api.linkedin.com/rest/images/urn%3Ali%3Aimage%3AC9ZZ');
       expect(calls).toHaveLength(1);
       expect(calls[0].thumbnail).toBeUndefined();
       expect(outcomeLine()).toContain('image=none:processing');
@@ -336,12 +336,42 @@ describe('I. the link card carries the article\'s picture and a description (fai
       expect(outcomeLine()).toContain('image=ok');
     });
 
-    it('an error from the status call, or a failed processing → posted without the thumbnail (image=none:status_<code> / processing_failed)', async () => {
-      await camp('t-status-err', at(NOW, -5));
-      await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: upload(), waitImage: async () => ({ ok: false, reason: 'status_404' }) }));
-      expect(calls[0].thumbnail).toBeUndefined();
-      expect(outcomeLine()).toContain('image=none:status_404');
-      expect((await rowsOf())[0].status).toBe('POSTED');
+    it('a real PROCESSING_FAILED, a 401/403 or a 5xx from the status call → posted without the thumbnail (image=none:<reason>)', async () => {
+      let n = 0;
+      for (const reason of ['processing_failed', 'status_401', 'status_403', 'status_500'] as const) {
+        n += 1;
+        calls = [];
+        await camp(`t-status-err-${n}`, at(NOW, -5));
+        await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: upload(), waitImage: async () => ({ ok: false, reason }) }));
+        expect(calls).toHaveLength(1);
+        expect(calls[0].thumbnail).toBeUndefined();
+        expect(outcomeLine()).toContain(`image=none:${reason}`);
+      }
+    });
+
+    it('the status poll answers 400 (or a network error) → the post goes out WITH the thumbnail, image=ok:unverified; then a 400 → repeated once without, image=dropped:400', async () => {
+      await camp('t-unverified', at(NOW, -5));
+      const s400 = (async (u: string) => (polled.push(u), { ok: false, status: 400, json: async () => ({ message: `echo ${TOKEN}` }) } as unknown as Response)) as unknown as typeof fetch;
+      const polled: string[] = [];
+      script = () => posted();
+      await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: upload(), waitImage: wait(s400) }));
+      expect(polled).toEqual(['https://api.linkedin.com/rest/images/urn%3Ali%3Aimage%3AC9ZZ']);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].thumbnail).toBe('urn:li:image:C9ZZ');
+      expect(outcomeLine()).toContain('outcome=posted hashtags=fallback image=ok:unverified');
+      expect(outcomeLine()).not.toContain(TOKEN);
+
+      await prisma.linkedInPost.deleteMany({ where: { page: PAGE } });
+      await prisma.campaign.deleteMany({ where: { portal: PORTAL } });
+      calls = [];
+      await camp('t-unverified-net', at(NOW, -5));
+      const down = (async () => { throw new Error('reset'); }) as unknown as typeof fetch;
+      script = (n) => (n === 1 ? { kind: 'failed', status: 400, error: 'HTTP 400: thumbnail' } : posted());
+      await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: upload(), waitImage: wait(down) }));
+      expect(calls).toHaveLength(2);
+      expect(calls[0].thumbnail).toBe('urn:li:image:C9ZZ');
+      expect(calls[1].thumbnail).toBeUndefined();
+      expect(outcomeLine()).toContain('outcome=posted hashtags=fallback image=dropped:400');
     });
 
     it('T3: the post WITH a thumbnail → 422; the repeat WITHOUT → posted: exactly 2 post calls, the second without thumbnail, description kept, image=dropped:422', async () => {
@@ -419,7 +449,14 @@ describe('I. the link card carries the article\'s picture and a description (fai
       expect(seen[0].method).toBe('GET');
       expect(seen[0].headers).toMatchObject({ Authorization: `Bearer ${TOKEN}`, 'LinkedIn-Version': env.linkedin.apiVersion, 'X-Restli-Protocol-Version': '2.0.0' });
       const err = (status: number) => (async () => ({ ok: false, status, json: async () => ({ message: `echo ${TOKEN}` }) }) as unknown as Response) as never;
+      const urls: string[] = [];
+      await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, (async (u: string) => (urls.push(u), { ok: true, status: 200, json: async () => ({ status: 'AVAILABLE' }) } as unknown as Response)) as never, sleep);
+      expect(urls).toEqual(['https://api.linkedin.com/rest/images/urn%3Ali%3Aimage%3AC9ZZ']);
       expect(await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, err(404), sleep)).toEqual({ ok: false, reason: 'status_404' });
+      expect(await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, err(400), sleep)).toEqual({ ok: false, reason: 'status_400' });
+      expect(isUnverifiedImage('status_400')).toBe(true);
+      expect(isUnverifiedImage('status_network')).toBe(true);
+      for (const r of ['status_401', 'status_403', 'status_500', 'processing', 'processing_failed']) expect(isUnverifiedImage(r)).toBe(false);
       expect(await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, err(403), sleep)).toEqual({ ok: false, reason: 'status_403' });
       expect(await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, (async () => { throw new Error('reset'); }) as never, sleep)).toEqual({ ok: false, reason: 'status_network' });
       expect(await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, statusFetch(['PROCESSING_FAILED']).f, sleep)).toEqual({ ok: false, reason: 'processing_failed' });
