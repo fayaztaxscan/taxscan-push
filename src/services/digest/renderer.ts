@@ -98,7 +98,7 @@ export const UNSUBSCRIBE_TAG = '{{unsubscribe_link}}';
 
 export const SUBJECT_MAX = 90;
 export const PREHEADER_MAX = 110;
-/** Summary shown under a headline: about three lines in the 560 px text column. */
+/** Longest summary kept by the builder; the renderer trims it further to 1-2 lines (`fitSummary`). */
 export const SUMMARY_MAX = 220;
 /** Allowance per link for the provider's click-tracking rewrite (design §4). */
 export const TRACKING_BYTES_PER_LINK = 150;
@@ -222,7 +222,7 @@ const HEADER_TEXT = '#111111';
 export const LOGO_WIDTH = 220;
 export const LOGO_HEIGHT = 53;
 
-/** Every button (Read More and an ad's CTA) is 38 px tall on desktop (the old newsletter's); phones draw it 43 px, full column. */
+/** An ad's CTA is 38 px tall on desktop (the old newsletter's); "Read More" is the compact 30 px (MORE_HEIGHT); phones draw both 43 px, full column. */
 const BUTTON_HEIGHT = 38;
 /** "Read More" is 96 px wide (the old newsletter's VML button is 95). */
 const READ_MORE_WIDTH = 96;
@@ -753,10 +753,51 @@ const PREVIEW_FILLER = '&#847;&zwnj;&nbsp;'.repeat(40);
 /** The content width of the email (the old newsletter's), and what is inside its 20 px side padding. */
 export const EMAIL_WIDTH = 900;
 export const EMAIL_INNER_WIDTH = 860;
-/** A story row: picture 280 px, 20 px gap, text column 560 px (= 860). */
+/**
+ * A story row at the full 860 px is 280 px picture + 20 px gap + 560 px text. These three are that NOMINAL layout (the
+ * picture's width/height attributes, the Outlook fallback size); the live columns are percentages of the pane, so the
+ * row shrinks with a narrower reading pane instead of wrapping (see STORY_*_PCT).
+ */
 export const STORY_IMAGE_WIDTH = 280;
 export const STORY_GAP = 20;
 export const STORY_TEXT_WIDTH = EMAIL_INNER_WIDTH - STORY_IMAGE_WIDTH - STORY_GAP;
+/** Column widths as a share of the row: 33 % picture, 2.5 % gap, 64 % text (= 99.5 %, so rounding never wraps the row). */
+export const STORY_PIC_PCT = 33;
+export const STORY_GAP_PCT = 2.5;
+export const STORY_TEXT_PCT = 64;
+/**
+ * Floors so a narrow row stacks by itself instead of squeezing (a phone, or an app that drops <style>): 180 + 300 px
+ * plus the gap needs a row of about 490 px, i.e. a pane of about 600 px once the email's own 56 px of padding is taken off.
+ */
+export const STORY_PIC_MIN = 180;
+export const STORY_TEXT_MIN = 300;
+/** Compact text column (desktop): headline 16/21 bold, summary 14/19 6 px under it, Read More 7 px under that, 30 px tall. */
+const HEAD_LINE = 21;
+const SUM_LINE = 19;
+const SUM_GAP = 6;
+const MORE_GAP = 7;
+const MORE_HEIGHT = 30;
+/**
+ * Summary limits, in characters. ESTIMATES: Arial 14 px averages ~6.5 px/char, 16 px bold ~8.3 px/char. The text column
+ * is 64 % of a row; in a 780 px reading pane (the owner's Zoho 3-panel) the row is ~724 px, so the column is ~463 px =
+ * ~71 summary chars or ~55 headline chars per line. Limits keep ~10 % slack for word-wrap waste:
+ *   headline up to 2 lines  = 104 chars (2 x ~52)  -> summary 2 lines = 130 chars (2 x ~65)
+ *   a longer headline (3 lines) leaves room for one summary line only = 62 chars.
+ * 2 lines of headline + 2 of summary + button = 42 + 6 + 38 + 7 + 30 = 123 px (a 3-line headline + 1 summary line: 63 + 6 + 19 + 7 + 30 = 125), vs a 125 px picture at 780.
+ */
+export const HEADLINE_2LINE_CHARS = 104;
+export const SUMMARY_2LINE_CHARS = 130;
+export const SUMMARY_1LINE_CHARS = 62;
+/** The summary under a headline, cut at a word boundary with "…" to fit its line budget; null/blank stays absent. */
+export function fitSummary(summary: string | null, title: string): string | null {
+  if (!summary) return null;
+  const max = title.length > HEADLINE_2LINE_CHARS ? SUMMARY_1LINE_CHARS : SUMMARY_2LINE_CHARS;
+  if (summary.length <= max) return summary;
+  const head = summary.slice(0, max - 1);
+  const at = head.lastIndexOf(' ');
+  const cut = (at >= Math.floor(max * 0.5) ? head.slice(0, at) : head).replace(/[\s,;:.\-–—]+$/, '');
+  return `${cut}…`;
+}
 /**
  * The picture's box is 1.91:1 (the og:image standard, 1200×628). We store no picture size, so this is an
  * assumption; `object-fit:cover` crops a picture of another shape instead of stretching it.
@@ -768,66 +809,70 @@ const BRAND_LOGO_HEIGHT = 39;
 const BRAND_LOGO_PATH = '/email/taxscan-logo-white-440.png';
 
 /**
- * One story, laid out like the old newsletter's: picture left (280 px, `adapt-img` = full width on phones), a 20 px
- * gap, the text column right (560 px), both top-aligned. Headline: Arial 16 px bold, line-height 24 px (exact in
- * Outlook), black, linked, no underline. Summary: 16/24 #333, 15 px below the headline. "Read More": 13 px below the
- * summary, a 96 x 38 yellow square with 15 px bold black text (a table-cell button, one link; full column, 43 px high on
- * phones). Alt text = the headline.
+ * One story, laid out like the old newsletter's but in proportion to the reading pane: picture left (33 %, `adapt-img` =
+ * full width on phones), a 2.5 % gap, the text column right (64 %), both top-aligned. At the full 860 px that is the old
+ * 280 / 20 / 560. The text is compact so it is no taller than the 1.91:1 picture: headline Arial 16 px bold, line-height
+ * 21 px (exact in Outlook), black, linked, no underline; summary 14/19 #333, 6 px under it, at most 2 lines (1 when the
+ * headline runs to 3; see `fitSummary`); "Read More" 7 px below, a 96 x 30 yellow square with 15 px bold black text (a
+ * table-cell button, one link; full column, 43 px high on phones). Alt text = the headline.
  *
- * The row holds its shape WITHOUT the <style> block: it is two `display:inline-block` divs (100 % wide, capped at 280
- * and 560 px) plus a 20 px spacer, so they sit side by side only when 860 px is there and stack on anything narrower
- * (a phone, an app that drops <style>) with no media query; Outlook desktop gets an MSO-only 280/20/560 table. A MAIN
- * story with no picture of its own shows the default picture, else the brand block (same 280 x 147 box), so every
- * row keeps this shape. An ICYMI story ("In case you missed it") is text only: the same 560 px text column, left-aligned
- * with the main text column on desktop (a 300 px spacer), full width on phones.
+ * The row holds its shape WITHOUT the <style> block: three `display:inline-block` divs with percentage widths and a
+ * `min-width` floor each (picture 180, text 300) inside a `font-size:0` cell (no whitespace gaps), so they sit side by
+ * side from a ~600 px pane and shrink with it, and stack on anything narrower (a phone, an app that drops <style>) with
+ * no media query. Outlook desktop gets an MSO-only 100 %-wide table with 33 / 3 / 64 % cells. A MAIN story with no
+ * picture of its own shows the default picture, else the brand block (same 1.91:1 box), so every row keeps this shape. An
+ * ICYMI story ("In case you missed it") is text only: the same text column, left-aligned with the main text column on
+ * desktop (a spacer as wide as picture + gap), full width on phones.
  */
 function itemRow(it: Prepared, defaultPic: string | null, logoWhiteUrl: string | null): string {
   const href = esc(it.href);
-  const summary = it.summary
-    ? `<p style="margin:15px 0 0 0;font-family:${FONT};font-size:16px;line-height:24px;mso-line-height-rule:exactly;color:${C.body};" class="ts-body">${esc(it.summary)}</p>`
+  const sum = fitSummary(it.summary, it.title);
+  const summary = sum
+    ? `<p style="margin:${SUM_GAP}px 0 0 0;font-family:${FONT};font-size:14px;line-height:${SUM_LINE}px;mso-line-height-rule:exactly;color:${C.body};" class="ts-body ts-sum">${esc(sum)}</p>`
     : '';
   const text =
-    `<h2 style="margin:0;font-family:${FONT};font-size:16px;line-height:24px;mso-line-height-rule:exactly;font-weight:700;color:${C.ink};"><a href="${href}" class="ts-head" style="color:${C.ink};text-decoration:none;">${esc(it.title)}</a></h2>` +
+    `<h2 class="ts-hl" style="margin:0;font-family:${FONT};font-size:16px;line-height:${HEAD_LINE}px;mso-line-height-rule:exactly;font-weight:700;color:${C.ink};"><a href="${href}" class="ts-head" style="color:${C.ink};text-decoration:none;">${esc(it.title)}</a></h2>` +
     summary +
-    `<div style="padding-top:13px;">${button(href, 'Read More', READ_MORE_WIDTH, BUTTON_HEIGHT)}</div>`;
+    `<div class="ts-more" style="padding-top:${MORE_GAP}px;">${button(href, 'Read More', READ_MORE_WIDTH, MORE_HEIGHT)}</div>`;
   const icymi = it.section === 'ICYMI';
-  const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}" style="${WRAP}padding:20px 20px 0 20px;background-color:${C.card};">`;
+  // font-size:0 on the cell: the inline-block columns leave no whitespace gap between them; every text element sets its own size.
+  const open = `<tr><td class="ts-card ts-pad" data-item="${it.rank}" data-section="${it.section}" style="${WRAP}padding:20px 20px 0 20px;background-color:${C.card};font-size:0;line-height:0;">`;
   const W = STORY_IMAGE_WIDTH;
-  const T = STORY_TEXT_WIDTH;
-  const col = (w: number, extra = '') => `display:inline-block;width:100%;max-width:${w}px;vertical-align:top;${extra}`;
-  const msoOpen = (first: number) => `<!--[if mso]><table width="${EMAIL_INNER_WIDTH}" cellpadding="0" cellspacing="0"><tr><td width="${first}" valign="top"><![endif]-->`;
+  const col = (pct: number, min: number, extra = '') => `display:inline-block;width:${pct}%;min-width:${min}px;vertical-align:top;${extra}`;
+  const msoOpen = (first: number) => `<!--[if mso]><table width="100%" cellpadding="0" cellspacing="0"><tr><td width="${first}%" valign="top"><![endif]-->`;
   const msoClose = `<!--[if mso]></td></tr></table><![endif]-->`;
-  const textDiv = `<div class="ts-stcol ts-sttext" style="${col(T)}">${text}</div>`;
+  const gapDiv = `<!--[if !mso]><!--><div class="ts-stgap" style="display:inline-block;width:${STORY_GAP_PCT}%;height:0;vertical-align:top;"></div><!--<![endif]-->`;
+  const textDiv = `<div class="ts-stcol ts-sttext" style="${col(STORY_TEXT_PCT, STORY_TEXT_MIN)}">${text}</div>`;
   if (icymi) {
-    // 300 px spacer (= picture + gap) so the text lines up with the main column's; empty, so stacked it takes no height.
+    // A spacer as wide as the picture column + the gap, so the text lines up with the main column's; empty, so stacked it takes no height.
     return (
-      `${open}${msoOpen(W + STORY_GAP).replace('<![endif]-->', '&nbsp;<![endif]-->')}<!--[if mso]></td><td width="${T}" valign="top"><![endif]-->` +
-      `<!--[if !mso]><!--><div class="ts-stgap" style="display:inline-block;width:${W + STORY_GAP}px;height:0;vertical-align:top;"></div><!--<![endif]-->${textDiv}${msoClose}</td></tr>`
+      `${open}${msoOpen(36).replace('<![endif]-->', '&nbsp;<![endif]-->')}<!--[if mso]></td><td width="64%" valign="top"><![endif]-->` +
+      `<!--[if !mso]><!--><div class="ts-stgap" style="${col(STORY_PIC_PCT, STORY_PIC_MIN, 'height:0;')}"></div><!--<![endif]-->${gapDiv}${textDiv}${msoClose}</td></tr>`
     );
   }
   const pic = it.imageUrl ?? defaultPic;
   const picHtml = pic
-    ? `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(pic)}" width="${W}" height="${STORY_IMAGE_HEIGHT}" alt="${esc(it.title)}" style="display:block;width:100%;max-width:${W}px;height:auto;aspect-ratio:1200/628;object-fit:cover;border:0;"></a>`
+    ? `<a href="${href}" style="display:block;text-decoration:none;"><img class="ts-pic adapt-img" src="${esc(pic)}" width="${W}" height="${STORY_IMAGE_HEIGHT}" alt="${esc(it.title)}" style="display:block;width:100%;height:auto;aspect-ratio:1200/628;object-fit:cover;border:0;"></a>`
     : brandBlock(href, it.title, logoWhiteUrl);
   return (
-    `${open}${msoOpen(W)}<div class="ts-stcol ts-stpic" style="${col(W)}">${picHtml}</div>` +
-    `<!--[if mso]></td><td width="${STORY_GAP}"></td><td width="${T}" valign="top"><![endif]-->` +
-    `<!--[if !mso]><!--><div class="ts-stgap" style="display:inline-block;width:${STORY_GAP}px;height:0;vertical-align:top;"></div><!--<![endif]-->` +
-    `${textDiv}${msoClose}</td></tr>`
+    `${open}${msoOpen(33)}<div class="ts-stcol ts-stpic" style="${col(STORY_PIC_PCT, STORY_PIC_MIN)}">${picHtml}</div>` +
+    `<!--[if mso]></td><td width="3%"></td><td width="64%" valign="top"><![endif]-->` +
+    `${gapDiv}${textDiv}${msoClose}</td></tr>`
   );
 }
 
 /**
- * The brand block a main story shows until a default picture is uploaded (decision A): the same 280 x 147 box as a
- * picture, #3b3543 with the white Taxscan logo centred. A table, so the colour and the 147 px hold in Outlook too.
+ * The brand block a main story shows until a default picture is uploaded (decision A): the picture column's width, in the
+ * same 1.91:1 box as a picture (`aspect-ratio`; Outlook ignores that, so an MSO-only 147 px cell keeps the row at the
+ * nominal 280 x 147), #3b3543 with the white Taxscan logo centred. A table, so the colour holds in Outlook too.
  */
 function brandBlock(href: string, title: string, logoUrl: string | null): string {
   const inner = logoUrl
     ? `<img src="${esc(logoUrl)}" width="${BRAND_LOGO_WIDTH}" height="${BRAND_LOGO_HEIGHT}" alt="${esc(title)}" style="display:block;margin:0 auto;width:${BRAND_LOGO_WIDTH}px;height:${BRAND_LOGO_HEIGHT}px;border:0;outline:none;text-decoration:none;color:${C.brandText};font-family:${FONT};font-size:14px;">`
     : `<span style="font-family:${FONT};font-size:22px;line-height:30px;font-weight:700;letter-spacing:0.08em;color:${C.brandText};">TAXSCAN</span>`;
   return (
-    `<table role="presentation" class="ts-brand" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.brand}" style="width:100%;max-width:${STORY_IMAGE_WIDTH}px;background-color:${C.brand};${solid(C.brand)}">` +
-    `<tr><td align="center" valign="middle" height="${STORY_IMAGE_HEIGHT}" style="height:${STORY_IMAGE_HEIGHT}px;padding:0;text-align:center;"><a href="${href}" style="display:block;text-decoration:none;color:${C.brandText};">${inner}</a></td></tr></table>`
+    `<table role="presentation" class="ts-brand" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.brand}" style="width:100%;aspect-ratio:1200/628;background-color:${C.brand};${solid(C.brand)}">` +
+    `<tr><!--[if mso]><td width="1" height="${STORY_IMAGE_HEIGHT}" style="height:${STORY_IMAGE_HEIGHT}px;font-size:0;line-height:0;">&nbsp;</td><![endif]--><td align="center" valign="middle" style="padding:0;text-align:center;"><a href="${href}" style="display:block;text-decoration:none;color:${C.brandText};">${inner}</a></td></tr></table>`
   );
 }
 
@@ -907,7 +952,9 @@ export const BUILTIN_TEMPLATE_HTML =
   `.ts-pad{padding-left:20px!important;padding-right:20px!important}` +
   `.ml-mobile-hidden{display:none!important}` +
   `.ml-desk-hidden{display:block!important;float:none!important;overflow:visible!important;width:auto!important;max-height:none!important;line-height:normal!important;text-align:center!important}` +
-  `.ts-stcol{display:block!important;width:100%!important;max-width:100%!important}.ts-stgap{display:none!important}.ts-brand{max-width:100%!important}` +
+  `.ts-stcol{display:block!important;width:100%!important;min-width:0!important;max-width:100%!important}.ts-stgap{display:none!important}.ts-brand{max-width:100%!important}` +
+  // Phones keep the roomier reading sizes (headline 16/24, summary 16/24 15 px below it, Read More 13 px below that); the compact sizes are desktop-only.
+  `.ts-hl{line-height:24px!important}.ts-sum{margin-top:15px!important;font-size:16px!important;line-height:24px!important}.ts-more{padding-top:13px!important}` +
   `.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}` +
   `.ts-sttext{padding-top:12px!important}` +
   `.ts-btnt{width:100%!important}.ts-btn{display:block!important;width:auto!important;height:43px!important;line-height:43px!important}` +

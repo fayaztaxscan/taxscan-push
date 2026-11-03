@@ -66,19 +66,19 @@ const rowOf = (html: string, rank: number) => new RegExp(`<td [^>]*data-item="${
 /* ------------------------------------------------------------------ */
 
 describe('a story is always a picture + text row (its own picture, else the default, else the brand block)', () => {
-  it('imageUrl → picture left (the ORIGINAL url, 280 px), 20 px gap, text 560 px, alt = headline; phones stack', () => {
+  it('imageUrl → picture left (the ORIGINAL url, 33 %), 2.5 % gap, text 64 %, alt = headline; phones stack', () => {
     const its = stories(5, (i) => (i === 0 ? PIC : null));
     const r = render(its);
     const row = rowOf(r.html, 1);
     expect(row).toContain(`<img class="ts-pic adapt-img" src="${PIC}" width="280" height="147"`);
     expect(row).toContain('alt="GST Registration Cancelled Over ₹8.87 Lakh ITC &amp; more'); // alt = the (escaped) headline
-    expect(row).toContain('<div class="ts-stcol ts-stpic" style="display:inline-block;width:100%;max-width:280px;vertical-align:top;">');
-    expect(row).toContain('<div class="ts-stgap" style="display:inline-block;width:20px;');
-    expect(row).toContain('<div class="ts-stcol ts-sttext" style="display:inline-block;width:100%;max-width:560px;vertical-align:top;">');
+    expect(row).toContain('<div class="ts-stcol ts-stpic" style="display:inline-block;width:33%;min-width:180px;vertical-align:top;">');
+    expect(row).toContain('<div class="ts-stgap" style="display:inline-block;width:2.5%;');
+    expect(row).toContain('<div class="ts-stcol ts-sttext" style="display:inline-block;width:64%;min-width:300px;vertical-align:top;">');
     expect((row.match(/<a /g) ?? []).length).toBe(3); // picture link, headline, Read more — one href
     expect(new Set([...row.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).size).toBe(1);
     expect(r.html).toContain('@media only screen and (max-width:600px){');
-    expect(r.html).toContain('.ts-stcol{display:block!important;width:100%!important;max-width:100%!important}.ts-stgap{display:none!important}');
+    expect(r.html).toContain('.ts-stcol{display:block!important;width:100%!important;min-width:0!important;max-width:100%!important}.ts-stgap{display:none!important}');
     expect(r.html).toContain('.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}');
     // The second story has no picture and no default is set: the brand block, in the same row shape.
     const plain = rowOf(r.html, 2);
@@ -102,7 +102,7 @@ describe('a story is always a picture + text row (its own picture, else the defa
     expect(rowOf(render(its, { defaultStoryImageUrl: 'https://evil.example/x.jpg' }).html, 2)).toContain('ts-brand');
     // Nothing set: the brand block, #3b3543 + the white logo, in the same 280 x 147 box.
     const brand = rowOf(render(its).html, 2);
-    expect(brand).toMatch(/<table role="presentation" class="ts-brand" width="100%"[^>]*bgcolor="#3b3543"[^>]*max-width:280px/);
+    expect(brand).toMatch(/<table role="presentation" class="ts-brand" width="100%"[^>]*bgcolor="#3b3543"[^>]*aspect-ratio:1200\/628/); // follows the picture column, 1.91:1
     expect(brand).toContain('height="147"');
     expect(brand).toContain(`src="${ASSET}/email/taxscan-logo-white-440.png"`);
   });

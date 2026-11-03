@@ -679,16 +679,17 @@ describe('the built-in look stays close to today’s digest (owner, 2026-10-23)'
   it('square yellow buttons with bold dark text in a table cell (Outlook paints the cell; one link, no VML), for stories and ads', () => {
     const btns = r.html.match(/<a href="[^"]*" class="ts-btn" style="[^"]*">/g) ?? [];
     expect(btns.length).toBe(7); // 5 stories + 2 ads
-    for (const b of btns) expect(b).toMatch(/display:block;height:38px;line-height:38px;text-align:center;background-color:#FEE620;font-family:[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
-    expect((r.html.match(/<td align="center" width="\d+" height="38" bgcolor="#FEE620"/g) ?? []).length).toBe(7);
+    for (const b of btns) expect(b).toMatch(/display:block;height:(30|38)px;line-height:(30|38)px;text-align:center;background-color:#FEE620;font-family:[^"]*font-size:15px;font-weight:700;color:#000000;text-decoration:none/);
+    expect((r.html.match(/<td align="center" width="96" height="30" bgcolor="#FEE620"/g) ?? []).length).toBe(5); // Read More: 30 px (compact story row)
+    expect((r.html.match(/<td align="center" width="\d+" height="38" bgcolor="#FEE620"/g) ?? []).length).toBe(2); // an ad's button: 38 px
     expect(r.html).not.toContain('v:rect');
     expect(r.html).not.toContain('linear-gradient(#FEE620');
     expect(r.html).not.toMatch(/data-ogs[bc]/);
   });
   it('headlines #000000 (the old newsletter\'s), not underlined; body #333333; other links #1376c8', () => {
     expect(r.html).toMatch(/class="ts-head" style="[^"]*color:#000000;text-decoration:none;"/);
-    expect(r.html).toMatch(/class="ts-body">Summary/);
-    expect(r.html).toMatch(/color:#333333;" class="ts-body"/);
+    expect(r.html).toMatch(/class="ts-body ts-sum">Summary/);
+    expect(r.html).toMatch(/color:#333333;" class="ts-body ts-sum"/);
     expect(r.html).toMatch(/href="mailto:info@taxscan\.in" class="ts-link" style="[^"]*color:#1376c8;/);
   });
   it('without an asset host (unit renders) the header falls back to a white TAXSCAN wordmark', () => {
