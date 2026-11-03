@@ -36,7 +36,7 @@ status changes so a fresh Claude session can pick up cleanly.
   grants (24 Oct–3 Nov), flat ~300/h round the clock (robots / background tabs); everything else ~0.5 % (v1 ~0.6 %); real grants
   UP with v2 (~5/day vs ~0.4/day). Measure 7 days from the switch vs 24 Oct–3 Nov (grants/day + shown/day by device/trigger);
   **stop rule: grants < ~4/day for a week → flag off.** Shipped without a separate Release check (owner "go live now"; the build's
-  full suite 1,925 ran on the same code, develop fast-forwarded to it).
+  full suite 1,925 ran on the same code, develop fast-forwarded to it). Release check passed afterwards on cf0ff8a (1,925/1,925, first run).
 - Release-check note: `audienceIngest` failed once in the f9fb4d9 check (seq 7 erasure step), passed 3× after — watch.
 
 **▶ 2026-11-02 PR #98 LIVE 18:09 IST:** LinkedIn link-card cover picture (Images API, wait AVAILABLE, drop-and-repeat on a client error) + description; SOCIAL shows right after login. To verify: next LinkedIn post `image=ok` + picture on the page; Abhirami logs out/in → SOCIAL visible. Note: 2 Nov staff digest was SKIPPED (nobody approved before 17:00).
