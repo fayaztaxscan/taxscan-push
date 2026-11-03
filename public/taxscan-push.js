@@ -60,6 +60,10 @@
   // (SOFT_PROMPT_V2 → /api/config) so it can be switched without touching the site.
   var promptVariant = 'v1';
   var promptLanding = false;
+  // SOFT_PROMPT_REAL_SCROLL (via /api/config.promptRealScroll). Off = the original
+  // scroll/dwell rules untouched. On = the scroll trigger needs real user input,
+  // a real distance on a real-length page, and a visible tab.
+  var promptRealScroll = false;
 
   /* ---------------- helpers ---------------- */
 
@@ -436,24 +440,101 @@
     ];
   }
 
+  var SCROLL_KEYS = {
+    ArrowUp: 1, ArrowDown: 1, PageUp: 1, PageDown: 1, Home: 1, End: 1, ' ': 1, Spacebar: 1,
+  };
+
+  /**
+   * Is this input event a genuine reader's scroll gesture? (pure — unit-tested)
+   * Only trusted events count; a keydown counts only for scroll keys.
+   */
+  function isRealScrollInput(type, isTrusted, key) {
+    if (!isTrusted) return false;
+    if (type === 'keydown') return !!SCROLL_KEYS[key];
+    return type === 'wheel' || type === 'touchmove' || type === 'pointerdown';
+  }
+
+  /**
+   * Should a scroll at this moment show the prompt? (pure — unit-tested)
+   * s = { ratio, scrollTop, clientHeight, scrollHeight, sawInput }.
+   * realScroll off: exactly the original rule (ratio of scrollable height).
+   * realScroll on: also needs a prior trusted input, a full window scrolled, and
+   * a page at least two windows tall at this moment (else keep listening).
+   */
+  function scrollShouldShow(realScroll, s) {
+    var max = s.scrollHeight - s.clientHeight;
+    if (max <= 0) return false;
+    if (s.scrollTop / max < s.ratio) return false;
+    if (!realScroll) return true;
+    if (!s.sawInput) return false;
+    if (s.scrollTop < s.clientHeight) return false;
+    return s.scrollHeight >= 2 * s.clientHeight;
+  }
+
+  /**
+   * May any trigger show the card right now? (pure — unit-tested)
+   * Flag off: always. On: only in a visible tab. A trigger that fires in a hidden
+   * tab is NOT dropped: maybeShow waits for `visibilitychange` and retries then.
+   */
+  function visibleOk(realScroll, visibilityState) {
+    return !realScroll || visibilityState === 'visible';
+  }
+
   function armSoftPrompt(isLanding) {
     if (loadDismissed()) return;
     if (Notification.permission !== 'default') return;
     promptLanding = isLanding;
 
+    // Real-input gate (flag on only): flips true on the first trusted wheel,
+    // touchmove, scroll key or pointerdown anywhere on the page.
+    var sawInput = false;
+    var recheck = [];
+    if (promptRealScroll) {
+      var onInput = function (e) {
+        if (sawInput || !isRealScrollInput(e.type, e.isTrusted === true, e.key)) return;
+        sawInput = true;
+        ['wheel', 'touchmove', 'keydown', 'pointerdown'].forEach(function (n) {
+          window.removeEventListener(n, onInput, true);
+        });
+        recheck.forEach(function (fn) {
+          fn();
+        });
+      };
+      ['wheel', 'touchmove', 'keydown', 'pointerdown'].forEach(function (n) {
+        window.addEventListener(n, onInput, { capture: true, passive: true });
+      });
+    }
+
     promptTriggers(isLanding, promptVariant).forEach(function (t) {
       if (t.kind === 'scroll') {
         var onScroll = function () {
           var h = document.documentElement;
-          var max = h.scrollHeight - h.clientHeight;
-          if (max <= 0) return;
-          var ratio = (h.scrollTop || document.body.scrollTop || 0) / max;
-          if (ratio >= t.ratio) {
+          var top = h.scrollTop || document.body.scrollTop || 0;
+          if (!promptRealScroll) {
+            // Original rule, unchanged.
+            var max = h.scrollHeight - h.clientHeight;
+            if (max <= 0) return;
+            if (top / max >= t.ratio) {
+              window.removeEventListener('scroll', onScroll);
+              maybeShow('scroll');
+            }
+            return;
+          }
+          if (
+            scrollShouldShow(true, {
+              ratio: t.ratio,
+              scrollTop: top,
+              clientHeight: h.clientHeight,
+              scrollHeight: h.scrollHeight,
+              sawInput: sawInput,
+            })
+          ) {
             window.removeEventListener('scroll', onScroll);
             maybeShow('scroll');
           }
         };
         window.addEventListener('scroll', onScroll, { passive: true });
+        if (promptRealScroll) recheck.push(onScroll);
       } else {
         setTimeout(function () {
           maybeShow(t.kind);
@@ -466,6 +547,18 @@
     if (promptShown) return;
     if (loadDismissed()) return;
     if (Notification.permission !== 'default') return;
+    if (!visibleOk(promptRealScroll, document.visibilityState)) {
+      // Hidden tab (flag on): WAIT for the tab to become visible, then ask again
+      // (all the checks above re-run; promptShown stops duplicates). Chosen over
+      // re-arming a timer so a reader who returns gets the prompt they earned once.
+      var onVis = function () {
+        if (document.visibilityState !== 'visible') return;
+        document.removeEventListener('visibilitychange', onVis);
+        maybeShow(trigger);
+      };
+      document.addEventListener('visibilitychange', onVis);
+      return;
+    }
     showSoftPrompt(trigger);
   }
 
@@ -549,6 +642,7 @@
       var serverCfg = await cfgRes.json();
       vapidKey = serverCfg.vapidPublicKey;
       promptVariant = serverCfg.promptVariant === 'v2' ? 'v2' : 'v1';
+      promptRealScroll = serverCfg.promptRealScroll === true;
     } catch (_) {
       return;
     }
@@ -602,6 +696,9 @@
       isIzootoWorker: isIzootoWorker,
       maybeUnregisterForeignWorkers: maybeUnregisterForeignWorkers,
       promptTriggers: promptTriggers,
+      scrollShouldShow: scrollShouldShow,
+      isRealScrollInput: isRealScrollInput,
+      visibleOk: visibleOk,
       cfg: cfg,
     };
     return;

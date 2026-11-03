@@ -319,6 +319,7 @@ export function createApiRouter(
     return res.json({
       vapidPublicKey: env.vapid.publicKey,
       promptVariant: env.softPrompt.v2 ? 'v2' : 'v1',
+      promptRealScroll: env.softPrompt.realScroll,
     });
   });
 
