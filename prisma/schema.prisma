@@ -88,6 +88,8 @@ enum AuditAction {
   AUDIENCE_RESUBSCRIBED
   // CMS views (Feed 2): an admin started the history backfill (range + dryRun only)
   CMS_VIEWS_BACKFILL_STARTED
+  // Facebook page posting: an ADMIN cleared a policy stop (page name only in metadata)
+  FACEBOOK_POSTING_RESUMED
 }
 
 model Subscriber {
@@ -945,6 +947,35 @@ model LinkedInPost {
   status         LinkedInPostStatus @default(PENDING)
   linkedinPostId String?
   /// ≤ 240 characters; never the token or the request body.
+  error          String?
+  attempts       Int                @default(0)
+  nextAttemptAt  DateTime?
+  postedAt       DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([page, articleKey])
+  @@index([status, nextAttemptAt])
+}
+
+enum FacebookPostStatus {
+  PENDING
+  POSTED
+  FAILED
+  SKIPPED
+}
+
+/// One article's post to a Facebook page (docs/FACEBOOK_POSTING.md). Same rules as LinkedInPost: keyed by PAGE; the row is
+/// created (PENDING, in flight = nextAttemptAt null) BEFORE the Graph call; unique (page, articleKey) = one post per article.
+/// `facebookPostId` is Graph's `<pageid>_<postid>`. `error` is <= 240 chars, never the token or the body. NOT in the R2 backup.
+/// (The persisted policy stop lives in DigestSetting under `facebook:policy:<page>`.)
+model FacebookPost {
+  id             String             @id @default(cuid())
+  page           String
+  articleKey     String
+  campaignId     String
+  status         FacebookPostStatus @default(PENDING)
+  facebookPostId String?
   error          String?
   attempts       Int                @default(0)
   nextAttemptAt  DateTime?

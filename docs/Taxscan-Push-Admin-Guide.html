@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.18 &nbsp;·&nbsp; Updated 3 November 2026
+    &nbsp;·&nbsp; Version 2.19 &nbsp;·&nbsp; Updated 3 November 2026
   </div>
 </div>
 
@@ -126,8 +126,9 @@
   <li><span class="n">10</span> Digest ads and templates</li>
   <li><span class="n">11</span> The WhatsApp channel</li>
   <li><span class="n">12</span> The LinkedIn page</li>
-  <li><span class="n">13</span> Quick reference card</li>
-  <li><span class="n">14</span> Frequently asked questions</li>
+  <li><span class="n">13</span> The Facebook page</li>
+  <li><span class="n">14</span> Quick reference card</li>
+  <li><span class="n">15</span> Frequently asked questions</li>
 </ol>
 </section>
 
@@ -168,7 +169,7 @@ you want to. This guide shows you how.</p>
 </table>
 <div class="box tip"><span class="box-t">Tip — finding your way around the top menu</span>
   The top menu is grouped by channel: <strong>Dashboard</strong>; <strong>PUSH</strong> (Compose, Review, Queue, Campaigns);
-  <strong>SOCIAL</strong> (WhatsApp and LinkedIn &mdash; each appears only when it is switched on, and the whole group is
+  <strong>SOCIAL</strong> (WhatsApp, LinkedIn and Facebook &mdash; each appears only when it is switched on, and the whole group is
   hidden when neither is); <strong>EMAIL</strong> (Digests, Ads, Templates); then <strong>Reports</strong>. Administrators also see an
   <strong>Admin</strong> menu (Users, Activity) &mdash; click it to open, press <em>Esc</em> to close. The group you are
   in is highlighted. On a phone the same groups appear as headings inside the ☰ menu.</div>
@@ -419,6 +420,7 @@ notification will look before sending it to anyone.</p>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
     <tr><td><strong>WhatsApp</strong></td><td>Every pushed article as a ready-to-post WhatsApp message, with Copy, Share, Posted and Skip. See section 11.</td></tr>
     <tr><td><strong>LinkedIn</strong></td><td>Whether each pushed article reached the Taxscan LinkedIn page, with Retry and Skip for a failed post. See section 12.</td></tr>
+    <tr><td><strong>Facebook</strong></td><td>Whether each pushed article reached the Taxscan Facebook page, with Retry and Skip for a failed post, and (administrators) Check connection and Resume. See section 13.</td></tr>
     <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
     <tr><td><strong>Digests</strong></td><td>The daily email digest: preview, approve, hold or send it, and its last 14 days. See section 9. <span class="muted">Ads and Templates (open to everyone signed in) are in section 10.</span></td></tr>
     <tr><td><strong>Activity</strong> <span class="muted">(Admins only)</span></td><td>A record of who did what and when (logins, sends, approvals, user changes). Useful for accountability and tracing "who sent that?".</td></tr>
@@ -432,10 +434,10 @@ notification will look before sending it to anyone.</p>
   only for people who also need to manage the team.</div>
 
 <h3>The Campaigns screen — the columns explained</h3>
-<p>When WhatsApp or LinkedIn is switched on, a <strong>Channels</strong> column shows where else each article went, as small
+<p>When WhatsApp, LinkedIn or Facebook is switched on, a <strong>Channels</strong> column shows where else each article went, as small
 labelled marks (never colour alone). <strong>WA</strong> is WhatsApp: <strong>WA&nbsp;✓</strong> posted, <strong>WA&nbsp;–</strong>
 skipped, <strong>WA&nbsp;…</strong> still to do. <strong>in</strong> is LinkedIn: <strong>in&nbsp;✓</strong> posted,
-<strong>in&nbsp;✕</strong> failed, <strong>in&nbsp;…</strong> waiting. No mark means the channel does not apply to that row (it is
+<strong>in&nbsp;✕</strong> failed, <strong>in&nbsp;…</strong> waiting. <strong>fb</strong> is Facebook and reads the same way: <strong>fb&nbsp;✓</strong> posted, <strong>fb&nbsp;✕</strong> failed, <strong>fb&nbsp;…</strong> waiting, <strong>fb&nbsp;–</strong> skipped. No mark means the channel does not apply to that row (it is
 switched off, or the item is not a Taxscan article). Hover a mark &mdash; or touch and hold on a phone &mdash; for the full
 wording, such as <em>WhatsApp: posted by anagha at 10:42</em> or <em>LinkedIn: failed &mdash; the reason</em>. Click a mark to open
 that channel's screen on the day the article was pushed. The Channels column is not sortable.</p>
@@ -897,7 +899,49 @@ switched on.</p>
 
 <!-- 13 -->
 <section class="page-break">
-<h2>13 &nbsp;Quick reference card</h2>
+<h2>13 &nbsp;The Facebook page</h2>
+<p>Every Taxscan article we push is also posted to the <strong>Taxscan Facebook page</strong>, automatically, a few minutes after
+the push. One post per article &mdash; an article that is pushed again, or re-sent by the morning catch-up, is never posted
+twice. The post is the headline, up to four hashtags (<code>#taxscan</code> last) and the article link; Facebook builds the
+preview card itself. The <strong>Facebook</strong> screen (menu: <strong>SOCIAL</strong>, after LinkedIn) shows what happened to
+each one; it appears only when an administrator has switched the feature on. Normally there is nothing to do.</p>
+<div class="box tip"><span class="box-t">Pacing &mdash; why a post can be late</span>
+  To keep the page safe from Facebook's spam checks, posts go out <strong>one at a time</strong>, at least <strong>10 minutes
+  apart</strong>, and <strong>no more than 30 a day</strong>. On a busy day the later articles wait their turn, and one pushed
+  more than 24 hours ago is never posted. Retries never happen between 11 pm and 7 am.</div>
+<table>
+  <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Waiting</strong></td><td>Pushed, not on Facebook yet. <em>Waiting &mdash; retry 14:35</em> means Facebook was busy and it will try again at that time.</td></tr>
+    <tr><td><strong>Posted</strong></td><td>On the page. <em>View on Facebook</em> opens the post.</td></tr>
+    <tr><td><strong>Failed</strong></td><td>It did not go out; the reason is shown under the status. Use <strong>Retry</strong> or <strong>Skip</strong>.</td></tr>
+    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted.</td></tr>
+    <tr><td><strong>Not posted</strong></td><td>Pushed before this feature started, or more than a day ago. It is never posted late.</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li><strong>Pick the day</strong> with <em>Today</em>, <em>Yesterday</em> or the date box (up to 14 days back). The chips show the counts; <em>Failed</em> turns red when it is above zero.</li>
+  <li><strong>Retry</strong> asks <em>"Post to Facebook now?"</em> and then posts that one article. If the reason says
+      <em>unknown &mdash; check the page</em>, the app lost the answer from Facebook and the post <strong>may already be there</strong>:
+      open the Facebook page first, and only press Retry if it is not.</li>
+  <li><strong>Skip</strong> leaves the article off the Facebook page for good.</li>
+  <li><strong>Check connection</strong> (administrators only) asks Facebook who the page is and shows
+      <em>Connected to page: &hellip;</em>, or the kind of error. It posts nothing, so it is safe to press at any time.</li>
+</ul>
+<div class="box warn"><span class="box-t">Red banner: Facebook blocked a post &mdash; check the page before resuming</span>
+  Facebook refused a post as spam or restricted, so <strong>all posting is stopped</strong> and the administrators are emailed. It
+  stays stopped, even after a restart, until an <strong>administrator</strong> opens the page on Facebook, checks that it is in good
+  standing, and presses <strong>Resume posting</strong> (the action is recorded in Activity). Retry is refused while it is
+  stopped. Editors who see this banner should tell an administrator.</div>
+<div class="box warn"><span class="box-t">Amber banner: Facebook rejected the access token</span>
+  The page's access token has expired or been withdrawn, so posting is stopped (admins also get one email a day). Editors cannot
+  fix this from the app: tell the owner, who sets a new token in Railway. Posting resumes by itself afterwards, and articles
+  pushed in the last 24 hours that were not posted are still posted.</div>
+</section>
+
+<!-- 14 -->
+<section class="page-break">
+<h2>14 &nbsp;Quick reference card</h2>
 
 <h3>Daily checklist</h3>
 <ul>
@@ -943,9 +987,9 @@ switched on.</p>
 </table>
 </section>
 
-<!-- 14 -->
+<!-- 15 -->
 <section class="page-break">
-<h2>14 &nbsp;Frequently asked questions</h2>
+<h2>15 &nbsp;Frequently asked questions</h2>
 
 <h3>Why didn't my article go out immediately?</h3>
 <p>To protect readers, the system sends about one notification every 45 minutes. Your article is in the queue and
@@ -1048,7 +1092,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.17 · Updated 2 November 2026
+  Taxscan Push · Admin User Guide · Version 2.19 · Updated 3 November 2026
 </p>
 </section>
 

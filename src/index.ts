@@ -24,6 +24,7 @@ import { startBackupCron } from './services/backup';
 import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
 import { startLinkedInWorker } from './services/linkedin/worker';
+import { startFacebookWorker } from './services/facebook/worker';
 import { startLinkedInTokenRenewal } from './services/linkedin/token';
 import { startWhatsAppNudge } from './services/whatsapp/nudge';
 import { startAudienceSync } from './services/audience/boot';
@@ -82,6 +83,7 @@ app.listen(env.port, () => {
   startDigestScheduler(undefined, undefined, mockDigestSender ? { sender: mockDigestSender } : {});
   startAudienceSync();
   startLinkedInWorker();
+  startFacebookWorker();
   startLinkedInTokenRenewal();
   startWhatsAppNudge();
 });
