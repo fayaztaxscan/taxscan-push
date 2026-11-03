@@ -222,6 +222,6 @@ describe('6. roles and the flag', () => {
   });
   it('/api/auth/me tells the SPA whether the menu item shows (the configured flag; off by default)', async () => {
     const me = await request(loginApp).get('/api/auth/me').set('Cookie', adminCookie);
-    expect(me.body.features).toEqual({ whatsappQueue: env.whatsapp.queueEnabled, linkedinPosting: env.linkedin.enabled });
+    expect(me.body.features).toEqual({ whatsappQueue: env.whatsapp.queueEnabled, linkedinPosting: env.linkedin.enabled, facebookPosting: env.facebook.enabled });
   });
 });

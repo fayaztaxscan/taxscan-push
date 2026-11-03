@@ -5,6 +5,7 @@ import { safeErrorLog } from '../lib/httpErrors';
 import { articleKey } from './reports';
 import { isPublicArticleCampaign } from './social/publicCampaign';
 import { PAGE_TAXSCAN, PORTAL_TO_PAGE } from './linkedin/pages';
+import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
@@ -38,11 +39,14 @@ export type CampaignCreator = {
 export type CampaignChannels = {
   whatsapp: 'TODO' | 'POSTED' | 'SKIPPED' | null;
   linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
+  /** Only present while FACEBOOK_POSTING_ENABLED (the payload is unchanged when it is off). Same meaning as `linkedin`. */
+  facebook?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
 };
 /** The words behind a mark's tooltip; only present where there is something to say. */
 export type CampaignChannelDetails = {
   whatsapp?: { by: string | null; at: string };
   linkedin?: { error: string | null; at: string | null; postUrl: string | null };
+  facebook?: { error: string | null; at: string | null; postUrl: string | null };
 };
 
 export type CampaignStat = {
@@ -583,18 +587,22 @@ async function channelsFor(
 ): Promise<Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }> | null> {
   const waOn = env.whatsapp.queueEnabled;
   const liOn = env.linkedin.enabled;
-  if (!waOn && !liOn) return null;
+  const fbOn = env.facebook.enabled;
+  if (!waOn && !liOn && !fbOn) return null;
   const eligible = campaigns.filter((c) => c.status === 'SENT' && isPublicArticleCampaign(c));
   const keyOf = new Map(eligible.map((c) => [c.id, articleKey(c)]));
   const keys = [...new Set(keyOf.values())];
   const waPortal = env.rss.portal;
-  const [wa, li] = await Promise.all([
+  const [wa, li, fb] = await Promise.all([
     waOn && keys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: keys } }, include: { actedBy: { select: { email: true } } } }) : [],
     liOn && keys.length ? prisma.linkedInPost.findMany({ where: { page: PAGE_TAXSCAN, articleKey: { in: keys } } }) : [],
+    fbOn && keys.length ? prisma.facebookPost.findMany({ where: { page: FB_PAGE_TAXSCAN, articleKey: { in: keys } } }) : [],
   ]);
   const waBy = new Map(wa.map((p) => [p.articleKey, p]));
   const liBy = new Map(li.map((p) => [p.articleKey, p]));
+  const fbBy = new Map(fb.map((p) => [p.articleKey, p]));
   const from = env.linkedin.postFrom;
+  const fbFrom = env.facebook.postFrom;
   const out = new Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }>();
   for (const c of campaigns) {
     const key = keyOf.get(c.id);
@@ -610,6 +618,14 @@ async function channelsFor(
         const p = liBy.get(key);
         channels.linkedin = p ? p.status : 'PENDING';
         if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
+      }
+    }
+    if (fbOn) {
+      channels.facebook = null;
+      if (key && FB_PORTAL_TO_PAGE[c.portal] === FB_PAGE_TAXSCAN && c.lastSentAt && fbFrom && c.lastSentAt >= fbFrom) {
+        const p = fbBy.get(key);
+        channels.facebook = p ? p.status : 'PENDING';
+        if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null };
       }
     }
     out.set(c.id, { channels, channelDetails: details, channelDay: c.lastSentAt ? istDay(c.lastSentAt) : null });

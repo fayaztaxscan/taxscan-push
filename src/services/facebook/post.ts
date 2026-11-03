@@ -1,0 +1,42 @@
+import { isAllowedPushUrl } from '../../lib/urlAllowlist';
+import { articleContentOf } from '../whatsapp/postText';
+import { fetchCmsArticle, hashtagsFor, slugOf, FIXED_TAG, type CmsArticle } from '../linkedin/post';
+import { withFacebookUtm } from './pages';
+
+/**
+ * Facebook posts reuse LinkedIn's CMS fetch and hashtag rules unchanged (imported, not copied): CMS down → fallback tags,
+ * never delayed or blocked.
+ */
+export const MAX_FB_HASHTAGS = 4;
+
+/** Plain text: headline, a blank line, then at most 4 `#Tag`s with `#taxscan` last. No escaping, no link in the text. */
+export function buildMessage(headline: string, tags: readonly string[]): string {
+  const head = headline.replace(/\s+/g, ' ').trim();
+  const body = tags.filter((t) => t.toLowerCase() !== FIXED_TAG).slice(0, MAX_FB_HASHTAGS - 1);
+  const all = [...body, FIXED_TAG].map((t) => `#${t}`);
+  return `${head}\n\n${all.join(' ')}`;
+}
+
+export type FbPostPayload = { message: string; link: string; hashtags: string[]; hashtagSource: 'cms' | 'fallback' };
+
+/** Null when the URL is not a taxscan.in article or the final link is off `ALLOWED_PUSH_HOSTS`. */
+export async function buildFacebookPost(
+  c: { id: string; title: string; url: string; authority: string | null; categories: string[]; body?: string | null },
+  page: string,
+  fetchCms: (slug: string) => Promise<CmsArticle | null> = (s) => fetchCmsArticle(s),
+): Promise<FbPostPayload | null> {
+  const content = articleContentOf(c);
+  if (!content) return null;
+  let link: string;
+  try {
+    link = withFacebookUtm(c.url, page, content);
+  } catch {
+    return null;
+  }
+  if (!isAllowedPushUrl(link)) return null;
+  const slug = slugOf(c.url);
+  const cms = slug ? await fetchCms(slug).catch(() => null) : null;
+  const { tags, source } = hashtagsFor({ cms, authority: c.authority, categories: c.categories });
+  const hashtags = [...tags.filter((t) => t.toLowerCase() !== FIXED_TAG).slice(0, MAX_FB_HASHTAGS - 1), FIXED_TAG];
+  return { message: buildMessage(c.title, tags), link, hashtags, hashtagSource: source };
+}
