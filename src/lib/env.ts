@@ -635,6 +635,34 @@ export const env = {
       })(),
     },
   },
+  // Facebook page posting (docs/FACEBOOK_POSTING.md). Default off. `postFrom` is REQUIRED when enabled. One entry per page; only
+  // `taxscan` for now. The page token goes in the POST body / Authorization header only, never a URL, log, column or email.
+  facebook: {
+    enabled: process.env.FACEBOOK_POSTING_ENABLED === 'true',
+    postFrom: (() => {
+      const t = Date.parse(process.env.FACEBOOK_POST_FROM ?? '');
+      return Number.isNaN(t) ? null : new Date(t);
+    })(),
+    graphVersion: (() => {
+      const v = (process.env.FACEBOOK_GRAPH_VERSION ?? '').trim();
+      return /^v\d{1,3}\.\d{1,2}$/.test(v) ? v : 'v25.0';
+    })(),
+    // At least this many minutes between two posts on the page, and at most this many posts per IST day (account safety).
+    minGapMinutes: (() => {
+      const n = Number((process.env.FACEBOOK_MIN_GAP_MINUTES ?? '').trim());
+      return Number.isInteger(n) && n >= 0 && n <= 720 ? n : 10;
+    })(),
+    dailyCap: (() => {
+      const n = Number((process.env.FACEBOOK_DAILY_CAP ?? '').trim());
+      return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : 30;
+    })(),
+    pages: {
+      taxscan: {
+        pageId: (process.env.FACEBOOK_TAXSCAN_PAGE_ID ?? '').trim(),
+        accessToken: (process.env.FACEBOOK_TAXSCAN_PAGE_TOKEN ?? '').trim(),
+      },
+    } as Record<string, { pageId: string; accessToken: string }>,
+  },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
   // CMS audience sync — see parseAudienceEnv above. Every flag default off.

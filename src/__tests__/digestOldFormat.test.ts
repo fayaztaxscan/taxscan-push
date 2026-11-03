@@ -118,23 +118,25 @@ describe('1. the old newsletter’s layout', () => {
     expect(r.html).toContain('<!--[if mso]><table role="presentation" width="900"');
     expect(r.html).toContain('@media only screen and (max-width:600px){');
   });
-  it('story row: 280 picture + 20 gap + 560 text, two inline-block columns, an MSO 280/20/560 table, 20 px above', () => {
-    expect(row).toContain('<!--[if mso]><table width="860" cellpadding="0" cellspacing="0"><tr><td width="280" valign="top"><![endif]-->');
-    expect(row).toContain('<!--[if mso]></td><td width="20"></td><td width="560" valign="top"><![endif]-->');
-    expect(row).toMatch(/<div class="ts-stcol ts-stpic" style="display:inline-block;width:100%;max-width:280px;vertical-align:top;">/);
-    expect(row).toMatch(/<div class="ts-stcol ts-sttext" style="display:inline-block;width:100%;max-width:560px;vertical-align:top;">/);
+  it('story row: 33 % picture + 2.5 % gap + 64 % text, inline-block columns with min-width floors, an MSO 100 % table (33/3/64), 20 px above', () => {
+    expect(row).toContain('<!--[if mso]><table width="100%" cellpadding="0" cellspacing="0"><tr><td width="33%" valign="top"><![endif]-->');
+    expect(row).toContain('<!--[if mso]></td><td width="3%"></td><td width="64%" valign="top"><![endif]-->');
+    expect(row).toMatch(/<div class="ts-stcol ts-stpic" style="display:inline-block;width:33%;min-width:180px;vertical-align:top;">/);
+    expect(row).toMatch(/<div class="ts-stcol ts-sttext" style="display:inline-block;width:64%;min-width:300px;vertical-align:top;">/);
+    expect(row).toMatch(/font-size:0;line-height:0;">/); // the cell: no whitespace gap between the inline-block columns
+    expect(row).not.toMatch(/max-width:(280|560)px/);
     expect(row).toContain('padding:20px 20px 0 20px;'); // 860 inside the 900, 20 px of white space above, no rule
   });
-  it('headline 16/24 bold #000 (exact line height in Outlook), linked, no underline', () => {
-    expect(row).toMatch(/<h2 style="[^"]*margin:0;[^"]*font-size:16px;line-height:24px;mso-line-height-rule:exactly;font-weight:700;color:#000000;"><a href="[^"]+" class="ts-head" style="[^"]*color:#000000;text-decoration:none;">/);
+  it('headline 16/21 bold #000 (exact line height in Outlook), linked, no underline', () => {
+    expect(row).toMatch(/<h2 class="ts-hl" style="[^"]*margin:0;[^"]*font-size:16px;line-height:21px;mso-line-height-rule:exactly;font-weight:700;color:#000000;"><a href="[^"]+" class="ts-head" style="[^"]*color:#000000;text-decoration:none;">/);
   });
-  it('summary 16/24 #333 (exact line height), 15 px above it', () => {
-    expect(row).toMatch(/<p style="[^"]*margin:15px 0 0 0;[^"]*font-size:16px;line-height:24px;mso-line-height-rule:exactly;color:#333333;" class="ts-body">A short summary\.<\/p>/);
+  it('summary 14/19 #333 (exact line height), 6 px above it', () => {
+    expect(row).toMatch(/<p style="[^"]*margin:6px 0 0 0;[^"]*font-size:14px;line-height:19px;mso-line-height-rule:exactly;color:#333333;" class="ts-body ts-sum">A short summary\.<\/p>/);
   });
-  it('Read More: 13 px above (padding, not margin), #FEE620 square, 96 x 38, Arial 15 px bold #000 (table-cell button, one link)', () => {
-    expect(row).toContain('<div style="padding-top:13px;">');
-    expect(row).toMatch(/class="ts-btn" style="display:block;height:38px;line-height:38px;text-align:center;background-color:#FEE620;[^"]*font-size:15px;font-weight:700;color:#000000;/);
-    expect(row).toMatch(/<td align="center" width="96" height="38" bgcolor="#FEE620"/);
+  it('Read More: 7 px above (padding, not margin), #FEE620 square, 96 x 30, Arial 15 px bold #000 (table-cell button, one link)', () => {
+    expect(row).toContain('<div class="ts-more" style="padding-top:7px;">');
+    expect(row).toMatch(/class="ts-btn" style="display:block;height:30px;line-height:30px;text-align:center;background-color:#FEE620;[^"]*font-size:15px;font-weight:700;color:#000000;/);
+    expect(row).toMatch(/<td align="center" width="96" height="30" bgcolor="#FEE620"/);
     expect(row).not.toContain('v:rect');
     expect(row).toContain('>Read More</a>');
   });
@@ -170,14 +172,14 @@ describe('1. the old newsletter’s layout', () => {
 /* ------------------------------------------------------------------ */
 
 describe('2. the summary', () => {
-  const summaryOf = (html: string, rank: number) => /class="ts-body">([^<]*)</.exec(rowOf(html, rank))?.[1] ?? null;
-  it('a 300-char excerpt → at most 220 chars, cut at a word, ending "…"', () => {
+  const summaryOf = (html: string, rank: number) => /class="ts-body ts-sum">([^<]*)</.exec(rowOf(html, rank))?.[1] ?? null;
+  it('a 300-char excerpt → at most 130 chars (2 lines), cut at a word, ending "…"', () => {
     const excerpt = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ').slice(0, 300);
     expect(excerpt.length).toBe(300);
     const s = summaryOf(render(items(5, { excerpt })).html, 1)!;
     expect(SUMMARY_MAX).toBe(220);
-    expect(s.length).toBeLessThanOrEqual(220);
-    expect(s.length).toBeGreaterThan(190);
+    expect(s.length).toBeLessThanOrEqual(130);
+    expect(s.length).toBeGreaterThan(100);
     expect(s.endsWith('…')).toBe(true);
     expect(excerpt.startsWith(s.slice(0, -1))).toBe(true);
     expect(excerpt.charAt(s.length - 1)).toBe(' '); // the cut falls on a word boundary
@@ -189,7 +191,7 @@ describe('2. the summary', () => {
     expect(perAudience.FREE[0].excerpt).toBe(long.trim());
     const rest = items(3).map((x, i) => ({ ...x, rank: i + 3, articleKey: `z${i}` }));
     const s = summaryOf(render([...perAudience.FREE, ...rest]).html, 1)!;
-    expect(s.length).toBeLessThanOrEqual(220);
+    expect(s.length).toBeLessThanOrEqual(130);
     expect(s.endsWith('…')).toBe(true);
   });
   it('an RSS excerpt is never overwritten by the page description', async () => {
@@ -202,7 +204,7 @@ describe('2. the summary', () => {
     await attachImages(perAudience, async (urls) => new Map(urls.map((u) => [u, { image: null, description: null }] as const)));
     expect(perAudience.FREE[0].excerpt).toBeNull();
     const row = rowOf(render(items(5, { excerpt: null })).html, 1);
-    expect(row).not.toContain('class="ts-body"');
+    expect(row).not.toContain('class="ts-body');
   });
   it('a picture-only answer from an older fetcher (a plain URL map) still works', async () => {
     const perAudience = { FREE: items(1, { excerpt: 'x' }), PREMIUM: items(1, { excerpt: 'x' }) };

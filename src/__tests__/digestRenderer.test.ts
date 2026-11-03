@@ -342,13 +342,13 @@ describe('9. responsive, email-safe HTML', () => {
     for (const tag of black) expect(/^<(a|h2|center)\b/i.test(tag)).toBe(true); // headline link, its h2, the button (link and VML)
     expect(r.html).toContain("font-family:Arial,'Helvetica Neue',Helvetica,sans-serif"); // the look readers know (owner, 2026-10-23)
   });
-  it('body text 16 px, no font under 14 px; the Read More button is 38 px tall, every other button 44 px', () => {
+  it('story summary 14 px, no font under 14 px; the Read More button is 30 px tall, every other button 44 px', () => {
     const sizes = [...r.html.matchAll(/font-size:(\d+)px/g)].map((m) => Number(m[1])).filter((n) => n !== 1); // 1px = hidden preheader
     expect(Math.min(...sizes)).toBeGreaterThanOrEqual(14);
-    for (const p of r.html.match(/<p [^>]*class="ts-body"/g) ?? []) expect(p).toContain('font-size:16px');
+    for (const p of r.html.match(/<p [^>]*class="ts-body ts-sum"/g) ?? []) expect(p).toContain('font-size:14px');
     for (const a of r.html.match(/<a\s[^>]*class="ts-btn"[^>]*>/g) ?? []) {
       const style = /style="([^"]*)"/.exec(a)?.[1] ?? '';
-      expect(/(^|;)height:(38|44)px/.test(style)).toBe(true);
+      expect(/(^|;)height:(30|38|44)px/.test(style)).toBe(true);
     }
   });
 });
@@ -437,9 +437,9 @@ describe('15. item content', () => {
     const first = /<td [^>]*data-item="1"[\s\S]*?<\/td><\/tr>(?=\n)/.exec(r.html)![0];
     expect(first).not.toContain('>GST<'); // no category / authority label above the headline (owner, 29 Oct)
     expect(first).not.toContain('ts-label');
-    const summary = /class="ts-body">([^<]*)</.exec(first)![1];
-    expect(summary.length).toBeLessThanOrEqual(220);
-    expect(summary.length).toBeGreaterThan(150);
+    const summary = /class="ts-body ts-sum">([^<]*)</.exec(first)![1];
+    expect(summary.length).toBeLessThanOrEqual(130); // 2 lines in the compact column (a short headline)
+    expect(summary.length).toBeGreaterThan(90);
     expect(summary.endsWith('…')).toBe(true);
     expect((first.match(/<a /g) ?? []).length).toBe(3); // the brand block's link (no picture, no asset host here), the headline and "Read More": one href
     expect(first).not.toMatch(/<img|capturedAt|readRate|article:/);
@@ -482,7 +482,7 @@ describe('QA follow-ups', () => {
       ...(r.html.match(/<td [^>]*(data-item|data-heading|data-footer)=[^>]*>/g) ?? []),
       // A story's own h2 / summary / headline link inherit both properties from their cell (they are inherited properties),
       // so only the elements that are NOT inside a story row repeat them.
-      ...(r.html.match(/<(p|h2) [^>]*>/g) ?? []).filter((t) => !t.startsWith('<p style="margin:0 0 12px 0;">') && !/^<(h2 style="margin:0;font-family|p style="margin:15px 0 0 0;)/.test(t)),
+      ...(r.html.match(/<(p|h2) [^>]*>/g) ?? []).filter((t) => !t.startsWith('<p style="margin:0 0 12px 0;">') && !/^<(h2 class="ts-hl" style="margin:0;font-family|p style="margin:6px 0 0 0;)/.test(t)),
     ];
     expect(textTags.length).toBeGreaterThan(10);
     for (const t of textTags) expect(t).toContain(WRAP);

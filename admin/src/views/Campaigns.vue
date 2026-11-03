@@ -34,10 +34,13 @@ type Campaign = {
   channels?: {
     whatsapp: 'TODO' | 'POSTED' | 'SKIPPED' | null;
     linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
+    /** Absent while Facebook posting is switched off. */
+    facebook?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
   };
   channelDetails?: {
     whatsapp?: { by: string | null; at: string };
     linkedin?: { error: string | null; at: string; postUrl: string | null };
+    facebook?: { error: string | null; at: string | null; postUrl: string | null };
   };
   /** IST day (YYYY-MM-DD) of the push: which day to open on the channel screen. */
   channelDay?: string | null;
@@ -164,12 +167,12 @@ async function load(): Promise<void> {
   }
 }
 
-// ---- Channels column (WhatsApp / LinkedIn marks) ----
+// ---- Channels column (WhatsApp / LinkedIn / Facebook marks) ----
 // Shown only when the server sent `channels` on at least one row, i.e. a switch is on.
 const showChannels = computed(() => campaigns.value.some((c) => c.channels !== undefined));
 const colCount = computed(() => (showChannels.value ? 13 : 12));
 
-type Mark = { key: 'whatsapp' | 'linkedin'; short: string; label: string; state: string };
+type Mark = { key: 'whatsapp' | 'linkedin' | 'facebook'; short: string; label: string; state: string };
 
 function fmtTime(iso: string | undefined): string {
   if (!iso) return '';
@@ -218,11 +221,29 @@ function marksFor(c: Campaign): Mark[] {
               : 'LinkedIn: waiting',
     });
   }
+  if (ch.facebook) {
+    const s = ch.facebook;
+    const at = fmtTime(d?.facebook?.at ?? undefined);
+    const err = d?.facebook?.error;
+    out.push({
+      key: 'facebook',
+      state: s,
+      short: s === 'POSTED' ? 'fb ✓' : s === 'FAILED' ? 'fb ✕' : s === 'SKIPPED' ? 'fb –' : 'fb …',
+      label:
+        s === 'POSTED'
+          ? `Facebook: posted${at ? ' at ' + at : ''}`
+          : s === 'FAILED'
+            ? `Facebook: failed${err ? ' — ' + err : ''}`
+            : s === 'SKIPPED'
+              ? 'Facebook: skipped'
+              : 'Facebook: waiting',
+    });
+  }
   return out;
 }
 function openChannel(c: Campaign, m: Mark): void {
   const query = c.channelDay ? { date: c.channelDay } : undefined;
-  void router.push({ path: m.key === 'whatsapp' ? '/whatsapp' : '/linkedin', query });
+  void router.push({ path: '/' + m.key, query });
 }
 
 function fmtReads(n: number | null): string {
@@ -336,7 +357,7 @@ onMounted(load);
             <th class="th-sort" @click="setSort('deliveryRate')">
               Delivery<span class="sort-ind">{{ sortInd('deliveryRate') }}</span>
             </th>
-            <th v-if="showChannels" title="Whether the article was also posted to WhatsApp and LinkedIn. Click a mark to open that screen.">
+            <th v-if="showChannels" title="Whether the article was also posted to WhatsApp, LinkedIn and Facebook. Click a mark to open that screen.">
               Channels
             </th>
           </tr>

@@ -153,12 +153,12 @@ describe('2. pictures keep their size in every app', () => {
     expect(STORY_IMAGE_HEIGHT).toBe(147);
     expect(row).toMatch(/<img class="ts-pic adapt-img"[^>]* width="280" height="147" /);
     // fluid inline: it fills its column (280 px on desktop, the full column when the column stacks), always 1.91:1
-    expect(row).toContain('style="display:block;width:100%;max-width:280px;height:auto;aspect-ratio:1200/628;object-fit:cover;');
+    expect(row).toContain('style="display:block;width:100%;height:auto;aspect-ratio:1200/628;object-fit:cover;');
   });
-  it('stripping <style> (Zoho-like) keeps the fluid inline sizes (the column itself stays capped at 280 px without a media query)', () => {
+  it('stripping <style> (Zoho-like) keeps the fluid inline sizes (the columns are 33 % / 64 % with min-width floors, so they stack by themselves on a narrow pane without a media query)', () => {
     const stripped = render(items(10, PIC)).html.replace(/<style>[\s\S]*?<\/style>/, '');
-    expect(rowOf(stripped, 1)).toContain('width:100%;max-width:280px;height:auto;aspect-ratio:1200/628');
-    expect(rowOf(stripped, 1)).toContain('class="ts-stcol ts-stpic" style="display:inline-block;width:100%;max-width:280px;');
+    expect(rowOf(stripped, 1)).toContain('width:100%;height:auto;aspect-ratio:1200/628');
+    expect(rowOf(stripped, 1)).toContain('class="ts-stcol ts-stpic" style="display:inline-block;width:33%;min-width:180px;');
   });
   it('phones: the stylesheet makes it full width at its natural aspect', () => {
     expect(render(items(10, PIC)).html).toContain('.ts-pic,.adapt-img{width:100%!important;max-width:100%!important;height:auto!important}');
@@ -171,13 +171,13 @@ describe('3. alignment', () => {
     expect((row.match(/valign="top"/g) ?? []).length).toBe(2);
     expect((row.match(/class="ts-stcol[^"]*"[^>]*style="[^"]*vertical-align:top/g) ?? []).length).toBe(2);
   });
-  it('no padding above the headline; Read More has 13 px above it', () => {
+  it('no padding above the headline; Read More has 7 px above it (13 px on phones)', () => {
     expect(row).not.toMatch(/class="ts-head"[^>]*padding/);
-    expect(row).toContain('<div style="padding-top:13px;">');
+    expect(row).toContain('<div class="ts-more" style="padding-top:7px;">');
   });
-  it('Read More is a fixed 96×38 box (the old newsletter\'s is 95), text centred both ways, as a table cell (Outlook paints the cell), one link', () => {
-    expect(row).toContain('class="ts-btn" style="display:block;height:38px;line-height:38px;text-align:center;');
-    expect(row).toMatch(/<td align="center" width="96" height="38" bgcolor="#FEE620"/);
+  it('Read More is a fixed 96×30 box (the old newsletter\'s is 38 × 95; compact so the text fits beside the picture), text centred both ways, as a table cell (Outlook paints the cell), one link', () => {
+    expect(row).toContain('class="ts-btn" style="display:block;height:30px;line-height:30px;text-align:center;');
+    expect(row).toMatch(/<td align="center" width="96" height="30" bgcolor="#FEE620"/);
     expect(row).not.toContain('v:rect'); // one URL per button: no VML copy
     expect((row.match(/href=/g) ?? []).length).toBe(3); // picture, headline, Read More
   });

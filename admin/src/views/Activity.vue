@@ -63,6 +63,7 @@ const ACTIONS = [
   'AUDIENCE_ERASURE',
   'AUDIENCE_RESUBSCRIBED',
   'CMS_VIEWS_BACKFILL_STARTED',
+  'FACEBOOK_POSTING_RESUMED',
 ] as const;
 
 const api = useApi();
@@ -173,6 +174,8 @@ function summarize(item: AuditItem): string {
       return `Removed ${m.email ?? '—'}'s notification devices (${m.removed ?? '?'})`;
     case 'DIGEST_SUBJECT_EDITED':
       return `Changed the ${m.audience === 'PREMIUM' ? 'Premium' : 'Free'} digest subject line (${m.oldLength ?? '?'} → ${m.newLength ?? '?'} characters)`;
+    case 'FACEBOOK_POSTING_RESUMED':
+      return `${item.user ? item.user.email : 'An administrator'} resumed Facebook posting after a policy stop`;
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;
     case 'DIGEST_TEMPLATE_SAVED': {

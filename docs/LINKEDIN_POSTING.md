@@ -71,9 +71,12 @@ So, in each attempt, after the CMS article is read for the hashtags (`src/servic
    `value.uploadUrl` and `value.image` (`urn:li:image:…`); then `PUT` the bytes to `uploadUrl` **with the Bearer token** (the image upload
    call requires it; a 200 / 201 answer). The upload URL must be https on `linkedin.com` / `licdn.com`, or the token is not sent to it.
 4. **Wait until the image is ready:** the upload is asynchronous (WAITING_UPLOAD → PROCESSING → AVAILABLE). After the PUT the worker looks at
-   `GET https://api.linkedin.com/rest/images/<urn>` (same headers; the `status` field) up to 4 times, 1.5 s apart. Only AVAILABLE attaches the
-   thumbnail; still processing → `image=none:processing`, a failed processing → `image=none:processing_failed`, an error from the status call →
-   `image=none:status_<code>` (or `status_network`): the post then goes out without it.
+   `GET https://api.linkedin.com/rest/images/<urn>` (the URN **URL-encoded** in the path, `urn%3Ali%3Aimage%3A…`, as the Rest.li 2.0 protocol
+   requires; same headers; the `status` field) up to 4 times, 1.5 s apart. AVAILABLE attaches the thumbnail (`image=ok`); still processing →
+   `image=none:processing`, a failed processing → `image=none:processing_failed`, a 401 / 403 / 5xx from the status call →
+   `image=none:status_<code>`: the post then goes out without it. **If the status call itself errors** (a 4xx other than 401 / 403, or a network
+   error) that says nothing about the picture, so it is attached anyway and logged `image=ok:unverified`; step 6 repeats the post without it if
+   LinkedIn rejects it.
 5. **Post** with `content.article = { source, title, description, thumbnail: <image URN> }`. The **description** is the CMS `excerpt`, else the
    campaign body: whitespace-collapsed, ≤ 200 characters at a word boundary with "…", a plain string (not escaped like the commentary).
 6. **A post rejected because of the picture still goes out:** if the post WITH a thumbnail gets a client error that is not 401 / 403 / 429 (the
@@ -81,7 +84,7 @@ So, in each attempt, after the CMS article is read for the hashtags (`src/servic
    `image=dropped:<status>`. Safe because a 4xx means LinkedIn did not create the first post. The repeat's verdict is the attempt's. A 2xx, 5xx, 429
    or network error is never repeated here (the normal retry rules apply, with the thumbnail), and a 401 / 403 is an auth-stop with no repeat.
 7. **Fail-open:** any failure in 2–4 (timeout, 4xx/5xx, wrong type, too big, a bad answer, the image not ready) posts WITHOUT `thumbnail` (the description is kept) and
-   the outcome line says why: `image=ok`, or `image=none:<reason>` with `host`, `redirect`, `timeout`, `network`, `type`, `size`, `http_<n>`,
+   the outcome line says why: `image=ok` / `image=ok:unverified`, or `image=none:<reason>` with `host`, `redirect`, `timeout`, `network`, `type`, `size`, `http_<n>`,
    `init_http_<n>` / `init_network` / `init_timeout` / `init_bad_answer`, `put_http_<n>` / `put_network` / `put_timeout`, or `no_cover`. A picture
    problem is never a post failure, never a retry, never an auth-stop, **except** a 401 / 403 from the registration: that is handled like the post's
    own 401 / 403 (the token is bad for everything), and no post call is made. A retried attempt uploads again (images are cheap); there is no loop

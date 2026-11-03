@@ -137,7 +137,7 @@ export function createAuthRouter(
       lastLoginAt: u.lastLoginAt,
       passwordResetRequired: u.passwordResetRequired,
       // Switches the SPA needs for its menu (the endpoints themselves answer 404 when off).
-      features: { whatsappQueue: env.whatsapp.queueEnabled, linkedinPosting: env.linkedin.enabled },
+      features: { whatsappQueue: env.whatsapp.queueEnabled, linkedinPosting: env.linkedin.enabled, facebookPosting: env.facebook.enabled },
     });
   });
 
