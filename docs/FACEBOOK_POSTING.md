@@ -60,3 +60,7 @@ The worker refuses to start (`[facebook] refusing to start: ...`) without a vali
 3. ADMIN: SOCIAL -> Facebook -> **Check connection** ("Connected to page: ...").
 4. Set `FACEBOOK_POST_FROM` = now and `FACEBOOK_POSTING_ENABLED=true`.
 5. Watch the first `outcome=posted` and check the post in a logged-out browser.
+
+## Backups and restores
+`FacebookPost` is **not** in the R2 export. After a restore keep `FACEBOOK_POSTING_ENABLED` **off** and set `FACEBOOK_POST_FROM` to the restore time
+before switching it back on: with the rows gone and no age limit, everything pushed since go-live would otherwise post a second time. See `docs/BACKUPS.md`.
