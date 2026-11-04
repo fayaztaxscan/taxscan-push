@@ -229,6 +229,7 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
+**4 Nov, PR #101 LIVE (~12:35 IST, main 28b8be8; guide v2.21; suite 2,023):** LinkedIn + Facebook have **no age limit** (only the page's post-from time is absolute; post rows are not in the backup, so a restore must set every post-from to the restore time first). **LinkedIn Academy page** (company 91100022) built, **OFF** until `LINKEDIN_ACADEMY_ORG_URN` + `LINKEDIN_ACADEMY_POST_FROM` (same articles, shared Taxscan token, own go-live, per-page stops). The LinkedIn app is on the **Development tier**; Standard appeal open, case CAS-12316619-W9J3R4. Detail: `NEXT_STEP.md` top block.
 **3 Nov, PRs #99 + #100 LIVE (guide v2.19; suite 1,925):** digest story row fit (picture + text side by side in any desktop
 pane, compact text, no gap); **Facebook page posting ON since 17:43 IST** (`src/services/facebook/`, `docs/FACEBOOK_POSTING.md`;
 `FACEBOOK_POSTING_ENABLED` + `FACEBOOK_POST_FROM` 2026-11-03T11:59:00Z; the token must be the **Page** token from `me/accounts`,

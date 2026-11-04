@@ -7,6 +7,15 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**⏳ PENDING (2026-11-04) — the current list; the full version is memory `project_taxscan_push_state`. The 2 Nov list below is history.**
+1. **Follow up until LinkedIn clears it:** Standard tier appeal, case CAS-12316619-W9J3R4 (denied 24 Jun, "Business verification failed"; appeal + certificate sent 4 Nov). No new app until it answers; never delete `taxscan_post_app`.
+2. Academy page: owner checks their role on the page, then sets the two variables, with `LINKEDIN_ACADEMY_POST_FROM` = the moment of switch-on. The first post proves permission; a 403 stops Academy only and needs an app restart after the role is fixed.
+3. Anagha: 1080×1080 squares for the 4 ads (phones show the banner because no ad has one), then check that digest on a real phone. 4 Nov digest layout: Zoho + Outlook screenshots.
+4. Soft prompt: first look ~19:00 IST 4 Nov, full compare 10 Nov (from 2026-11-03T13:24:51Z); flag off if grants stay < ~4/day for a week.
+5. Later: a test for a 429 on the image poll (code already treats it as unverified); optional guard if Academy's URN equals Taxscan's.
+
+**▶ 2026-11-04 — PR #101 LIVE (~12:35 IST, main 28b8be8; release check 2,023/2,023 on 19d9483):** no age limit on LinkedIn + Facebook; Academy page built, OFF. Verified: boot line `[linkedin] academy page off`, healthz 200, no extra posts after deploy (nothing was waiting). Not yet seen: a post on the new build (next new article).
+
 **⏳ PENDING (2026-11-02 evening) — the single list (mirrors memory `project_taxscan_push_state`):**
 1. 3 Nov: approve the digest 06:30–17:00 (2 Nov skipped); Anagha's Zoho dark-mode screenshots → if Read More still
    unreadable, brief purple #3b3543 button + white text.
