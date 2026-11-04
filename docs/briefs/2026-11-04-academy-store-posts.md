@@ -15,7 +15,7 @@ Planning's reading: both kinds of push go to all three pages. WhatsApp and the s
 **In:**
 - **What qualifies (new rule, new name, e.g. `isStorePromoCampaign()` in `src/services/social/`):** a SENT campaign of portal `taxscan` whose URL is `https://academy.taxscan.in/course/<slug>` or `https://shop.taxscan.in/products/<slug>`, on `ALLOWED_PUSH_HOSTS`, and not test-segment-only (reuse `isTestSegmentOnly`). A home, collection or other page does not qualify. `lastSentAt` must be set (`[system] shop URL check` rows have none).
 - **`isPublicArticleCampaign()` is NOT changed:** article posting and the WhatsApp queue stay exactly as they are. Store posts are a second kind of candidate beside articles.
-- **Switches, one per page:** `LINKEDIN_TAXSCAN_STORE_POST_FROM`, `LINKEDIN_ACADEMY_STORE_POST_FROM`, `FACEBOOK_STORE_POST_FROM`, validated like `LINKEDIN_ACADEMY_POST_FROM` (strict ISO). Unset or invalid = no store posts on that page, with one boot line saying so. The Academy one also needs the Academy page active. Nothing pushed before a page's time posts there, at any age; no age limit after it.
+- **Switches, one per page:** `LINKEDIN_TAXSCAN_STORE_POST_FROM`, `LINKEDIN_ACADEMY_STORE_POST_FROM`, `FACEBOOK_STORE_POST_FROM`, validated like `LINKEDIN_ACADEMY_POST_FROM` (strict ISO). Unset or invalid = no store posts on that page, with one boot line saying so. **Academy store posts must not need Academy articles:** the owner turned articles off on Academy on 4 Nov (`LINKEDIN_ACADEMY_POST_FROM` removed, `LINKEDIN_ACADEMY_ORG_URN` kept). So the Academy page is usable for store posts with `LINKEDIN_ACADEMY_ORG_URN` + `LINKEDIN_ACADEMY_STORE_POST_FROM` alone, and articles post there only when `LINKEDIN_ACADEMY_POST_FROM` is also set. Each kind has its own switch, on the Academy page's own rows, shared token and per-page stop. Nothing pushed before a page's time posts there, at any age; no age limit after it.
 - **One post per wording:** these links are re-pushed often with new wording (see Context). The row key is the link without its query string plus a hash of the normalised title, in the key namespace `store:`. New wording on the same link posts again; the same wording never does. Store it in `LinkedInPost.articleKey` / `FacebookPost.articleKey`; unique `(page, articleKey)` still prevents a double post on each page.
 - **The LinkedIn post (both pages):**
   - Commentary: the push title, a blank line, the push body (whitespace kept to single line breaks), a blank line, the hashtag `#taxscan`. Use the existing little-text escaping; emoji must survive it. Keep within LinkedIn's length limit, cutting the body and never the title.
@@ -42,6 +42,7 @@ Each one must PASS in the REPORT. LinkedIn and page fetches mocked.
 5. Each link carries exactly one set of UTMs, that channel's; the push's `utm_*` are gone.
 6. Commentary: title, body, `#taxscan`, with emoji, parentheses, `#`, `@` and line breaks correctly escaped (use real titles from Context). An over-long body is cut and the title kept.
 7. Picture: `secure_url` preferred; `og:image` over http is ignored; off-allowlist host, redirect, timeout, 404 or no tag posts without a picture and logs the reason. A page fetch failure never fails the post.
+7b. Academy with the URN + store variable only: store posts post, articles never do, the page shows in the LinkedIn screen's switch, and the boot lines say which kinds are on. Academy with the URN + article variable only: exactly as today. With the URN alone: off.
 8. Existing article posting, Facebook, WhatsApp and Channels tests pass unchanged with all switches unset. Articles still post as before with them set.
 9. A 403 on Academy stops Academy's store posts and articles together; Taxscan is unaffected. A Facebook policy stop holds store posts too, until Resume. Store posts respect the 10-minute gap and the daily cap, and spill to the next day.
 10. `MAX_PER_TICK` and Facebook's one-per-tick hold with articles and store posts waiting; oldest first across both kinds.
@@ -62,6 +63,7 @@ Each one must PASS in the REPORT. LinkedIn and page fetches mocked.
 - Do not post, or call LinkedIn, from a test.
 
 ## Context the builder needs
+- **Manual posts exist:** the team has been posting academy and shop links by hand. They stop on the day each page's switch goes on; the code does not try to detect a manual post.
 - Production, last 60 days (read 4 Nov):
 
 | Host / section | Pushes | Links | Distinct wordings |
