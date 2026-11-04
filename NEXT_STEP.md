@@ -9,10 +9,12 @@ status changes so a fresh Claude session can pick up cleanly.
 
 **⏳ PENDING (2026-11-04) — the current list; the full version is memory `project_taxscan_push_state`. The 2 Nov list below is history.**
 1. **Follow up until LinkedIn clears it:** Standard tier appeal, case CAS-12316619-W9J3R4 (denied 24 Jun, "Business verification failed"; appeal + certificate sent 4 Nov). No new app until it answers; never delete `taxscan_post_app`.
-2. Academy articles: `LINKEDIN_ACADEMY_POST_FROM` was removed 4 Nov ~13:30 IST and is to be set again (owner: articles are Academy's main content); posting permission there is unproven until the first post. Next build: `docs/briefs/2026-11-04-academy-store-posts.md` (every push posts on both LinkedIn pages + Facebook, like a notification, repeats included, owner's Option B; one switch per page; manual posts continue, no filtering).
+2. Every-push switches: owner sets `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM`, `LINKEDIN_ACADEMY_ALL_PUSHES_FROM`, `FACEBOOK_ALL_PUSHES_FROM` = the moment of switch-on, never earlier later on. Check the first course and shop posts + any red "already posted" rows.
 3. All 4 ads have 1080×1080 squares since 4 Nov: check the 5 Nov digest on a real phone (banner still showing = code bug). 4 Nov digest layout: Zoho + Outlook screenshots.
 4. Soft prompt: first look ~19:00 IST 4 Nov, full compare 10 Nov (from 2026-11-03T13:24:51Z); flag off if grants stay < ~4/day for a week.
 5. Later: a test for a 429 on the image poll (code already treats it as unverified); optional guard if Academy's URN equals Taxscan's.
+
+**▶ 2026-11-04 — PR #102 LIVE (~15:55 IST, main bf5b9e8; release check 2,266/2,266 on f6e44ca):** every push posts on LinkedIn + Facebook, per-page switch, all OFF at release. Academy articles ON since 13:40 IST, first post OK 13:47 IST.
 
 **▶ 2026-11-04 — PR #101 LIVE (~12:35 IST, main 28b8be8; release check 2,023/2,023 on 19d9483):** no age limit on LinkedIn + Facebook; Academy page built, OFF. Verified: boot line `[linkedin] academy page off`, healthz 200, no extra posts after deploy (nothing was waiting). Not yet seen: a post on the new build (next new article).
 
