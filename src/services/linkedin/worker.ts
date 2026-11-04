@@ -2,18 +2,20 @@ import cron from 'node-cron';
 import { createHash } from 'node:crypto';
 import { Prisma, type LinkedInPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, parseLinkedInAcademyEnv } from '../../lib/env';
+import { env, parseLinkedInAcademyEnv, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
+import { fetchStorePage, type StorePageFetch } from '../social/storePage';
+import { isAllPushesCampaign, pushKey, storeLinkOf } from '../social/allPushes';
 import { istDay } from '../whatsapp/queue';
 import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
 import { fetchCoverImage } from './image';
-import { PAGE_ACADEMY, normalizePortals, pageConfig, pagesOf, portalPages, portalsOfPage, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
+import { PAGE_ACADEMY, PAGE_TAXSCAN, academyActive, normalizePortals, pageAllPushesFrom, pageConfig, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
 import { refreshActiveTokens, tokenPageOf } from './token';
-import { buildPost, fetchCmsArticle, type CmsArticle } from './post';
+import { buildPost, buildStorePost, fetchCmsArticle, type CmsArticle } from './post';
 
 /**
  * The LinkedIn posting worker (brief 2026-11-02-linkedin-page-posting, docs/LINKEDIN_POSTING.md).
@@ -32,6 +34,15 @@ import { buildPost, fetchCmsArticle, type CmsArticle } from './post';
  *  - nothing pushed before the page's go-live (LINKEDIN_POST_FROM; Academy: LINKEDIN_ACADEMY_POST_FROM) is ever posted to it.
  *    After it there is NO age limit: an article that has no row yet is posted however long ago it was pushed (brief
  *    2026-11-04-social-no-age-limit).
+ *
+ * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts). A page with its own LINKEDIN_TAXSCAN_ALL_PUSHES_FROM /
+ * LINKEDIN_ACADEMY_ALL_PUSHES_FROM posts, from that time on, EVERY push: taxscan.in articles, academy.taxscan.in courses and
+ * shop.taxscan.in products, ONE POST PER PUSH, repeats included (a backfill clone, a resend). The row key is `push:<campaign id>:<send
+ * time ms>`. A push sent before that time follows today's rule (one post per article, the `earlier` look-back) for good, so switching
+ * on never floods the page with the past. The two kinds of candidate share everything above: the order (merged by send time, oldest
+ * first), MAX_PER_TICK, the retries, the stale rule, the per-page login stop. A course / product post has its own builder (the push's
+ * own title and body, the card from the page's og tags); an article post is built exactly as before. LinkedIn's duplicate answer
+ * (422 DUPLICATE_POST) is a plain FAILED: no retry, no repeat without the picture, no stop, no alert. See src/services/social/allPushes.ts.
  */
 
 export const MAX_PER_TICK = 3;
@@ -42,6 +53,7 @@ export const MAX_ATTEMPTS = RETRY_DELAYS_MIN.length + 1;
 /** How far before go-live (LINKEDIN_POST_FROM) an earlier push of the same article is looked for. */
 const EARLIER_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 export const UNKNOWN_ERROR = 'unknown — check the page';
+export const DUPLICATE_ERROR = 'LinkedIn says this was already posted';
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
 
 export type WorkerDeps = {
@@ -62,6 +74,10 @@ export type WorkerDeps = {
   portals?: PortalMap;
   /** Go-live: one time for every page, or one per page. Default: each page's own configured time. */
   postFrom?: PostFromInput;
+  /** The time from which a page posts EVERY push (brief 2026-11-04-academy-store-posts): one time for every page, or one per page; null = today's rule. Default: each page's own variable. */
+  allPushesFrom?: PostFromInput;
+  /** A course / product page's og tags (tests mock it). */
+  fetchStorePage?: StorePageFetch;
   /** Quiet hours window; default env.send.quietStart/quietEnd. */
   quiet?: { start: string; end: string };
 };
@@ -196,16 +212,23 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       log(page, row.campaignId, 'failed', 'reason=config');
       return 'failed';
     }
-    const post = await buildPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
+    // A course / product post (its LINK says so: under "every push posts" every kind of row has a `push:` key) has its own builder: the
+    // push's own wording, UTMs and the page's og tags. An article is built exactly as before.
+    const store = storeLinkOf(campaign.url);
+    const kind = store ? ` kind=${store.kind}` : '';
+    const post = store ? await buildStorePost(campaign, page, d.fetchStorePage ?? ((u) => fetchStorePage(u))) : await buildPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
     if (!post) {
-      await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'FAILED', error: 'not a taxscan.in article link, or the link is not allowed', nextAttemptAt: null } });
-      log(page, row.campaignId, 'failed', 'reason=link');
+      await prisma.linkedInPost.update({
+        where: { id: row.id },
+        data: { status: 'FAILED', error: store ? 'not a course or shop product link, or the link is not allowed' : 'not a taxscan.in article link, or the link is not allowed', nextAttemptAt: null },
+      });
+      log(page, row.campaignId, 'failed', `reason=link${kind}`);
       return 'failed';
     }
     // The card's picture (fail-open): any problem fetching or uploading it posts WITHOUT a thumbnail. Only a 401 / 403 from the
     // upload registration counts as a login error, exactly like the post's own, and then no post call is made.
     let thumbnail: string | undefined;
-    let image = 'none:no_cover';
+    let image = `none:${post.imageReason ?? 'no_cover'}`;
     let uploadAuth: LinkedInResult | null = null;
     if (post.coverImageUrl) {
       const img = await (d.fetchImage ?? fetchCoverImage)(post.coverImageUrl);
@@ -233,7 +256,9 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
     let result: LinkedInResult = uploadAuth ?? (await send(true));
     // A post REJECTED with a client error while it carried a thumbnail (a 4xx that is not 401 / 403 / 429: our `failed` verdict)
     // is repeated ONCE, right away, without the thumbnail. Safe: a 4xx means LinkedIn did not create the first post. A picture
-    // must never stop a post. 2xx, 5xx, 429 and network errors are NOT repeated here (they follow the normal retry rules).
+    // must never stop a post. 2xx, 5xx, 429 and network errors are NOT repeated here (they follow the normal retry rules), and
+    // neither is a DUPLICATE answer (its own kind, never `failed`): that is not the picture's fault, and repeating a post LinkedIn
+    // refused as a copy would only hide the reason.
     if (thumbnail && result.kind === 'failed') {
       image = `dropped:${result.status ?? 'unknown'}`;
       result = await send(false);
@@ -241,7 +266,7 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
     if (result.kind === 'posted') {
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'POSTED', linkedinPostId: result.postId === 'unknown' ? null : result.postId, postedAt: now, error: null, nextAttemptAt: null } });
       if (result.postId === 'unknown') await prisma.linkedInPost.update({ where: { id: row.id }, data: { error: 'posted, but LinkedIn returned no post id — check the page' } });
-      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource} image=${image}`);
+      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource} image=${image}${kind}`);
       if (await readAuthState(page)) await clearAuthState(page); // it works again
       return 'posted';
     }
@@ -249,17 +274,24 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       // not a real attempt: put the row back as a retry that is due as soon as posting resumes
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { attempts: Math.max(0, row.attempts - 1), nextAttemptAt: now, error: clip(result.error) } });
       await handleAuthStop(page, result.status, d, now);
-      log(page, row.campaignId, 'auth_stop', `status=${result.status ?? ''} image=${image}`);
+      log(page, row.campaignId, 'auth_stop', `status=${result.status ?? ''} image=${image}${kind}`);
       return 'auth_stop';
+    }
+    if (result.kind === 'duplicate') {
+      // LinkedIn already has this exact post (every push posts, so an identical repeat can happen). Not a fault of ours: FAILED with a
+      // plain reason, and no retry, no login stop, no alert; the push behind it posts on the next tick.
+      await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'FAILED', nextAttemptAt: null, error: DUPLICATE_ERROR } });
+      log(page, row.campaignId, 'failed', `reason=duplicate image=${image}${kind}`);
+      return 'failed';
     }
     if (result.kind === 'retry' && row.attempts < MAX_ATTEMPTS) {
       const due = pushOutOfQuietHours(new Date(now.getTime() + RETRY_DELAYS_MIN[row.attempts - 1] * 60_000), quietOf(d));
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { nextAttemptAt: due, error: clip(result.error) } });
-      log(page, row.campaignId, 'retry', `attempt=${row.attempts} next=${due.toISOString()} image=${image}`);
+      log(page, row.campaignId, 'retry', `attempt=${row.attempts} next=${due.toISOString()} image=${image}${kind}`);
       return 'retry';
     }
     await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'FAILED', nextAttemptAt: null, error: clip(result.error) } });
-    log(page, row.campaignId, 'failed', `attempts=${row.attempts} image=${image}`);
+    log(page, row.campaignId, 'failed', `attempts=${row.attempts} image=${image}${kind}`);
     return 'failed';
   } catch (err) {
     console.error('[linkedin] attempt failed', safeErrorLog(err));
@@ -336,41 +368,62 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     }
     if (stopped || budget <= 0) continue;
 
-    // 3. New articles, oldest push first. NO age limit: every SENT push since THIS PAGE's go-live (Taxscan: LINKEDIN_POST_FROM;
+    // 3. New posts, oldest push first. NO age limit: every SENT push since THIS PAGE's go-live (Taxscan: LINKEDIN_POST_FROM;
     //    Academy: LINKEDIN_ACADEMY_POST_FROM) whose article has no row on THIS page yet is posted, however long ago it was pushed.
     //    That list only grows (~20 a day) and is read every minute, so it is read with `select` of just what the two shared rules
     //    need (isPublicArticleCampaign: url + target; articleKey: id + url), never whole rows; `attempt` loads the one full campaign
     //    it posts.
+    //    EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): a page with an all-pushes time splits the pushes at that time.
+    //    A push BEFORE it follows today's rule above for good (one post per article, the `earlier` look-back), so setting the time
+    //    never floods the page with the past, and a pre-time article that has no row yet still gets its one post. A push AT or
+    //    AFTER it follows the new rule: every qualifying push (article, course, product) is its own candidate, keyed
+    //    `push:<campaign id>:<send time ms>`, repeats included. Both kinds are merged by the time of the push, oldest first.
     const postFrom = resolvePostFrom(d.postFrom, page) as Date; // startupProblem has made sure every page has one
+    // null = today's rule only. The read below starts at THIS page's own go-live, so the new rule can never reach back before it, whatever time is set.
+    const pushesFrom = resolveAllPushesFrom(d.allPushesFrom, page);
     const pagePortals = portalsOfPage(portals, page);
-    const campaigns = await prisma.campaign.findMany({
+    // The read stays `select`-narrow: only what the rules need, and `lastSentAt` too ONLY while the all-pushes time is set (it is what
+    // splits the pushes at that time and merges the two rules by time). With the time unset the read is exactly today's.
+    const campaigns: { id: string; url: string; target: unknown; lastSentAt?: Date | null }[] = await prisma.campaign.findMany({
       where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: postFrom } },
-      select: { id: true, url: true, target: true },
+      select: pushesFrom ? { id: true, url: true, target: true, lastSentAt: true } : { id: true, url: true, target: true },
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
-    const firstOf = new Map<string, string>(); // article key → the id of its OLDEST push
+    const firstOf = new Map<string, string>(); // post key → the id of the push it is posted for; both rules insert as the pushes come, oldest first
+    let todays = 0; // how many candidates follow today's rule
     for (const c of campaigns) {
-      // WHO sent it never matters (pacer, Compose now / scheduled, Push now, Breaking all post); only a public article does.
+      const sentAt = c.lastSentAt ?? null; // only read while the all-pushes time is set
+      if (pushesFrom && sentAt && sentAt >= pushesFrom) {
+        // THE NEW RULE: one candidate per push. WHO sent it never matters (pacer, backfill clone, Compose, Push now, Breaking).
+        if (isAllPushesCampaign(c)) firstOf.set(pushKey({ id: c.id, lastSentAt: sentAt }), c.id);
+        continue;
+      }
+      // TODAY'S RULE: only a public article, once per article (its oldest push). WHO sent it never matters.
       if (!isPublicArticleCampaign(c)) continue;
       const k = articleKey(c);
-      if (!firstOf.has(k)) firstOf.set(k, c.id);
+      if (!firstOf.has(k)) {
+        firstOf.set(k, c.id);
+        todays += 1;
+      }
     }
-    if (firstOf.size === 0) continue;
-    // A re-push or the morning-backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is
-    // not new: never post it, at any age.
-    const earlier = await prisma.campaign.findMany({
-      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
-      select: { id: true, url: true },
-    });
-    for (const c of earlier) firstOf.delete(articleKey(c));
+    if (todays > 0) {
+      // A re-push or the morning-backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is
+      // not new: never post it, at any age. (Only today's rule looks back; the new rule posts every push.)
+      const earlier = await prisma.campaign.findMany({
+        where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
+        select: { id: true, url: true },
+      });
+      for (const c of earlier) firstOf.delete(articleKey(c));
+    }
     if (firstOf.size === 0) continue;
     // Which of them already have a row (POSTED, SKIPPED, FAILED or in flight)? The page's keys in ONE indexed read: an
     // `IN (…)` of every candidate would grow with the list above.
     const have = new Set((await prisma.linkedInPost.findMany({ where: { page }, select: { articleKey: true } })).map((r) => r.articleKey));
+    // Oldest first across both rules: the read orders the pushes by send time (then id) and each rule inserts as it goes.
     for (const [key, campaignId] of firstOf) {
       if (budget <= 0 || stopped) break;
       if (have.has(key)) continue;
-      // No row: this article was never handled (an earlier push of it that was handled would have left its row).
+      // No row: this article / push was never handled (an earlier push of it that was handled would have left its row).
       let row: LinkedInPost;
       try {
         row = await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId, status: 'PENDING', attempts: 1 } });
@@ -446,4 +499,16 @@ export function startLinkedInWorker(): void {
   const academy = env.linkedin.sharedPages[PAGE_ACADEMY];
   // eslint-disable-next-line no-console
   console.log(academy ? `[linkedin] academy page on (post from ${academy.postFrom.toISOString()})` : `[linkedin] academy page off: ${parseLinkedInAcademyEnv(process.env).off ?? 'not configured'}`);
+  // "Every push posts" (brief 2026-11-04-academy-store-posts): ONE line per page, on with its time, or off (the page stays on today's
+  // rule, one post per article) and why, in fixed words naming the variable, never its value. The line names the page through its
+  // variable. The Academy page needs both its page and its own variable.
+  for (const [page, name] of [
+    [PAGE_TAXSCAN, ALL_PUSHES_FROM_VARS.linkedinTaxscan],
+    [PAGE_ACADEMY, ALL_PUSHES_FROM_VARS.linkedinAcademy],
+  ] as const) {
+    const from = pageAllPushesFrom(page);
+    const why = page === PAGE_ACADEMY && !academyActive() ? `${name} is ignored while the Academy page is off` : parseAllPushesFrom(process.env, name).off ?? `${name} is not set`;
+    // eslint-disable-next-line no-console
+    console.log(from ? `[linkedin] all pushes on for ${name} (from ${from.toISOString()})` : `[linkedin] all pushes off: ${why} (today's rule: one post per article)`);
+  }
 }

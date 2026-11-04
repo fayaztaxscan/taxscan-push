@@ -1,5 +1,7 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import { articleContentOf } from '../whatsapp/postText';
+import { fetchStorePage, type StorePageFetch, type StorePageResult } from '../social/storePage';
+import { storeBodyLines, storeLinkOf, storeTitle, storeUtmContent } from '../social/allPushes';
 import { withLinkedInUtm } from './pages';
 
 /* ------------------------------------------------------------------ */
@@ -257,11 +259,14 @@ export type PostPayload = {
   title: string;
   link: string;
   hashtags: string[];
-  hashtagSource: 'cms' | 'fallback';
+  /** 'fixed' = a course / shop post: only the fixed `#taxscan`, no CMS data. */
+  hashtagSource: 'cms' | 'fallback' | 'fixed';
   /** The card's one-line description: the CMS excerpt, else the campaign body (≤ 200 characters). May be empty. */
   description: string;
   /** The CMS cover picture's URL, or null (the CMS fetch failed or has none). Never scraped from the page. */
   coverImageUrl: string | null;
+  /** Course / shop posts only: why there is no `coverImageUrl` (a fixed word, safe to log). */
+  imageReason?: string;
 };
 
 /**
@@ -294,5 +299,97 @@ export async function buildPost(
     hashtagSource: source,
     description: cardDescription(cms?.excerpt || c.body),
     coverImageUrl: cms?.coverImageUrl ?? null,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Course and shop pushes (brief 2026-11-04-academy-store-posts)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The longest `commentary` sent. LinkedIn documents 3,000 characters for a post's text (UGC Post API; the Posts API answers 400
+ * FIELD_LENGTH_TOO_LONG above its limit). It is measured on the text as SENT (escape backslashes and the hashtag template count),
+ * which can only be longer than what LinkedIn counts, so staying under it is safe.
+ */
+export const COMMENTARY_MAX = 3000;
+/** The card title taken from a page is cut at a word boundary to at most this many characters. */
+export const CARD_TITLE_MAX = 200;
+
+/** Whitespace-collapsed, cut at a word boundary to ≤ `max` characters with "…". A plain string (not little-text commentary). */
+function cutPlain(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > 0 ? cut.slice(0, at) : flat.slice(0, max - 1)).replace(/[\s.,;:!?-]+$/, '')}…`;
+}
+
+/**
+ * The commentary of a course / shop post: the push title, a blank line, the push body (its own lines, single line breaks), a blank
+ * line, `#taxscan` as the documented hashtag template. Title and body are escaped as little text (emoji pass through untouched); the
+ * hashtag is NOT escaped. When the whole would pass `COMMENTARY_MAX`, the BODY is cut (at a word boundary, with "…", on the raw text
+ * so no escape pair is ever split) or dropped; the title is never cut. Pure.
+ */
+export function buildStoreCommentary(title: string, body: string): string {
+  const head = escapeLittleText(storeTitle(title));
+  const tag = hashtagTemplate(FIXED_TAG);
+  const lines = storeBodyLines(body);
+  if (!lines) return `${head}\n\n${tag}`;
+  const whole = `${head}\n\n${escapeLittleText(lines)}\n\n${tag}`;
+  if (whole.length <= COMMENTARY_MAX) return whole;
+  // the room the body may use: everything but the title, the tag and the two blank lines between the three parts
+  const room = COMMENTARY_MAX - head.length - tag.length - 4;
+  if (room < 2) return `${head}\n\n${tag}`;
+  let used = 0;
+  let kept = '';
+  for (const ch of lines) {
+    const w = escapeLittleText(ch).length;
+    if (used + w > room - 1) break; // one character for the ellipsis
+    used += w;
+    kept += ch;
+  }
+  const at = Math.max(kept.lastIndexOf(' '), kept.lastIndexOf('\n'));
+  const head2 = (at > 0 ? kept.slice(0, at) : kept).replace(/[\s.,;:!?-]+$/, '');
+  return head2 ? `${head}\n\n${escapeLittleText(head2)}…\n\n${tag}` : `${head}\n\n${tag}`;
+}
+
+export type StorePostPayload = PostPayload & { hashtagSource: 'fixed'; imageReason?: string };
+
+/**
+ * Everything a course / shop post needs, built from the campaign and (fail-open) the product page's og tags. Null when the URL is not a
+ * course or shop-product link, or the final link is off `ALLOWED_PUSH_HOSTS`.
+ *  - commentary: see `buildStoreCommentary`;
+ *  - link: the push's own link with this page's LinkedIn UTMs (`utm_content` = the slug), replacing any UTMs the push carried;
+ *  - card title / description: the page's `og:title` / `og:description`, else the push title / body;
+ *  - picture: the page's `og:image:secure_url`, else `og:image` when it is https; with no usable one, `imageReason` says why.
+ * The page is fetched on its canonical form (the link without a query string, WITH a trailing slash): WordPress answers the
+ * slash-less course URL with a redirect, and redirects are refused.
+ */
+export async function buildStorePost(
+  c: { id: string; title: string; url: string; body?: string | null },
+  page: string,
+  fetchPage: StorePageFetch = (u) => fetchStorePage(u),
+): Promise<StorePostPayload | null> {
+  const link = storeLinkOf(c.url);
+  if (!link || !isAllowedPushUrl(c.url.trim())) return null;
+  let tagged: string;
+  try {
+    tagged = withLinkedInUtm(c.url.trim(), page, storeUtmContent(link));
+  } catch {
+    return null;
+  }
+  if (!isAllowedPushUrl(tagged)) return null;
+  const got: StorePageResult = await fetchPage(`${link.base}/`).catch((): StorePageResult => ({ ok: false, reason: 'page_network' }));
+  const tags = got.ok ? got.tags : null;
+  const title = storeTitle(c.title);
+  return {
+    commentary: buildStoreCommentary(c.title, c.body ?? ''),
+    title: tags?.title ? cutPlain(tags.title, CARD_TITLE_MAX) : title,
+    link: tagged,
+    hashtags: [FIXED_TAG],
+    hashtagSource: 'fixed',
+    description: cardDescription(tags?.description || c.body),
+    coverImageUrl: tags?.imageUrl ?? null,
+    imageReason: tags ? (tags.imageUrl ? undefined : tags.imageReason ?? 'no_tag') : got.ok ? undefined : got.reason,
   };
 }

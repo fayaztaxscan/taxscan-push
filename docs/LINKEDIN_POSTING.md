@@ -9,7 +9,12 @@ article). Brief: `docs/briefs/2026-11-02-linkedin-page-posting.md` (incl. follow
 and picture, once the owner sets the two `LINKEDIN_ACADEMY_*` variables (see "Pages"). Unset, nothing about it exists: no rows, no
 log noise, no change to the Taxscan page. Brief: `docs/briefs/2026-11-04-linkedin-academy-page.md`.
 
+**Optionally, from a time set per page, a page posts EVERY push** (articles, academy courses, shop products), one post per push,
+repeats included, like the push notification itself (see "Every push posts"). Unset, each page behaves exactly as described below.
+Brief: `docs/briefs/2026-11-04-academy-store-posts.md`.
+
 ## What posts
+(This is **today's rule**, the one every page follows until its `LINKEDIN_*_ALL_PUSHES_FROM` time is set; see "Every push posts" below.)
 A `Campaign` with `status = SENT`, a mapped `portal` (`taxscan` → page `taxscan`, and page `academy` too while it is on), a
 taxscan.in **article** URL (`articleContentOf()`: `/<section>/<slug>`, or a trailing numeric id; never the home page, a section page,
 academy or shop; the Academy PAGE posts these same taxscan.in articles, not academy.taxscan.in pushes) and `lastSentAt ≥` the page's
@@ -25,6 +30,79 @@ never posts again, nor does a re-push or clone of an article first pushed before
 before the page's own go-live time). The two pages are independent: separate rows, statuses, Retry and Skip, and an article pushed
 between the two go-live times is posted to the Taxscan page only (a later repeat of it adds no Academy row).
 
+## Every push posts (brief 2026-11-04-academy-store-posts)
+Off by default. Everything above is **today's rule**: one post per taxscan.in article. From a time the owner sets **per page**, a page
+instead posts **every push, like the push notification itself**: taxscan.in articles, `academy.taxscan.in` courses and
+`shop.taxscan.in` products, **one post per push, repeats included** (the morning-backfill clone, a Compose copy, the same campaign row
+sent again). Nobody filters duplicates; the platform may refuse an identical one (see "A repeat LinkedIn refuses").
+
+| Variable | Page |
+|---|---|
+| `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` | the Taxscan page |
+| `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` | the Academy page; counts only while the Academy page is on |
+
+A strict ISO date or time, validated exactly like `LINKEDIN_ACADEMY_POST_FROM` (`parseAllPushesFrom()` in `src/lib/env.ts`; a bare year,
+`04/11/2026` or `Nov 4` is refused). Unset or invalid = that page stays on today's rule, with ONE boot line saying why (names, never
+values): `[linkedin] all pushes off: LINKEDIN_TAXSCAN_ALL_PUSHES_FROM is not set (today's rule: one post per article)`; on, `[linkedin] all
+pushes on for LINKEDIN_TAXSCAN_ALL_PUSHES_FROM (from <ISO time>)`. Each page's line names the page through its variable.
+
+- **Why a time is essential.** Today's rows are keyed by article, so past repeats and every course or product push have no row. Without a
+  time, switching on would post all of them. **A push with `lastSentAt` before the page's time follows today's rule for good; a push at or
+  after it follows the new rule; nothing older ever becomes eligible.** A pre-time article that has no row yet (waiting behind a login
+  stop, say) still gets its one post by today's rule. Set the variable to the moment you switch on.
+- **It never reaches back before the page's own go-live.** The new rule starts at the LATER of the all-pushes time and the page's
+  `LINKEDIN_POST_FROM` / `LINKEDIN_ACADEMY_POST_FROM` (`newRuleFrom()`): "nothing pushed before a page's go-live is ever posted there"
+  stays true whatever else is set.
+- **What qualifies** (`isAllPushesCampaign()` in `src/services/social/allPushes.ts`, a NEW rule beside `isPublicArticleCampaign()`,
+  which is unchanged because the WhatsApp queue relies on it): a SENT campaign of a mapped portal with `lastSentAt` set, not
+  test-segment-only, on `ALLOWED_PUSH_HOSTS`, whose URL is a taxscan.in article, `https://academy.taxscan.in/course/<slug>` or
+  `https://shop.taxscan.in/products/<slug>`. The home page, a section page, a collection, `/collections/<c>/products/<p>`, an http link
+  and every other page do not qualify.
+- **One post per push.** The row key is `push:<campaignId>:<lastSentAt ms>` in `LinkedInPost.articleKey` (the same column and the same
+  unique `(page, articleKey)`): a resend of the same campaign row has a new `lastSentAt`, so it posts again, while two overlapping ticks
+  still cannot post the same push twice. Under the new rule the 14-day look-back and the "first push of the article" logic do not apply.
+- **Candidates of both rules are merged by send time, oldest first**, and share everything else: `MAX_PER_TICK` (3, Taxscan first), the
+  retries, the stale rule and the per-page login stop. No new caps.
+- **Articles** are built exactly as before (CMS hashtags, cover picture, description); **course and product posts** below.
+- **Screens.** SOCIAL → LinkedIn lists one row per push under the new rule (a repeat is its own row, with its own Retry and Skip), and
+  today's one-row-per-article for earlier pushes; **Campaigns → Channels** shows a new-rule push the status of its own row (Taxscan
+  page); both are exactly as before while the variable is unset.
+- **Quota note.** The app is on the Development tier (100 calls per member per endpoint per day). About 3 course and product pushes a day
+  plus repeats per page make roughly 60 `posts-CREATE` a day; `images-GET` (the status poll, 2 per post) could approach 100, which is why
+  a 429 on that poll still publishes the post, with the picture attached unverified (`image=ok:unverified`) and no retry loop.
+
+### Course and product posts
+A course or product has no CMS article, so the post is built from the push and the page (`buildStorePost()` in `post.ts`):
+- **Commentary** = the push title, a blank line, the push body (its own lines kept as single line breaks, so `- ` bullets survive), a
+  blank line, `{hashtag|\#|taxscan}`. The title and the body are escaped as little text (emoji pass through untouched). If the whole
+  would pass LinkedIn's **3,000-character** limit (`COMMENTARY_MAX`, measured on the text as sent), the **body** is cut at a word
+  boundary with "…" and, if need be, dropped; **the title is never cut**. (LinkedIn documents 3,000 for a post's text; the Posts API
+  answers 400 `FIELD_LENGTH_TOO_LONG` above its limit.)
+- **Link** = the push's own link with `utm_source=taxscan-linkedin`, `utm_medium=social`, `utm_campaign=linkedin-<page>`, `utm_content=<slug>`
+  (≤ 100 characters); the push's own `utm_*` are replaced.
+- **Card title and description** = the page's `og:title` and `og:description` (entities decoded, markup stripped; the description ≤ 200
+  characters), falling back to the push title and body.
+- **Picture** (`src/services/social/storePage.ts`): the worker fetches the course / product page, reads **only the start of it**
+  (256 KB, the stream is cancelled past that; `metaContent()` from the digest's `articleImage.ts`) with a 5 s limit, **no redirects**,
+  https only, hosts `academy.taxscan.in` / `shop.taxscan.in`. The page is fetched in its canonical form, the link without a query string
+  **with a trailing slash**, because WordPress answers the slash-less course URL with a 301. It prefers `og:image:secure_url`, then
+  `og:image`, **https only** (Shopify serves `og:image` over http and the same file over https in `secure_url`); a relative value
+  resolves against the page. The picture itself then goes through the existing `fetchCoverImage` (the two store hosts are now in its
+  allowlist, redirects still refused), the Images API upload under the page's own org URN and the wait for AVAILABLE. **Fail-open**: any
+  problem posts without a picture and the outcome line says why: `image=none:<reason>` with `page_host`, `page_timeout`,
+  `page_redirect`, `page_network`, `page_http_<n>` (the page), `no_tag` or `not_https` (the tags), then the picture reasons listed above
+  (`host`, `redirect`, `timeout`, `http_<n>` …). A page that cannot be read never fails the post: the card falls back to the push title
+  and body.
+- Log line: `[linkedin] page=<page> campaign=… outcome=posted hashtags=fixed image=ok|none:<reason> kind=course|product`. Articles keep
+  their line unchanged.
+
+### A repeat LinkedIn refuses
+LinkedIn can answer an identical post with **422** and `errorDetails.inputErrors[].code = "DUPLICATE_POST"` ("Content is a duplicate of
+urn:li:share:…"; LinkedIn's reference pages do not list the code, the shape is what the API returns, matched in `isDuplicateAnswer()`
+only on a 422). The row becomes **FAILED** with the plain reason *"LinkedIn says this was already posted"*: **no retry, no repeat
+without the picture, no login stop, no alert**, and the next push posts on the next tick (`reason=duplicate` in the log). Retry on it
+asks LinkedIn again.
+
 ## How it runs
 `src/services/linkedin/worker.ts`: a 1-minute `node-cron` tick, started only when `LINKEDIN_POSTING_ENABLED=true` **and**
 `LINKEDIN_POST_FROM` + the Taxscan page's two variables are valid (otherwise it logs `[linkedin] refusing to start: …` and does not
@@ -34,8 +112,8 @@ untouched, and the request path never calls LinkedIn (only the worker, and the s
 
 - At most **3 posts per tick, shared by both pages**, oldest push first. The Taxscan page is handled first in a tick, so a busy
   Taxscan page only delays the Academy page to a later tick (an article normally posts to both in the same tick).
-- Each tick reads, per page, every SENT push since that page's go-live time (only `id`, `url` and `target`) and the page's existing
-  article keys. That list grows by about 20 a day per page and nothing else does; it is the one thing to revisit if the pages run for years.
+- Each tick reads, per page, every SENT push since that page's go-live time (only `id`, `url` and `target`; plus `lastSentAt` while the
+  page's all-pushes time is set, since that is what splits the pushes at that time) and the page's existing keys. That list grows by about 20 a day per page and nothing else does; it is the one thing to revisit if the pages run for years.
 - The `LinkedInPost` row (PENDING, in flight) is created **before** the API call; unique (`page`, `articleKey`) means a
   crash or an overlapping tick can't post twice.
 - An in-flight row older than **10 minutes** with no result becomes FAILED *"unknown — check the page"* and is **never
@@ -161,6 +239,8 @@ is that one token's status on both pages). Rows, counts and the banner follow `p
 | `LINKEDIN_TAXSCAN_ACCESS_TOKEN` | — | a token with `w_organization_social`; never logged, never in a response or the `error` column. **Also the Academy page's token.** |
 | `LINKEDIN_ACADEMY_ORG_URN` | — | the Academy page, `urn:li:organization:<digits>`. **The page is on only when this AND `LINKEDIN_ACADEMY_POST_FROM` are valid**; anything else = off (one boot line) |
 | `LINKEDIN_ACADEMY_POST_FROM` | — | the Academy page's own go-live (ISO date or time); nothing pushed before it is ever posted to Academy. Set it to the moment you switch on |
+| `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` | — | **every push posts** on the Taxscan page from this time (strict ISO); a push before it keeps today's rule for good. Unset or invalid = today's rule (one boot line). Never earlier than `LINKEDIN_POST_FROM`. Set it to the moment you switch on |
+| `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` | — | the same for the Academy page; counts only while the Academy page is on; never earlier than `LINKEDIN_ACADEMY_POST_FROM` |
 
 There are no Academy token variables: the two Academy variables are the whole switch, and `LINKEDIN_POSTING_ENABLED` still governs
 everything (off = no worker for either page).
@@ -180,6 +260,16 @@ everything (off = no worker for either page).
 3. Look for `[linkedin] academy page on (post from …)` in the boot log, then for `[linkedin] page=academy campaign=… outcome=posted`
    after the next push. A 403 (an amber banner and an e-mail for the Academy page only) means the token's member has no role on that
    page: the Taxscan page keeps posting. Give the member the role in LinkedIn and restart the app.
+
+### Switching "every push posts" on (per page, any time after that page works)
+1. In Railway set `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` (and `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` if the Academy page is on) to **the current
+   time** (UTC ISO), then redeploy. Pushes sent before that time keep today's rule; nothing in the past is posted.
+2. Look for `[linkedin] all pushes on for LINKEDIN_TAXSCAN_ALL_PUSHES_FROM (from …)` in the boot log, then for
+   `[linkedin] page=taxscan campaign=… outcome=posted hashtags=fixed … kind=course|product` after the next course or product push.
+3. **Do not unset it again once it has been on** (a trap, not a feature). Today's rule keys on the article, and an article first
+   pushed while the new rule was on has only a `push:` row, so after an unset today's rule would post each of them once more (about 20
+   a day since the time). To pause posting, set `LINKEDIN_POSTING_ENABLED=false`; to go back for good, plan for those re-posts or ask
+   for the guard (suggested in the brief's REPORT: skip an article whose first push already has a `push:` row).
 
 ## Token renewal
 (brief `docs/briefs/2026-11-02-linkedin-token-refresh.md`; `src/services/linkedin/token.ts`.) The page's **access token lasts about 60
@@ -251,9 +341,14 @@ The renewal does NOT write back into Railway variables and has no sign-in page o
 `LinkedInPost` and `LinkedInToken` (the encrypted renewed token) are **not** in the R2 export (the small `linkedin:auth:<page>` banner row and `linkedin:token:state:<page>` markers live in `DigestSetting`, which is; a restored stale one is harmless). After a restore the env token is used and the next daily renewal re-creates the `LinkedInToken` row. After a restore keep
 `LINKEDIN_POSTING_ENABLED` **off**, and set `LINKEDIN_POST_FROM` to the restore time before switching it back on (the
 `LinkedInPost` rows are gone, so without that, recent articles would post twice; with the Academy page on, also set
-`LINKEDIN_ACADEMY_POST_FROM` to the restore time, for the same reason). See `docs/BACKUPS.md`.
+`LINKEDIN_ACADEMY_POST_FROM` to the restore time, for the same reason). **Set `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` and
+`LINKEDIN_ACADEMY_ALL_PUSHES_FROM` to the restore time too** (or unset them): the `push:` rows are gone with the rest, and an old value
+would post every push since then, repeats included. See `docs/BACKUPS.md`.
 
 ## Logs
 One line per attempt: `[linkedin] page=taxscan campaign=<id> outcome=posted|retry|failed|auth_stop` (`page=academy` for the Academy
 page). One boot line about the Academy page, from `startLinkedInWorker` only (`[linkedin] academy page on (post from …)` or
-`[linkedin] academy page off: …`). Every error goes through `safeErrorLog`; the token appears nowhere.
+`[linkedin] academy page off: …`), and one per page about "every push posts" (`[linkedin] all pushes on for … (from …)` /
+`[linkedin] all pushes off: <variable> is not set | is not a valid ISO time | is ignored while the Academy page is off (today's rule: one
+post per article)`). A course or product post adds `kind=course|product` to its line, and a refused identical repeat is
+`outcome=failed reason=duplicate`. Every error goes through `safeErrorLog`; the token appears nowhere.

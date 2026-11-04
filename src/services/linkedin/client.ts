@@ -6,14 +6,16 @@ import type { FetchLike } from './post';
  * The result is a verdict the worker can act on; the token and the request body never reach it (`error` is the HTTP
  * status plus LinkedIn's own short `message`, with the token scrubbed and the whole thing capped).
  *
- *   posted — the post id (`x-restli-id` header, else body `id`)
- *   retry  — 429 / 5xx / network / timeout: try again later
- *   auth   — 401, or 403 (token / permission): stop posting for this page until the token is fixed
- *   failed — anything else (a 400 / 422 / 409: retrying cannot help)
+ *   posted    — the post id (`x-restli-id` header, else body `id`)
+ *   retry     — 429 / 5xx / network / timeout: try again later
+ *   auth      — 401, or 403 (token / permission): stop posting for this page until the token is fixed
+ *   duplicate — 422 DUPLICATE_POST: LinkedIn already has this exact post (every push posts, so an identical repeat can happen); never
+ *               retried, never repeated without the picture, never a login stop
+ *   failed    — anything else (a 400 / 422 / 409: retrying cannot help)
  */
 export type LinkedInResult =
   | { kind: 'posted'; postId: string }
-  | { kind: 'retry' | 'auth' | 'failed'; status: number | null; error: string };
+  | { kind: 'retry' | 'auth' | 'failed' | 'duplicate'; status: number | null; error: string };
 
 export const LINKEDIN_POSTS_URL = 'https://api.linkedin.com/rest/posts';
 const TIMEOUT_MS = 15_000;
@@ -42,6 +44,21 @@ export function postBody(r: Pick<LinkedInRequest, 'orgUrn' | 'commentary' | 'tit
     lifecycleState: 'PUBLISHED',
     isReshareDisabledByAuthor: false,
   };
+}
+
+/**
+ * Is this LinkedIn's answer to a post it already has? HTTP 422 with `errorDetails.inputErrors[].code = "DUPLICATE_POST"` ("Duplicate
+ * post is detected"), and a message ending "Content is a duplicate of urn:li:share:<id>". LinkedIn's reference pages do not list the
+ * code; the shape is what the API returns in practice (a developer's captured response, 4 Nov 2026). Matched tolerantly: the code in
+ * `inputErrors`, the code at the top level, or the message, but only ever on a 422 so no other error can look like a duplicate.
+ */
+export function isDuplicateAnswer(status: number, body: unknown): boolean {
+  if (status !== 422 || !body || typeof body !== 'object') return false;
+  const b = body as { message?: unknown; code?: unknown; errorDetails?: { inputErrors?: unknown } };
+  if (b.code === 'DUPLICATE_POST') return true;
+  const inputs = b.errorDetails?.inputErrors;
+  if (Array.isArray(inputs) && inputs.some((e) => !!e && typeof e === 'object' && (e as { code?: unknown }).code === 'DUPLICATE_POST')) return true;
+  return typeof b.message === 'string' && /content is a duplicate of/i.test(b.message);
 }
 
 /** Short, token-free text for the `error` column. */
@@ -82,13 +99,16 @@ export async function postToLinkedIn(r: LinkedInRequest, fetchImpl: FetchLike = 
       return { kind: 'posted', postId: id || 'unknown' };
     }
     let message = '';
+    let duplicate = false;
     try {
       const j = (await res.json()) as { message?: unknown };
       if (typeof j.message === 'string') message = j.message;
+      duplicate = isDuplicateAnswer(res.status, j);
     } catch {
       // not JSON
     }
     const error = safeError(`HTTP ${res.status}${message ? `: ${message}` : ''}`, r.accessToken);
+    if (duplicate) return { kind: 'duplicate', status: res.status, error };
     if (res.status === 401 || res.status === 403) return { kind: 'auth', status: res.status, error };
     if (res.status === 429 || res.status >= 500) return { kind: 'retry', status: res.status, error };
     return { kind: 'failed', status: res.status, error };

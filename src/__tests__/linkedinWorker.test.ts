@@ -498,6 +498,24 @@ describe('I. the link card carries the article\'s picture and a description (fai
       expect(outcomeLine()).toContain('outcome=posted hashtags=fallback image=dropped:400');
     });
 
+    it('12 (brief 2026-11-04-academy-store-posts): the status poll answers 429 (the tightest daily quota) → ONE look, no retry loop and no waiting; the post goes out WITH the thumbnail, image=ok:unverified', async () => {
+      await camp('t-429', at(NOW, -5));
+      const polled: string[] = [];
+      const s429 = (async (u: string) => (polled.push(u), { ok: false, status: 429, headers: new Headers({ 'retry-after': '3600' }), json: async () => ({ message: 'Too many requests' }) } as unknown as Response)) as unknown as typeof fetch;
+      const sleeps: number[] = [];
+      expect(isUnverifiedImage('status_429')).toBe(true);
+      expect(await waitForImage({ urn: 'urn:li:image:C9ZZ', accessToken: TOKEN }, s429, async (ms) => void sleeps.push(ms))).toEqual({ ok: false, reason: 'status_429' });
+      expect([polled.length, sleeps]).toEqual([1, []]); // the unit: one GET, no sleep
+      polled.length = 0;
+      await runLinkedInTick(deps({ fetchCms: cmsWith(), fetchImage: okImage, uploadImage: upload(), waitImage: (r) => waitForImage(r, s429, async (ms) => void sleeps.push(ms)) }));
+      expect(polled).toEqual(['https://api.linkedin.com/rest/images/urn%3Ali%3Aimage%3AC9ZZ']); // and in the worker: still one GET
+      expect(sleeps).toEqual([]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].thumbnail).toBe('urn:li:image:C9ZZ');
+      expect(outcomeLine()).toContain('outcome=posted hashtags=fallback image=ok:unverified');
+      expect((await rowsOf())[0]).toMatchObject({ status: 'POSTED', attempts: 1 });
+    });
+
     it('T3: the post WITH a thumbnail → 422; the repeat WITHOUT → posted: exactly 2 post calls, the second without thumbnail, description kept, image=dropped:422', async () => {
       await camp('t3', at(NOW, -5));
       script = (n) => (n === 1 ? { kind: 'failed', status: 422, error: 'HTTP 422: thumbnail not available' } : posted());

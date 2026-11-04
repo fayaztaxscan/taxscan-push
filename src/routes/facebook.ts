@@ -7,6 +7,7 @@ import { requestClientIp } from '../lib/clientIp';
 import { safeErrorLog } from '../lib/httpErrors';
 import { articleKey } from '../services/reports';
 import { isPublicArticleCampaign } from '../services/social/publicCampaign';
+import { isAllPushesCampaign, newRuleFrom, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PORTAL_TO_PAGE, PAGE_TAXSCAN, pageConfig, postUrlOf } from '../services/facebook/pages';
 import { checkConnection } from '../services/facebook/client';
@@ -23,12 +24,19 @@ import type { FetchLike } from '../services/linkedin/post';
  *   POST /api/facebook/posts/:id/skip           a FAILED row, or one waiting for a retry
  *   POST /api/facebook/check                    ADMIN: "Connected to page: <name>" or the error class; posts nothing
  *   POST /api/facebook/resume                   ADMIN: clears a policy stop (audited)
+ *
+ * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): once FACEBOOK_ALL_PUSHES_FROM is set, a push at or after it is its own row
+ * (articles, courses and products alike; a repeat is another row, with its own Retry and Skip) and is WAITING until posted. A push
+ * before it follows today's rule: one row per article, WAITING / NOT_POSTED by FACEBOOK_POST_FROM. Without the time the list is
+ * exactly what it was before.
  */
 export type FacebookRouterOptions = {
   enabled?: () => boolean;
   clock?: () => Date;
   portals?: () => Readonly<Record<string, string>>;
   postFrom?: () => Date | null;
+  /** The time from which the page posts EVERY push (brief 2026-11-04-academy-store-posts); null = today's rule. Default FACEBOOK_ALL_PUSHES_FROM. */
+  allPushesFrom?: () => Date | null;
   worker?: WorkerDeps;
   /** The Graph fetch used by Check connection (tests inject a fake). */
   fetch?: FetchLike;
@@ -45,6 +53,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
   const nowOf = o.clock ?? (() => new Date());
   const portalsOf = o.portals ?? (() => PORTAL_TO_PAGE);
   const postFromOf = o.postFrom ?? (() => env.facebook.postFrom);
+  const allPushesFromOf = o.allPushesFrom ?? (() => env.facebook.allPushesFrom);
   const pageOf = (): string => Object.values(portalsOf())[0] ?? PAGE_TAXSCAN;
 
   router.use((_req, res, next) => (enabled() ? next() : void res.status(404).json({ error: 'not_found' })));
@@ -63,20 +72,28 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
         select: { id: true, title: true, url: true, target: true, lastSentAt: true },
         orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
       });
+      const postFrom = postFromOf();
+      const pushesFrom = newRuleFrom(allPushesFromOf(), postFrom); // null = the page stays on today's rule; never earlier than the page's own go-live
+      // One row per article (its oldest push) for a push before the all-pushes time, one row per PUSH at or after it. Pushes come
+      // in time order, so the rows do too.
       const first = new Map<string, (typeof sent)[number]>();
       for (const c of sent) {
-        if (!c.lastSentAt || !isPublicArticleCampaign(c)) continue;
-        const k = articleKey(c);
-        if (!first.has(k)) first.set(k, c);
+        if (!c.lastSentAt) continue;
+        if (pushesFrom && c.lastSentAt >= pushesFrom) {
+          if (isAllPushesCampaign(c)) first.set(pushKey({ id: c.id, lastSentAt: c.lastSentAt }), c);
+        } else if (isPublicArticleCampaign(c)) {
+          const k = articleKey(c);
+          if (!first.has(k)) first.set(k, c);
+        }
       }
       const inDay = [...first.entries()].filter(([, c]) => c.lastSentAt! >= start && c.lastSentAt! < end);
       const posts = inDay.length ? await prisma.facebookPost.findMany({ where: { page: pageOf(), articleKey: { in: inDay.map(([k]) => k) } } }) : [];
       const byKey = new Map(posts.map((p) => [p.articleKey, p]));
-      const postFrom = postFromOf();
       const rows = inDay.map(([k, c]) => {
         const p = byKey.get(k);
         let status: ScreenStatus;
-        // No row yet: pushed since go-live → the worker will post it, however long ago (no age limit); before go-live → never.
+        // No row yet: pushed since go-live (the new rule never starts before it) → the worker will post it, however long ago (no age
+        // limit); before go-live → never.
         if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
         else status = postFrom && c.lastSentAt! >= postFrom ? 'WAITING' : 'NOT_POSTED';
         return {
@@ -106,6 +123,8 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
         login: await loginProblem(pageOf()),
         /** Red banner: Facebook blocked a post; posting is stopped until an ADMIN presses Resume. */
         policy: await policyProblem(pageOf()),
+        /** Present only while the page posts EVERY push (its all-pushes time, as the new rule really starts): the screen says so. Absent otherwise. */
+        ...(pushesFrom ? { everyPushFrom: pushesFrom.toISOString() } : {}),
       });
     } catch (err) {
       console.error('[facebook] list failed', safeErrorLog(err));
