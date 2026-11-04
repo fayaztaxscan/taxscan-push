@@ -4,7 +4,7 @@ import { readsPath, readsForPaths } from './reads';
 import { safeErrorLog } from '../lib/httpErrors';
 import { articleKey } from './reports';
 import { isPublicArticleCampaign } from './social/publicCampaign';
-import { PAGE_TAXSCAN, PORTAL_TO_PAGE } from './linkedin/pages';
+import { PAGE_TAXSCAN, portalPages } from './linkedin/pages';
 import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
 
@@ -38,6 +38,7 @@ export type CampaignCreator = {
  */
 export type CampaignChannels = {
   whatsapp: 'TODO' | 'POSTED' | 'SKIPPED' | null;
+  /** The TAXSCAN LinkedIn page's status, always: the Academy page (brief 2026-11-04-linkedin-academy-page) has no mark of its own. */
   linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
   /** Only present while FACEBOOK_POSTING_ENABLED (the payload is unchanged when it is off). Same meaning as `linkedin`. */
   facebook?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
@@ -601,6 +602,8 @@ async function channelsFor(
   const waBy = new Map(wa.map((p) => [p.articleKey, p]));
   const liBy = new Map(li.map((p) => [p.articleKey, p]));
   const fbBy = new Map(fb.map((p) => [p.articleKey, p]));
+  // The LinkedIn mark means the TAXSCAN page, whether or not the Academy page is also posting (it has its own rows and its own screen).
+  const liPortals = portalPages();
   const from = env.linkedin.postFrom;
   const fbFrom = env.facebook.postFrom;
   const out = new Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }>();
@@ -614,7 +617,7 @@ async function channelsFor(
         channels.whatsapp = p ? p.status : 'TODO';
         if (p) details.whatsapp = { by: p.actedBy?.email ?? null, at: p.actedAt.toISOString() };
       }
-      if (liOn && PORTAL_TO_PAGE[c.portal] === PAGE_TAXSCAN && c.lastSentAt && from && c.lastSentAt >= from) {
+      if (liOn && liPortals[c.portal]?.includes(PAGE_TAXSCAN) && c.lastSentAt && from && c.lastSentAt >= from) {
         const p = liBy.get(key);
         channels.linkedin = p ? p.status : 'PENDING';
         if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
