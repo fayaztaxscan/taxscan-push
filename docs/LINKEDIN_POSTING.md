@@ -61,6 +61,9 @@ pushes on for LINKEDIN_TAXSCAN_ALL_PUSHES_FROM (from <ISO time>)`. Each page's l
 - **One post per push.** The row key is `push:<campaignId>:<lastSentAt ms>` in `LinkedInPost.articleKey` (the same column and the same
   unique `(page, articleKey)`): a resend of the same campaign row has a new `lastSentAt`, so it posts again, while two overlapping ticks
   still cannot post the same push twice. Under the new rule the 14-day look-back and the "first push of the article" logic do not apply.
+- **Turning it off is safe.** Today's rule skips an article any of whose pushes already has a `push:` row on the page (the campaign id is
+  in the key, so the worker's one read of the page's keys supplies the ids; no extra query). Remove the variable, or move it later than
+  those pushes, and nothing is reposted. The screens and the Campaigns mark show such an article with that row's status, never WAITING.
 - **Candidates of both rules are merged by send time, oldest first**, and share everything else: `MAX_PER_TICK` (3, Taxscan first), the
   retries, the stale rule and the per-page login stop. No new caps.
 - **Articles** are built exactly as before (CMS hashtags, cover picture, description); **course and product posts** below.
@@ -266,10 +269,11 @@ everything (off = no worker for either page).
    time** (UTC ISO), then redeploy. Pushes sent before that time keep today's rule; nothing in the past is posted.
 2. Look for `[linkedin] all pushes on for LINKEDIN_TAXSCAN_ALL_PUSHES_FROM (from …)` in the boot log, then for
    `[linkedin] page=taxscan campaign=… outcome=posted hashtags=fixed … kind=course|product` after the next course or product push.
-3. **Do not unset it again once it has been on** (a trap, not a feature). Today's rule keys on the article, and an article first
-   pushed while the new rule was on has only a `push:` row, so after an unset today's rule would post each of them once more (about 20
-   a day since the time). To pause posting, set `LINKEDIN_POSTING_ENABLED=false`; to go back for good, plan for those re-posts or ask
-   for the guard (suggested in the brief's REPORT: skip an article whose first push already has a `push:` row).
+3. **Switching it off again.** Remove the variable (or move it later) and the page is back on today's rule, and **nothing is posted
+   again**: an article any of whose pushes already has a `push:` row on that page is skipped by today's rule, whatever status the
+   row has (POSTED, FAILED, SKIPPED, in flight). A new article posts once, as before; an article that never got a `push:` row still gets
+   its one post. Set the variable again later and every push from that time posts, the past does not. (To stop all posting instead, set
+   `LINKEDIN_POSTING_ENABLED=false`.)
 
 ## Token renewal
 (brief `docs/briefs/2026-11-02-linkedin-token-refresh.md`; `src/services/linkedin/token.ts`.) The page's **access token lasts about 60

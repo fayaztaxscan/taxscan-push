@@ -5,7 +5,7 @@ import { prisma } from '../lib/prisma';
 import { safeErrorLog } from '../lib/httpErrors';
 import { articleKey } from '../services/reports';
 import { isPublicArticleCampaign } from '../services/social/publicCampaign';
-import { isAllPushesCampaign, newRuleFrom, pushKey } from '../services/social/allPushes';
+import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
 import { loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
@@ -80,20 +80,51 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
       // One row per article (its oldest push) for a push before the all-pushes time, one row per PUSH at or after it. Pushes come
       // in time order, so the rows do too.
       const first = new Map<string, (typeof sent)[number]>();
+      // For each of today's-rule rows, the id of EVERY push of that article in this window (the `push:` fallback below needs them all).
+      const idsOfArticle = new Map<string, string[]>();
       for (const c of sent) {
         if (!c.lastSentAt) continue;
+        const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
+        if (k !== null) idsOfArticle.get(k)?.push(c.id);
         if (pushesFrom && c.lastSentAt >= pushesFrom) {
           if (isAllPushesCampaign(c)) first.set(pushKey({ id: c.id, lastSentAt: c.lastSentAt }), c);
-        } else if (isPublicArticleCampaign(c)) {
-          const k = articleKey(c);
-          if (!first.has(k)) first.set(k, c);
+          continue;
+        }
+        if (k !== null && !first.has(k)) {
+          first.set(k, c);
+          idsOfArticle.set(k, [c.id]);
         }
       }
       const inDay = [...first.entries()].filter(([, c]) => c.lastSentAt! >= start && c.lastSentAt! < end);
-      const posts = inDay.length ? await prisma.linkedInPost.findMany({ where: { page, articleKey: { in: inDay.map(([k]) => k) } } }) : [];
+      // An article row of TODAY'S rule may have been handled by the NEW rule (its pushes have `push:` rows) while the all-pushes time was
+      // on, and the time removed or moved later since: it must show that row's status, not WAITING (follow-up 1). The same read also
+      // asks for the `push:` rows of every push of those articles.
+      const todaysIds = inDay.filter(([k]) => !isPushKey(k)).flatMap(([k]) => idsOfArticle.get(k) ?? []);
+      const posts = inDay.length
+        ? await prisma.linkedInPost.findMany({
+            where: { page, OR: [{ articleKey: { in: inDay.map(([k]) => k) } }, ...(todaysIds.length ? [{ campaignId: { in: todaysIds }, articleKey: { startsWith: PUSH_KEY_PREFIX } }] : [])] },
+          })
+        : [];
       const byKey = new Map(posts.map((p) => [p.articleKey, p]));
+      const pushRows = new Map<string, (typeof posts)[number]>(); // campaign id → its `push:` row (the latest, if the same campaign row was sent again)
+      for (const p of posts) {
+        if (!isPushKey(p.articleKey)) continue;
+        const cur = pushRows.get(p.campaignId);
+        if (!cur || p.createdAt > cur.createdAt) pushRows.set(p.campaignId, p);
+      }
+      // The `push:` row to show for an article row that has no article-key row: its own push's, else the latest of the article's other pushes.
+      const viaPush = (k: string, c: (typeof sent)[number]) => {
+        const own = pushRows.get(c.id);
+        if (own) return own;
+        let best: (typeof posts)[number] | undefined;
+        for (const id of idsOfArticle.get(k) ?? []) {
+          const r = pushRows.get(id);
+          if (r && (!best || r.createdAt > best.createdAt)) best = r;
+        }
+        return best;
+      };
       const rows = inDay.map(([k, c]) => {
-        const p = byKey.get(k);
+        const p = byKey.get(k) ?? (isPushKey(k) ? undefined : viaPush(k, c));
         let status: ScreenStatus;
         // No row yet: pushed since go-live (the new rule never starts before it) → the worker will post it, however long ago (no age
         // limit); before go-live → never.

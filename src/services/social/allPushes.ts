@@ -73,6 +73,14 @@ export const newRuleFrom = (pushesFrom: Date | null, postFrom: Date | null): Dat
 /** `push:<campaign id>:<send time in ms>`: the row key of ONE push. */
 export const pushKey = (c: { id: string; lastSentAt: Date }): string => `${PUSH_KEY_PREFIX}${c.id}:${c.lastSentAt.getTime()}`;
 export const isPushKey = (key: string): boolean => key.startsWith(PUSH_KEY_PREFIX);
+/** The campaign id inside a `push:<campaign id>:<send time in ms>` key (a cuid has no colon). */
+export const pushKeyCampaignId = (key: string): string => key.slice(PUSH_KEY_PREFIX.length, key.lastIndexOf(':'));
+/** The campaigns that already have a `push:` row, out of a page's keys (the workers' `have` read): the new rule has handled them. */
+export function pushedCampaignIds(keys: Iterable<string>): Set<string> {
+  const ids = new Set<string>();
+  for (const k of keys) if (isPushKey(k)) ids.add(pushKeyCampaignId(k));
+  return ids;
+}
 
 /** `utm_content` for a course / product post: the slug (decoded), cut like an article's. */
 export function storeUtmContent(link: StoreLink): string {

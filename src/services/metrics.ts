@@ -599,6 +599,35 @@ async function channelsFor(
   const eligible = campaigns.filter((c) => c.status === 'SENT' && isPublicArticleCampaign(c));
   const keyOf = new Map(eligible.map((c) => [c.id, articleKey(c)]));
   const keys = [...new Set(keyOf.values())]; // ARTICLE keys: WhatsApp reads only these
+  // Follow-up 1: an ARTICLE push with no article-key row may have been handled by the new rule (its own `push:` row) while the all-pushes
+  // time was on, and the time removed or moved later since: its mark is that row's status, never "waiting". Its own push key joins the
+  // same batched reads below (no extra query).
+  const ownKeyOf = new Map<string, string>();
+  for (const c of eligible) if (c.lastSentAt) ownKeyOf.set(c.id, pushKey({ id: c.id, lastSentAt: c.lastSentAt }));
+  const pushesOfArticle = new Map<string, string[]>(); // article key → the ids of its pushes in this list
+  for (const c of eligible) {
+    const k = keyOf.get(c.id)!;
+    const l = pushesOfArticle.get(k);
+    if (l) l.push(c.id);
+    else pushesOfArticle.set(k, [c.id]);
+  }
+  /**
+   * The `push:` row an article push shows when it has no article-key row: its own push's, else the latest row of the article's other
+   * pushes in this list (the worker skips an article any of whose pushes has a `push:` row, so a repeat or the oldest push must not
+   * read "waiting" for ever). With no row at all: undefined.
+   */
+  const viaPushRow = <T extends { createdAt: Date }>(by: Map<string, T>, c: { id: string }, articleKeyOfPush: string | undefined): T | undefined => {
+    const own = ownKeyOf.get(c.id);
+    const ownRow = own ? by.get(own) : undefined;
+    if (ownRow || !articleKeyOfPush) return ownRow;
+    let best: T | undefined;
+    for (const id of pushesOfArticle.get(articleKeyOfPush) ?? []) {
+      const other = ownKeyOf.get(id);
+      const r = other ? by.get(other) : undefined;
+      if (r && (!best || r.createdAt > best.createdAt)) best = r;
+    }
+    return best;
+  };
   const liPushesFrom = liOn ? newRuleFrom(pageAllPushesFrom(PAGE_TAXSCAN), env.linkedin.postFrom) : null; // never earlier than the page's own go-live
   const fbPushesFrom = fbOn ? newRuleFrom(env.facebook.allPushesFrom, env.facebook.postFrom) : null;
   const pushKeyOf = new Map<string, string>(); // campaign id → its `push:` key (only while an all-pushes time is set)
@@ -607,7 +636,7 @@ async function channelsFor(
     const since = Math.min(...earliestPushes);
     for (const c of campaigns) if (c.status === 'SENT' && c.lastSentAt && c.lastSentAt.getTime() >= since && isAllPushesCampaign(c)) pushKeyOf.set(c.id, pushKey({ id: c.id, lastSentAt: c.lastSentAt }));
   }
-  const socialKeys = [...new Set([...keys, ...pushKeyOf.values()])];
+  const socialKeys = [...new Set([...keys, ...pushKeyOf.values(), ...ownKeyOf.values()])];
   const waPortal = env.rss.portal;
   const [wa, li, fb] = await Promise.all([
     waOn && keys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: keys } }, include: { actedBy: { select: { email: true } } } }) : [],
@@ -638,7 +667,7 @@ async function channelsFor(
     const liKey = liNew ? pKey : key;
     const liSince = liNew ? liPushesFrom : from;
     if (liOn && liKey && liPortals[c.portal]?.includes(PAGE_TAXSCAN) && c.lastSentAt && from && liSince && c.lastSentAt >= liSince) {
-      const p = liBy.get(liKey);
+      const p = liBy.get(liKey) ?? (liNew ? undefined : viaPushRow(liBy, c, key)); // today's rule, no article-key row: a `push:` row the new rule left
       channels.linkedin = p ? p.status : 'PENDING';
       if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
     }
@@ -648,7 +677,7 @@ async function channelsFor(
       const fbKey = fbNew ? pKey : key;
       const fbSince = fbNew ? fbPushesFrom : fbFrom;
       if (fbKey && FB_PORTAL_TO_PAGE[c.portal] === FB_PAGE_TAXSCAN && c.lastSentAt && fbFrom && fbSince && c.lastSentAt >= fbSince) {
-        const p = fbBy.get(fbKey);
+        const p = fbBy.get(fbKey) ?? (fbNew ? undefined : viaPushRow(fbBy, c, key));
         channels.facebook = p ? p.status : 'PENDING';
         if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null };
       }

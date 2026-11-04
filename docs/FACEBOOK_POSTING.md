@@ -46,8 +46,11 @@ FACEBOOK_ALL_PUSHES_FROM (from <ISO time>)`.
   rest spill to the next IST day), the auth stop, the policy stop (it holds every kind of post until an ADMIN presses Resume).
 - **A repeat Facebook refuses** (code 506) is FAILED *"Facebook says this was already posted"*: no retry, no stop, no alert; the next push
   posts on the next tick (`reason=duplicate` in the log).
-- **Do not unset the variable once it has been on.** Today's rule keys on the article, and an article first pushed while the new rule was
-  on has only a `push:` row, so after an unset today's rule would post each of them once more. To pause, set `FACEBOOK_POSTING_ENABLED=false`.
+- **Turning it off is safe.** Remove the variable (or move it later than those pushes) and the page is back on today's rule, and
+  **nothing is reposted**: today's rule skips an article any of whose pushes already has a `push:` row on the page (the campaign id is in
+  the key, so the worker's one read of the page's keys supplies the ids), whatever status the row has. A new article posts once; an article
+  that never got a `push:` row still gets its one post; set the variable again later and every push from that time posts, the past does
+  not. To stop all posting instead, set `FACEBOOK_POSTING_ENABLED=false`.
 - Screens: SOCIAL -> Facebook lists one row per push under the new rule (a repeat is its own row, with its own Retry and Skip) and one row
   per article before the time; **Campaigns -> Channels** shows a new-rule push the status of its own row. Both are exactly as before while the
   variable is unset.

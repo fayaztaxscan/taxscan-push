@@ -8,7 +8,7 @@ import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../l
 import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
-import { isAllPushesCampaign, pushKey, storeLinkOf } from '../social/allPushes';
+import { isAllPushesCampaign, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
 import { istDay, istDayBounds } from '../whatsapp/queue';
 import { pushOutOfQuietHours } from '../linkedin/worker';
 import type { CmsArticle } from '../linkedin/post';
@@ -365,23 +365,24 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
     const firstOf = new Map<string, string>(); // post key → the id of the push it is posted for; both rules insert as the pushes come, oldest first
-    let todays = 0; // how many candidates follow today's rule
+    // TODAY'S-RULE candidates (an article's oldest push) and, for each, the id of EVERY push of that article in this read: the guard
+    // below needs them all (a repeat of an article can have a `push:` row while its oldest push does not).
+    const idsOfArticle = new Map<string, string[]>();
     for (const c of campaigns) {
       const sentAt = c.lastSentAt ?? null; // only read while the all-pushes time is set
+      const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
+      if (k !== null) idsOfArticle.get(k)?.push(c.id); // a later push of an article that follows today's rule
       if (pushesFrom && sentAt && sentAt >= pushesFrom) {
         // THE NEW RULE: one candidate per push. WHO sent it never matters (pacer, backfill clone, Compose, Push now, Breaking).
         if (isAllPushesCampaign(c)) firstOf.set(pushKey({ id: c.id, lastSentAt: sentAt }), c.id);
         continue;
       }
-      // TODAY'S RULE: only a public article, once per article (its oldest push).
-      if (!isPublicArticleCampaign(c)) continue;
-      const k = articleKey(c);
-      if (!firstOf.has(k)) {
-        firstOf.set(k, c.id);
-        todays += 1;
-      }
+      // TODAY'S RULE: only a public article, once per article (its oldest push). WHO sent it never matters.
+      if (k === null || firstOf.has(k)) continue;
+      firstOf.set(k, c.id);
+      idsOfArticle.set(k, [c.id]);
     }
-    if (todays > 0) {
+    if (idsOfArticle.size > 0) {
       // A re-push or backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is not new: never
       // post it, at any age. (Only today's rule looks back; the new rule posts every push.)
       const earlier = await prisma.campaign.findMany({
@@ -394,6 +395,12 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
     // Which of them already have a row (POSTED, SKIPPED, FAILED or in flight)? The page's keys in ONE indexed read: an
     // `IN (…)` of every candidate would grow with the list above.
     const have = new Set((await prisma.facebookPost.findMany({ where: { page }, select: { articleKey: true } })).map((r) => r.articleKey));
+    // Follow-up 1: an article ANY of whose pushes already has a `push:` row on this page was handled by the new rule, so today's rule must
+    // not post it again. That is what happens when the all-pushes time is removed or moved later: without this, every article pushed
+    // while the new rule was on would be posted once more. The campaign id is in the key, so the `have` read above supplies the ids,
+    // and the article keys come from the pushes already read: no extra query. Any status counts (POSTED, FAILED, SKIPPED, in flight).
+    const handled = pushedCampaignIds(have);
+    if (handled.size > 0) for (const [k, ids] of idsOfArticle) if (ids.some((id) => handled.has(id))) firstOf.delete(k);
     // Oldest first across both rules: the read orders the pushes by send time (then id) and each rule inserts as it goes.
     for (const [key, campaignId] of firstOf) {
       if (have.has(key)) continue;

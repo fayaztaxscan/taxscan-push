@@ -1991,9 +1991,9 @@ describe('13. Campaigns Channels: a push under the new rule shows the status of 
     env.whatsapp.queueEnabled = saved.waQueue;
   });
 
-  it('both times unset: a course has no marks (as today) whatever rows exist, an article has the article\'s mark, and no push key is ever queried', async () => {
+  it('both times unset: a course has no marks (as today) whatever rows exist, an article has the article\'s mark; only an ARTICLE\'s own push key is queried (follow-up 1), never a course\'s', async () => {
     const c = await seed('off', course('off'), 'Offer off', hoursAgo(1));
-    await seed('art', articleUrl('off'), 'Article off', hoursAgo(1));
+    const art = await seed('art', articleUrl('off'), 'Article off', hoursAgo(1));
     await liMark('taxscan', pk(c), c, 'POSTED', { linkedinPostId: 'urn:li:share:9', postedAt: hoursAgo(1) });
     const li = jest.spyOn(prisma.linkedInPost, 'findMany');
     const fb = jest.spyOn(prisma.facebookPost, 'findMany');
@@ -2003,7 +2003,8 @@ describe('13. Campaigns Channels: a push under the new rule shows the status of 
       expect(m.details).toEqual({});
       expect((await marks('art')).channels).toEqual({ whatsapp: null, linkedin: 'PENDING', facebook: 'PENDING' });
       const asked = [...li.mock.calls, ...fb.mock.calls].map((x) => JSON.stringify(x[0])).join('');
-      expect(asked).not.toContain('push:');
+      expect(asked).toContain(`push:${art.id}:`); // an article's own push key (it may have been handled by the new rule before an unset)
+      expect(asked).not.toContain(c.id); // a course's never: a course is not an article under today's rule
     } finally {
       li.mockRestore();
       fb.mockRestore();
@@ -2056,6 +2057,59 @@ describe('13. Campaigns Channels: a push under the new rule shows the status of 
     await seed('after', course('after'), 'Offer after', hoursAgo(1));
     expect((await marks('before')).channels).toEqual({ whatsapp: null, linkedin: null, facebook: null });
     expect((await marks('after')).channels).toEqual({ whatsapp: null, linkedin: 'PENDING', facebook: 'PENDING' });
+  });
+  it('18. after an UNSET (both times absent): an article with a push: row shows THAT row\'s status, not "waiting"; one without still reads waiting; a course gets no mark', async () => {
+    const posted = await seed('p', articleUrl('p'), 'Posted article', hoursAgo(3));
+    const failed = await seed('f', articleUrl('f'), 'Failed article', hoursAgo(2));
+    await seed('w', articleUrl('w'), 'Waiting article', hoursAgo(1));
+    const c = await seed('c', course('c'), 'A course', hoursAgo(1));
+    await liMark('taxscan', pk(posted), posted, 'POSTED', { linkedinPostId: 'urn:li:share:9', postedAt: hoursAgo(3) });
+    await fbMark(pk(posted), posted, 'POSTED', { facebookPostId: '1234567890_9', postedAt: hoursAgo(3) });
+    await liMark('taxscan', pk(failed), failed, 'FAILED', { error: 'HTTP 422: nope' });
+    await liMark('taxscan', pk(c), c, 'POSTED', { linkedinPostId: 'urn:li:share:8', postedAt: hoursAgo(1) }); // never read: a course is not an article
+    const p = await marks('p');
+    expect(p.channels).toEqual({ whatsapp: null, linkedin: 'POSTED', facebook: 'POSTED' });
+    expect(p.details).toMatchObject({ linkedin: { postUrl: 'https://www.linkedin.com/feed/update/urn%3Ali%3Ashare%3A9/' }, facebook: { postUrl: 'https://www.facebook.com/1234567890_9' } });
+    expect((await marks('f')).channels).toEqual({ whatsapp: null, linkedin: 'FAILED', facebook: 'PENDING' });
+    expect((await marks('f')).details).toMatchObject({ linkedin: { error: 'HTTP 422: nope' } });
+    expect((await marks('w')).channels).toEqual({ whatsapp: null, linkedin: 'PENDING', facebook: 'PENDING' });
+    expect((await marks('c')).channels).toEqual({ whatsapp: null, linkedin: null, facebook: null });
+  });
+  it('18. after an UNSET, every push of an article whose only row is a push: row reads THAT row (a repeat, and the oldest push), the later row wins, and the channels stay apart', async () => {
+    // r: the oldest push has no row, the repeat has
+    await seed('r1', articleUrl('r'), 'Repeat article', hoursAgo(5));
+    const r2 = await seed('r2', articleUrl('r'), 'Repeat article', hoursAgo(2));
+    await liMark('taxscan', pk(r2), r2, 'POSTED', { linkedinPostId: 'urn:li:share:3', postedAt: hoursAgo(2) });
+    await fbMark(pk(r2), r2, 'SKIPPED');
+    // q: the oldest push has the row, the repeat has none
+    const q1 = await seed('q1', articleUrl('q'), 'Other article', hoursAgo(5));
+    await seed('q2', articleUrl('q'), 'Other article', hoursAgo(2));
+    await liMark('taxscan', pk(q1), q1, 'FAILED', { error: 'HTTP 500' });
+    await fbMark(pk(q1), q1, 'POSTED', { facebookPostId: '1_7', postedAt: hoursAgo(5) });
+    // m: two pushes with rows of different ages; a third push with none shows the LATER row
+    const m1 = await seed('m1', articleUrl('m'), 'Third article', hoursAgo(6));
+    const m2 = await seed('m2', articleUrl('m'), 'Third article', hoursAgo(4));
+    await seed('m3', articleUrl('m'), 'Third article', hoursAgo(1));
+    await liMark('taxscan', pk(m1), m1, 'POSTED', { linkedinPostId: 'urn:li:share:4', postedAt: hoursAgo(6), createdAt: hoursAgo(6) });
+    await liMark('taxscan', pk(m2), m2, 'FAILED', { error: 'HTTP 500', createdAt: hoursAgo(4) });
+    // n: an article with no row on any of its pushes still reads waiting
+    await seed('n1', articleUrl('n'), 'Fourth article', hoursAgo(3));
+    await seed('n2', articleUrl('n'), 'Fourth article', hoursAgo(1));
+    for (const n of ['r1', 'r2']) expect((await marks(n)).channels).toEqual({ whatsapp: null, linkedin: 'POSTED', facebook: 'SKIPPED' });
+    expect((await marks('r1')).details).toMatchObject({ linkedin: { postUrl: 'https://www.linkedin.com/feed/update/urn%3Ali%3Ashare%3A3/' } });
+    for (const n of ['q1', 'q2']) expect((await marks(n)).channels).toEqual({ whatsapp: null, linkedin: 'FAILED', facebook: 'POSTED' });
+    expect((await marks('m1')).channels).toMatchObject({ linkedin: 'POSTED' }); // its own row first
+    expect((await marks('m2')).channels).toMatchObject({ linkedin: 'FAILED' });
+    expect((await marks('m3')).channels).toEqual({ whatsapp: null, linkedin: 'FAILED', facebook: 'PENDING' });
+    for (const n of ['n1', 'n2']) expect((await marks(n)).channels).toEqual({ whatsapp: null, linkedin: 'PENDING', facebook: 'PENDING' });
+  });
+  it('18. an article-key row still wins over a push: row (an article handled by today\'s rule keeps its mark)', async () => {
+    const a = await seed('both', articleUrl('both'), 'Both rows', hoursAgo(2));
+    await liMark('taxscan', ak(a), a, 'POSTED', { linkedinPostId: 'urn:li:share:1', postedAt: hoursAgo(2) });
+    await liMark('taxscan', pk(a), a, 'FAILED', { error: 'HTTP 500' });
+    await fbMark(ak(a), a, 'FAILED', { error: 'HTTP 500 code 2' });
+    await fbMark(pk(a), a, 'POSTED', { facebookPostId: '1_9', postedAt: hoursAgo(2) });
+    expect((await marks('both')).channels).toMatchObject({ linkedin: 'POSTED', facebook: 'FAILED' });
   });
   it('both set: both marks; the Academy page has no mark of its own, whatever its rows say', async () => {
     env.linkedin.allPushesFrom = { taxscan: hoursAgo(5), academy: hoursAgo(5) };
@@ -2232,5 +2286,269 @@ describe('the boot lines: one per page saying whether every push posts, and if n
     startFacebookWorker();
     expect(pushLines()).toEqual([]);
     expect(schedule).not.toHaveBeenCalled();
+  });
+});
+
+/* ================================================================== */
+/* Follow-up 1: turning a switch off (or moving it later) must not repost articles */
+/* ================================================================== */
+
+describe('15. LinkedIn: the all-pushes time removed or moved later reposts nothing', () => {
+  const sendTicks = async (over: LiDeps) => {
+    for (const m of [1, 2, 3, 15, 60, 600]) await runLinkedInTick(liDeps({ ...ONE, now: () => at(NOW, m), ...over }));
+  };
+  async function threeOnTheNewRule() {
+    const arts = [await article('a1', after(10)), await article('a2', after(20)), await article('a3', after(30))];
+    await runLinkedInTick(liDeps(ONE)); // the new rule is on: three posts, three `push:` rows
+    expect(calls).toHaveLength(3);
+    sameKeys(await keysOf(PAGE), arts.map(pk));
+    calls = [];
+    return arts;
+  }
+  it.each([['null', null], ['undefined (the env alone, and nothing is set there)', undefined]])('three articles posted with push: rows, the variable then REMOVED (%s): no new row and no post call over several ticks', async (_n, value) => {
+    const arts = await threeOnTheNewRule();
+    await sendTicks({ allPushesFrom: value as LiDeps['allPushesFrom'] });
+    expect(calls).toEqual([]);
+    sameKeys(await keysOf(PAGE), arts.map(pk));
+    expect(pageCalls).toEqual([]);
+  });
+  it('the time MOVED LATER than those pushes: the same', async () => {
+    const arts = await threeOnTheNewRule();
+    await sendTicks({ allPushesFrom: { [PAGE]: after(60) } });
+    expect(calls).toEqual([]);
+    sameKeys(await keysOf(PAGE), arts.map(pk));
+  });
+  it.each(['POSTED', 'FAILED', 'SKIPPED'] as const)('whatever status the push: row has (%s): nothing is reposted', async (status) => {
+    const arts = [await article('a1', after(10)), await article('a2', after(20)), await article('a3', after(30))];
+    for (const a of arts) await liRow(PAGE, pk(a), a, status, status === 'FAILED' ? { attempts: 4, error: 'HTTP 500' } : {});
+    await sendTicks({ allPushesFrom: null });
+    expect(calls).toEqual([]);
+    sameKeys(await keysOf(PAGE), arts.map(pk));
+    expect((await liRows(PAGE)).every((r) => r.status === status)).toBe(true); // untouched
+  });
+  it('ANY push of the article counts: a repeat with a push: row covers its oldest push, which has none', async () => {
+    const orig = await article('orig', after(10)); // no row of any kind
+    const clone = await push(orig.url, after(20), { title: orig.title });
+    await liRow(PAGE, pk(clone), clone, 'POSTED', { linkedinPostId: 'urn:li:share:1', postedAt: after(21) });
+    await sendTicks({ allPushesFrom: null });
+    expect(calls).toEqual([]);
+    expect(await keysOf(PAGE)).toEqual([pk(clone)]);
+  });
+  it('the guard is per page: the Taxscan page\'s push: rows do not stop the Academy page from posting what it never posted', async () => {
+    const arts = [await article('a1', at(NOW, -60)), await article('a2', at(NOW, -50))]; // after both pages\' go-lives
+    for (const a of arts) await liRow(PAGE, pk(a), a, 'POSTED', { linkedinPostId: 'urn:li:share:1', postedAt: at(NOW, -40) });
+    await runLinkedInTick(liDeps({ allPushesFrom: null }));
+    expect(calls.map((x) => x.orgUrn)).toEqual([ORG_AC, ORG_AC]); // Academy (no rows of its own) posts each once; Taxscan nothing
+    sameKeys(await keysOf(PAGE_AC), arts.map(articleKey));
+    sameKeys(await keysOf(PAGE), arts.map(pk));
+  });
+});
+
+describe('16. LinkedIn: after the removal, today\'s rule is back — new articles post once, handled ones never again', () => {
+  it('a NEW article posts once; one that never got a push: row still gets its one post; a repeat of a handled article posts nothing', async () => {
+    const handled = await article('handled', after(10));
+    await runLinkedInTick(liDeps(ONE)); // the new rule is on: a push: row for `handled`
+    const never = await article('never', after(20)); // pushed while the new rule was on, but the worker never saw it
+    const repeat = await push(handled.url, after(25), { title: handled.title }); // a repeat of the handled article
+    calls = [];
+    const off = (m: number) => liDeps({ ...ONE, allPushesFrom: null, now: () => at(NOW, m) });
+    await runLinkedInTick(off(1));
+    const fresh = await article('fresh', after(40)); // pushed after the removal
+    await runLinkedInTick(off(2));
+    await runLinkedInTick(off(3));
+    expect(calls.map(headOf).sort()).toEqual(['Story fresh', 'Story never']);
+    sameKeys(await keysOf(PAGE), [pk(handled), articleKey(never), articleKey(fresh)]); // today\'s keys for the two; nothing for the repeat
+    expect((await liRows(PAGE)).some((r) => r.campaignId === repeat.id)).toBe(false);
+  });
+});
+
+describe('17. LinkedIn: set again later — every push from the new time posts, the past does not', () => {
+  it('pushes at or after the new time post every time (a repeat of a handled article, a course); past pushes post nothing', async () => {
+    const a = await article('a', after(10));
+    await runLinkedInTick(liDeps(ONE)); // handled under the first time (08:00)
+    const past = await push(courseUrl('c-past'), after(40), { title: 'Past course' }); // pushed while the variable was removed
+    calls = [];
+    await runLinkedInTick(liDeps({ ...ONE, allPushesFrom: null, now: () => at(NOW, 1) }));
+    expect(calls).toEqual([]);
+    const T2 = after(60);
+    const e1 = await push(a.url, after(70), { title: a.title });
+    const e2 = await push(a.url, after(80), { title: a.title });
+    const c1 = await push(courseUrl('c-new'), after(90), { title: 'New course' });
+    await runLinkedInTick(liDeps({ ...ONE, allPushesFrom: { [PAGE]: T2 }, now: () => at(NOW, 2) }));
+    expect(calls.map(headOf)).toEqual([a.title, a.title, 'New course']); // every push from the new time, in order
+    sameKeys(await keysOf(PAGE), [pk(a), pk(e1), pk(e2), pk(c1)]);
+    expect((await liRows(PAGE)).some((r) => r.campaignId === past.id)).toBe(false); // the past does not
+    await runLinkedInTick(liDeps({ ...ONE, allPushesFrom: { [PAGE]: T2 }, now: () => at(NOW, 3) }));
+    expect(calls).toHaveLength(3); // and nothing more
+  });
+});
+
+describe('15 + 16 + 17. Facebook: removal, moving later and setting again', () => {
+  it('three articles posted with push: rows, the variable REMOVED, then MOVED LATER: no new row and no post over several ticks', async () => {
+    const arts = [await article('a1', after(10)), await article('a2', after(20)), await article('a3', after(30))];
+    await fbTicks([0, 11, 22]);
+    expect(fbCalls).toHaveLength(3);
+    sameKeys(await fbKeys(), arts.map(pk));
+    fbCalls = [];
+    await fbTicks([40, 51, 62, 73, 600], { allPushesFrom: null });
+    await fbTicks([700, 711, 722], { allPushesFrom: after(60) });
+    await fbTicks([800], { allPushesFrom: undefined });
+    expect(fbCalls).toEqual([]);
+    sameKeys(await fbKeys(), arts.map(pk));
+  });
+  it.each(['POSTED', 'FAILED', 'SKIPPED'] as const)('whatever status the push: row has (%s)', async (status) => {
+    const arts = [await article('a1', after(10)), await article('a2', after(20)), await article('a3', after(30))];
+    for (const a of arts) await fbRow(pk(a), a, status, status === 'FAILED' ? { attempts: 4, error: 'HTTP 500 code 2' } : {});
+    await fbTicks([0, 11, 22, 33, 600], { allPushesFrom: null });
+    expect(fbCalls).toEqual([]);
+    sameKeys(await fbKeys(), arts.map(pk));
+    expect((await fbRows()).every((r) => r.status === status)).toBe(true);
+  });
+  it('ANY push of the article counts: a repeat with a push: row covers its oldest push', async () => {
+    const orig = await article('orig', after(10));
+    const clone = await push(orig.url, after(20), { title: orig.title });
+    await fbRow(pk(clone), clone, 'POSTED', { facebookPostId: '1_1', postedAt: after(21) });
+    await fbTicks([0, 11, 22], { allPushesFrom: null });
+    expect(fbCalls).toEqual([]);
+    expect(await fbKeys()).toEqual([pk(clone)]);
+  });
+  it('after the removal a NEW article posts once, an article that never got a push: row still gets its one post, a repeat of a handled one posts nothing', async () => {
+    const handled = await article('handled', after(10));
+    await fbTicks([0]);
+    const never = await article('never', after(20));
+    await push(handled.url, after(25), { title: handled.title });
+    fbCalls = [];
+    await fbTicks([11], { allPushesFrom: null });
+    const fresh = await article('fresh', after(40));
+    await fbTicks([22, 33, 44, 55], { allPushesFrom: null });
+    expect(fbCalls.map((c) => c.message.split('\n')[0]).sort()).toEqual(['Story fresh', 'Story never']);
+    sameKeys(await fbKeys(), [pk(handled), articleKey(never), articleKey(fresh)]);
+  });
+  it('set again later: every push from the new time posts, the past does not', async () => {
+    const a = await article('a', after(10));
+    await fbTicks([0]);
+    const past = await push(courseUrl('c-past'), after(40), { title: 'Past course' });
+    fbCalls = [];
+    await fbTicks([11], { allPushesFrom: null });
+    expect(fbCalls).toEqual([]);
+    const T2 = after(60);
+    const e1 = await push(a.url, after(70), { title: a.title });
+    const e2 = await push(a.url, after(80), { title: a.title });
+    await fbTicks([22, 33, 44, 55], { allPushesFrom: T2 });
+    expect(fbCalls).toHaveLength(2);
+    sameKeys(await fbKeys(), [pk(a), pk(e1), pk(e2)]);
+    expect((await fbRows()).some((r) => r.campaignId === past.id)).toBe(false);
+  });
+});
+
+describe('18. the screens after a removal: an article with a push: row shows that row\'s status, not WAITING', () => {
+  const liApp = (allPushesFrom: () => unknown = () => null) =>
+    createApp({
+      rateLimit: { publicPerMin: 10000, loginPerMin: 10000 },
+      linkedin: { enabled: () => true, clock: () => NOW, portals: () => ({ [PORTAL]: [PAGE, PAGE_AC] }), postFrom: () => ({ [PAGE]: FROM, [PAGE_AC]: FROM_AC }), allPushesFrom: allPushesFrom as never, worker: liDeps() },
+    });
+  const fbApp = () =>
+    createApp({
+      rateLimit: { publicPerMin: 10000, loginPerMin: 10000 },
+      facebook: { enabled: () => true, clock: () => NOW, portals: () => ({ [PORTAL]: FB_PAGE }), postFrom: () => FROM, allPushesFrom: () => null, worker: fbDeps() },
+    });
+  type Row = { id: string | null; campaignId: string; status: string; error: string | null; postUrl: string | null };
+  it('LinkedIn: POSTED / FAILED / SKIPPED push rows show their own status (with their ids, so Retry and Skip work); an article without any row still reads WAITING', async () => {
+    const posted = await article('p', ist(8, 10));
+    const failed = await article('f', ist(8, 20));
+    const skipped = await article('s', ist(8, 30));
+    const fresh = await article('n', ist(9, 0));
+    await liRow(PAGE, pk(posted), posted, 'POSTED', { linkedinPostId: 'urn:li:share:5', postedAt: ist(8, 12) });
+    await liRow(PAGE, pk(failed), failed, 'FAILED', { attempts: 4, error: 'HTTP 500' });
+    await liRow(PAGE, pk(skipped), skipped, 'SKIPPED');
+    const a = liApp();
+    const rows = (await request(a).get(`/api/linkedin/posts?date=2026-11-03&page=${PAGE}`).set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([
+      [posted.id, 'POSTED'],
+      [failed.id, 'FAILED'],
+      [skipped.id, 'SKIPPED'],
+      [fresh.id, 'WAITING'],
+    ]);
+    expect(rows[0].postUrl).toBe('https://www.linkedin.com/feed/update/urn%3Ali%3Ashare%3A5/');
+    expect(rows[1]).toMatchObject({ error: 'HTTP 500' });
+    expect(rows.slice(0, 3).every((r) => r.id !== null)).toBe(true);
+    // Retry from the article's row posts through the article builder
+    const retried = await request(a).post(`/api/linkedin/posts/${rows[1].id}/retry`).set(BEARER).send({});
+    expect(retried.body).toEqual({ ok: true, status: 'POSTED' });
+    expect(headOf(calls[0])).toBe('Story f');
+  });
+  it('LinkedIn: when only a REPEAT has the push: row, the article row shows that row (the worker skips the article)', async () => {
+    const orig = await article('orig', ist(8, 10));
+    const clone = await push(orig.url, ist(8, 40), { title: orig.title });
+    await liRow(PAGE, pk(clone), clone, 'POSTED', { linkedinPostId: 'urn:li:share:7', postedAt: ist(8, 41) });
+    const rows = (await request(liApp()).get(`/api/linkedin/posts?date=2026-11-03&page=${PAGE}`).set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([[orig.id, 'POSTED']]);
+  });
+  it('LinkedIn: an article-key row still wins over a push: row; a page with no push: rows reads exactly as before', async () => {
+    const both = await article('both', ist(8, 10));
+    await liRow(PAGE, articleKey(both), both, 'FAILED', { attempts: 4, error: 'HTTP 422' });
+    await liRow(PAGE, pk(both), both, 'POSTED', { linkedinPostId: 'urn:li:share:9' });
+    const w = await article('w', ist(8, 50));
+    const rows = (await request(liApp()).get(`/api/linkedin/posts?date=2026-11-03&page=${PAGE}`).set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([
+      [both.id, 'FAILED'],
+      [w.id, 'WAITING'],
+    ]);
+  });
+  it('LinkedIn: a campaign row sent again has two push: rows: the article row shows the LATER one, whichever order the database returns them in', async () => {
+    const a = await article('twice-a', ist(8, 10));
+    const b = await article('twice-b', ist(8, 20));
+    const older = new Date(Date.UTC(2026, 10, 1));
+    const later = new Date(Date.UTC(2026, 10, 2));
+    // a: the older row is created first; b: the later row is created first
+    await liRow(PAGE, `push:${a.id}:1`, a, 'POSTED', { linkedinPostId: 'urn:li:share:1', createdAt: older });
+    await liRow(PAGE, `push:${a.id}:2`, a, 'FAILED', { attempts: 4, error: 'HTTP 500', createdAt: later });
+    await liRow(PAGE, `push:${b.id}:2`, b, 'FAILED', { attempts: 4, error: 'HTTP 500', createdAt: later });
+    await liRow(PAGE, `push:${b.id}:1`, b, 'POSTED', { linkedinPostId: 'urn:li:share:2', createdAt: older });
+    const rows = (await request(liApp()).get(`/api/linkedin/posts?date=2026-11-03&page=${PAGE}`).set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([
+      [a.id, 'FAILED'],
+      [b.id, 'FAILED'],
+    ]);
+  });
+  it('Facebook: a campaign row sent again has two push: rows: the article row shows the LATER one, whichever order the database returns them in', async () => {
+    const a = await article('twice-a', ist(8, 10));
+    const b = await article('twice-b', ist(8, 20));
+    const older = new Date(Date.UTC(2026, 10, 1));
+    const later = new Date(Date.UTC(2026, 10, 2));
+    await fbRow(`push:${a.id}:1`, a, 'POSTED', { facebookPostId: '1_1', createdAt: older });
+    await fbRow(`push:${a.id}:2`, a, 'FAILED', { attempts: 4, error: 'HTTP 500 code 2', createdAt: later });
+    await fbRow(`push:${b.id}:2`, b, 'FAILED', { attempts: 4, error: 'HTTP 500 code 2', createdAt: later });
+    await fbRow(`push:${b.id}:1`, b, 'POSTED', { facebookPostId: '1_2', createdAt: older });
+    const rows = (await request(fbApp()).get('/api/facebook/posts?date=2026-11-03').set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([
+      [a.id, 'FAILED'],
+      [b.id, 'FAILED'],
+    ]);
+  });
+  it('Facebook: an article-key row still wins over a push: row', async () => {
+    const both = await article('both', ist(8, 10));
+    await fbRow(articleKey(both), both, 'FAILED', { attempts: 4, error: 'HTTP 500 code 2' });
+    await fbRow(pk(both), both, 'POSTED', { facebookPostId: '1_9' });
+    const rows = (await request(fbApp()).get('/api/facebook/posts?date=2026-11-03').set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([[both.id, 'FAILED']]);
+  });
+  it('Facebook: the same', async () => {
+    const posted = await article('p', ist(8, 10));
+    const failed = await article('f', ist(8, 20));
+    const fresh = await article('n', ist(9, 0));
+    await fbRow(pk(posted), posted, 'POSTED', { facebookPostId: '1234567890_5', postedAt: ist(8, 12) });
+    await fbRow(pk(failed), failed, 'FAILED', { attempts: 4, error: 'HTTP 500 code 2' });
+    const orig = await article('orig', ist(8, 30));
+    const clone = await push(orig.url, ist(8, 40), { title: orig.title });
+    await fbRow(pk(clone), clone, 'SKIPPED');
+    const rows = (await request(fbApp()).get('/api/facebook/posts?date=2026-11-03').set(BEARER)).body.rows as Row[];
+    expect(rows.map((r) => [r.campaignId, r.status])).toEqual([
+      [posted.id, 'POSTED'],
+      [failed.id, 'FAILED'],
+      [orig.id, 'SKIPPED'], // via its repeat's push: row
+      [fresh.id, 'WAITING'],
+    ]);
+    expect(rows[0].postUrl).toBe('https://www.facebook.com/1234567890_5');
   });
 });
