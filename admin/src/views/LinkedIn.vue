@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
 import { useRoute } from 'vue-router';
-import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
+import { apiErrorMessage, PUSH_REQUEST, useApi, type ApiError } from '../composables/useApi';
 
 type Status = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
 type Row = {
@@ -22,10 +22,15 @@ type Row = {
 type Counts = { waiting: number; posted: number; failed: number; skipped: number; notPosted: number; all: number };
 type ListResponse = {
   date: string;
+  /** The page these rows belong to, and the ACTIVE pages (Taxscan first). A server without them gets no switch. */
+  page?: string;
+  pages?: string[];
   rows: Row[];
   counts: Counts;
   login: { since: string; status: number | null } | null;
   token?: TokenInfo;
+  /** Present (true) only while two pages post with one token; missing = false. */
+  tokenShared?: boolean;
 };
 type TokenInfo = {
   validUntil: string | null;
@@ -52,10 +57,16 @@ const minDate = istDay(-14);
 const qDate = String(useRoute().query.date ?? '');
 const date = ref<string>(/^\d{4}-\d{2}-\d{2}$/.test(qDate) && qDate >= minDate && qDate <= maxDate ? qDate : maxDate);
 const filter = ref<Filter>('all');
+const EMPTY_COUNTS: Counts = { waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 };
 const rows = ref<Row[]>([]);
-const counts = ref<Counts>({ waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 });
+const counts = ref<Counts>({ ...EMPTY_COUNTS });
 const login = ref<ListResponse['login']>(null);
 const token = ref<TokenInfo | null>(null);
+// Which LinkedIn page is on screen. null = not chosen yet: the first request leaves `page` out and adopts the server's
+// answer (its first page, Taxscan). `pages` = the ACTIVE pages, Taxscan first; the switch shows only when there are two or more.
+const page = ref<string | null>(null);
+const pages = ref<string[]>([]);
+const tokenShared = ref(false);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const note = ref<string | null>(null);
@@ -64,6 +75,16 @@ const retrying = ref<Row | null>(null);
 
 const isToday = computed(() => date.value === maxDate);
 const isYesterday = computed(() => date.value === istDay(-1));
+
+// A page's name as the editors say it. Any other key is shown capitalised (a page added later needs no change here).
+const PAGE_LABEL: Record<string, string> = { taxscan: 'Taxscan', academy: 'Academy' };
+const labelOf = (key: string): string => PAGE_LABEL[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+const multi = computed(() => pages.value.length > 1);
+// The page being shown ("Taxscan" until the first answer, which is also what a one-page server always shows).
+const pageLabel = computed(() => labelOf(page.value ?? pages.value[0] ?? 'taxscan'));
+function joinNames(names: string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
 
 const CHIPS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -102,45 +123,104 @@ const emptyText = computed(() => {
   return `Nothing ${word[filter.value as Exclude<Filter, 'all'>]} ${dayWord.value}.`;
 });
 
+// The page that posts with ANOTHER page's token (Academy): it has no token variable of its own, so its banner never sends
+// anyone to Railway for it.
+const borrowsToken = computed(() => tokenShared.value && !!page.value && page.value !== pages.value[0]);
 const loginText = computed(() => {
-  if (!login.value) return '';
-  const when = new Date(login.value.since).toLocaleString(undefined, {
+  const l = login.value;
+  if (!l) return '';
+  const when = new Date(l.since).toLocaleString(undefined, {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   });
-  const st = login.value.status ? ` (${login.value.status})` : '';
-  return `LinkedIn rejected the access token${st} since ${when}. Posting is stopped until a new token is set in Railway or the app restarts.`;
+  const st = l.status ? ` (${l.status})` : '';
+  const lead = `LinkedIn rejected the access token${st} since ${when}.`;
+  // One page in use: the original wording, word for word.
+  if (!multi.value) return `${lead} Posting is stopped until a new token is set in Railway or the app restarts.`;
+  // Two pages: a stop belongs to one page, so the banner names it.
+  const name = pageLabel.value;
+  if (borrowsToken.value) {
+    const stopped = `Posting to the ${name} page is stopped. Both pages post with one shared token`;
+    // A 403 on this page alone, while the other keeps posting, is almost always a missing admin role on THIS page.
+    return l.status === 403
+      ? `${lead} ${stopped}, so this usually means the LinkedIn member who made that token has no admin role on the ${name} page. Tell the owner.`
+      : `${lead} ${stopped}. Tell the owner.`;
+  }
+  return `${lead} Posting to the ${name} page is stopped until a new token is set in Railway or the app restarts. Tell the owner.`;
 });
 
 function longDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 }
+// Two pages posting with one token (the Academy page borrows the Taxscan page's): say so plainly, on both pages. The server
+// reports `tokenShared` for the pages in `pages`, so the names come from there.
+const sharedNote = computed(() => (tokenShared.value && multi.value ? `one token, shared by the ${joinNames(pages.value.map(labelOf))} pages` : ''));
 const tokenText = computed(() => {
   const t = token.value;
-  if (!t) return '';
+  if (!t) {
+    // Renewal is off (no token dates), but two pages still share one token: a short line, never invented dates.
+    return sharedNote.value ? `Both pages post with the ${labelOf(pages.value[0] as string)} page's token.` : '';
+  }
   const parts = [t.validUntil ? `Token valid until ${t.validUntilSource === 'estimate' ? 'about ' : ''}${longDate(t.validUntil)}` : 'Token expiry not read yet'];
   parts.push(t.autoRenew ? 'renews automatically' : 'renewal is not fully set up');
   if (t.refreshUntil) parts.push(`yearly sign-in due by ${longDate(t.refreshUntil)}`);
   if (t.renewalFailed) parts.push('last renewal failed');
+  if (sharedNote.value) parts.push(sharedNote.value);
   return parts.join(' · ');
 });
 
+// Each answer is for one page and one day. If a newer request has started (another page or day tapped meanwhile), an older
+// answer is dropped, so one page's rows can never appear under the other page's name.
+let loadSeq = 0;
+function fetchList(withPage = true): Promise<ListResponse> {
+  const pageQ = withPage && page.value ? `&page=${encodeURIComponent(page.value)}` : '';
+  return api.get<ListResponse>(`/api/linkedin/posts?date=${encodeURIComponent(date.value)}${pageQ}`);
+}
 async function load(keepError = false): Promise<void> {
+  const mine = ++loadSeq;
   loading.value = true;
   if (!keepError) error.value = null;
   try {
-    const data = await api.get<ListResponse>(`/api/linkedin/posts?date=${encodeURIComponent(date.value)}`);
+    let data: ListResponse;
+    try {
+      data = await fetchList();
+    } catch (e) {
+      const err = e as ApiError;
+      const invalidPage = err.status === 400 && (err.body as { error?: string } | undefined)?.error === 'invalid_page';
+      if (!page.value || !invalidPage) throw e;
+      // The remembered page is no longer active (the Academy page was switched off meanwhile): quietly ask for the first
+      // page instead. Nothing on screen changes until that answer arrives, so if it fails too the screen stays consistent.
+      data = await fetchList(false);
+    }
+    if (mine !== loadSeq) return;
     rows.value = data.rows;
     counts.value = data.counts;
     login.value = data.login;
     token.value = data.token ?? null;
+    pages.value = data.pages ?? [];
+    page.value = data.page ?? data.pages?.[0] ?? null;
+    tokenShared.value = data.tokenShared === true;
   } catch (e) {
-    error.value = apiErrorMessage(e);
+    if (mine === loadSeq) error.value = apiErrorMessage(e);
   } finally {
-    loading.value = false;
+    if (mine === loadSeq) loading.value = false;
   }
+}
+
+function selectPage(p: string): void {
+  if (p === page.value) return;
+  page.value = p;
+  // Rows, counts and the banner belong to the page just left: clear them so none of its Retry / Skip buttons stay on
+  // screen under the new name while the answer is on its way. (The token line is the one shared token: it stays.)
+  rows.value = [];
+  counts.value = { ...EMPTY_COUNTS };
+  login.value = null;
+  error.value = null;
+  note.value = null;
+  retrying.value = null;
+  void load();
 }
 
 function setDate(d: string): void {
@@ -159,8 +239,10 @@ function onPick(e: Event): void {
 
 const retryDetail = computed(() =>
   retrying.value?.unknownOutcome
-    ? 'Check the LinkedIn page first — it may already be posted.'
-    : 'It goes to the Taxscan LinkedIn page straight away.',
+    ? multi.value
+      ? `Check the ${pageLabel.value} LinkedIn page first — it may already be posted.`
+      : 'Check the LinkedIn page first — it may already be posted.'
+    : `It goes to the ${pageLabel.value} LinkedIn page straight away.`,
 );
 
 async function confirmRetry(): Promise<void> {
@@ -234,12 +316,26 @@ onMounted(() => load());
       <h1 class="section-title" style="margin: 0">LinkedIn page</h1>
       <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
     </div>
-    <p class="muted" style="font-size: 13px; margin: 4px 0 12px">
-      Every article we push is posted to the Taxscan LinkedIn page automatically, a few minutes later. Nothing to do
+    <!-- Which page's list this is. Only while the Academy page is on; it sits above everything it changes. -->
+    <div v-if="multi" class="li-switch" role="group" aria-label="LinkedIn page" data-testid="li-switch">
+      <button
+        v-for="p in pages"
+        :key="p"
+        type="button"
+        :class="{ on: p === page }"
+        :aria-pressed="p === page"
+        @click="selectPage(p)"
+      >
+        {{ labelOf(p) }}
+      </button>
+    </div>
+
+    <p class="muted" style="font-size: 13px; margin: 4px 0 12px" data-testid="li-intro">
+      Every article we push is posted to the {{ pageLabel }} LinkedIn page automatically, a few minutes later. Nothing to do
       unless a post fails.
     </p>
 
-    <p v-if="token" class="li-token" :class="'t-' + token.status" data-testid="li-token">{{ tokenText }}</p>
+    <p v-if="tokenText" class="li-token" :class="token ? 't-' + token.status : ''" data-testid="li-token">{{ tokenText }}</p>
 
     <div v-if="login" class="banner warn" role="alert">{{ loginText }}</div>
 
@@ -339,6 +435,44 @@ onMounted(() => load());
 </template>
 
 <style scoped>
+/* The page switch: a scope control (which page's list is this), so it is ONE joined box, unlike the loose day buttons and the
+   status pills below it. Same tokens as the joined .seg control on Reports and Digests. No overflow:hidden (it would clip the
+   keyboard focus ring), so the outer corners are rounded on the buttons themselves. */
+.li-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  margin: 0 0 8px;
+}
+.li-switch button {
+  min-width: 104px;
+  min-height: 38px;
+  padding: 8px 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+.li-switch button:first-child {
+  border-radius: 7px 0 0 7px;
+}
+.li-switch button:last-child {
+  border-radius: 0 7px 7px 0;
+}
+.li-switch button:hover:not(.on) {
+  background: #f1f5f9;
+}
+.li-switch button.on {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.li-switch button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .li-token {
   font-size: 13px;
   margin: 0 0 12px;
@@ -445,6 +579,17 @@ tr.li-quiet td {
   white-space: nowrap;
 }
 @media (max-width: 720px) {
+  /* The switch spans the phone's width, one equal 44px-tall tap target per page. */
+  .li-switch {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    width: 100%;
+  }
+  .li-switch button {
+    min-width: 0;
+    min-height: 44px;
+  }
   .toolbar .btn,
   .li-days .btn,
   .li-chip,

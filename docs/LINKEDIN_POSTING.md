@@ -5,28 +5,37 @@ page**: headline, hashtags and a link-preview card whose link carries our Linked
 It replaces the `sheet_to_linkedin` job in the separate `fayaztaxscan/taxscan-automation` repo (which posts every feed
 article). Brief: `docs/briefs/2026-11-02-linkedin-page-posting.md` (incl. follow-up 1).
 
+**Optionally the same articles also go to the Taxscan Academy page** (`urn:li:organization:91100022`), with the same text, hashtags
+and picture, once the owner sets the two `LINKEDIN_ACADEMY_*` variables (see "Pages"). Unset, nothing about it exists: no rows, no
+log noise, no change to the Taxscan page. Brief: `docs/briefs/2026-11-04-linkedin-academy-page.md`.
+
 ## What posts
-A `Campaign` with `status = SENT`, a mapped `portal` (`taxscan` → page `taxscan`), a taxscan.in **article** URL
-(`articleContentOf()`: `/<section>/<slug>`, or a trailing numeric id; never the home page, a section page, academy or shop)
-and `lastSentAt ≥ LINKEDIN_POST_FROM`. **There is no age limit** (brief 2026-11-04-social-no-age-limit): an article that has no
-row yet is posted however long ago it was pushed, so an outage, a login stop or a backlog never loses one. Only
-`LINKEDIN_POST_FROM` is absolute: nothing pushed before it is ever posted. **Whoever sent it does not matter**: the pacer, Compose
+A `Campaign` with `status = SENT`, a mapped `portal` (`taxscan` → page `taxscan`, and page `academy` too while it is on), a
+taxscan.in **article** URL (`articleContentOf()`: `/<section>/<slug>`, or a trailing numeric id; never the home page, a section page,
+academy or shop; the Academy PAGE posts these same taxscan.in articles, not academy.taxscan.in pushes) and `lastSentAt ≥` the page's
+go-live time. **There is no age limit** (brief 2026-11-04-social-no-age-limit): an article that has no row yet is posted however long
+ago it was pushed, so an outage, a login stop or a backlog never loses one. Only the page's go-live time is absolute
+(`LINKEDIN_POST_FROM`; Academy: its own `LINKEDIN_ACADEMY_POST_FROM`): nothing pushed before it is ever posted to that page. **Whoever sent it does not matter**: the pacer, Compose
 "Send now", a scheduled Compose send marked SENT by the sweeper, Queue/Review "Push now" and Breaking all post. The one
 exclusion is a **test send**: a campaign whose target is ONLY the test-segment topic (`TEST_SEGMENT_TOPIC`, default `test`).
 The predicate is shared with the WhatsApp queue: `isPublicArticleCampaign()` in `src/services/social/publicCampaign.ts`.
 
-One post per **article** (`articleKey()`): a re-push or the morning-backfill clone never posts again, nor does a re-push or
-clone of an article first pushed before go-live (looked for up to 14 days before `LINKEDIN_POST_FROM`).
+One post per **article per page** (`articleKey()`; the unique key is `(page, articleKey)`): a re-push or the morning-backfill clone
+never posts again, nor does a re-push or clone of an article first pushed before that page's go-live (looked for up to 14 days
+before the page's own go-live time). The two pages are independent: separate rows, statuses, Retry and Skip, and an article pushed
+between the two go-live times is posted to the Taxscan page only (a later repeat of it adds no Academy row).
 
 ## How it runs
 `src/services/linkedin/worker.ts`: a 1-minute `node-cron` tick, started only when `LINKEDIN_POSTING_ENABLED=true` **and**
-`LINKEDIN_POST_FROM` + the page's two variables are valid (otherwise it logs `[linkedin] refusing to start: …` and does not
-run). It reads `Campaign` rows only; the push send path is untouched, and the request path never calls LinkedIn (only the
-worker, and the screen's Retry, which makes one post and answers).
+`LINKEDIN_POST_FROM` + the Taxscan page's two variables are valid (otherwise it logs `[linkedin] refusing to start: …` and does not
+run). The Academy page never blocks the start: it is active only when its own two variables are valid, and borrows the Taxscan
+token, so once the Taxscan page is sound Academy cannot be the reason. It reads `Campaign` rows only; the push send path is
+untouched, and the request path never calls LinkedIn (only the worker, and the screen's Retry, which makes one post and answers).
 
-- At most **3 posts per tick**, oldest push first.
-- Each tick reads every SENT push since `LINKEDIN_POST_FROM` (only `id`, `url` and `target`) and the page's existing article keys.
-  That list grows by about 20 a day and nothing else does; it is the one thing to revisit if the page runs for years.
+- At most **3 posts per tick, shared by both pages**, oldest push first. The Taxscan page is handled first in a tick, so a busy
+  Taxscan page only delays the Academy page to a later tick (an article normally posts to both in the same tick).
+- Each tick reads, per page, every SENT push since that page's go-live time (only `id`, `url` and `target`) and the page's existing
+  article keys. That list grows by about 20 a day per page and nothing else does; it is the one thing to revisit if the pages run for years.
 - The `LinkedInPost` row (PENDING, in flight) is created **before** the API call; unique (`page`, `articleKey`) means a
   crash or an overlapping tick can't post twice.
 - An in-flight row older than **10 minutes** with no result becomes FAILED *"unknown — check the page"* and is **never
@@ -35,9 +44,14 @@ worker, and the screen's Retry, which makes one post and answers).
   fall in quiet hours (23:00–07:00 IST) waits until 07:00. A first attempt goes out at any hour (a push already obeyed the
   night rule: only Breaking goes out at night).
 - **400 / 409 / 422** and other client errors: FAILED at once (retrying can't help).
-- **401 / 403** (token expired, revoked or lacking permission): posting for the page **stops** until the token changes in
-  Railway or the app restarts. One alert email per IST day to the active ADMIN users (ElasticEmail), and an amber banner on
-  the LinkedIn screen. Pushed articles are kept and post once posting resumes, however long that takes.
+- **401 / 403** (token expired, revoked or lacking permission): posting for **that page** **stops** until the token changes in
+  Railway (or is renewed) or the app restarts. One alert email per page per IST day to the active ADMIN users (ElasticEmail), and
+  an amber banner on the LinkedIn screen (each page keeps its own banner state, `linkedin:auth:<page>`). Pushed articles are kept and
+  post once posting resumes, however long that takes. **A stop is per page**: a 401 / 403 on one page never gates the other, in the
+  same tick or a later one. A 401 on the Taxscan page does not prevent the Academy page's attempt in that tick (it shares the token,
+  so it fails too, stops itself and sends its own alert). A 403 on Academy alone, while Taxscan keeps posting, normally means the
+  LinkedIn member who made the token has no admin role on the Academy page: Taxscan carries on, Academy stops with its own banner and
+  e-mail, and after the role is fixed in LinkedIn the app must be restarted (or the token changed or renewed) for Academy to resume.
 
 ## The post
 `POST https://api.linkedin.com/rest/posts`, headers `LinkedIn-Version: $LINKEDIN_API_VERSION` (default `202603`),
@@ -95,10 +109,47 @@ So, in each attempt, after the CMS article is read for the hashtags (`src/servic
    inside one attempt. Time budget per attempt: CMS 5 s + picture 10 s + registration 15 s + upload 15 s + post 15 s, far inside the 10-minute stale window.
 Log line: `[linkedin] page=taxscan campaign=… outcome=posted hashtags=cms|fallback image=ok|none:<reason>|dropped:<status>`.
 
-## Pages (keyed for later)
-`LinkedInPost.page` is a plain string. Page `taxscan` reads `LINKEDIN_TAXSCAN_ORG_URN` + `LINKEDIN_TAXSCAN_ACCESS_TOKEN`
-(`src/services/linkedin/pages.ts`, `PORTAL_TO_PAGE`). **Adding Shopscan or Academy = their two env variables + one mapping
-entry; no schema change.** (The screen shows the first mapped page; a page switch would come with the second page.)
+## Pages
+`LinkedInPost.page` is a plain string: a page is its env variables plus a place in the portal → pages map (`portalPages()` in
+`src/services/linkedin/pages.ts`). No schema change, no migration. One portal can post to several pages.
+
+- **`taxscan`** reads `LINKEDIN_TAXSCAN_ORG_URN` + `LINKEDIN_TAXSCAN_ACCESS_TOKEN` (`env.linkedin.pages`) and `LINKEDIN_POST_FROM`.
+- **`academy`**, the Taxscan Academy page, posts the **same taxscan.in articles** as the Taxscan page (portal `taxscan` → pages
+  `taxscan`, then `academy`: Taxscan is always first). It is **active only when BOTH variables are valid**:
+  - `LINKEDIN_ACADEMY_ORG_URN` = `urn:li:organization:<digits>` (the Academy page is `urn:li:organization:91100022`);
+  - `LINKEDIN_ACADEMY_POST_FROM` = an ISO date or time, e.g. `2026-11-04T10:00:00Z`. A bare year, `04/11/2026` or `Nov 4` is refused
+    (a loose reading would put the go-live months back, and with no age limit that posts everything pushed since).
+  Anything else (neither set, only one set, either invalid) leaves it **off**: no Academy rows, no FAILED rows, no refusal to start, no
+  log noise except ONE boot line from `startLinkedInWorker`, `[linkedin] academy page off: <which variable is missing or invalid>`
+  (names, never values). On, the line is `[linkedin] academy page on (post from <ISO time>)`. The parser is the pure
+  `parseLinkedInAcademyEnv()` in `src/lib/env.ts`; the result is read at call time (`env.linkedin.sharedPages`), never cached.
+  - **Own go-live.** Academy uses `LINKEDIN_ACADEMY_POST_FROM` wherever the Taxscan page uses `LINKEDIN_POST_FROM`: the list read, the
+    14-day look-back for earlier pushes, the screen's WAITING / NOT POSTED. Nothing pushed before it is posted to Academy; a repeat of
+    an article first pushed before it adds no Academy row; an article pushed between the two times is posted to Taxscan only.
+  - **Shared token.** No Academy token variables, no second `LinkedInToken` row, no second renewal. `pageConfig('academy')` = its own
+    org URN + the Taxscan page's token IN USE (the renewed one when there is one: `cachedAccessToken` resolves `academy` through
+    `taxscan`). The Academy page lives in `env.linkedin.sharedPages`, **not** in `env.linkedin.pages`, because every token loop
+    (renewal, `LinkedInToken` rows, the active-token cache) walks `pages` and must never see a page without a token of its own.
+    The LinkedIn member who made the token must be an admin of the Academy page too; the first real post proves it, and a 403 on
+    Academy alone is the signal that it does not.
+  - **Own rows, stops and alerts.** Rows, statuses, Retry and Skip are per page; so are the login-stop state (`linkedin:auth:academy`),
+    the amber banner and the once-a-day alert e-mail (which names the shared token's variable, `LINKEDIN_TAXSCAN_ACCESS_TOKEN`).
+  - **Picture.** The cover is uploaded separately under each page's own org URN (the Images API `owner`), so each post carries an
+    image owned by its own page. Text, hashtags (`#taxscan` last) and headline are identical; only the link differs
+    (`utm_campaign=linkedin-taxscan` / `linkedin-academy`).
+  - **Switching it off** only stops it: its rows are kept and nothing is marked FAILED. **Switching it back on**: set
+    `LINKEDIN_ACADEMY_POST_FROM` to that moment, or everything pushed since the old time posts at once, three a tick.
+  - **Campaigns → Channels** keeps meaning the Taxscan page (its rows only), with Academy on or off.
+- Adding Shopscan later is the same recipe: its variables and a place in `portalPages()`.
+
+## The screen's API
+`GET /api/linkedin/posts?date=YYYY-MM-DD&page=<key>` (ADMIN or PUBLISHER; `date` = an IST day, default today, up to 14 days back).
+`page` must be one of the **active** pages (default `taxscan`); an unknown page, or `academy` while it is off, is
+`400 {"error":"invalid_page"}`. The answer: `date`, `page`, `pages` (the active page keys, Taxscan first: the screen shows a page
+switch only when there is more than one), `rows`, `counts`, `login` (that page's own banner state, or null) and, while renewal is on,
+`token` (dates and a status, never a token). `tokenShared: true` appears only while two pages post with one token (then `token`
+is that one token's status on both pages). Rows, counts and the banner follow `page`. Retry and Skip are by row id
+(`POST /api/linkedin/posts/:id/retry|skip`); each touches only its own row.
 
 ## Flags / env
 | Variable | Default | Meaning |
@@ -107,7 +158,12 @@ entry; no schema change.** (The screen shows the first mapped page; a page switc
 | `LINKEDIN_POST_FROM` | — | **required when enabled** (ISO time); nothing pushed before it is ever posted |
 | `LINKEDIN_API_VERSION` | `202603` | the `LinkedIn-Version` header |
 | `LINKEDIN_TAXSCAN_ORG_URN` | — | e.g. `urn:li:organization:12345` |
-| `LINKEDIN_TAXSCAN_ACCESS_TOKEN` | — | a token with `w_organization_social`; never logged, never in a response or the `error` column |
+| `LINKEDIN_TAXSCAN_ACCESS_TOKEN` | — | a token with `w_organization_social`; never logged, never in a response or the `error` column. **Also the Academy page's token.** |
+| `LINKEDIN_ACADEMY_ORG_URN` | — | the Academy page, `urn:li:organization:<digits>`. **The page is on only when this AND `LINKEDIN_ACADEMY_POST_FROM` are valid**; anything else = off (one boot line) |
+| `LINKEDIN_ACADEMY_POST_FROM` | — | the Academy page's own go-live (ISO date or time); nothing pushed before it is ever posted to Academy. Set it to the moment you switch on |
+
+There are no Academy token variables: the two Academy variables are the whole switch, and `LINKEDIN_POSTING_ENABLED` still governs
+everything (off = no worker for either page).
 
 ## Switch-over (owner, after deploy)
 1. Set `LINKEDIN_TAXSCAN_ORG_URN` + `LINKEDIN_TAXSCAN_ACCESS_TOKEN` in Railway (the same values as the automation repo's
@@ -116,6 +172,14 @@ entry; no schema change.** (The screen shows the first mapped page; a page switc
    `LINKEDIN_POST_FROM` to the current time (UTC ISO), then `LINKEDIN_POSTING_ENABLED=true`. (Doing the old job's switch-off
    first avoids a double post.)
 3. Watch the first `[linkedin] page=taxscan campaign=… outcome=posted` log line and the post on the page.
+
+### Switching the Academy page on (after the Taxscan page works)
+1. The token's member (the owner) must administer the Academy page too; no new sign-in is expected.
+2. In Railway set `LINKEDIN_ACADEMY_ORG_URN=urn:li:organization:91100022` and `LINKEDIN_ACADEMY_POST_FROM` = the current time (UTC
+   ISO), then redeploy. Nothing else changes for the Taxscan page.
+3. Look for `[linkedin] academy page on (post from …)` in the boot log, then for `[linkedin] page=academy campaign=… outcome=posted`
+   after the next push. A 403 (an amber banner and an e-mail for the Academy page only) means the token's member has no role on that
+   page: the Taxscan page keeps posting. Give the member the role in LinkedIn and restart the app.
 
 ## Token renewal
 (brief `docs/briefs/2026-11-02-linkedin-token-refresh.md`; `src/services/linkedin/token.ts`.) The page's **access token lasts about 60
@@ -138,6 +202,11 @@ manual job left is the **yearly sign-in**, announced by email 30 days ahead.
    `LINKEDIN_TOKEN_KEY`) and is the token the worker and Retry use from the next tick. A renewal also ends a login stop and clears the
    LinkedIn screen's amber banner, without a restart.
 4. One log line per page per run: `[linkedin-token] page=taxscan access_left_days=N refresh_left_days=M action=none|renewed|failed`.
+
+**The Academy page shares this token.** Renewal runs once, for the page that owns the token (`taxscan`): one `LinkedInToken` row,
+one daily check, one renewal. The Academy page posts with that same token (the renewed one once there is one) and has no variable,
+row or renewal of its own. A successful renewal (or a token pasted into Railway) ends the login stop and clears the banner of BOTH
+pages, and both post with the new token on the next tick; the screen shows the one token's status on either page.
 
 **Which token is used** (`activeAccessToken`): the stored one while its `envFingerprint` equals the SHA-256 of the current
 `LINKEDIN_<PAGE>_ACCESS_TOKEN` env value; otherwise the env token (and a stored row that no longer matches is dropped). So **pasting a new
@@ -181,8 +250,10 @@ The renewal does NOT write back into Railway variables and has no sign-in page o
 ## Backups and restores
 `LinkedInPost` and `LinkedInToken` (the encrypted renewed token) are **not** in the R2 export (the small `linkedin:auth:<page>` banner row and `linkedin:token:state:<page>` markers live in `DigestSetting`, which is; a restored stale one is harmless). After a restore the env token is used and the next daily renewal re-creates the `LinkedInToken` row. After a restore keep
 `LINKEDIN_POSTING_ENABLED` **off**, and set `LINKEDIN_POST_FROM` to the restore time before switching it back on (the
-`LinkedInPost` rows are gone, so without that, recent articles would post twice). See `docs/BACKUPS.md`.
+`LinkedInPost` rows are gone, so without that, recent articles would post twice; with the Academy page on, also set
+`LINKEDIN_ACADEMY_POST_FROM` to the restore time, for the same reason). See `docs/BACKUPS.md`.
 
 ## Logs
-One line per attempt: `[linkedin] page=taxscan campaign=<id> outcome=posted|retry|failed|auth_stop`. Every error goes
-through `safeErrorLog`; the token appears nowhere.
+One line per attempt: `[linkedin] page=taxscan campaign=<id> outcome=posted|retry|failed|auth_stop` (`page=academy` for the Academy
+page). One boot line about the Academy page, from `startLinkedInWorker` only (`[linkedin] academy page on (post from …)` or
+`[linkedin] academy page off: …`). Every error goes through `safeErrorLog`; the token appears nowhere.
