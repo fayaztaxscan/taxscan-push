@@ -9,7 +9,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 **⏳ PENDING (2026-11-04) — the current list; the full version is memory `project_taxscan_push_state`. The 2 Nov list below is history.**
 1. **Follow up until LinkedIn clears it:** Standard tier appeal, case CAS-12316619-W9J3R4 (denied 24 Jun, "Business verification failed"; appeal + certificate sent 4 Nov). No new app until it answers; never delete `taxscan_post_app`.
-2. Every-push switches: owner sets `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM`, `LINKEDIN_ACADEMY_ALL_PUSHES_FROM`, `FACEBOOK_ALL_PUSHES_FROM` = the moment of switch-on, never earlier later on. Check the first course and shop posts + any red "already posted" rows.
+2. Every-push switches ON since 2026-11-04T10:26:26Z on all three pages. Check the first course and shop posts + any red "already posted" rows; never move a time earlier.
 3. All 4 ads have 1080×1080 squares since 4 Nov: check the 5 Nov digest on a real phone (banner still showing = code bug). 4 Nov digest layout: Zoho + Outlook screenshots.
 4. Soft prompt: first look ~19:00 IST 4 Nov, full compare 10 Nov (from 2026-11-03T13:24:51Z); flag off if grants stay < ~4/day for a week.
 5. Later: a test for a 429 on the image poll (code already treats it as unverified); optional guard if Academy's URN equals Taxscan's.
