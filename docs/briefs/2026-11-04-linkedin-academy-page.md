@@ -57,6 +57,7 @@ Each one must PASS in the REPORT. All LinkedIn calls are mocked.
 9. `GET /api/linkedin/posts?page=academy` returns Academy's rows when active; 400 for an unknown page or Academy when inactive. Default still `taxscan`.
 10. The screen shows no switch when Academy is inactive, and the switch changes rows and the banner when active (real browser, phone and desktop shots).
 11. Facebook tests pass unchanged. Campaigns Channels still reports the Taxscan page's status.
+12. A 429 on the image status poll (the tightest daily quota, see Context) still publishes the post, with the picture attached unverified, and uses no retry loop.
 
 ## Files
 - `src/lib/env.ts`, `src/services/linkedin/pages.ts`, `worker.ts`, `token.ts`, possibly `image.ts`
@@ -74,3 +75,5 @@ Each one must PASS in the REPORT. All LinkedIn calls are mocked.
 ## Context the builder needs
 - Org URN form: `urn:li:organization:91100022`. The owner is an admin of the page, and the current token was created by the owner, so no new sign-in is expected. The first real post proves it; a 403 is the signal that it does not.
 - Trap memory: image URNs must be `encodeURIComponent`-encoded in REST paths (already fixed, keep it).
+- App: `taxscan_post_app` is the only app to use. It has Community Management API on the **Development tier** (upgrade denied). The separate "Taxscan Academy" app has only Share on LinkedIn, which cannot post as a page: do not use it.
+- Quotas seen in the portal on 4 Nov are per endpoint: 500 per app and 100 per member per 24 h. Two pages at ~21 posts a day make ~42 `posts-CREATE` and ~42 `images-ACTION`. `images-GET` is the tightest: observed 2 polls per post, so ~84 a day, and up to 4 polls per post is possible.
