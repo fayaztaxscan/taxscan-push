@@ -136,11 +136,16 @@ to keep.
 **`LinkedInPost` (the LinkedIn page posting log) is deliberately NOT in the export either.** After a restore keep
 `LINKEDIN_POSTING_ENABLED` off and set `LINKEDIN_POST_FROM` to the restore time before switching it back on; with the rows
 gone and no age limit on posting (since 2026-11-04), EVERYTHING pushed earlier would otherwise post to LinkedIn a second time. If the Academy page is on,
-set `LINKEDIN_ACADEMY_POST_FROM` to the restore time too. See `docs/LINKEDIN_POSTING.md`.
+set `LINKEDIN_ACADEMY_POST_FROM` to the restore time too. **The two LinkedIn "every push posts" variables (`LINKEDIN_TAXSCAN_ALL_PUSHES_FROM`,
+`LINKEDIN_ACADEMY_ALL_PUSHES_FROM`) get the same treatment: set each one that is in use to the restore time (or unset it).** Their `push:<id>:<ms>`
+rows are gone with the rest, and an old value would post every push since then (articles, courses and products, repeats included) a second time.
+See `docs/LINKEDIN_POSTING.md`.
 
 **`FacebookPost` (the Facebook page posting log) is deliberately NOT in the export either, and the same rule applies.** After a restore keep
 `FACEBOOK_POSTING_ENABLED` off and set `FACEBOOK_POST_FROM` to the restore time before switching it back on. With the rows gone and no age
-limit, everything pushed since go-live would otherwise post a second time, and repeated posts put the page at risk with Facebook. See `docs/FACEBOOK_POSTING.md`.
+limit, everything pushed since go-live would otherwise post a second time, and repeated posts put the page at risk with Facebook. **Set
+`FACEBOOK_ALL_PUSHES_FROM` to the restore time too (or unset it)**: with the `push:` rows gone, an old value would post every push since then
+again. See `docs/FACEBOOK_POSTING.md`.
 
 **`WhatsAppPost` (the WhatsApp channel queue's Posted / Skipped marks) is deliberately NOT in the export.** It holds only
 "who marked which article, when" for a short-lived working list; losing it means a day's list shows To do again, and

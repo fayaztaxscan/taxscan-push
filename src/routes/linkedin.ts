@@ -5,8 +5,9 @@ import { prisma } from '../lib/prisma';
 import { safeErrorLog } from '../lib/httpErrors';
 import { articleKey } from '../services/reports';
 import { isPublicArticleCampaign } from '../services/social/publicCampaign';
+import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
-import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
+import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
 import { loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
 import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
 
@@ -21,6 +22,11 @@ import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
  *                                                else (an unknown page, or `academy` while it is not active) is 400 invalid_page.
  *   POST /api/linkedin/posts/:id/retry          a FAILED row: post it now
  *   POST /api/linkedin/posts/:id/skip           a FAILED row, or one waiting for a retry
+ *
+ * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): on a page with an all-pushes time, a push at or after it is its own row
+ * (articles, courses and products alike; a repeat is another row, with its own Retry and Skip) and is WAITING until posted. A push
+ * before it follows today's rule: one row per article, WAITING / NOT_POSTED by the page's go-live. A page without the time lists
+ * exactly what it did before.
  */
 export type LinkedInRouterOptions = {
   enabled?: () => boolean;
@@ -29,6 +35,8 @@ export type LinkedInRouterOptions = {
   portals?: () => PortalMap;
   /** Go-live: one time for every page (the old shape) or one per page. Default: each page's own configured time. */
   postFrom?: () => PostFromInput;
+  /** The time from which a page posts EVERY push (brief 2026-11-04-academy-store-posts): one time for every page or one per page; null = today's rule. Default: each page's own variable. */
+  allPushesFrom?: () => PostFromInput;
   worker?: WorkerDeps;
 };
 
@@ -42,6 +50,7 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
   const nowOf = o.clock ?? (() => new Date());
   const portalsOf = o.portals ?? portalPages;
   const postFromOf = o.postFrom ?? (() => undefined);
+  const allPushesFromOf = o.allPushesFrom ?? (() => undefined);
 
   router.use((_req, res, next) => (enabled() ? next() : void res.status(404).json({ error: 'not_found' })));
 
@@ -65,20 +74,60 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
         select: { id: true, title: true, url: true, target: true, lastSentAt: true },
         orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
       });
+      // This page's OWN go-live (Academy has its own), and its all-pushes time (null = it stays on today's rule).
+      const postFrom = resolvePostFrom(postFromOf(), page);
+      const pushesFrom = newRuleFrom(resolveAllPushesFrom(allPushesFromOf(), page), postFrom); // never earlier than the page's own go-live
+      // One row per article (its oldest push) for a push before the all-pushes time, one row per PUSH at or after it. Pushes come
+      // in time order, so the rows do too.
       const first = new Map<string, (typeof sent)[number]>();
+      // For each of today's-rule rows, the id of EVERY push of that article in this window (the `push:` fallback below needs them all).
+      const idsOfArticle = new Map<string, string[]>();
       for (const c of sent) {
-        if (!c.lastSentAt || !isPublicArticleCampaign(c)) continue;
-        const k = articleKey(c);
-        if (!first.has(k)) first.set(k, c);
+        if (!c.lastSentAt) continue;
+        const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
+        if (k !== null) idsOfArticle.get(k)?.push(c.id);
+        if (pushesFrom && c.lastSentAt >= pushesFrom) {
+          if (isAllPushesCampaign(c)) first.set(pushKey({ id: c.id, lastSentAt: c.lastSentAt }), c);
+          continue;
+        }
+        if (k !== null && !first.has(k)) {
+          first.set(k, c);
+          idsOfArticle.set(k, [c.id]);
+        }
       }
       const inDay = [...first.entries()].filter(([, c]) => c.lastSentAt! >= start && c.lastSentAt! < end);
-      const posts = inDay.length ? await prisma.linkedInPost.findMany({ where: { page, articleKey: { in: inDay.map(([k]) => k) } } }) : [];
+      // An article row of TODAY'S rule may have been handled by the NEW rule (its pushes have `push:` rows) while the all-pushes time was
+      // on, and the time removed or moved later since: it must show that row's status, not WAITING (follow-up 1). The same read also
+      // asks for the `push:` rows of every push of those articles.
+      const todaysIds = inDay.filter(([k]) => !isPushKey(k)).flatMap(([k]) => idsOfArticle.get(k) ?? []);
+      const posts = inDay.length
+        ? await prisma.linkedInPost.findMany({
+            where: { page, OR: [{ articleKey: { in: inDay.map(([k]) => k) } }, ...(todaysIds.length ? [{ campaignId: { in: todaysIds }, articleKey: { startsWith: PUSH_KEY_PREFIX } }] : [])] },
+          })
+        : [];
       const byKey = new Map(posts.map((p) => [p.articleKey, p]));
-      const postFrom = resolvePostFrom(postFromOf(), page); // this page's OWN go-live (Academy has its own)
+      const pushRows = new Map<string, (typeof posts)[number]>(); // campaign id → its `push:` row (the latest, if the same campaign row was sent again)
+      for (const p of posts) {
+        if (!isPushKey(p.articleKey)) continue;
+        const cur = pushRows.get(p.campaignId);
+        if (!cur || p.createdAt > cur.createdAt) pushRows.set(p.campaignId, p);
+      }
+      // The `push:` row to show for an article row that has no article-key row: its own push's, else the latest of the article's other pushes.
+      const viaPush = (k: string, c: (typeof sent)[number]) => {
+        const own = pushRows.get(c.id);
+        if (own) return own;
+        let best: (typeof posts)[number] | undefined;
+        for (const id of idsOfArticle.get(k) ?? []) {
+          const r = pushRows.get(id);
+          if (r && (!best || r.createdAt > best.createdAt)) best = r;
+        }
+        return best;
+      };
       const rows = inDay.map(([k, c]) => {
-        const p = byKey.get(k);
+        const p = byKey.get(k) ?? (isPushKey(k) ? undefined : viaPush(k, c));
         let status: ScreenStatus;
-        // No row yet: pushed since go-live → the worker will post it, however long ago (no age limit); before go-live → never.
+        // No row yet: pushed since go-live (the new rule never starts before it) → the worker will post it, however long ago (no age
+        // limit); before go-live → never.
         if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
         else status = postFrom && c.lastSentAt! >= postFrom ? 'WAITING' : 'NOT_POSTED';
         return {
@@ -112,6 +161,9 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
         ...(await tokenStatus(page, now).then((t) => (t ? { token: t } : {}))),
         // present (true) only when two pages post with the same token, so the screen can say so; absent otherwise (old answer unchanged)
         ...(pages.some((p) => tokenPageOf(p) !== p) ? { tokenShared: true } : {}),
+        // present only while this page posts EVERY push (its all-pushes time, as the new rule really starts), so the screen can say so;
+        // absent otherwise (old answer unchanged)
+        ...(pushesFrom ? { everyPushFrom: pushesFrom.toISOString() } : {}),
       });
     } catch (err) {
       console.error('[linkedin] list failed', safeErrorLog(err));

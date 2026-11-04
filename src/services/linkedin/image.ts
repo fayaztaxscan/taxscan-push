@@ -8,8 +8,11 @@ import type { FetchLike } from './post';
  * Safe by construction: https only, an exact-host allowlist, no redirects (a redirect could leave the allowlist), a 10 s limit
  * for the whole fetch including the body, at most 5 MB (the read is aborted past it), and only JPEG / PNG / GIF. The result
  * says WHY it failed in a fixed word, never a URL, a body or a header, so the reason is safe to log.
+ *
+ * `academy.taxscan.in` and `shop.taxscan.in` are here for the course / product posts (brief 2026-11-04-academy-store-posts): their
+ * og:image files are served from those hosts themselves (`/wp-content/uploads/…`, `/cdn/shop/files/…?v=…`).
  */
-export const IMAGE_HOSTS: ReadonlySet<string> = new Set(['documents.taxscan.in', 'www.taxscan.in', 'taxscan.in']);
+export const IMAGE_HOSTS: ReadonlySet<string> = new Set(['documents.taxscan.in', 'www.taxscan.in', 'taxscan.in', 'academy.taxscan.in', 'shop.taxscan.in']);
 export const IMAGE_TYPES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/gif']);
 export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const IMAGE_TIMEOUT_MS = 10_000;

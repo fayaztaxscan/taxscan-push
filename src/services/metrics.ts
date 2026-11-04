@@ -4,7 +4,8 @@ import { readsPath, readsForPaths } from './reads';
 import { safeErrorLog } from '../lib/httpErrors';
 import { articleKey } from './reports';
 import { isPublicArticleCampaign } from './social/publicCampaign';
-import { PAGE_TAXSCAN, portalPages } from './linkedin/pages';
+import { isAllPushesCampaign, newRuleFrom, pushKey } from './social/allPushes';
+import { PAGE_TAXSCAN, pageAllPushesFrom, portalPages } from './linkedin/pages';
 import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
 
@@ -582,6 +583,11 @@ export async function listCampaigns(
  * The Channels column: per campaign, where its article went on WhatsApp and LinkedIn. ONE batched query per channel for
  * the whole page (`articleKey IN (…)`), never one per row, and nothing from Event. A re-push shares its article's marks.
  * Returns null when neither channel is switched on (the payload is then unchanged).
+ *
+ * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): a push at or after a channel's all-pushes time is its own post there (an
+ * article, a course or a product; a repeat is another post), so its mark is the status of ITS OWN row (`push:<id>:<ms>`), read through
+ * the same two batched queries (those keys join the lists). A push before the time, and every push while the time is unset, keeps
+ * today's article mark; with the variables unset nothing here differs from before. WhatsApp never changes (article keys only).
  */
 async function channelsFor(
   campaigns: { id: string; url: string; status: string; portal: string; target: unknown; lastSentAt: Date | null }[],
@@ -592,12 +598,50 @@ async function channelsFor(
   if (!waOn && !liOn && !fbOn) return null;
   const eligible = campaigns.filter((c) => c.status === 'SENT' && isPublicArticleCampaign(c));
   const keyOf = new Map(eligible.map((c) => [c.id, articleKey(c)]));
-  const keys = [...new Set(keyOf.values())];
+  const keys = [...new Set(keyOf.values())]; // ARTICLE keys: WhatsApp reads only these
+  // Follow-up 1: an ARTICLE push with no article-key row may have been handled by the new rule (its own `push:` row) while the all-pushes
+  // time was on, and the time removed or moved later since: its mark is that row's status, never "waiting". Its own push key joins the
+  // same batched reads below (no extra query).
+  const ownKeyOf = new Map<string, string>();
+  for (const c of eligible) if (c.lastSentAt) ownKeyOf.set(c.id, pushKey({ id: c.id, lastSentAt: c.lastSentAt }));
+  const pushesOfArticle = new Map<string, string[]>(); // article key → the ids of its pushes in this list
+  for (const c of eligible) {
+    const k = keyOf.get(c.id)!;
+    const l = pushesOfArticle.get(k);
+    if (l) l.push(c.id);
+    else pushesOfArticle.set(k, [c.id]);
+  }
+  /**
+   * The `push:` row an article push shows when it has no article-key row: its own push's, else the latest row of the article's other
+   * pushes in this list (the worker skips an article any of whose pushes has a `push:` row, so a repeat or the oldest push must not
+   * read "waiting" for ever). With no row at all: undefined.
+   */
+  const viaPushRow = <T extends { createdAt: Date }>(by: Map<string, T>, c: { id: string }, articleKeyOfPush: string | undefined): T | undefined => {
+    const own = ownKeyOf.get(c.id);
+    const ownRow = own ? by.get(own) : undefined;
+    if (ownRow || !articleKeyOfPush) return ownRow;
+    let best: T | undefined;
+    for (const id of pushesOfArticle.get(articleKeyOfPush) ?? []) {
+      const other = ownKeyOf.get(id);
+      const r = other ? by.get(other) : undefined;
+      if (r && (!best || r.createdAt > best.createdAt)) best = r;
+    }
+    return best;
+  };
+  const liPushesFrom = liOn ? newRuleFrom(pageAllPushesFrom(PAGE_TAXSCAN), env.linkedin.postFrom) : null; // never earlier than the page's own go-live
+  const fbPushesFrom = fbOn ? newRuleFrom(env.facebook.allPushesFrom, env.facebook.postFrom) : null;
+  const pushKeyOf = new Map<string, string>(); // campaign id → its `push:` key (only while an all-pushes time is set)
+  const earliestPushes = [liPushesFrom, fbPushesFrom].filter((t): t is Date => !!t).map((t) => t.getTime());
+  if (earliestPushes.length) {
+    const since = Math.min(...earliestPushes);
+    for (const c of campaigns) if (c.status === 'SENT' && c.lastSentAt && c.lastSentAt.getTime() >= since && isAllPushesCampaign(c)) pushKeyOf.set(c.id, pushKey({ id: c.id, lastSentAt: c.lastSentAt }));
+  }
+  const socialKeys = [...new Set([...keys, ...pushKeyOf.values(), ...ownKeyOf.values()])];
   const waPortal = env.rss.portal;
   const [wa, li, fb] = await Promise.all([
     waOn && keys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: keys } }, include: { actedBy: { select: { email: true } } } }) : [],
-    liOn && keys.length ? prisma.linkedInPost.findMany({ where: { page: PAGE_TAXSCAN, articleKey: { in: keys } } }) : [],
-    fbOn && keys.length ? prisma.facebookPost.findMany({ where: { page: FB_PAGE_TAXSCAN, articleKey: { in: keys } } }) : [],
+    liOn && socialKeys.length ? prisma.linkedInPost.findMany({ where: { page: PAGE_TAXSCAN, articleKey: { in: socialKeys } } }) : [],
+    fbOn && socialKeys.length ? prisma.facebookPost.findMany({ where: { page: FB_PAGE_TAXSCAN, articleKey: { in: socialKeys } } }) : [],
   ]);
   const waBy = new Map(wa.map((p) => [p.articleKey, p]));
   const liBy = new Map(li.map((p) => [p.articleKey, p]));
@@ -609,24 +653,31 @@ async function channelsFor(
   const out = new Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }>();
   for (const c of campaigns) {
     const key = keyOf.get(c.id);
+    const pKey = pushKeyOf.get(c.id);
     const channels: CampaignChannels = { whatsapp: null, linkedin: null };
     const details: CampaignChannelDetails = {};
-    if (key) {
-      if (waOn && c.portal === waPortal) {
-        const p = waBy.get(key);
-        channels.whatsapp = p ? p.status : 'TODO';
-        if (p) details.whatsapp = { by: p.actedBy?.email ?? null, at: p.actedAt.toISOString() };
-      }
-      if (liOn && liPortals[c.portal]?.includes(PAGE_TAXSCAN) && c.lastSentAt && from && c.lastSentAt >= from) {
-        const p = liBy.get(key);
-        channels.linkedin = p ? p.status : 'PENDING';
-        if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
-      }
+    if (key && waOn && c.portal === waPortal) {
+      const p = waBy.get(key);
+      channels.whatsapp = p ? p.status : 'TODO';
+      if (p) details.whatsapp = { by: p.actedBy?.email ?? null, at: p.actedAt.toISOString() };
+    }
+    // The key a channel's row for THIS push is stored under, and the go-live that counts for it: under the new rule the push's own key
+    // and the channel's all-pushes time; under today's rule the article's key and the page's go-live.
+    const liNew = !!pKey && !!liPushesFrom && !!c.lastSentAt && c.lastSentAt >= liPushesFrom;
+    const liKey = liNew ? pKey : key;
+    const liSince = liNew ? liPushesFrom : from;
+    if (liOn && liKey && liPortals[c.portal]?.includes(PAGE_TAXSCAN) && c.lastSentAt && from && liSince && c.lastSentAt >= liSince) {
+      const p = liBy.get(liKey) ?? (liNew ? undefined : viaPushRow(liBy, c, key)); // today's rule, no article-key row: a `push:` row the new rule left
+      channels.linkedin = p ? p.status : 'PENDING';
+      if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
     }
     if (fbOn) {
       channels.facebook = null;
-      if (key && FB_PORTAL_TO_PAGE[c.portal] === FB_PAGE_TAXSCAN && c.lastSentAt && fbFrom && c.lastSentAt >= fbFrom) {
-        const p = fbBy.get(key);
+      const fbNew = !!pKey && !!fbPushesFrom && !!c.lastSentAt && c.lastSentAt >= fbPushesFrom;
+      const fbKey = fbNew ? pKey : key;
+      const fbSince = fbNew ? fbPushesFrom : fbFrom;
+      if (fbKey && FB_PORTAL_TO_PAGE[c.portal] === FB_PAGE_TAXSCAN && c.lastSentAt && fbFrom && fbSince && c.lastSentAt >= fbSince) {
+        const p = fbBy.get(fbKey) ?? (fbNew ? undefined : viaPushRow(fbBy, c, key));
         channels.facebook = p ? p.status : 'PENDING';
         if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null };
       }

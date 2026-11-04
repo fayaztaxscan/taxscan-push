@@ -31,6 +31,11 @@ type ListResponse = {
   token?: TokenInfo;
   /** Present (true) only while two pages post with one token; missing = false. */
   tokenShared?: boolean;
+  /**
+   * Present (an ISO time) ONLY while this page posts EVERY push (articles, courses, shop products; a repeat is its own row), from
+   * that time. Missing = the old rule: one post per article. Pushes before the time keep the old rule.
+   */
+  everyPushFrom?: string;
 };
 type TokenInfo = {
   validUntil: string | null;
@@ -67,6 +72,8 @@ const token = ref<TokenInfo | null>(null);
 const page = ref<string | null>(null);
 const pages = ref<string[]>([]);
 const tokenShared = ref(false);
+// When the page being shown started posting EVERY push (the server's `everyPushFrom`); null = it still posts one per article.
+const everyPushFrom = ref<string | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const note = ref<string | null>(null);
@@ -154,6 +161,22 @@ const loginText = computed(() => {
 function longDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 }
+// "4 Nov 2026, 15:56 IST": the date as the token line writes it, plus the time in IST like the "Pushed (IST)" column, so the
+// moment can be compared with the rows below. Empty when the server's time is unreadable (the line is then left out).
+const sinceText = computed(() => {
+  const d = everyPushFrom.value ? new Date(everyPushFrom.value) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  const when = d.toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'Asia/Kolkata',
+  });
+  return `${when} IST`;
+});
 // Two pages posting with one token (the Academy page borrows the Taxscan page's): say so plainly, on both pages. The server
 // reports `tokenShared` for the pages in `pages`, so the names come from there.
 const sharedNote = computed(() => (tokenShared.value && multi.value ? `one token, shared by the ${joinNames(pages.value.map(labelOf))} pages` : ''));
@@ -202,6 +225,7 @@ async function load(keepError = false): Promise<void> {
     pages.value = data.pages ?? [];
     page.value = data.page ?? data.pages?.[0] ?? null;
     tokenShared.value = data.tokenShared === true;
+    everyPushFrom.value = data.everyPushFrom ?? null;
   } catch (e) {
     if (mine === loadSeq) error.value = apiErrorMessage(e);
   } finally {
@@ -213,10 +237,12 @@ function selectPage(p: string): void {
   if (p === page.value) return;
   page.value = p;
   // Rows, counts and the banner belong to the page just left: clear them so none of its Retry / Skip buttons stay on
-  // screen under the new name while the answer is on its way. (The token line is the one shared token: it stays.)
+  // screen under the new name while the answer is on its way. (The token line is the one shared token: it stays.) The same goes
+  // for "every push is posted from …": each page has its own time, so the page just left must not lend it to the new one.
   rows.value = [];
   counts.value = { ...EMPTY_COUNTS };
   login.value = null;
+  everyPushFrom.value = null;
   error.value = null;
   note.value = null;
   retrying.value = null;
@@ -330,9 +356,19 @@ onMounted(() => load());
       </button>
     </div>
 
-    <p class="muted" style="font-size: 13px; margin: 4px 0 12px" data-testid="li-intro">
-      Every article we push is posted to the {{ pageLabel }} LinkedIn page automatically, a few minutes later. Nothing to do
-      unless a post fails.
+    <p class="muted" :class="{ 'li-every': everyPushFrom }" style="font-size: 13px; margin: 4px 0 12px" data-testid="li-intro">
+      <!-- This page posts EVERY push from a set time (the server sent `everyPushFrom`): say so, and from when. -->
+      <template v-if="everyPushFrom">
+        Every push we send is posted to the {{ pageLabel }} LinkedIn page automatically, a few minutes later: articles, courses
+        and shop products. A push that is sent again is posted again and gets its own row. Nothing to do unless a post fails.
+        <span v-if="sinceText" class="li-since" data-testid="li-since"
+          >From {{ sinceText }} every push is posted. Earlier pushes keep the old rule: one post per article.</span
+        >
+      </template>
+      <template v-else>
+        Every article we push is posted to the {{ pageLabel }} LinkedIn page automatically, a few minutes later. Nothing to do
+        unless a post fails.
+      </template>
     </p>
 
     <p v-if="tokenText" class="li-token" :class="token ? 't-' + token.status : ''" data-testid="li-token">{{ tokenText }}</p>
@@ -472,6 +508,15 @@ onMounted(() => load());
 .li-switch button:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+/* The longer explanation (the page posts every push): no one-word last line on a phone. Only this state, so the old text lays out as before. */
+.li-every {
+  text-wrap: pretty;
+}
+/* The second line of the explanation: from when every push is posted. Same muted 13px as the paragraph, on its own line. */
+.li-since {
+  display: block;
+  margin-top: 4px;
 }
 .li-token {
   font-size: 13px;

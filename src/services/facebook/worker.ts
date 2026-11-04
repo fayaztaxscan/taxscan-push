@@ -2,19 +2,20 @@ import cron from 'node-cron';
 import { createHash } from 'node:crypto';
 import { Prisma, type FacebookPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env } from '../../lib/env';
+import { env, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
+import { isAllPushesCampaign, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
 import { istDay, istDayBounds } from '../whatsapp/queue';
 import { pushOutOfQuietHours } from '../linkedin/worker';
 import type { CmsArticle } from '../linkedin/post';
 import { fetchCmsArticle } from '../linkedin/post';
 import { postToFacebook, type FacebookFailure } from './client';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
-import { buildFacebookPost } from './post';
+import { buildFacebookPost, buildFacebookStorePost } from './post';
 
 /**
  * The Facebook posting worker (brief 2026-11-03-facebook-page-posting, docs/FACEBOOK_POSTING.md). It mirrors the LinkedIn worker
@@ -27,6 +28,14 @@ import { buildFacebookPost } from './post';
  *  - a bad token (190 / permission / 401 / 403) stops the page until the token changes or the app restarts;
  *  - rate limits retry slowly (+15, +60 min), transient errors quickly (+1, +5, +15); retries never fall in quiet hours.
  * The `FacebookPost` row is created BEFORE the call; its unique (page, articleKey) makes a re-push a no-op.
+ *
+ * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts). Once FACEBOOK_ALL_PUSHES_FROM is set, the page posts, from that time on,
+ * EVERY push: taxscan.in articles, academy.taxscan.in courses and shop.taxscan.in products, ONE POST PER PUSH, repeats included
+ * (a backfill clone, a resend). The row key is `push:<campaign id>:<send time ms>`. A push sent before that time follows today's rule
+ * (one post per article, the `earlier` look-back) for good, so switching on never floods the page with the past. The two kinds of
+ * candidate share EVERYTHING above: the one-per-tick rule, the gap, the daily cap (every kind counts), the retries, both stops, and
+ * the order (merged by send time, oldest first). A course / product post is the push's own title and body; an article post is built
+ * exactly as before. Facebook's duplicate answer (code 506) is a plain FAILED: no retry, no stop, no alert.
  */
 
 export const STALE_MS = 10 * 60_000;
@@ -49,6 +58,8 @@ export type WorkerDeps = {
   /** Campaign.portal → page. Default PORTAL_TO_PAGE. */
   portals?: Readonly<Record<string, string>>;
   postFrom?: Date | null;
+  /** The time from which the page posts EVERY push (brief 2026-11-04-academy-store-posts); null = today's rule. Default FACEBOOK_ALL_PUSHES_FROM. */
+  allPushesFrom?: Date | null;
   quiet?: { start: string; end: string };
   minGapMinutes?: number;
   dailyCap?: number;
@@ -184,10 +195,15 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
       log(page, row.campaignId, 'failed', 'reason=config');
       return 'failed';
     }
-    const post = await buildFacebookPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
+    // A course / product post (its LINK says so: under "every push posts" every kind of row has a `push:` key) has its own builder: the
+    // push's own wording, no CMS data. An article keeps the CMS one.
+    const link = storeLinkOf(campaign.url);
+    const store = link !== null;
+    const kind = link ? ` kind=${link.kind}` : '';
+    const post = store ? buildFacebookStorePost(campaign, page) : await buildFacebookPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
     if (!post) {
-      await fail('not a taxscan.in article link, or the link is not allowed');
-      log(page, row.campaignId, 'failed', 'reason=link');
+      await fail(store ? 'not a course or shop product link, or the link is not allowed' : 'not a taxscan.in article link, or the link is not allowed');
+      log(page, row.campaignId, 'failed', `reason=link${kind}`);
       return 'failed';
     }
     const result = await (d.post ?? postToFacebook)({ pageId: cfg.pageId, accessToken: cfg.accessToken, message: post.message, link: post.link });
@@ -202,7 +218,7 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
           nextAttemptAt: null,
         },
       });
-      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource}`);
+      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource}${kind}`);
       if (await readSetting(authKey(page))) await prisma.digestSetting.deleteMany({ where: { key: authKey(page) } }); // it works again
       return 'posted';
     }
@@ -210,19 +226,19 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
       // not a real attempt: back to a retry that is due as soon as posting resumes
       await prisma.facebookPost.update({ where: { id: row.id }, data: { attempts: Math.max(0, row.attempts - 1), nextAttemptAt: now, error: clip(result.error) } });
       await handleAuthStop(page, result.status, d, now);
-      log(page, row.campaignId, 'auth_stop', `status=${result.status ?? ''} code=${result.code ?? ''}`);
+      log(page, row.campaignId, 'auth_stop', `status=${result.status ?? ''} code=${result.code ?? ''}${kind}`);
       return 'auth_stop';
     }
     if (result.kind === 'policy') {
       // never retried into a block: FAILED, and the page stops until an ADMIN resumes
       await fail(clip(result.error));
       await handlePolicyStop(page, result, d, now);
-      log(page, row.campaignId, 'policy_stop', `status=${result.status ?? ''} code=${result.code ?? ''} subcode=${result.subcode ?? ''}`);
+      log(page, row.campaignId, 'policy_stop', `status=${result.status ?? ''} code=${result.code ?? ''} subcode=${result.subcode ?? ''}${kind}`);
       return 'policy_stop';
     }
     if (result.kind === 'duplicate') {
       await fail(DUPLICATE_ERROR);
-      log(page, row.campaignId, 'failed', 'reason=duplicate');
+      log(page, row.campaignId, 'failed', `reason=duplicate${kind}`);
       return 'failed';
     }
     if (result.kind === 'rate' || result.kind === 'transient') {
@@ -230,12 +246,12 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
       if (row.attempts <= delays.length) {
         const due = pushOutOfQuietHours(new Date(now.getTime() + delays[row.attempts - 1] * 60_000), quietOf(d));
         await prisma.facebookPost.update({ where: { id: row.id }, data: { nextAttemptAt: due, error: clip(result.error) } });
-        log(page, row.campaignId, 'retry', `class=${result.kind} attempt=${row.attempts} next=${due.toISOString()}`);
+        log(page, row.campaignId, 'retry', `class=${result.kind} attempt=${row.attempts} next=${due.toISOString()}${kind}`);
         return 'retry';
       }
     }
     await fail(clip(result.error));
-    log(page, row.campaignId, 'failed', `attempts=${row.attempts}`);
+    log(page, row.campaignId, 'failed', `attempts=${row.attempts}${kind}`);
     return 'failed';
   } catch (err) {
     console.error('[facebook] attempt failed', safeErrorLog(err));
@@ -329,34 +345,63 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
       if (out.posted + out.retried + out.failed > 0 || out.authStopped || out.policyStopped) continue;
     }
 
-    // 3. A new article, oldest push first. NO age limit: the oldest SENT push since go-live (FACEBOOK_POST_FROM) whose article has
+    // 3. A new post, oldest push first. NO age limit: the oldest SENT push since go-live (FACEBOOK_POST_FROM) whose article has
     //    no row yet posts, however long ago it was pushed; the gap, the daily cap and the stops above still pace it. That list only
     //    grows (~20 a day) and is read every minute, so it is read with `select` of just what the two shared rules need
     //    (isPublicArticleCampaign: url + target; articleKey: id + url), never whole rows; `attempt` loads the one it posts.
+    //    EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): with FACEBOOK_ALL_PUSHES_FROM set, the pushes split at that time.
+    //    A push BEFORE it follows today's rule above for good (one post per article, the `earlier` look-back), so setting the time
+    //    never floods the page with the past, and a pre-time article that has no row yet still gets its one post. A push AT or
+    //    AFTER it follows the new rule: every qualifying push (article, course, product) is its own candidate, keyed
+    //    `push:<campaign id>:<send time ms>`, repeats included. Both kinds are merged by the time of the push, oldest first.
+    // null = today's rule only. The read below starts at the page's own go-live, so the new rule can never reach back before it, whatever time is set.
+    const pushesFrom = d.allPushesFrom === undefined ? env.facebook.allPushesFrom : d.allPushesFrom;
     const pagePortals = Object.keys(portals).filter((p) => portals[p] === page);
-    const campaigns = await prisma.campaign.findMany({
+    // The read stays `select`-narrow: only what the rules need, and `lastSentAt` too ONLY while the all-pushes time is set (it is what
+    // splits the pushes at that time and merges the two rules by time). With the time unset the read is exactly today's.
+    const campaigns: { id: string; url: string; target: unknown; lastSentAt?: Date | null }[] = await prisma.campaign.findMany({
       where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: postFrom } },
-      select: { id: true, url: true, target: true },
+      select: pushesFrom ? { id: true, url: true, target: true, lastSentAt: true } : { id: true, url: true, target: true },
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
-    const firstOf = new Map<string, string>(); // article key → the id of its OLDEST push
+    const firstOf = new Map<string, string>(); // post key → the id of the push it is posted for; both rules insert as the pushes come, oldest first
+    // TODAY'S-RULE candidates (an article's oldest push) and, for each, the id of EVERY push of that article in this read: the guard
+    // below needs them all (a repeat of an article can have a `push:` row while its oldest push does not).
+    const idsOfArticle = new Map<string, string[]>();
     for (const c of campaigns) {
-      if (!isPublicArticleCampaign(c)) continue;
-      const k = articleKey(c);
-      if (!firstOf.has(k)) firstOf.set(k, c.id);
+      const sentAt = c.lastSentAt ?? null; // only read while the all-pushes time is set
+      const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
+      if (k !== null) idsOfArticle.get(k)?.push(c.id); // a later push of an article that follows today's rule
+      if (pushesFrom && sentAt && sentAt >= pushesFrom) {
+        // THE NEW RULE: one candidate per push. WHO sent it never matters (pacer, backfill clone, Compose, Push now, Breaking).
+        if (isAllPushesCampaign(c)) firstOf.set(pushKey({ id: c.id, lastSentAt: sentAt }), c.id);
+        continue;
+      }
+      // TODAY'S RULE: only a public article, once per article (its oldest push). WHO sent it never matters.
+      if (k === null || firstOf.has(k)) continue;
+      firstOf.set(k, c.id);
+      idsOfArticle.set(k, [c.id]);
     }
-    if (firstOf.size === 0) continue;
-    // A re-push or backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is not new: never
-    // post it, at any age.
-    const earlier = await prisma.campaign.findMany({
-      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
-      select: { id: true, url: true },
-    });
-    for (const c of earlier) firstOf.delete(articleKey(c));
+    if (idsOfArticle.size > 0) {
+      // A re-push or backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is not new: never
+      // post it, at any age. (Only today's rule looks back; the new rule posts every push.)
+      const earlier = await prisma.campaign.findMany({
+        where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
+        select: { id: true, url: true },
+      });
+      for (const c of earlier) firstOf.delete(articleKey(c));
+    }
     if (firstOf.size === 0) continue;
     // Which of them already have a row (POSTED, SKIPPED, FAILED or in flight)? The page's keys in ONE indexed read: an
     // `IN (…)` of every candidate would grow with the list above.
     const have = new Set((await prisma.facebookPost.findMany({ where: { page }, select: { articleKey: true } })).map((r) => r.articleKey));
+    // Follow-up 1: an article ANY of whose pushes already has a `push:` row on this page was handled by the new rule, so today's rule must
+    // not post it again. That is what happens when the all-pushes time is removed or moved later: without this, every article pushed
+    // while the new rule was on would be posted once more. The campaign id is in the key, so the `have` read above supplies the ids,
+    // and the article keys come from the pushes already read: no extra query. Any status counts (POSTED, FAILED, SKIPPED, in flight).
+    const handled = pushedCampaignIds(have);
+    if (handled.size > 0) for (const [k, ids] of idsOfArticle) if (ids.some((id) => handled.has(id))) firstOf.delete(k);
+    // Oldest first across both rules: the read orders the pushes by send time (then id) and each rule inserts as it goes.
     for (const [key, campaignId] of firstOf) {
       if (have.has(key)) continue;
       let row: FacebookPost;
@@ -431,4 +476,13 @@ export function startFacebookWorker(): void {
   });
   // eslint-disable-next-line no-console
   console.log(`[facebook] worker started (post from ${env.facebook.postFrom!.toISOString()})`);
+  // "Every push posts" (brief 2026-11-04-academy-store-posts): ONE line, on with its time, or off (the page stays on today's rule, one
+  // post per article) and why, in fixed words naming the variable, never its value.
+  const pushesFrom = env.facebook.allPushesFrom;
+  // eslint-disable-next-line no-console
+  console.log(
+    pushesFrom
+      ? `[facebook] all pushes on for ${ALL_PUSHES_FROM_VARS.facebook} (from ${pushesFrom.toISOString()})`
+      : `[facebook] all pushes off: ${parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).off ?? `${ALL_PUSHES_FROM_VARS.facebook} is not set`} (today's rule: one post per article)`,
+  );
 }
