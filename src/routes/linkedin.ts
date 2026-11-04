@@ -29,7 +29,6 @@ export type LinkedInRouterOptions = {
 };
 
 const STAFF = requireBearerOrUser(['ADMIN', 'PUBLISHER']);
-const WINDOW_MS = 24 * 60 * 60_000;
 
 export type ScreenStatus = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
 
@@ -71,8 +70,9 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
       const rows = inDay.map(([k, c]) => {
         const p = byKey.get(k);
         let status: ScreenStatus;
+        // No row yet: pushed since go-live → the worker will post it, however long ago (no age limit); before go-live → never.
         if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
-        else status = postFrom && c.lastSentAt! >= postFrom && now.getTime() - c.lastSentAt!.getTime() <= WINDOW_MS ? 'WAITING' : 'NOT_POSTED';
+        else status = postFrom && c.lastSentAt! >= postFrom ? 'WAITING' : 'NOT_POSTED';
         return {
           id: p?.id ?? null,
           campaignId: c.id,

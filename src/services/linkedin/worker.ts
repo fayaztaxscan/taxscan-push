@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { createHash } from 'node:crypto';
-import { Prisma, type Campaign, type LinkedInPost } from '@prisma/client';
+import { Prisma, type LinkedInPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
@@ -26,7 +26,8 @@ import { buildPost, fetchCmsArticle, type CmsArticle } from './post';
  *    automatically (a crash mid-call may or may not have posted);
  *  - 429 / 5xx / network: retry at +1, +5, +15 min (a retry due in quiet hours waits for 07:00 IST), then FAILED;
  *  - 401 / 403: stop posting for the page until the token changes or the app restarts; one alert email per IST day;
- *  - nothing pushed before LINKEDIN_POST_FROM, or more than 24 h ago, is ever posted.
+ *  - nothing pushed before LINKEDIN_POST_FROM is ever posted. After it there is NO age limit: an article that has no row yet is
+ *    posted however long ago it was pushed (brief 2026-11-04-social-no-age-limit).
  */
 
 export const MAX_PER_TICK = 3;
@@ -34,8 +35,7 @@ export const STALE_MS = 10 * 60_000;
 /** Minutes to wait after failed attempt 1, 2, 3; attempt 4 failing = FAILED. */
 export const RETRY_DELAYS_MIN = [1, 5, 15] as const;
 export const MAX_ATTEMPTS = RETRY_DELAYS_MIN.length + 1;
-const WINDOW_MS = 24 * 60 * 60_000;
-/** How far before the window an earlier push of the same article is looked for. */
+/** How far before go-live (LINKEDIN_POST_FROM) an earlier push of the same article is looked for. */
 const EARLIER_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 export const UNKNOWN_ERROR = 'unknown — check the page';
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
@@ -128,7 +128,7 @@ async function alertAdmins(page: string, status: number | null, d: WorkerDeps, n
     const text =
       `Taxscan Push could not post to the ${page} LinkedIn page: LinkedIn answered ${status ?? 'an authorisation error'} (the access token expired, was revoked or lacks permission).\n\n` +
       `No further posts are attempted for this page until a new token is set in Railway (LINKEDIN_${page.toUpperCase()}_ACCESS_TOKEN) or the app restarts. ` +
-      `Articles pushed meanwhile are kept: they post once posting resumes, if they are still within 24 hours of their push.\n\n` +
+      `Articles pushed meanwhile are kept: they post once posting resumes.\n\n` +
       `The LinkedIn screen in the admin shows this notice too. (${now.toISOString()})`;
     const html = `<p>${text.replace(/\n\n/g, '</p><p>')}</p>`;
     for (const addr of to) await send({ to: addr, subject, html, text });
@@ -309,36 +309,42 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     }
     if (out.authStopped || budget <= 0) continue;
 
-    // 3. New articles, oldest push first.
-    const since = new Date(Math.max(postFrom.getTime(), now.getTime() - WINDOW_MS));
+    // 3. New articles, oldest push first. NO age limit: every SENT push since go-live (LINKEDIN_POST_FROM) whose article has no
+    //    row yet is posted, however long ago it was pushed. That list only grows (~20 a day) and is read every minute, so it is
+    //    read with `select` of just what the two shared rules need (isPublicArticleCampaign: url + target; articleKey: id + url),
+    //    never whole rows; `attempt` loads the one full campaign it posts.
+    const pagePortals = Object.keys(portals).filter((p) => portals[p] === page);
     const campaigns = await prisma.campaign.findMany({
-      where: { portal: { in: Object.keys(portals).filter((p) => portals[p] === page) }, status: 'SENT', lastSentAt: { gte: since } },
+      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: postFrom } },
+      select: { id: true, url: true, target: true },
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
-    const firstOf = new Map<string, Campaign>();
+    const firstOf = new Map<string, string>(); // article key → the id of its OLDEST push
     for (const c of campaigns) {
       // WHO sent it never matters (pacer, Compose now / scheduled, Push now, Breaking all post); only a public article does.
       if (!isPublicArticleCampaign(c)) continue;
       const k = articleKey(c);
-      if (!firstOf.has(k)) firstOf.set(k, c);
+      if (!firstOf.has(k)) firstOf.set(k, c.id);
     }
     if (firstOf.size === 0) continue;
-    // A re-push or the morning-backfill clone of an article first pushed BEFORE the window (before go-live, or more than
-    // 24 h ago) is not new: never post it.
+    // A re-push or the morning-backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is
+    // not new: never post it, at any age.
     const earlier = await prisma.campaign.findMany({
-      where: { portal: { in: Object.keys(portals).filter((p) => portals[p] === page) }, status: 'SENT', lastSentAt: { gte: new Date(since.getTime() - EARLIER_LOOKBACK_MS), lt: since } },
+      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
       select: { id: true, url: true },
     });
     for (const c of earlier) firstOf.delete(articleKey(c));
     if (firstOf.size === 0) continue;
-    const have = new Set((await prisma.linkedInPost.findMany({ where: { page, articleKey: { in: [...firstOf.keys()] } }, select: { articleKey: true } })).map((r) => r.articleKey));
-    for (const [key, c] of firstOf) {
+    // Which of them already have a row (POSTED, SKIPPED, FAILED or in flight)? The page's keys in ONE indexed read: an
+    // `IN (…)` of every candidate would grow with the list above.
+    const have = new Set((await prisma.linkedInPost.findMany({ where: { page }, select: { articleKey: true } })).map((r) => r.articleKey));
+    for (const [key, campaignId] of firstOf) {
       if (budget <= 0 || out.authStopped) break;
       if (have.has(key)) continue;
-      // An older push of the same article (before the window) already posted, or was before go-live: the row says so.
+      // No row: this article was never handled (an earlier push of it that was handled would have left its row).
       let row: LinkedInPost;
       try {
-        row = await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId: c.id, status: 'PENDING', attempts: 1 } });
+        row = await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId, status: 'PENDING', attempts: 1 } });
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
         throw err;
