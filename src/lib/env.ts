@@ -373,6 +373,37 @@ export const AUDIENCE_SECRET_NAMES = [
   'MAILERCLOUD_SYNC_API_KEY',
 ] as const;
 
+/**
+ * A LinkedIn page that posts with ANOTHER page's member token (one token with `w_organization_social` serves both pages).
+ * `tokenFrom` names the page whose token it uses; `postFrom` is this page's OWN go-live time.
+ */
+export type SharedLinkedInPage = { orgUrn: string; postFrom: Date; tokenFrom: string };
+
+const LINKEDIN_ORG_URN = /^urn:li:organization:\d+$/;
+/** An ISO calendar date, with or without a time (`2026`, `04/11/2026` and `Nov 4` are NOT ISO; Date.parse alone would take them). */
+const ISO_DATE_START = /^\d{4}-\d{2}-\d{2}(?:[T ].*)?$/;
+
+/**
+ * The Taxscan Academy LinkedIn page (brief 2026-11-04-linkedin-academy-page). It posts the SAME articles as the Taxscan page, with
+ * the Taxscan page's token. It is ACTIVE only when BOTH variables are valid:
+ *   LINKEDIN_ACADEMY_ORG_URN    `urn:li:organization:<digits>`
+ *   LINKEDIN_ACADEMY_POST_FROM  an ISO date or time; nothing pushed before it is ever posted to Academy (its own go-live)
+ * Anything else (neither set, only one set, either one invalid) leaves it OFF: no rows, no failures, no refusal to start.
+ * Pure (takes the source as a parameter) so tests can feed it any input. `off` says why in fixed words naming the variables,
+ * never their values; it is the one boot line the worker prints.
+ */
+export function parseLinkedInAcademyEnv(src: NodeJS.ProcessEnv): { page: SharedLinkedInPage | null; off: string | null } {
+  const urn = (src.LINKEDIN_ACADEMY_ORG_URN ?? '').trim();
+  const from = (src.LINKEDIN_ACADEMY_POST_FROM ?? '').trim();
+  if (!urn && !from) return { page: null, off: 'not configured (it needs both LINKEDIN_ACADEMY_ORG_URN and LINKEDIN_ACADEMY_POST_FROM)' };
+  const t = ISO_DATE_START.test(from) ? Date.parse(from) : Number.NaN;
+  const bad: string[] = [];
+  if (!LINKEDIN_ORG_URN.test(urn)) bad.push('LINKEDIN_ACADEMY_ORG_URN is missing or not urn:li:organization:<digits>');
+  if (Number.isNaN(t)) bad.push('LINKEDIN_ACADEMY_POST_FROM is missing or not a valid ISO time');
+  if (bad.length) return { page: null, off: bad.join('; ') };
+  return { page: { orgUrn: urn, postFrom: new Date(t), tokenFrom: 'taxscan' }, off: null };
+}
+
 export const env = {
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -606,7 +637,8 @@ export const env = {
   // nudgeEnabled: a 5-minute tick that tells opted-in staff devices when articles are waiting for WhatsApp (needs queueEnabled).
   whatsapp: { queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true', nudgeEnabled: process.env.WHATSAPP_NUDGE_ENABLED === 'true' },
   // LinkedIn page posting (docs/LINKEDIN_POSTING.md). Default off. `postFrom` is REQUIRED when enabled (the worker refuses to
-  // start without a valid one; nothing pushed before it is ever posted). One entry per page; only `taxscan` for now.
+  // start without a valid one; nothing pushed before it is ever posted). `pages` = the pages with a token of their own: only
+  // `taxscan`. The Academy page (optional, own go-live time, the Taxscan token) is in `sharedPages` below.
   linkedin: {
     enabled: process.env.LINKEDIN_POSTING_ENABLED === 'true',
     postFrom: (() => {
@@ -626,6 +658,14 @@ export const env = {
         })(),
       },
     } as Record<string, { orgUrn: string; accessToken: string; refreshToken?: string; refreshExpiresAt?: Date | null }>,
+    // Pages that post with ANOTHER page's token, kept OUT of `pages` on purpose: every token loop (renewal, `LinkedInToken` rows,
+    // the active-token cache) walks `pages`, and a page without a token of its own must never get a row or a renewal. Today only
+    // `academy`, and only while it is ACTIVE (both LINKEDIN_ACADEMY_* variables valid, see parseLinkedInAcademyEnv). Read at call
+    // time everywhere, so a test can add a private page here.
+    sharedPages: (() => {
+      const academy = parseLinkedInAcademyEnv(process.env).page;
+      return academy ? { academy } : {};
+    })() as Record<string, SharedLinkedInPage>,
     // Automatic renewal of the access token with the refresh token (docs/LINKEDIN_POSTING.md "Token renewal"). Default off.
     // One LinkedIn app serves every page (client id / secret); the key encrypts the renewed token in Postgres (32 bytes, base64).
     tokenRefresh: {

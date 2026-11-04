@@ -1,10 +1,13 @@
 import bcrypt from 'bcrypt';
 import cron from 'node-cron';
+import fs from 'node:fs';
+import path from 'node:path';
 import request from 'supertest';
 import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { env } from '../lib/env';
 import { prisma } from '../lib/prisma';
+import { articleKey } from '../services/reports';
 import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from '../services/linkedin/client';
 import type { CmsArticle } from '../services/linkedin/post';
 import { runLinkedInTick, retryNow, startLinkedInWorker, resetLinkedInStops, loginProblem, authKey, pushOutOfQuietHours, UNKNOWN_ERROR, MAX_PER_TICK, type WorkerDeps } from '../services/linkedin/worker';
@@ -165,9 +168,130 @@ describe('4. the worker posts what was pushed, in order, three at a time', () =>
     expect(r.title).toBe('Order (2) [Read Order]');
     expect(logSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/\[linkedin\] page=litest campaign=\S+ outcome=posted hashtags=fallback/);
   });
-  it('nothing older than 24 h is posted', async () => {
-    await camp('stale', at(NOW, -25 * 60));
-    expect((await runLinkedInTick(deps({ postFrom: at(NOW, -30 * 60) }))).posted).toBe(0);
+});
+
+/**
+ * Brief 2026-11-04-social-no-age-limit. The old "nothing older than 24 h is posted" case is replaced by the cases below: only
+ * LINKEDIN_POST_FROM is absolute. An article with no row posts however long ago it was pushed; one pushed before go-live never
+ * does; a row (or a first push before go-live) still stops every repeat.
+ */
+describe('4b. no age limit: an article that has no row posts however long ago it was pushed', () => {
+  const DAY = 24 * 60; // minutes
+  const titles = () => calls.map((c) => c.title);
+  const repush = (url: string, lastSentAt: Date) => prisma.campaign.create({ data: { portal: PORTAL, title: 'again', body: 'b', url, target: {}, status: 'SENT', lastSentAt } });
+  const rowFor = (c: { id: string; url: string }, data: object) => prisma.linkedInPost.create({ data: { page: PAGE, articleKey: articleKey(c), campaignId: c.id, attempts: 1, ...data } as never });
+
+  it.each([
+    { ago: 25 * 60, label: '25 hours' },
+    { ago: 3 * DAY, label: '3 days' },
+    { ago: 30 * DAY, label: '30 days' },
+  ])('1: an article pushed $label ago (after post-from) with no row is posted', async ({ ago }) => {
+    const c = await camp(`aged-${ago}`, at(NOW, -ago));
+    const t = await runLinkedInTick(deps({ postFrom: at(NOW, -(ago + DAY)) }));
+    expect(t.posted).toBe(1);
+    expect(titles()).toEqual([`Story aged-${ago}`]);
+    const rows = await rowsOf();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ campaignId: c.id, status: 'POSTED', attempts: 1 });
+  });
+
+  it('2: an article pushed before post-from is never posted, at any age; one pushed exactly AT post-from is', async () => {
+    const from = at(NOW, -2 * DAY);
+    for (const [i, ago] of [1, 59, 25 * 60, 3 * DAY, 20 * DAY, 400 * DAY].entries()) await camp(`before-${i}`, at(from, -ago));
+    await camp('exactly-at', from);
+    const t = await runLinkedInTick(deps({ postFrom: from }));
+    expect(t.posted).toBe(1);
+    expect(titles()).toEqual(['Story exactly-at']);
+    // later ticks never reach back to the earlier ones either
+    await runLinkedInTick(deps({ postFrom: from, now: () => at(NOW, 90) }));
+    expect(calls).toHaveLength(1);
+    expect(await rowsOf()).toHaveLength(1);
+  });
+
+  it('3: a re-push or morning-backfill clone of an article first pushed BEFORE post-from adds no row, however long after go-live', async () => {
+    const from = at(NOW, -5 * DAY);
+    const a = await camp('orig-30-min-before', at(from, -30));
+    const b = await camp('orig-10-days-before', at(from, -10 * DAY)); // inside the 14-day look-back before go-live
+    const repushes: [{ url: string }, number][] = [[a, 4 * DAY], [a, 90], [b, 3 * DAY], [b, 5]]; // days after go-live, and just now
+    for (const [src, ago] of repushes) await repush(src.url, at(NOW, -ago));
+    const t = await runLinkedInTick(deps({ postFrom: from }));
+    expect(t.posted).toBe(0);
+    expect(calls).toHaveLength(0);
+    expect(await rowsOf()).toHaveLength(0);
+  });
+
+  it.each(['POSTED', 'SKIPPED', 'FAILED'] as const)('4: a re-push of an article whose row is %s, first pushed days ago, adds no row and makes no call', async (status) => {
+    const first = await camp(`row-${status}`, at(NOW, -4 * DAY));
+    await rowFor(first, { status, ...(status === 'POSTED' ? { linkedinPostId: 'urn:li:share:9', postedAt: at(NOW, -4 * DAY + 3) } : {}), ...(status === 'FAILED' ? { error: 'HTTP 422: invalid content' } : {}) });
+    for (const ago of [2 * DAY, 26 * 60, 40]) await repush(first.url, at(NOW, -ago));
+    // The unique (page, articleKey) would also refuse a duplicate, but only after a doomed INSERT that Postgres logs as an error:
+    // with no age limit every already-handled article would cost one such insert a minute. The pre-check must stop it earlier.
+    const insert = jest.spyOn(prisma.linkedInPost, 'create');
+    try {
+      const t = await runLinkedInTick(deps({ postFrom: at(NOW, -6 * DAY) }));
+      expect(t).toMatchObject({ posted: 0, retried: 0, failed: 0 });
+      expect(insert).not.toHaveBeenCalled();
+    } finally {
+      insert.mockRestore();
+    }
+    expect(calls).toHaveLength(0);
+    const rows = await rowsOf();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ campaignId: first.id, status });
+  });
+
+  it('5: waiting articles of different ages post oldest push first, three a tick', async () => {
+    // created newest-first on purpose: the order comes from lastSentAt, not from insertion
+    for (const [slug, ago] of [['age-3h', 3 * 60], ['age-26h', 26 * 60], ['age-2d', 2 * DAY], ['age-5d', 5 * DAY], ['age-30d', 30 * DAY]] as const) await camp(slug, at(NOW, -ago));
+    const from = at(NOW, -40 * DAY);
+    const t1 = await runLinkedInTick(deps({ postFrom: from }));
+    expect(t1.posted).toBe(MAX_PER_TICK);
+    expect(titles()).toEqual(['Story age-30d', 'Story age-5d', 'Story age-2d']);
+    const t2 = await runLinkedInTick(deps({ postFrom: from }));
+    expect(t2.posted).toBe(2);
+    expect(titles().slice(3)).toEqual(['Story age-26h', 'Story age-3h']);
+    expect((await runLinkedInTick(deps({ postFrom: from }))).posted).toBe(0);
+    expect(calls).toHaveLength(5);
+  });
+
+  it('6: an article that waited through a login stop for more than 24 h posts when a new token is set; the stop e-mail makes no age promise', async () => {
+    await camp('stop-a', at(NOW, -30));
+    await camp('stop-b', at(NOW, -20));
+    script = () => auth401;
+    await runLinkedInTick(deps()); // stop-a's attempt hits the login error: the page stops and stop-b never gets a row
+    expect(calls).toHaveLength(1);
+    expect(await rowsOf()).toHaveLength(1);
+    expect(mails).toHaveLength(1);
+    expect(mails[0].text).toContain('Articles pushed meanwhile are kept: they post once posting resumes.');
+    expect(mails[0].text).not.toMatch(/24 ?h/i);
+    // three days later a new token is in place: the retry that was due goes first, then the article that never got a row
+    env.linkedin.pages[PAGE] = { orgUrn: 'urn:li:organization:99', accessToken: `${TOKEN}-new` };
+    script = () => posted();
+    const t = await runLinkedInTick(deps({ now: () => at(NOW, 3 * DAY) }));
+    expect(t.posted).toBe(2);
+    expect(titles().slice(1)).toEqual(['Story stop-a', 'Story stop-b']);
+    expect((await rowsOf()).map((r) => r.status)).toEqual(['POSTED', 'POSTED']);
+  });
+
+  it('7: the tick reads only the columns the two shared rules need (a select on every campaign list), never whole rows', async () => {
+    await camp('select-check', at(NOW, -5));
+    const spy = jest.spyOn(prisma.campaign, 'findMany');
+    try {
+      await runLinkedInTick(deps());
+      expect(calls).toHaveLength(1); // it still posted
+      const args = spy.mock.calls.map((c) => c[0] as { select?: Record<string, boolean> } | undefined);
+      expect(args.length).toBeGreaterThanOrEqual(2); // the list since go-live, and the look-back before it
+      for (const a of args) expect(a?.select).toBeDefined();
+      expect(Object.keys(args[0]!.select!).sort()).toEqual(['id', 'target', 'url']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('8: WINDOW_MS is gone from the worker and the screen route (the rule exists nowhere in code)', () => {
+    for (const f of ['../services/linkedin/worker.ts', '../routes/linkedin.ts']) {
+      expect(fs.readFileSync(path.join(__dirname, f), 'utf8')).not.toMatch(/WINDOW_MS|24 ?h(ours)? ago|last 24 hours|within 24 hours/);
+    }
   });
 });
 
@@ -761,6 +885,16 @@ describe('9. the screen\'s API', () => {
     expect(res.body.login).toMatchObject({ status: 401 });
     const yesterday = await request(appWith()).get('/api/linkedin/posts?date=2026-11-02').set('Cookie', adminCookie);
     expect(yesterday.body.rows).toEqual([]); // nothing was pushed on the 2nd
+  });
+  it('no age limit on the screen: an unposted article pushed days before the clock is WAITING (the worker will post it); one pushed before go-live is NOT_POSTED', async () => {
+    const later = ist(10, 0, 6); // three days after the pushes below
+    await camp('s-days-old', at(FROM, 300)); // 3 Nov 09:00 IST: after go-live, no row, more than 24 h before `later`
+    await camp('s-before-golive', at(FROM, -90));
+    const app = createApp({ rateLimit: { publicPerMin: 10000, loginPerMin: 10000 }, linkedin: { enabled: () => true, clock: () => later, portals: () => ({ [PORTAL]: PAGE }), postFrom: () => FROM, worker: deps() } });
+    const res = await request(app).get('/api/linkedin/posts?date=2026-11-03').set('Cookie', publisherCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.rows.map((r: { status: string }) => r.status)).toEqual(['NOT_POSTED', 'WAITING']);
+    expect(res.body.counts).toMatchObject({ waiting: 1, notPosted: 1, all: 2 });
   });
   it('Retry posts one failed row now (one call, then answers); Skip skips; both only on the right rows', async () => {
     const c = await camp('r-failed', at(NOW, -30));

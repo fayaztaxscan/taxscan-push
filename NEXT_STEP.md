@@ -20,6 +20,25 @@ status changes so a fresh Claude session can pick up cleanly.
 8. Digest stage-3 prerequisites, audience tasks 9–10, Postgres password window, VAPID decision, owner's long-standing items
    (see CLAUDE.md "Open next steps"). X posting ON HOLD.
 
+**▶ 2026-11-03 — two releases, four changes, all LIVE (PRs #99, #100):**
+- **PR #99 (17:07 IST, main e5825dd; release check 1,917/1,917 on f9fb4d9):** (1) digest story row fit — proportional columns
+  (33/2.5/64 %, Outlook 100 %), compact text (summary 14 px ≤ 2 lines / 1 when the headline runs to 3, Read More 30 px), no gap;
+  first digest in it = 4 Nov 06:30 — get a Zoho + Anagha's Outlook screenshot. (2) **Facebook page posting — ON since 17:43 IST**
+  (`FACEBOOK_POST_FROM` 2026-11-03T11:59:00Z): Meta app taxscan_post_app (Live, Taxscan business), system user
+  taxscan-push-poster (Tax Scan = Content only). First attempt `auth_stop 403 code 200` = we had set the SYSTEM-USER token; the
+  /feed needs the **PAGE token** (Graph Explorer → `me/accounts` with the system-user token → Tax Scan's access_token). Page token
+  set ~17:52 → first post `outcome=posted hashtags=cms`. Paced 1/10 min, 30/day; policy stop (368) kept in DigestSetting until an
+  ADMIN Resume; nav hamburger now < 1430 px. (3) LinkedIn fixes — every post logged `image=none:status_400` (raw URN in the status
+  poll path) → `encodeURIComponent`, attach on an unverified poll (`image=ok:unverified`); screen keeps its error after a refused
+  Retry/Skip. **Verify: next LinkedIn post `image=ok` + picture.** Open: can a PROCESSING image be attached?
+- **PR #100 (18:53 IST, main c6978fb): soft prompt real scroll — `SOFT_PROMPT_REAL_SCROLL` ON since 2026-11-03T13:24:51Z
+  (18:54:51 IST).** Why: owner saw the opt-in rate fall; prod showed desktop first-page **scroll** trigger = 78,787 shows / 5
+  grants (24 Oct–3 Nov), flat ~300/h round the clock (robots / background tabs); everything else ~0.5 % (v1 ~0.6 %); real grants
+  UP with v2 (~5/day vs ~0.4/day). Measure 7 days from the switch vs 24 Oct–3 Nov (grants/day + shown/day by device/trigger);
+  **stop rule: grants < ~4/day for a week → flag off.** Shipped without a separate Release check (owner "go live now"; the build's
+  full suite 1,925 ran on the same code, develop fast-forwarded to it). Release check passed afterwards on cf0ff8a (1,925/1,925, first run).
+- Release-check note: `audienceIngest` failed once in the f9fb4d9 check (seq 7 erasure step), passed 3× after — watch.
+
 **▶ 2026-11-02 PR #98 LIVE 18:09 IST:** LinkedIn link-card cover picture (Images API, wait AVAILABLE, drop-and-repeat on a client error) + description; SOCIAL shows right after login. To verify: next LinkedIn post `image=ok` + picture on the page; Abhirami logs out/in → SOCIAL visible. Note: 2 Nov staff digest was SKIPPED (nobody approved before 17:00).
 
 **▶ 2026-11-02 PR #97 LIVE 17:33 IST:** first check showed `introspect=http_401` → LinkedIn `invalid_client`: the Client ID had been typed from a screenshot (misread). Re-set ID + secret via clipboard → `introspect=ok source=linkedin access_left_days=59 refresh_left_days=364`. Token renewal now fully working. (A manual `curl -d` test still says invalid_client because it doesn't URL-encode the secret — use `--data-urlencode`.) Next: build linkedin-article-thumbnail.

@@ -74,10 +74,23 @@ export const sha256 = (s: string): string => createHash('sha256').update(s).dige
 
 const cache = new Map<string, { env: string; active: string }>();
 
-/** The token last resolved for the page, if the env token it was resolved against is still the current one. */
+/**
+ * The page whose token `page` posts with: itself, or the page it shares one with (Academy → Taxscan). A page that shares a token
+ * has no env token, no `LinkedInToken` row and no renewal of its own: everything about the token is read through its owner.
+ */
+export function tokenPageOf(page: string): string {
+  return env.linkedin.sharedPages[page]?.tokenFrom ?? page;
+}
+/** The pages that post with `page`'s token (Academy for Taxscan): a renewal of that token ends THEIR login stop too. */
+export function pagesSharingToken(page: string): string[] {
+  return Object.keys(env.linkedin.sharedPages).filter((p) => env.linkedin.sharedPages[p].tokenFrom === page);
+}
+
+/** The token last resolved for the page (for a shared page, its owner's), if the env token it was resolved against is still the current one. */
 export function cachedAccessToken(page: string): string | null {
-  const c = cache.get(page);
-  const cur = env.linkedin.pages[page]?.accessToken;
+  const owner = tokenPageOf(page);
+  const c = cache.get(owner);
+  const cur = env.linkedin.pages[owner]?.accessToken;
   return c && cur && c.env === cur ? c.active : null;
 }
 export function resetTokenCache(): void {
@@ -354,8 +367,9 @@ async function checkPage(page: string, key: Buffer, d: TokenDeps, now: Date): Pr
           },
         });
         cache.set(page, { env: cfg.accessToken, active: r.accessToken });
-        // a successful renewal ends a login stop and its banner (the worker's stop keys on the active token, which just changed)
-        await prisma.digestSetting.deleteMany({ where: { key: `linkedin:auth:${page}` } });
+        // a successful renewal ends a login stop and its banner (the worker's stop keys on the active token, which just changed),
+        // for this page AND for every page that posts with this token (Academy): they all resume on the next tick
+        await prisma.digestSetting.deleteMany({ where: { key: { in: [page, ...pagesSharingToken(page)].map((p) => `linkedin:auth:${p}`) } } });
         if (state.blockedFp) await writeState(page, { ...state, blockedFp: undefined });
         action = 'renewed';
       } else {
@@ -436,9 +450,13 @@ export type TokenStatus = {
   status: 'ok' | 'amber' | 'red';
 };
 
-/** Dates and a status only; never a token. null when renewal is switched off (the screen then shows nothing new). */
-export async function tokenStatus(page: string, nowDate: Date = new Date()): Promise<TokenStatus | null> {
+/**
+ * Dates and a status only; never a token. null when renewal is switched off (the screen then shows nothing new).
+ * A page that shares a token (Academy) reports its owner's: it is the one token.
+ */
+export async function tokenStatus(pageName: string, nowDate: Date = new Date()): Promise<TokenStatus | null> {
   if (!env.linkedin.tokenRefresh.enabled) return null;
+  const page = tokenPageOf(pageName);
   const row = await prisma.linkedInToken.findUnique({ where: { page } });
   const cfg = env.linkedin.pages[page];
   const validUntil = row?.accessExpiresAt ?? null;

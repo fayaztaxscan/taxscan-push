@@ -135,7 +135,12 @@ to keep.
 
 **`LinkedInPost` (the LinkedIn page posting log) is deliberately NOT in the export either.** After a restore keep
 `LINKEDIN_POSTING_ENABLED` off and set `LINKEDIN_POST_FROM` to the restore time before switching it back on; with the rows
-gone, anything pushed earlier would otherwise post to LinkedIn a second time. See `docs/LINKEDIN_POSTING.md`.
+gone and no age limit on posting (since 2026-11-04), EVERYTHING pushed earlier would otherwise post to LinkedIn a second time. If the Academy page is on,
+set `LINKEDIN_ACADEMY_POST_FROM` to the restore time too. See `docs/LINKEDIN_POSTING.md`.
+
+**`FacebookPost` (the Facebook page posting log) is deliberately NOT in the export either, and the same rule applies.** After a restore keep
+`FACEBOOK_POSTING_ENABLED` off and set `FACEBOOK_POST_FROM` to the restore time before switching it back on. With the rows gone and no age
+limit, everything pushed since go-live would otherwise post a second time, and repeated posts put the page at risk with Facebook. See `docs/FACEBOOK_POSTING.md`.
 
 **`WhatsAppPost` (the WhatsApp channel queue's Posted / Skipped marks) is deliberately NOT in the export.** It holds only
 "who marked which article, when" for a short-lived working list; losing it means a day's list shows To do again, and

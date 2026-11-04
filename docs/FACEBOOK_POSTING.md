@@ -7,8 +7,10 @@ Built 3 Nov 2026 (brief `docs/briefs/2026-11-03-facebook-page-posting.md`). It m
 ## What posts
 Every taxscan.in article the push system SENT, whoever sent it (pacer, Compose, Queue/Review Push now, Breaking), by the same
 rule as WhatsApp and LinkedIn (`isPublicArticleCampaign()`): not a test-segment-only send, not the home page / a section /
-academy / shop. One post per article (`articleKey()`), so a re-push or the morning-backfill clone never posts again. Only
-pushes at or after `FACEBOOK_POST_FROM` and not older than 24 h. The CMS hashtag/keyword fetch is LinkedIn's (fail-open).
+academy / shop. One post per article (`articleKey()`), so a re-push or the morning-backfill clone never posts again, nor does a
+re-push of an article first pushed before go-live (looked for up to 14 days before it). Only pushes at or after
+`FACEBOOK_POST_FROM`, and **there is no age limit** (brief 2026-11-04-social-no-age-limit): an article that has no row yet posts
+however long ago it was pushed, paced by the gap, the daily cap and the stops below. The CMS hashtag/keyword fetch is LinkedIn's (fail-open).
 
 The post: `POST https://graph.facebook.com/<FACEBOOK_GRAPH_VERSION>/<page-id>/feed`, form-encoded `message`, `link`,
 `access_token` (the token is in the body, never in a URL). `message` = headline, blank line, at most 4 plain `#Tags`
@@ -17,7 +19,7 @@ Facebook builds the link card itself (og:title / og:image). No image upload. The
 
 ## Pacing (account safety)
 - At most **one post attempt per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts.
-- At most `FACEBOOK_DAILY_CAP` (30) posts per IST day; the rest wait for the next day (the 24 h window then decides).
+- At most `FACEBOOK_DAILY_CAP` (30) posts per IST day; the rest wait for the next day, however old they are by then.
 - The row is created before the call; an in-flight row older than 10 min becomes FAILED "unknown - check the page" and is never
   re-posted automatically.
 
@@ -58,3 +60,7 @@ The worker refuses to start (`[facebook] refusing to start: ...`) without a vali
 3. ADMIN: SOCIAL -> Facebook -> **Check connection** ("Connected to page: ...").
 4. Set `FACEBOOK_POST_FROM` = now and `FACEBOOK_POSTING_ENABLED=true`.
 5. Watch the first `outcome=posted` and check the post in a logged-out browser.
+
+## Backups and restores
+`FacebookPost` is **not** in the R2 export. After a restore keep `FACEBOOK_POSTING_ENABLED` **off** and set `FACEBOOK_POST_FROM` to the restore time
+before switching it back on: with the rows gone and no age limit, everything pushed since go-live would otherwise post a second time. See `docs/BACKUPS.md`.

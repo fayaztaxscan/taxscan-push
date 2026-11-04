@@ -1,8 +1,8 @@
 import cron from 'node-cron';
 import { createHash } from 'node:crypto';
-import { Prisma, type Campaign, type LinkedInPost } from '@prisma/client';
+import { Prisma, type LinkedInPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env } from '../../lib/env';
+import { env, parseLinkedInAcademyEnv } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
@@ -11,22 +11,27 @@ import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { istDay } from '../whatsapp/queue';
 import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
 import { fetchCoverImage } from './image';
-import { PORTAL_TO_PAGE, pageConfig } from './pages';
-import { refreshActiveTokens } from './token';
+import { PAGE_ACADEMY, normalizePortals, pageConfig, pagesOf, portalPages, portalsOfPage, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
+import { refreshActiveTokens, tokenPageOf } from './token';
 import { buildPost, fetchCmsArticle, type CmsArticle } from './post';
 
 /**
  * The LinkedIn posting worker (brief 2026-11-02-linkedin-page-posting, docs/LINKEDIN_POSTING.md).
  *
  * A 1-minute tick that READS Campaign rows (never touches the send path) and posts each pushed taxscan.in article to
- * its LinkedIn page, oldest first, at most 3 per tick. Safety rules, all enforced here:
+ * its LinkedIn page(s), oldest first, at most 3 per tick across ALL pages (Taxscan first; the optional Academy page, brief
+ * 2026-11-04-linkedin-academy-page, posts the same articles with its own rows, go-live time and org URN, and the Taxscan token).
+ * Safety rules, all enforced here, PER PAGE:
  *  - the `LinkedInPost` row is created (PENDING, in flight = `nextAttemptAt` null) BEFORE the API call, one article at a
  *    time, and its unique (page, articleKey) makes a second tick (or a re-push / the morning-backfill clone) a no-op;
  *  - an in-flight row older than 10 min with no result becomes FAILED "unknown — check the page" and is never re-posted
  *    automatically (a crash mid-call may or may not have posted);
  *  - 429 / 5xx / network: retry at +1, +5, +15 min (a retry due in quiet hours waits for 07:00 IST), then FAILED;
- *  - 401 / 403: stop posting for the page until the token changes or the app restarts; one alert email per IST day;
- *  - nothing pushed before LINKEDIN_POST_FROM, or more than 24 h ago, is ever posted.
+ *  - 401 / 403: stop posting for THAT page until the token changes or the app restarts; one alert email per page per IST day. A
+ *    stop never gates another page, in the same tick or a later one;
+ *  - nothing pushed before the page's go-live (LINKEDIN_POST_FROM; Academy: LINKEDIN_ACADEMY_POST_FROM) is ever posted to it.
+ *    After it there is NO age limit: an article that has no row yet is posted however long ago it was pushed (brief
+ *    2026-11-04-social-no-age-limit).
  */
 
 export const MAX_PER_TICK = 3;
@@ -34,8 +39,7 @@ export const STALE_MS = 10 * 60_000;
 /** Minutes to wait after failed attempt 1, 2, 3; attempt 4 failing = FAILED. */
 export const RETRY_DELAYS_MIN = [1, 5, 15] as const;
 export const MAX_ATTEMPTS = RETRY_DELAYS_MIN.length + 1;
-const WINDOW_MS = 24 * 60 * 60_000;
-/** How far before the window an earlier push of the same article is looked for. */
+/** How far before go-live (LINKEDIN_POST_FROM) an earlier push of the same article is looked for. */
 const EARLIER_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 export const UNKNOWN_ERROR = 'unknown — check the page';
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
@@ -54,9 +58,10 @@ export type WorkerDeps = {
   isEmailConfigured?: () => boolean;
   /** Active ADMIN emails; default reads the User table. */
   recipients?: () => Promise<string[]>;
-  /** Campaign.portal → page. Default PORTAL_TO_PAGE. */
-  portals?: Readonly<Record<string, string>>;
-  postFrom?: Date | null;
+  /** Campaign.portal → page(s): one page name or a list per portal, Taxscan first. Default `portalPages()` (Academy only while active). */
+  portals?: PortalMap;
+  /** Go-live: one time for every page, or one per page. Default: each page's own configured time. */
+  postFrom?: PostFromInput;
   /** Quiet hours window; default env.send.quietStart/quietEnd. */
   quiet?: { start: string; end: string };
 };
@@ -125,11 +130,24 @@ async function alertAdmins(page: string, status: number | null, d: WorkerDeps, n
     const to = await (d.recipients ?? defaultRecipients)();
     const send = d.emailSender ?? defaultEmailSender;
     const subject = `LinkedIn posting stopped — the ${page} page token was rejected`;
+    const lead = `Taxscan Push could not post to the ${page} LinkedIn page: LinkedIn answered ${status ?? 'an authorisation error'} (the access token expired, was revoked or lacks permission).`;
+    const kept = 'Articles pushed meanwhile are kept: they post once posting resumes.';
+    const screen = `The LinkedIn screen in the admin shows this notice too. (${now.toISOString()})`;
+    // A page that posts with ANOTHER page's token (Academy → Taxscan) has no token variable of its own: say which one to change, and
+    // that a 403 on it alone normally means the member who made the token has no role on THIS page.
+    const owner = tokenPageOf(page);
     const text =
-      `Taxscan Push could not post to the ${page} LinkedIn page: LinkedIn answered ${status ?? 'an authorisation error'} (the access token expired, was revoked or lacks permission).\n\n` +
-      `No further posts are attempted for this page until a new token is set in Railway (LINKEDIN_${page.toUpperCase()}_ACCESS_TOKEN) or the app restarts. ` +
-      `Articles pushed meanwhile are kept: they post once posting resumes, if they are still within 24 hours of their push.\n\n` +
-      `The LinkedIn screen in the admin shows this notice too. (${now.toISOString()})`;
+      owner === page
+        ? [lead, `No further posts are attempted for this page until a new token is set in Railway (LINKEDIN_${page.toUpperCase()}_ACCESS_TOKEN) or the app restarts. ${kept}`, screen].join('\n\n')
+        : [
+            lead,
+            `The ${page} page posts with the same LinkedIn token as the ${owner} page, so it has no token variable of its own: the one to change in Railway is LINKEDIN_${owner.toUpperCase()}_ACCESS_TOKEN (the automatic renewal replaces it too).` +
+              (status === 403
+                ? ` If the ${owner} page is still posting, a 403 here normally means the LinkedIn member who made that token has no admin role on the ${page} page: give that member the role in LinkedIn, then restart the app so posting resumes.`
+                : ''),
+            `No further posts are attempted for the ${page} page until the token changes or the app restarts. ${kept}`,
+            screen,
+          ].join('\n\n');
     const html = `<p>${text.replace(/\n\n/g, '</p><p>')}</p>`;
     for (const addr of to) await send({ to: addr, subject, html, text });
   } catch (err) {
@@ -257,11 +275,16 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
 
 export type TickResult = { posted: number; retried: number; failed: number; staleClosed: number; authStopped: boolean; refused: string | null };
 
-/** Why the worker must not run, or null. */
+/**
+ * Why the worker must not run, or null. Checked for every page the worker handles, Taxscan first: an Academy page is active only
+ * with its own two variables valid and borrows the Taxscan token, so once Taxscan itself is sound Academy can never be the reason.
+ */
 export function startupProblem(d: Pick<WorkerDeps, 'postFrom' | 'portals'> = {}): string | null {
-  const from = d.postFrom === undefined ? env.linkedin.postFrom : d.postFrom;
-  if (!from) return 'LINKEDIN_POST_FROM is missing or not a valid ISO time (nothing would be safe to post)';
-  for (const page of new Set(Object.values(d.portals ?? PORTAL_TO_PAGE))) if (!pageConfig(page)) return `LINKEDIN_${page.toUpperCase()}_ORG_URN / _ACCESS_TOKEN are not both set`;
+  const pages = pagesOf(normalizePortals(d.portals ?? portalPages()));
+  for (const page of pages) {
+    if (!resolvePostFrom(d.postFrom, page)) return `${page === PAGE_ACADEMY ? 'LINKEDIN_ACADEMY_POST_FROM' : 'LINKEDIN_POST_FROM'} is missing or not a valid ISO time (nothing would be safe to post)`;
+  }
+  for (const page of pages) if (!pageConfig(page)) return `LINKEDIN_${page.toUpperCase()}_ORG_URN / _ACCESS_TOKEN are not both set`;
   return null;
 }
 
@@ -271,80 +294,92 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
   await refreshActiveTokens().catch(() => undefined); // the renewed token, if any, is the one in use
   const problem = startupProblem(d);
   if (problem) return { ...out, refused: problem };
-  const postFrom = (d.postFrom === undefined ? env.linkedin.postFrom : d.postFrom) as Date;
-  const portals = d.portals ?? PORTAL_TO_PAGE;
+  const portals = normalizePortals(d.portals ?? portalPages());
+  const pages = pagesOf(portals); // Taxscan first: it is handled first, so a busy Taxscan page only delays Academy to a later tick
 
   // 1. In-flight rows with no result after 10 minutes: unknown, never re-posted. Only the pages THIS tick handles: a row of a page
   //    it does not post for is not its to judge (in production that is every page; it matters when ticks of different pages overlap).
   const stale = await prisma.linkedInPost.updateMany({
-    where: { page: { in: [...new Set(Object.values(portals))] }, status: 'PENDING', nextAttemptAt: null, updatedAt: { lt: new Date(now.getTime() - STALE_MS) } },
+    where: { page: { in: pages }, status: 'PENDING', nextAttemptAt: null, updatedAt: { lt: new Date(now.getTime() - STALE_MS) } },
     data: { status: 'FAILED', error: UNKNOWN_ERROR },
   });
   out.staleClosed = stale.count;
 
+  // MAX_PER_TICK is shared by all pages. `note` counts an outcome and says whether it was a login error.
   let budget = MAX_PER_TICK;
-  const note = (r: Attempted) => {
+  const note = (r: Attempted): boolean => {
     if (r === 'posted') out.posted += 1;
     else if (r === 'retry') out.retried += 1;
     else if (r === 'failed') out.failed += 1;
     else if (r === 'auth_stop') out.authStopped = true;
+    return r === 'auth_stop';
   };
-  const pages = [...new Set(Object.values(portals))];
 
   for (const page of pages) {
     if (isStopped(page)) {
-      out.authStopped = true;
+      out.authStopped = true; // "some page is stopped": it never gates ANOTHER page
       continue;
     }
+    // A login error (401 / 403) ends THIS page's turn only: the next page is still attempted in the same tick (a shared token will
+    // fail it too, and it then stops itself with its own banner and alert), and a stopped page never holds back a later one.
+    let stopped = false;
     // 2. Retries that are due (never inside quiet hours: they were scheduled out of it, this guards a changed clock).
     if (!isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
       const due = await prisma.linkedInPost.findMany({ where: { page, status: 'PENDING', nextAttemptAt: { lte: now } }, orderBy: { nextAttemptAt: 'asc' }, take: budget });
       for (const r of due) {
-        if (budget <= 0 || out.authStopped) break;
+        if (budget <= 0 || stopped) break;
         const claimed = await prisma.linkedInPost.updateMany({ where: { id: r.id, status: 'PENDING', nextAttemptAt: { lte: now } }, data: { nextAttemptAt: null, attempts: { increment: 1 } } });
         if (claimed.count !== 1) continue; // another tick got it
         budget -= 1;
-        note(await attempt({ ...r, nextAttemptAt: null, attempts: r.attempts + 1 }, d, now));
+        if (note(await attempt({ ...r, nextAttemptAt: null, attempts: r.attempts + 1 }, d, now))) stopped = true;
       }
     }
-    if (out.authStopped || budget <= 0) continue;
+    if (stopped || budget <= 0) continue;
 
-    // 3. New articles, oldest push first.
-    const since = new Date(Math.max(postFrom.getTime(), now.getTime() - WINDOW_MS));
+    // 3. New articles, oldest push first. NO age limit: every SENT push since THIS PAGE's go-live (Taxscan: LINKEDIN_POST_FROM;
+    //    Academy: LINKEDIN_ACADEMY_POST_FROM) whose article has no row on THIS page yet is posted, however long ago it was pushed.
+    //    That list only grows (~20 a day) and is read every minute, so it is read with `select` of just what the two shared rules
+    //    need (isPublicArticleCampaign: url + target; articleKey: id + url), never whole rows; `attempt` loads the one full campaign
+    //    it posts.
+    const postFrom = resolvePostFrom(d.postFrom, page) as Date; // startupProblem has made sure every page has one
+    const pagePortals = portalsOfPage(portals, page);
     const campaigns = await prisma.campaign.findMany({
-      where: { portal: { in: Object.keys(portals).filter((p) => portals[p] === page) }, status: 'SENT', lastSentAt: { gte: since } },
+      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: postFrom } },
+      select: { id: true, url: true, target: true },
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
-    const firstOf = new Map<string, Campaign>();
+    const firstOf = new Map<string, string>(); // article key → the id of its OLDEST push
     for (const c of campaigns) {
       // WHO sent it never matters (pacer, Compose now / scheduled, Push now, Breaking all post); only a public article does.
       if (!isPublicArticleCampaign(c)) continue;
       const k = articleKey(c);
-      if (!firstOf.has(k)) firstOf.set(k, c);
+      if (!firstOf.has(k)) firstOf.set(k, c.id);
     }
     if (firstOf.size === 0) continue;
-    // A re-push or the morning-backfill clone of an article first pushed BEFORE the window (before go-live, or more than
-    // 24 h ago) is not new: never post it.
+    // A re-push or the morning-backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is
+    // not new: never post it, at any age.
     const earlier = await prisma.campaign.findMany({
-      where: { portal: { in: Object.keys(portals).filter((p) => portals[p] === page) }, status: 'SENT', lastSentAt: { gte: new Date(since.getTime() - EARLIER_LOOKBACK_MS), lt: since } },
+      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
       select: { id: true, url: true },
     });
     for (const c of earlier) firstOf.delete(articleKey(c));
     if (firstOf.size === 0) continue;
-    const have = new Set((await prisma.linkedInPost.findMany({ where: { page, articleKey: { in: [...firstOf.keys()] } }, select: { articleKey: true } })).map((r) => r.articleKey));
-    for (const [key, c] of firstOf) {
-      if (budget <= 0 || out.authStopped) break;
+    // Which of them already have a row (POSTED, SKIPPED, FAILED or in flight)? The page's keys in ONE indexed read: an
+    // `IN (…)` of every candidate would grow with the list above.
+    const have = new Set((await prisma.linkedInPost.findMany({ where: { page }, select: { articleKey: true } })).map((r) => r.articleKey));
+    for (const [key, campaignId] of firstOf) {
+      if (budget <= 0 || stopped) break;
       if (have.has(key)) continue;
-      // An older push of the same article (before the window) already posted, or was before go-live: the row says so.
+      // No row: this article was never handled (an earlier push of it that was handled would have left its row).
       let row: LinkedInPost;
       try {
-        row = await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId: c.id, status: 'PENDING', attempts: 1 } });
+        row = await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId, status: 'PENDING', attempts: 1 } });
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
         throw err;
       }
       budget -= 1;
-      note(await attempt(row, d, now));
+      if (note(await attempt(row, d, now))) stopped = true;
     }
   }
   return out;
@@ -406,4 +441,9 @@ export function startLinkedInWorker(): void {
   });
   // eslint-disable-next-line no-console
   console.log(`[linkedin] worker started (post from ${env.linkedin.postFrom!.toISOString()})`);
+  // The Academy page's ONE boot line (nothing else is logged about it while it is off): on with its own go-live, or off and why
+  // (fixed words naming the variables, never their values).
+  const academy = env.linkedin.sharedPages[PAGE_ACADEMY];
+  // eslint-disable-next-line no-console
+  console.log(academy ? `[linkedin] academy page on (post from ${academy.postFrom.toISOString()})` : `[linkedin] academy page off: ${parseLinkedInAcademyEnv(process.env).off ?? 'not configured'}`);
 }

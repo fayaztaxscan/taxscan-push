@@ -229,6 +229,12 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
+**3 Nov, PRs #99 + #100 LIVE (guide v2.19; suite 1,925):** digest story row fit (picture + text side by side in any desktop
+pane, compact text, no gap); **Facebook page posting ON since 17:43 IST** (`src/services/facebook/`, `docs/FACEBOOK_POSTING.md`;
+`FACEBOOK_POSTING_ENABLED` + `FACEBOOK_POST_FROM` 2026-11-03T11:59:00Z; the token must be the **Page** token from `me/accounts`,
+not the system-user token; paced 1/10 min, 30/day; Graph code 368 = policy stop kept until an ADMIN Resume); LinkedIn picture fix
+(encoded image URN); **`SOFT_PROMPT_REAL_SCROLL` ON since 2026-11-03T13:24:51Z** (scroll trigger needs a real reader's input; the
+desktop first-page scroll trigger had logged ~79k ghost shows in 11 days). Detail: `NEXT_STEP.md` top block.
 **2 Nov, PR #95 LIVE (~15:40 IST; guide v2.16; suite 1,806):** **LinkedIn page posting** (**ON since 2 Nov ~16:30 IST**, post-from 10:26:27Z; `src/services/linkedin/`,
 `docs/LINKEDIN_POSTING.md`; flag `LINKEDIN_POSTING_ENABLED` OFF + required `LINKEDIN_POST_FROM`; every pushed taxscan.in
 article incl. manual sends, never test-segment-only; hashtags from the CMS public article API keywords/courts; UTMs
