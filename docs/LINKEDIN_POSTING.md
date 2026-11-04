@@ -8,13 +8,15 @@ article). Brief: `docs/briefs/2026-11-02-linkedin-page-posting.md` (incl. follow
 ## What posts
 A `Campaign` with `status = SENT`, a mapped `portal` (`taxscan` → page `taxscan`), a taxscan.in **article** URL
 (`articleContentOf()`: `/<section>/<slug>`, or a trailing numeric id; never the home page, a section page, academy or shop)
-and `lastSentAt ≥ LINKEDIN_POST_FROM` and within the last 24 hours. **Whoever sent it does not matter**: the pacer, Compose
+and `lastSentAt ≥ LINKEDIN_POST_FROM`. **There is no age limit** (brief 2026-11-04-social-no-age-limit): an article that has no
+row yet is posted however long ago it was pushed, so an outage, a login stop or a backlog never loses one. Only
+`LINKEDIN_POST_FROM` is absolute: nothing pushed before it is ever posted. **Whoever sent it does not matter**: the pacer, Compose
 "Send now", a scheduled Compose send marked SENT by the sweeper, Queue/Review "Push now" and Breaking all post. The one
 exclusion is a **test send**: a campaign whose target is ONLY the test-segment topic (`TEST_SEGMENT_TOPIC`, default `test`).
 The predicate is shared with the WhatsApp queue: `isPublicArticleCampaign()` in `src/services/social/publicCampaign.ts`.
 
-One post per **article** (`articleKey()`): a re-push or the morning-backfill clone never posts again, nor does a clone of
-an article first pushed before go-live or more than 24 h ago.
+One post per **article** (`articleKey()`): a re-push or the morning-backfill clone never posts again, nor does a re-push or
+clone of an article first pushed before go-live (looked for up to 14 days before `LINKEDIN_POST_FROM`).
 
 ## How it runs
 `src/services/linkedin/worker.ts`: a 1-minute `node-cron` tick, started only when `LINKEDIN_POSTING_ENABLED=true` **and**
@@ -23,6 +25,8 @@ run). It reads `Campaign` rows only; the push send path is untouched, and the re
 worker, and the screen's Retry, which makes one post and answers).
 
 - At most **3 posts per tick**, oldest push first.
+- Each tick reads every SENT push since `LINKEDIN_POST_FROM` (only `id`, `url` and `target`) and the page's existing article keys.
+  That list grows by about 20 a day and nothing else does; it is the one thing to revisit if the page runs for years.
 - The `LinkedInPost` row (PENDING, in flight) is created **before** the API call; unique (`page`, `articleKey`) means a
   crash or an overlapping tick can't post twice.
 - An in-flight row older than **10 minutes** with no result becomes FAILED *"unknown — check the page"* and is **never
@@ -33,7 +37,7 @@ worker, and the screen's Retry, which makes one post and answers).
 - **400 / 409 / 422** and other client errors: FAILED at once (retrying can't help).
 - **401 / 403** (token expired, revoked or lacking permission): posting for the page **stops** until the token changes in
   Railway or the app restarts. One alert email per IST day to the active ADMIN users (ElasticEmail), and an amber banner on
-  the LinkedIn screen. Pushed articles wait as retries and post once posting resumes, if still within 24 h.
+  the LinkedIn screen. Pushed articles are kept and post once posting resumes, however long that takes.
 
 ## The post
 `POST https://api.linkedin.com/rest/posts`, headers `LinkedIn-Version: $LINKEDIN_API_VERSION` (default `202603`),

@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { createHash } from 'node:crypto';
-import { Prisma, type Campaign, type FacebookPost } from '@prisma/client';
+import { Prisma, type FacebookPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
@@ -20,7 +20,8 @@ import { buildFacebookPost } from './post';
  * The Facebook posting worker (brief 2026-11-03-facebook-page-posting, docs/FACEBOOK_POSTING.md). It mirrors the LinkedIn worker
  * and READS Campaign rows only (never touches the send path). Account safety is the difference:
  *  - AT MOST ONE post attempt per tick, and at least FACEBOOK_MIN_GAP_MINUTES between two posts on the page;
- *  - at most FACEBOOK_DAILY_CAP posts per IST day (the rest wait for the next day; the 24 h window then decides);
+ *  - at most FACEBOOK_DAILY_CAP posts per IST day (the rest wait for the next day, however old they are by then: there is NO age
+ *    limit, brief 2026-11-04-social-no-age-limit; only FACEBOOK_POST_FROM is absolute);
  *  - a policy block from Facebook (code 368 etc.) STOPS the page for good: the stop is persisted and only an ADMIN's Resume
  *    clears it, even across a restart. Retry is refused while stopped;
  *  - a bad token (190 / permission / 401 / 403) stops the page until the token changes or the app restarts;
@@ -31,7 +32,7 @@ import { buildFacebookPost } from './post';
 export const STALE_MS = 10 * 60_000;
 export const RATE_DELAYS_MIN = [15, 60] as const;
 export const TRANSIENT_DELAYS_MIN = [1, 5, 15] as const;
-const WINDOW_MS = 24 * 60 * 60_000;
+/** How far before go-live (FACEBOOK_POST_FROM) an earlier push of the same article is looked for. */
 const EARLIER_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 export const UNKNOWN_ERROR = 'unknown — check the page';
 export const DUPLICATE_ERROR = 'Facebook says this was already posted';
@@ -145,7 +146,7 @@ async function handleAuthStop(page: string, status: number | null, d: WorkerDeps
     `Facebook posting stopped — the ${page} page token was rejected`,
     `Taxscan Push could not post to the ${page} Facebook page: Facebook answered ${status ?? 'an authorisation error'} (the page access token is invalid, expired or lacks permission).\n\n` +
       `No further posts are attempted for this page until a new token is set in Railway (FACEBOOK_${page.toUpperCase()}_PAGE_TOKEN) or the app restarts. ` +
-      `Articles pushed meanwhile are kept: they post once posting resumes, if they are still within 24 hours of their push.\n\n` +
+      `Articles pushed meanwhile are kept: they post once posting resumes.\n\n` +
       `The Facebook screen in the admin shows this notice too. (${now.toISOString()})`,
     d,
   );
@@ -328,33 +329,39 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
       if (out.posted + out.retried + out.failed > 0 || out.authStopped || out.policyStopped) continue;
     }
 
-    // 3. A new article, oldest push first.
+    // 3. A new article, oldest push first. NO age limit: the oldest SENT push since go-live (FACEBOOK_POST_FROM) whose article has
+    //    no row yet posts, however long ago it was pushed; the gap, the daily cap and the stops above still pace it. That list only
+    //    grows (~20 a day) and is read every minute, so it is read with `select` of just what the two shared rules need
+    //    (isPublicArticleCampaign: url + target; articleKey: id + url), never whole rows; `attempt` loads the one it posts.
     const pagePortals = Object.keys(portals).filter((p) => portals[p] === page);
-    const since = new Date(Math.max(postFrom.getTime(), now.getTime() - WINDOW_MS));
     const campaigns = await prisma.campaign.findMany({
-      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: since } },
+      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: postFrom } },
+      select: { id: true, url: true, target: true },
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
-    const firstOf = new Map<string, Campaign>();
+    const firstOf = new Map<string, string>(); // article key → the id of its OLDEST push
     for (const c of campaigns) {
       if (!isPublicArticleCampaign(c)) continue;
       const k = articleKey(c);
-      if (!firstOf.has(k)) firstOf.set(k, c);
+      if (!firstOf.has(k)) firstOf.set(k, c.id);
     }
     if (firstOf.size === 0) continue;
-    // A re-push or backfill clone of an article first pushed BEFORE the window is not new: never post it.
+    // A re-push or backfill clone of an article first pushed BEFORE go-live (looked up to 14 days before it) is not new: never
+    // post it, at any age.
     const earlier = await prisma.campaign.findMany({
-      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(since.getTime() - EARLIER_LOOKBACK_MS), lt: since } },
+      where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: new Date(postFrom.getTime() - EARLIER_LOOKBACK_MS), lt: postFrom } },
       select: { id: true, url: true },
     });
     for (const c of earlier) firstOf.delete(articleKey(c));
     if (firstOf.size === 0) continue;
-    const have = new Set((await prisma.facebookPost.findMany({ where: { page, articleKey: { in: [...firstOf.keys()] } }, select: { articleKey: true } })).map((r) => r.articleKey));
-    for (const [key, c] of firstOf) {
+    // Which of them already have a row (POSTED, SKIPPED, FAILED or in flight)? The page's keys in ONE indexed read: an
+    // `IN (…)` of every candidate would grow with the list above.
+    const have = new Set((await prisma.facebookPost.findMany({ where: { page }, select: { articleKey: true } })).map((r) => r.articleKey));
+    for (const [key, campaignId] of firstOf) {
       if (have.has(key)) continue;
       let row: FacebookPost;
       try {
-        row = await prisma.facebookPost.create({ data: { page, articleKey: key, campaignId: c.id, status: 'PENDING', attempts: 1 } });
+        row = await prisma.facebookPost.create({ data: { page, articleKey: key, campaignId, status: 'PENDING', attempts: 1 } });
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
         throw err;

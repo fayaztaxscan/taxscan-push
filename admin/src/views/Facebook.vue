@@ -287,7 +287,6 @@ onMounted(() => load());
     </p>
     <ul class="fb-rules muted" data-testid="fb-rules">
       <li>One post at a time, at least 10 minutes apart, and no more than 30 a day. Busy days spill over, so a post can be late.</li>
-      <li>An article pushed more than 24 hours ago is never posted.</li>
       <li>If Facebook blocks a post, posting stops completely until an administrator presses Resume.</li>
     </ul>
 

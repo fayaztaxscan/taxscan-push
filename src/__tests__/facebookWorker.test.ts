@@ -10,7 +10,7 @@ import { prisma } from '../lib/prisma';
 import { postToFacebook, checkConnection, postForm, feedUrl, classify, type FacebookResult } from '../services/facebook/client';
 import { buildMessage } from '../services/facebook/post';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
-import { runFacebookTick, retryNow, startFacebookWorker, resetFacebookStops, loginProblem, policyProblem, authKey, policyKey, UNKNOWN_ERROR, type WorkerDeps } from '../services/facebook/worker';
+import { runFacebookTick, retryNow, startFacebookWorker, resetFacebookStops, resumePolicy, loginProblem, policyProblem, authKey, policyKey, UNKNOWN_ERROR, type WorkerDeps } from '../services/facebook/worker';
 
 /**
  * Brief 2026-11-03-facebook-page-posting, acceptance 1-7 (backend). Graph is a fake: no real Facebook call anywhere. Rows live
@@ -145,7 +145,7 @@ afterAll(async () => {
 });
 
 describe('1. what posts', () => {
-  it('SENT taxscan articles (both URL shapes) post once; never test-segment-only, home/section/academy/shop, before go-live, older than 24 h, drafts; a re-push or clone adds no row', async () => {
+  it('SENT taxscan articles (both URL shapes) post once; never test-segment-only, home/section/academy/shop, before go-live, drafts; a re-push or clone adds no row', async () => {
     const before = await camp('before-golive', at(FROM, -30));
     const a = await camp('numeric', at(NOW, -50), { url: `https://www.taxscan.in/gst/slug-${RUN}-111111` });
     const b = await camp('slugonly', at(NOW, -40)); // /gst/<slug> with no trailing id
@@ -163,10 +163,160 @@ describe('1. what posts', () => {
     expect(rows.map((r) => r.campaignId)).toEqual([a.id, b.id]);
     expect(rows.every((r) => r.status === 'POSTED' && r.facebookPostId === '123_456' && r.attempts === 1)).toBe(true);
   });
-  it('nothing older than 24 h is posted', async () => {
-    await camp('stale', at(NOW, -25 * 60));
-    await ticks(2, NOW, { postFrom: at(NOW, -30 * 60) });
+});
+
+/**
+ * Brief 2026-11-04-social-no-age-limit. The old "nothing older than 24 h is posted" case is replaced by the cases below: only
+ * FACEBOOK_POST_FROM is absolute. An article with no row posts however long ago it was pushed, but the gap, the daily cap and the
+ * stops still pace it; one pushed before go-live never posts; a row (or a first push before go-live) still stops every repeat.
+ */
+describe('1b. no age limit: an article that has no row posts however long ago it was pushed', () => {
+  const DAY = 24 * 60; // minutes
+  const titles = () => calls.map((c) => c.message.split('\n')[0]);
+  const repush = (url: string, lastSentAt: Date) => prisma.campaign.create({ data: { portal: PORTAL, title: 'again', body: 'b', url, target: {}, status: 'SENT', lastSentAt } });
+
+  it.each([
+    { ago: 25 * 60, label: '25 hours' },
+    { ago: 3 * DAY, label: '3 days' },
+    { ago: 30 * DAY, label: '30 days' },
+  ])('1: an article pushed $label ago (after go-live) with no row is posted', async ({ ago }) => {
+    const c = await camp(`aged-${ago}`, at(NOW, -ago));
+    await runFacebookTick(deps({ postFrom: at(NOW, -(ago + DAY)) }));
+    expect(titles()).toEqual([`Story aged-${ago}`]);
+    const rows = await rowsOf();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ campaignId: c.id, status: 'POSTED', attempts: 1 });
+  });
+
+  it('2: an article pushed before go-live is never posted, at any age; one pushed exactly AT go-live is', async () => {
+    const from = at(NOW, -2 * DAY);
+    for (const [i, ago] of [1, 59, 25 * 60, 3 * DAY, 20 * DAY, 400 * DAY].entries()) await camp(`before-${i}`, at(from, -ago));
+    await camp('exactly-at', from);
+    await ticks(40, NOW, { postFrom: from }); // room for four gaps: anything that qualified would have posted by now
+    expect(titles()).toEqual(['Story exactly-at']);
+    expect(await rowsOf()).toHaveLength(1);
+  });
+
+  it('3: a re-push or morning-backfill clone of an article first pushed BEFORE go-live adds no row, however long after go-live', async () => {
+    const from = at(NOW, -5 * DAY);
+    const a = await camp('orig-30-min-before', at(from, -30));
+    const b = await camp('orig-10-days-before', at(from, -10 * DAY)); // inside the 14-day look-back before go-live
+    const repushes: [{ url: string }, number][] = [[a, 4 * DAY], [a, 90], [b, 3 * DAY], [b, 5]]; // days after go-live, and just now
+    for (const [src, ago] of repushes) await repush(src.url, at(NOW, -ago));
+    await ticks(40, NOW, { postFrom: from });
     expect(calls).toHaveLength(0);
+    expect(await rowsOf()).toHaveLength(0);
+  });
+
+  it.each(['POSTED', 'SKIPPED', 'FAILED'] as const)('4: a re-push of an article whose row is %s, first pushed days ago, adds no row and makes no call', async (status) => {
+    const first = await camp(`row-${status}`, at(NOW, -4 * DAY));
+    await prisma.facebookPost.create({
+      data: {
+        page: PAGE,
+        articleKey: await keyOf(first),
+        campaignId: first.id,
+        status,
+        attempts: 1,
+        ...(status === 'POSTED' ? { facebookPostId: '1234567890_9', postedAt: at(NOW, -4 * DAY + 3) } : {}),
+        ...(status === 'FAILED' ? { error: 'HTTP 400 code 100' } : {}),
+      } as never,
+    });
+    for (const ago of [2 * DAY, 26 * 60, 40]) await repush(first.url, at(NOW, -ago));
+    // The unique (page, articleKey) would also refuse a duplicate, but only after a doomed INSERT that Postgres logs as an error:
+    // with no age limit every already-handled article would cost one such insert a minute. The pre-check must stop it earlier.
+    const insert = jest.spyOn(prisma.facebookPost, 'create');
+    try {
+      await ticks(30, NOW, { postFrom: at(NOW, -6 * DAY) });
+      expect(insert).not.toHaveBeenCalled();
+    } finally {
+      insert.mockRestore();
+    }
+    expect(calls).toHaveLength(0);
+    const rows = await rowsOf();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ campaignId: first.id, status });
+  });
+
+  it('5: waiting articles of different ages post oldest push first, one a tick, at least the gap apart', async () => {
+    // created newest-first on purpose: the order comes from lastSentAt, not from insertion
+    for (const [slug, ago] of [['age-3h', 3 * 60], ['age-26h', 26 * 60], ['age-2d', 2 * DAY], ['age-5d', 5 * DAY], ['age-30d', 30 * DAY]] as const) await camp(slug, at(NOW, -ago));
+    const times: number[] = [];
+    for (let m = 0; m < 45; m += 1) {
+      const before = calls.length;
+      await runFacebookTick(deps({ now: () => at(NOW, m), postFrom: at(NOW, -40 * DAY) }));
+      expect(calls.length - before).toBeLessThanOrEqual(1);
+      if (calls.length > before) times.push(m);
+    }
+    expect(times).toEqual([0, 10, 20, 30, 40]);
+    expect(titles()).toEqual(['Story age-30d', 'Story age-5d', 'Story age-2d', 'Story age-26h', 'Story age-3h']);
+  });
+
+  it('7a: a waiting article older than 24 h still respects the 10-minute gap', async () => {
+    const from = at(NOW, -5 * DAY);
+    await camp('gap-1', at(NOW, -3 * DAY));
+    await camp('gap-2', at(NOW, -3 * DAY + 1));
+    await runFacebookTick(deps({ postFrom: from }));
+    expect(titles()).toEqual(['Story gap-1']);
+    const t = await runFacebookTick(deps({ postFrom: from, now: () => at(NOW, 5) }));
+    expect(t.waited).toBe('gap');
+    expect(calls).toHaveLength(1);
+    await runFacebookTick(deps({ postFrom: from, now: () => at(NOW, 10) }));
+    expect(titles()).toEqual(['Story gap-1', 'Story gap-2']);
+  });
+
+  it('7b: a waiting article older than 24 h is held by a policy stop, and posts after an ADMIN Resume', async () => {
+    const from = at(NOW, -5 * DAY);
+    await camp('stop-1', at(NOW, -3 * DAY));
+    await camp('stop-2', at(NOW, -3 * DAY + 1));
+    script = () => fail('policy', 400, 368);
+    const t = await runFacebookTick(deps({ postFrom: from }));
+    expect(t.policyStopped).toBe(true);
+    script = () => posted();
+    await ticks(30, at(NOW, 1), { postFrom: from });
+    expect(titles()).toEqual(['Story stop-1']); // only the post Facebook blocked; stop-2 waits
+    expect(await resumePolicy(PAGE)).toBe(true);
+    await runFacebookTick(deps({ postFrom: from, now: () => at(NOW, 40) }));
+    expect(titles()).toEqual(['Story stop-1', 'Story stop-2']);
+  });
+
+  it('8: an article that waited through an auth stop for more than 24 h posts when a new token is set; the stop e-mail makes no age promise', async () => {
+    await camp('stop-a', at(NOW, -30));
+    await camp('stop-b', at(NOW, -20));
+    script = () => fail('auth', 400, 190);
+    await runFacebookTick(deps()); // stop-a's attempt hits the login error: the page stops and stop-b never gets a row
+    expect(calls).toHaveLength(1);
+    expect(await rowsOf()).toHaveLength(1);
+    expect(mails).toHaveLength(1);
+    expect(mails[0].text).toContain('Articles pushed meanwhile are kept: they post once posting resumes.');
+    expect(mails[0].text).not.toMatch(/24 ?h/i);
+    // three days later a new token is in place: the retry that was due posts first (one attempt a tick), then, a gap later, the article that never got a row
+    env.facebook.pages[PAGE] = { pageId: '1234567890', accessToken: `${TOKEN}-new` };
+    script = () => posted();
+    await runFacebookTick(deps({ now: () => at(NOW, 3 * DAY) }));
+    await runFacebookTick(deps({ now: () => at(NOW, 3 * DAY + 10) }));
+    expect(titles().slice(1)).toEqual(['Story stop-a', 'Story stop-b']);
+    expect((await rowsOf()).map((r) => r.status)).toEqual(['POSTED', 'POSTED']);
+  });
+
+  it('9: the tick reads only the columns the two shared rules need (a select on every campaign list), never whole rows', async () => {
+    await camp('select-check', at(NOW, -5));
+    const spy = jest.spyOn(prisma.campaign, 'findMany');
+    try {
+      await runFacebookTick(deps());
+      expect(calls).toHaveLength(1); // it still posted
+      const args = spy.mock.calls.map((c) => c[0] as { select?: Record<string, boolean> } | undefined);
+      expect(args.length).toBeGreaterThanOrEqual(2); // the list since go-live, and the look-back before it
+      for (const a of args) expect(a?.select).toBeDefined();
+      expect(Object.keys(args[0]!.select!).sort()).toEqual(['id', 'target', 'url']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('10: WINDOW_MS is gone from the worker and the screen route (the rule exists nowhere in code)', () => {
+    for (const f of ['../services/facebook/worker.ts', '../routes/facebook.ts']) {
+      expect(fs.readFileSync(path.join(__dirname, f), 'utf8')).not.toMatch(/WINDOW_MS|24 ?h(ours)? ago|last 24 hours|within 24 hours/);
+    }
   });
 });
 
@@ -233,17 +383,18 @@ describe('3. pacing', () => {
     expect(times).toEqual([0, 10, 20, 30, 40]);
     expect(calls.map((c) => c.message.split('\n')[0])).toEqual(['Story burst0', 'Story burst1', 'Story burst2', 'Story burst3', 'Story burst4']);
   });
-  it('the 31st post of an IST day waits (cap 30), and posts the next day while still inside 24 h', async () => {
-    const c = await camp('thirty-first', at(NOW, 200 * 0 - 5));
+  it('the 31st post of an IST day waits (cap 30), and still posts on a later day even when its push is more than 24 h old', async () => {
+    const c = await camp('thirty-first', at(NOW, -5)); // pushed 3 Nov 09:55 IST
     for (let i = 0; i < 30; i += 1) {
       await prisma.facebookPost.create({ data: { page: PAGE, articleKey: `k-${RUN}-${i}`, campaignId: c.id, status: 'POSTED', attempts: 1, postedAt: at(ist(0, 30), i) } });
     }
     const t = await runFacebookTick(deps({ now: () => at(NOW, 120) }));
     expect(t.waited).toBe('daily_cap');
     expect(calls).toHaveLength(0);
-    // next IST day (still within 24 h of the push), well past the gap: posts
-    await runFacebookTick(deps({ now: () => ist(0, 30, 4), postFrom: at(NOW, -60) }));
+    // the next IST day, 24 h 35 min after the push (past the old limit) and well past the gap: the cap has reset, so it posts
+    await runFacebookTick(deps({ now: () => ist(10, 30, 4) }));
     expect(calls).toHaveLength(1);
+    expect(calls[0].message.split('\n')[0]).toBe('Story thirty-first');
   });
 });
 
@@ -562,6 +713,16 @@ describe('API: list, retry, skip', () => {
     expect((await request(a).post(`/api/facebook/posts/${failedRow.id}/retry`).set('Cookie', publisherCookie)).status).toBe(409);
     expect((await request(a).post(`/api/facebook/posts/${failedRow.id}/skip`).set('Cookie', publisherCookie)).status).toBe(409);
     expect((await retryNow('nope', deps())).ok).toBe(false);
+  });
+  it('no age limit on the screen: an unposted article pushed days before the clock is WAITING (the worker will post it); one pushed before go-live is NOT_POSTED', async () => {
+    const later = ist(10, 0, 6); // three days after the pushes below
+    await camp('r-days-old', at(FROM, 300)); // 3 Nov 09:00 IST: after go-live, no row, more than 24 h before `later`
+    await camp('r-before-golive', at(FROM, -90));
+    const app = createApp({ rateLimit: { publicPerMin: 10000, loginPerMin: 10000 }, facebook: { enabled: () => true, clock: () => later, portals: () => ({ [PORTAL]: PAGE }), postFrom: () => FROM, worker: deps() } });
+    const res = await request(app).get('/api/facebook/posts?date=2026-11-03').set('Cookie', publisherCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.rows.map((r: { status: string }) => r.status)).toEqual(['NOT_POSTED', 'WAITING']);
+    expect(res.body.counts).toMatchObject({ waiting: 1, notPosted: 1, all: 2 });
   });
 });
 
