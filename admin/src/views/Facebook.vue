@@ -28,6 +28,11 @@ type ListResponse = {
   page?: string;
   login: { since: string; status: number | null } | null;
   policy: { since: string; code: number | null; subcode: number | null; message: string | null } | null;
+  /**
+   * Present (an ISO time) ONLY while the page posts EVERY push (articles, courses, shop products; a repeat is its own row), from
+   * that time. Missing = the old rule: one post per article. Pushes before the time keep the old rule.
+   */
+  everyPushFrom?: string;
 };
 type CheckResult = { ok: true; name: string; message: string } | { ok: false; kind: string; status?: number | null; code?: number | null; message: string };
 type Filter = 'all' | 'waiting' | 'posted' | 'failed' | 'skipped';
@@ -52,6 +57,8 @@ const rows = ref<Row[]>([]);
 const counts = ref<Counts>({ waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 });
 const login = ref<ListResponse['login']>(null);
 const policy = ref<ListResponse['policy']>(null);
+// When the page started posting EVERY push (the server's `everyPushFrom`); null = it still posts one per article.
+const everyPushFrom = ref<string | null>(null);
 const check = ref<CheckResult | null>(null);
 const checking = ref(false);
 const resuming = ref(false);
@@ -116,6 +123,22 @@ const loginText = computed(() => {
 function whenText(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
+// "4 Nov 2026, 15:56 IST": the time in IST like the "Pushed (IST)" column, so the moment can be compared with the rows below.
+// Empty when the server's time is unreadable (the line is then left out).
+const sinceText = computed(() => {
+  const d = everyPushFrom.value ? new Date(everyPushFrom.value) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  const when = d.toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'Asia/Kolkata',
+  });
+  return `${when} IST`;
+});
 const policyText = computed(() => {
   const p = policy.value;
   if (!p) return '';
@@ -133,6 +156,7 @@ async function load(keepError = false): Promise<void> {
     counts.value = data.counts;
     login.value = data.login;
     policy.value = data.policy ?? null;
+    everyPushFrom.value = data.everyPushFrom ?? null;
   } catch (e) {
     error.value = apiErrorMessage(e);
   } finally {
@@ -281,13 +305,26 @@ onMounted(() => load());
         <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
       </div>
     </div>
-    <p class="muted" style="font-size: 13px; margin: 4px 0 8px">
-      Every article we push is posted to the Taxscan Facebook page automatically, a few minutes later. Nothing to do
-      unless a post fails.
+    <p class="muted" :class="{ 'fb-every': everyPushFrom }" style="font-size: 13px; margin: 4px 0 8px" data-testid="fb-intro">
+      <!-- The page posts EVERY push from a set time (the server sent `everyPushFrom`): say so, and from when. -->
+      <template v-if="everyPushFrom">
+        Every push we send is posted to the Taxscan Facebook page automatically, a few minutes later: articles, courses and shop
+        products. A push that is sent again is posted again and gets its own row. Nothing to do unless a post fails.
+        <span v-if="sinceText" class="fb-since" data-testid="fb-since"
+          >From {{ sinceText }} every push is posted. Earlier pushes keep the old rule: one post per article.</span
+        >
+      </template>
+      <template v-else>
+        Every article we push is posted to the Taxscan Facebook page automatically, a few minutes later. Nothing to do
+        unless a post fails.
+      </template>
     </p>
     <ul class="fb-rules muted" data-testid="fb-rules">
       <li>One post at a time, at least 10 minutes apart, and no more than 30 a day. Busy days spill over, so a post can be late.</li>
       <li>If Facebook blocks a post, posting stops completely until an administrator presses Resume.</li>
+      <li v-if="everyPushFrom" data-testid="fb-rule-repeat">
+        If Facebook refuses an identical repeat, the row says “Facebook says this was already posted”. Nothing to fix: press Skip.
+      </li>
     </ul>
 
     <div v-if="check" class="banner" :class="check.ok ? 'ok' : 'err'" role="status" data-testid="fb-check-result">
@@ -415,6 +452,15 @@ onMounted(() => load());
   font-size: 13px;
   margin: 0 0 12px;
   padding-left: 18px;
+}
+/* The longer explanation (the page posts every push): no one-word last line on a phone. Only this state, so the old text lays out as before. */
+.fb-every {
+  text-wrap: pretty;
+}
+/* The second line of the explanation: from when every push is posted. Same muted 13px as the paragraph, on its own line. */
+.fb-since {
+  display: block;
+  margin-top: 4px;
 }
 .fb-policy {
   display: flex;

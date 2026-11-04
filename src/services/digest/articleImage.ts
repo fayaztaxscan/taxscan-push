@@ -59,8 +59,11 @@ function decodeEntities(v: string): string {
 /** The longest description kept: the renderer cuts at 220, this only bounds what is stored. */
 export const DESCRIPTION_MAX = 600;
 
-/** The value of the first `<meta>` whose property/name is one of `names` (lower case), decoded; null if none has a value. */
-function metaContent(html: string, names: readonly string[]): string | null {
+/**
+ * The value of the first `<meta>` whose property/name is one of `names` (lower case), decoded; null if none has a value.
+ * Exported for the social store posts (src/services/social/storePage.ts), which read the og tags of a course / product page.
+ */
+export function metaContent(html: string, names: readonly string[]): string | null {
   const head = html.slice(0, ARTICLE_READ_BYTES);
   // A quoted value may hold a raw ">" (a description with markup in it), so the tag ends at the first ">" outside quotes.
   for (const m of head.matchAll(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi)) {

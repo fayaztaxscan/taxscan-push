@@ -45,10 +45,24 @@ export const pagePostFrom = (page: string): Date | null => env.linkedin.sharedPa
  * uses its own configured one), or, with nothing injected, the page's own configured one.
  */
 export function resolvePostFrom(input: PostFromInput, page: string): Date | null {
-  if (input === undefined) return pagePostFrom(page);
+  return pickTime(input, page, pagePostFrom);
+}
+function pickTime(input: PostFromInput, page: string, own: (page: string) => Date | null): Date | null {
+  if (input === undefined) return own(page);
   if (input === null || typeof (input as Date).getTime === 'function') return input as Date | null;
   const v = (input as Readonly<Record<string, Date | null>>)[page];
-  return v === undefined ? pagePostFrom(page) : v;
+  return v === undefined ? own(page) : v;
+}
+
+/**
+ * The time from which `page` posts EVERY push, one post per push (brief 2026-11-04-academy-store-posts): the page's own variable, or
+ * null = the page stays on today's rule (one post per article). A push before it follows today's rule for good; a push at or after it
+ * follows the new one. Academy's counts only while the Academy page is active (both its LINKEDIN_ACADEMY_* variables valid).
+ */
+export const pageAllPushesFrom = (page: string): Date | null => (page === PAGE_ACADEMY && !academyActive() ? null : env.linkedin.allPushesFrom[page] ?? null);
+/** The all-pushes time to use for `page`: an injected single time (every page), an injected per-page record, or the page's own. */
+export function resolveAllPushesFrom(input: PostFromInput, page: string): Date | null {
+  return pickTime(input, page, pageAllPushesFrom);
 }
 
 export const LI_UTM_SOURCE = 'taxscan-linkedin';

@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.21 &nbsp;·&nbsp; Updated 4 November 2026
+    &nbsp;·&nbsp; Version 2.22 &nbsp;·&nbsp; Updated 4 November 2026
   </div>
 </div>
 
@@ -438,9 +438,11 @@ notification will look before sending it to anyone.</p>
 labelled marks (never colour alone). <strong>WA</strong> is WhatsApp: <strong>WA&nbsp;✓</strong> posted, <strong>WA&nbsp;–</strong>
 skipped, <strong>WA&nbsp;…</strong> still to do. <strong>in</strong> is LinkedIn: <strong>in&nbsp;✓</strong> posted,
 <strong>in&nbsp;✕</strong> failed, <strong>in&nbsp;…</strong> waiting. <strong>fb</strong> is Facebook and reads the same way: <strong>fb&nbsp;✓</strong> posted, <strong>fb&nbsp;✕</strong> failed, <strong>fb&nbsp;…</strong> waiting, <strong>fb&nbsp;–</strong> skipped. No mark means the channel does not apply to that row (it is
-switched off, or the item is not a Taxscan article). Hover a mark &mdash; or touch and hold on a phone &mdash; for the full
+switched off, or the item is not one that channel posts). Hover a mark &mdash; or touch and hold on a phone &mdash; for the full
 wording, such as <em>WhatsApp: posted by anagha at 10:42</em> or <em>LinkedIn: failed &mdash; the reason</em>. Click a mark to open
-that channel's screen on the day the article was pushed. The Channels column is not sortable.</p>
+that channel's screen on the day the article was pushed. The Channels column is not sortable. Where an administrator has
+switched on <em>every push posts</em> for LinkedIn or Facebook (sections 12 and 13), a course or shop product gets that mark too,
+and a push that is sent again shows the mark of <strong>its own</strong> post, not its first one.</p>
 <p>Every column is sortable — click the heading. The four that tell you how a notification performed:</p>
 <table>
   <thead><tr><th style="width:16%">Column</th><th>What it counts</th></tr></thead>
@@ -860,11 +862,18 @@ announced once, at 7 am. Once everything is marked Posted or Skipped, no more no
 <section class="page-break">
 <h2>12 &nbsp;The LinkedIn page</h2>
 <p>Every Taxscan article we push is also posted to the <strong>Taxscan LinkedIn page</strong>, automatically, a few minutes after
-the push. One post per article, in the order it was pushed &mdash; an article that is pushed again, or re-sent by the morning
-catch-up, is never posted twice. The post is the headline, a few hashtags and the article link as a preview card. The hashtags
-come from the article itself (its court or tribunal, its category and the editors' own keywords, with <code>#taxscan</code> last),
-so they differ from post to post. The <strong>LinkedIn</strong> screen (menu: <strong>SOCIAL</strong>, after WhatsApp) shows what
-happened to each one; it appears only when an administrator has switched the feature on. Normally there is nothing to do.</p>
+the push. By default that is <strong>one post per article</strong>, in the order it was pushed &mdash; an article that is pushed
+again, or re-sent by the morning catch-up, is not posted twice. The post is the headline, a few hashtags and the article link as a
+preview card. The hashtags come from the article itself (its court or tribunal, its category and the editors' own keywords, with
+<code>#taxscan</code> last), so they differ from post to post. The <strong>LinkedIn</strong> screen (menu: <strong>SOCIAL</strong>,
+after WhatsApp) shows what happened to each one; it appears only when an administrator has switched the feature on. Normally there
+is nothing to do.</p>
+<p><strong>When an administrator switches on &ldquo;every push posts&rdquo; for a page, the rule changes from a set time.</strong>
+That page then posts <strong>every push</strong>, not only articles: Academy courses and shop products too, and a push that is sent
+again is posted again. Each one is its <strong>own row</strong> on the screen, with its own <strong>Retry</strong> and
+<strong>Skip</strong>. Pushes made before that time keep the old rule (one post per article). <strong>The line under the title on the
+screen says which rule applies:</strong> <em>From 4 Nov 2026, 15:56 IST every push is posted&hellip;</em> means the new rule; without
+that line the page is on the old one. Each page has its own switch and time, so check the page you are looking at.</p>
 <div class="box tip"><span class="box-t">Two pages: Taxscan and Academy</span>
   When an administrator has also switched on the <strong>Taxscan Academy</strong> page, the same articles are posted there too
   &mdash; same text, hashtags and picture. The screen then shows a <strong>Taxscan | Academy</strong> switch under the title
@@ -885,12 +894,17 @@ happened to each one; it appears only when an administrator has switched the fea
 <ul>
   <li><strong>Pick the day</strong> with <em>Today</em>, <em>Yesterday</em> or the date box (up to 14 days back). The chips
       <strong>All &middot; Waiting &middot; Posted &middot; Failed &middot; Skipped</strong> show the counts; <em>Failed</em> turns red when it is above zero.</li>
-  <li><strong>Retry</strong> asks <em>"Post to LinkedIn now?"</em> and then posts that one article. If the reason says
+  <li><strong>Retry</strong> asks <em>"Post to LinkedIn now?"</em> and then posts that push. If the reason says
       <em>unknown &mdash; check the page</em>, the app lost the answer from LinkedIn and the post <strong>may already be there</strong>:
       open the LinkedIn page first, and only press Retry if it is not. If the screen says it may still be posting, wait a minute and
       press <em>Refresh</em> &mdash; do not press Retry again.</li>
-  <li><strong>Skip</strong> leaves the article off the LinkedIn page for good.</li>
+  <li><strong>Skip</strong> leaves that push off the LinkedIn page for good.</li>
 </ul>
+<div class="box tip"><span class="box-t">Failed: &ldquo;LinkedIn says this was already posted&rdquo;</span>
+  You can see this when &ldquo;every push posts&rdquo; is on. A push that is sent again can have exactly the same text and link as
+  a post already on the page, and LinkedIn refuses an identical repeat. <strong>Nothing is broken and there is nothing to fix.</strong>
+  Press <strong>Skip</strong> to close the row. <strong>Retry</strong> would only ask LinkedIn the same question and get the same
+  answer. (This is not the amber banner: posting carries on with the next push.)</div>
 <p><strong>The token line.</strong> Under the title, a grey line reads like <em>Token valid until 1 Jan 2027 &middot; renews automatically
 &middot; yearly sign-in due by 2 Nov 2027</em>. The first date is when the page's access token stops working; the app renews it by
 itself about two weeks before that, so you do not need to do anything. The second date is the once-a-year sign-in that LinkedIn
@@ -912,13 +926,19 @@ pages</em>: they post with a single token.</p>
 <section class="page-break">
 <h2>13 &nbsp;The Facebook page</h2>
 <p>Every Taxscan article we push is also posted to the <strong>Taxscan Facebook page</strong>, automatically, a few minutes after
-the push. One post per article &mdash; an article that is pushed again, or re-sent by the morning catch-up, is never posted
-twice. The post is the headline, up to four hashtags (<code>#taxscan</code> last) and the article link; Facebook builds the
-preview card itself. The <strong>Facebook</strong> screen (menu: <strong>SOCIAL</strong>, after LinkedIn) shows what happened to
-each one; it appears only when an administrator has switched the feature on. Normally there is nothing to do.</p>
+the push. By default that is <strong>one post per article</strong> &mdash; an article that is pushed again, or re-sent by the
+morning catch-up, is not posted twice. The post is the headline, up to four hashtags (<code>#taxscan</code> last) and the article
+link; Facebook builds the preview card itself. The <strong>Facebook</strong> screen (menu: <strong>SOCIAL</strong>, after LinkedIn)
+shows what happened to each one; it appears only when an administrator has switched the feature on. Normally there is nothing to do.</p>
+<p><strong>When an administrator switches on &ldquo;every push posts&rdquo;, the rule changes from a set time.</strong> The page then
+posts <strong>every push</strong>, not only articles: Academy courses and shop products too, and a push that is sent again is posted
+again. Each one is its <strong>own row</strong> on the screen, with its own <strong>Retry</strong> and <strong>Skip</strong>. Pushes
+made before that time keep the old rule (one post per article). <strong>The line under the title on the screen says which rule
+applies:</strong> <em>From 4 Nov 2026, 15:56 IST every push is posted&hellip;</em> means the new rule; without that line the page is
+on the old one. The pacing below is the same either way.</p>
 <div class="box tip"><span class="box-t">Pacing &mdash; why a post can be late</span>
   To keep the page safe from Facebook's spam checks, posts go out <strong>one at a time</strong>, at least <strong>10 minutes
-  apart</strong>, and <strong>no more than 30 a day</strong>. On a busy day the later articles wait their turn.
+  apart</strong>, and <strong>no more than 30 a day</strong>. On a busy day the later posts wait their turn.
   Retries never happen between 11 pm and 7 am.</div>
 <table>
   <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
@@ -932,13 +952,18 @@ each one; it appears only when an administrator has switched the feature on. Nor
 </table>
 <ul>
   <li><strong>Pick the day</strong> with <em>Today</em>, <em>Yesterday</em> or the date box (up to 14 days back). The chips show the counts; <em>Failed</em> turns red when it is above zero.</li>
-  <li><strong>Retry</strong> asks <em>"Post to Facebook now?"</em> and then posts that one article. If the reason says
+  <li><strong>Retry</strong> asks <em>"Post to Facebook now?"</em> and then posts that push. If the reason says
       <em>unknown &mdash; check the page</em>, the app lost the answer from Facebook and the post <strong>may already be there</strong>:
       open the Facebook page first, and only press Retry if it is not.</li>
-  <li><strong>Skip</strong> leaves the article off the Facebook page for good.</li>
+  <li><strong>Skip</strong> leaves that push off the Facebook page for good.</li>
   <li><strong>Check connection</strong> (administrators only) asks Facebook who the page is and shows
       <em>Connected to page: &hellip;</em>, or the kind of error. It posts nothing, so it is safe to press at any time.</li>
 </ul>
+<div class="box tip"><span class="box-t">Failed: &ldquo;Facebook says this was already posted&rdquo;</span>
+  You can see this when &ldquo;every push posts&rdquo; is on. A push that is sent again can have exactly the same text and link as
+  a post already on the page, and Facebook refuses an identical repeat. <strong>Nothing is broken and there is nothing to fix.</strong>
+  Press <strong>Skip</strong> to close the row. <strong>Retry</strong> would only ask Facebook the same question and get the same
+  answer. (This is not the red banner: posting carries on with the next push.)</div>
 <div class="box warn"><span class="box-t">Red banner: Facebook blocked a post &mdash; check the page before resuming</span>
   Facebook refused a post as spam or restricted, so <strong>all posting is stopped</strong> and the administrators are emailed. It
   stays stopped, even after a restart, until an <strong>administrator</strong> opens the page on Facebook, checks that it is in good
@@ -1103,7 +1128,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.21 · Updated 4 November 2026
+  Taxscan Push · Admin User Guide · Version 2.22 · Updated 4 November 2026
 </p>
 </section>
 

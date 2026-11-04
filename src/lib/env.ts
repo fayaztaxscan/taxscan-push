@@ -383,6 +383,34 @@ const LINKEDIN_ORG_URN = /^urn:li:organization:\d+$/;
 /** An ISO calendar date, with or without a time (`2026`, `04/11/2026` and `Nov 4` are NOT ISO; Date.parse alone would take them). */
 const ISO_DATE_START = /^\d{4}-\d{2}-\d{2}(?:[T ].*)?$/;
 
+/** A strict ISO date or time (see ISO_DATE_START), or null. The one check behind LINKEDIN_ACADEMY_POST_FROM and the all-pushes times. */
+export function parseIsoTime(raw: string | undefined): Date | null {
+  const s = (raw ?? '').trim();
+  if (!ISO_DATE_START.test(s)) return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t);
+}
+
+/**
+ * The "every push posts" switches (brief 2026-11-04-academy-store-posts): one per page, each OFF unless it holds a strict ISO time,
+ * validated exactly like LINKEDIN_ACADEMY_POST_FROM. From that time on, the page posts EVERY push (taxscan.in articles, academy
+ * courses, shop products), one post per push, repeats included; a push before it follows today's rule (one post per article) for
+ * good, so switching on never floods the page with the past. `off` says why a page is still on today's rule, in fixed words naming
+ * the variable, never its value; it is what the worker's one boot line per page prints. Pure (takes the source as a parameter).
+ */
+export const ALL_PUSHES_FROM_VARS = {
+  linkedinTaxscan: 'LINKEDIN_TAXSCAN_ALL_PUSHES_FROM',
+  linkedinAcademy: 'LINKEDIN_ACADEMY_ALL_PUSHES_FROM',
+  facebook: 'FACEBOOK_ALL_PUSHES_FROM',
+} as const;
+
+export function parseAllPushesFrom(src: NodeJS.ProcessEnv, name: string): { at: Date | null; off: string | null } {
+  const raw = (src[name] ?? '').trim();
+  if (!raw) return { at: null, off: `${name} is not set` };
+  const at = parseIsoTime(raw);
+  return at ? { at, off: null } : { at: null, off: `${name} is not a valid ISO time` };
+}
+
 /**
  * The Taxscan Academy LinkedIn page (brief 2026-11-04-linkedin-academy-page). It posts the SAME articles as the Taxscan page, with
  * the Taxscan page's token. It is ACTIVE only when BOTH variables are valid:
@@ -666,6 +694,13 @@ export const env = {
       const academy = parseLinkedInAcademyEnv(process.env).page;
       return academy ? { academy } : {};
     })() as Record<string, SharedLinkedInPage>,
+    // "Every push posts" (brief 2026-11-04-academy-store-posts): one time per page, null = that page stays on today's rule (one
+    // post per article). The Academy one is used only while the Academy page is active (see `pageAllPushesFrom`). Read at call time
+    // everywhere, so a test can set a private page here.
+    allPushesFrom: {
+      taxscan: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.linkedinTaxscan).at,
+      academy: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.linkedinAcademy).at,
+    } as Record<string, Date | null>,
     // Automatic renewal of the access token with the refresh token (docs/LINKEDIN_POSTING.md "Token renewal"). Default off.
     // One LinkedIn app serves every page (client id / secret); the key encrypts the renewed token in Postgres (32 bytes, base64).
     tokenRefresh: {
@@ -707,6 +742,8 @@ export const env = {
         accessToken: (process.env.FACEBOOK_TAXSCAN_PAGE_TOKEN ?? '').trim(),
       },
     } as Record<string, { pageId: string; accessToken: string }>,
+    // "Every push posts" (brief 2026-11-04-academy-store-posts): the page's time for it, null = the page stays on today's rule.
+    allPushesFrom: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).at as Date | null,
   },
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),

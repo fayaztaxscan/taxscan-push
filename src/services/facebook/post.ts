@@ -1,6 +1,7 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import { articleContentOf } from '../whatsapp/postText';
 import { fetchCmsArticle, hashtagsFor, slugOf, FIXED_TAG, type CmsArticle } from '../linkedin/post';
+import { storeBodyLines, storeLinkOf, storeTitle, storeUtmContent } from '../social/allPushes';
 import { withFacebookUtm } from './pages';
 
 /**
@@ -17,7 +18,13 @@ export function buildMessage(headline: string, tags: readonly string[]): string 
   return `${head}\n\n${all.join(' ')}`;
 }
 
-export type FbPostPayload = { message: string; link: string; hashtags: string[]; hashtagSource: 'cms' | 'fallback' };
+export type FbPostPayload = {
+  message: string;
+  link: string;
+  hashtags: string[];
+  /** 'fixed' = a course / shop post: only the fixed `#taxscan`, no CMS data. */
+  hashtagSource: 'cms' | 'fallback' | 'fixed';
+};
 
 /** Null when the URL is not a taxscan.in article or the final link is off `ALLOWED_PUSH_HOSTS`. */
 export async function buildFacebookPost(
@@ -39,4 +46,25 @@ export async function buildFacebookPost(
   const { tags, source } = hashtagsFor({ cms, authority: c.authority, categories: c.categories });
   const hashtags = [...tags.filter((t) => t.toLowerCase() !== FIXED_TAG).slice(0, MAX_FB_HASHTAGS - 1), FIXED_TAG];
   return { message: buildMessage(c.title, tags), link, hashtags, hashtagSource: source };
+}
+
+/**
+ * A course / shop push on Facebook (brief 2026-11-04-academy-store-posts): the message is the push title, a blank line, the push body
+ * (its own lines, single line breaks), a blank line, `#taxscan`; the link is the push's own link with the Facebook UTMs
+ * (`taxscan-facebook / social / facebook-<page> / <slug>`), replacing any UTMs the push carried. No picture is uploaded: Facebook
+ * builds the card from the page's og tags, as it does for articles. Plain text, nothing to escape. Null when the URL is not a
+ * course or shop-product link, or the final link is off `ALLOWED_PUSH_HOSTS`. No network.
+ */
+export function buildFacebookStorePost(c: { title: string; url: string; body?: string | null }, page: string): FbPostPayload | null {
+  const link = storeLinkOf(c.url);
+  if (!link || !isAllowedPushUrl(c.url.trim())) return null;
+  let tagged: string;
+  try {
+    tagged = withFacebookUtm(c.url.trim(), page, storeUtmContent(link));
+  } catch {
+    return null;
+  }
+  if (!isAllowedPushUrl(tagged)) return null;
+  const body = storeBodyLines(c.body);
+  return { message: [storeTitle(c.title), ...(body ? [body] : []), `#${FIXED_TAG}`].join('\n\n'), link: tagged, hashtags: [FIXED_TAG], hashtagSource: 'fixed' };
 }
