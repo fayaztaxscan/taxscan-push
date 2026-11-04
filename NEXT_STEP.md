@@ -12,7 +12,7 @@ status changes so a fresh Claude session can pick up cleanly.
 2. First every-push posts (switches ON since 2026-11-04T10:26:26Z, none seen at 16:00 IST): check all 3 pages, a course and a shop post, red "already posted" rows, LinkedIn quota. Never move a time earlier.
 3. Soft prompt: first look ~19:00 IST 4 Nov, full compare 10 Nov; flag off if grants stay < ~4/day for a week.
 4. 5 Nov digest: approve 06:30–17:00; first with ad squares (all 4 uploaded). Anagha checks the Gmail app on a phone; planning checks the frozen html.
-5. Owner checks: Academy post on the page; one Facebook post logged-out; 4 Nov digest row-fit screenshots; Abhirami SOCIAL; WhatsApp nudge opt-in; default story picture; Edit subject + CMS dry-run counts never reported.
+5. Owner checks: Academy post on the page; one Facebook post logged-out; 4 Nov digest row-fit screenshots; WhatsApp nudge opt-in; default story picture; Edit subject + CMS dry-run counts never reported.
 6. Longer: digest stage 3, audience tasks 9–10, Postgres password, VAPID, owner's older items (memory list).
 
 **▶ 2026-11-04 — PR #102 LIVE (~15:55 IST, main bf5b9e8; release check 2,266/2,266 on f6e44ca):** every push posts on LinkedIn + Facebook, per-page switch, all OFF at release. Academy articles ON since 13:40 IST, first post OK 13:47 IST.
