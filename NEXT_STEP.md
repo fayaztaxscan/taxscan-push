@@ -9,7 +9,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 **⏳ PENDING (2026-11-04) — the current list; the full version is memory `project_taxscan_push_state`. The 2 Nov list below is history.**
 1. **Follow up until LinkedIn clears it:** Standard tier appeal, case CAS-12316619-W9J3R4 (denied 24 Jun, "Business verification failed"; appeal + certificate sent 4 Nov). No new app until it answers; never delete `taxscan_post_app`.
-2. Academy articles: `LINKEDIN_ACADEMY_POST_FROM` was removed 4 Nov ~13:30 IST and is to be set again (owner: articles are Academy's main content); posting permission there is unproven until the first post. Next build: `docs/briefs/2026-11-04-academy-store-posts.md` (course + shop pushes to both LinkedIn pages + Facebook, one switch per page; manual posts continue, no filtering; Facebook last on my advice).
+2. Academy articles: `LINKEDIN_ACADEMY_POST_FROM` was removed 4 Nov ~13:30 IST and is to be set again (owner: articles are Academy's main content); posting permission there is unproven until the first post. Next build: `docs/briefs/2026-11-04-academy-store-posts.md` (every push posts on both LinkedIn pages + Facebook, like a notification, repeats included, owner's Option B; one switch per page; manual posts continue, no filtering).
 3. Anagha: 1080×1080 squares for the 4 ads (phones show the banner because no ad has one), then check that digest on a real phone. 4 Nov digest layout: Zoho + Outlook screenshots.
 4. Soft prompt: first look ~19:00 IST 4 Nov, full compare 10 Nov (from 2026-11-03T13:24:51Z); flag off if grants stay < ~4/day for a week.
 5. Later: a test for a 429 on the image poll (code already treats it as unverified); optional guard if Academy's URN equals Taxscan's.
