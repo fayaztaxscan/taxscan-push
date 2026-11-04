@@ -79,3 +79,18 @@ Each one must PASS in the REPORT. LinkedIn, Facebook and page fetches mocked.
 - Real titles for tests: `🕵️‍♂️ Stop being "just an accountant." Become a Financial De…`, `🚨COURSE STARTS TOMORROW 7 PM 🚨`, `❗GSTAT E-FILING CONFUSION? FEARING DEFECT NOTICES? 💻`, `🚨MEGA AUDIT OFFER – 50% OFF + EXTRA 10% OFF!  ! Training on …`. Bodies can be several lines with `- ` bullets.
 - `buildPost()` returns null for non-taxscan.in links today; courses and products need their own builder rather than a loosened article rule.
 - App quotas: Development tier, 100 calls per member per endpoint per day. Today ~21 article posts on two pages is ~42 `posts-CREATE`; every push adds ~3 course and product posts plus backfill repeats per page, so ~60 a day is plausible. `images-GET` at 2 polls per post could reach ~120 and hit 100, which is why test 12 matters.
+
+## Follow-up 1 (planning's review, 4 Nov): turning a switch off must not repost articles
+**Why:** the build's REPORT found it ("Unsetting a variable after it has been on re-posts articles"). An article pushed while the new rule was on has only a `push:` row. If the variable is later removed or moved later, today's rule sees an article with no article-key row and posts it again: every article since the time, three a tick on LinkedIn. Removing a variable is what the owner did on 4 Nov to turn a page off, so a warning in the docs is not enough.
+
+**Build (same branch, same REPORT, a new commit):** in both workers, a today's-rule candidate is skipped when any push of the same article already has a `push:` row on that page. Keep the read narrow: the campaign id is in the key, so the page's `have` read can supply the set of ids, and the article keys come from the campaigns already read.
+
+**Acceptance (add to `socialAllPushes.test.ts`):**
+15. LinkedIn + Facebook: new rule on, three articles posted with `push:` rows, variable then unset: no new row and no post call over several ticks. Same when the time is moved later than those pushes. Same whatever status the `push:` row has (POSTED, FAILED, SKIPPED).
+16. After the unset, a NEW article posts once under today's rule, and an article whose pushes never got a `push:` row still gets its one post. A repeat of an article already handled under the new rule posts nothing while unset.
+17. Set again later: pushes at or after the new time post every time, and past pushes do not.
+18. Screens and Channels after an unset: an article with a `push:` row must not read WAITING. It shows the push row's status.
+
+**Also:** the docs and `.env.example` warnings about unsetting are replaced with the plain statement that removing the variable returns the page to today's rule with nothing reposted.
+
+**Full suite:** no — area tests: `socialAllPushes`, `linkedinWorker`, `linkedinAcademy`, `facebookWorker`, `campaignChannels`. A Release check follows the merge.
