@@ -176,6 +176,7 @@ const SKIP_WORDS: Record<string, string> = {
   config_invalid: 'the digest settings are incomplete',
   too_little_news: 'there was too little news',
   audience_unverified: 'the reader list could not be verified before the cut-off',
+  manual_not_sent: 'nobody pressed Send Free before the cut-off',
 };
 
 export function skipWords(reason: string | null | undefined): string {
@@ -362,13 +363,16 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         todo: `Open the Digests screen (${digestsScreenUrl(cfg)}), read the preview, then ${preview ? 'compare it with the hand-made digest.' : 'press Approve (or Hold).'}`,
       };
     }
-    case 'not_approved_yet':
+    case 'not_approved_yet': {
+      // DIGEST_FREE_MANUAL: Approve covers Premium only, so the reminder names it (Free waits for its own button).
+      const day = cfg.freeManual ? "Today's Premium digest" : "Today's digest";
       return {
-        short: "Today's digest is still waiting for approval",
-        what: `Today's digest was due at ${cfg.sendAt} IST and nobody has approved it yet.`,
+        short: `${day} is still waiting for approval`,
+        what: `${day} was due at ${cfg.sendAt} IST and nobody has approved it yet.`,
         did: `Waiting — it is not sent without an approval. Not approved by ${cutoff}, it is skipped and its top stories roll into the next digest.`,
         todo: `Open the Digests screen (${digestsScreenUrl(cfg)}) and press Approve or Hold.`,
       };
+    }
     case 'health_failed':
       return {
         short: m.kind === 'FATAL' ? 'Mailercloud rejected the health check' : 'Mailercloud unreachable',
@@ -725,9 +729,9 @@ async function emailDigestAlerts(runId: string, deps: AlertDeps): Promise<AlertO
     let alerts = (run.alerts ?? {}) as AlertMap;
 
     // Recovery: a run that had a blocking alert has now been sent.
-    const sends = await prisma.digestSend.findMany({ where: { runId }, select: { state: true } });
+    const sends = await prisma.digestSend.findMany({ where: { runId }, select: { state: true, lastError: true, audience: true, approvedAt: true } });
     const blocking = Object.keys(alerts).filter((k) => BLOCKING_KINDS.has(k));
-    if (digestRunState(run, sends) === 'sent' && blocking.length > 0 && !alerts.resolved) {
+    if (digestRunState(run, sends, { freeManual: cfg.freeManual }) === 'sent' && blocking.length > 0 && !alerts.resolved) {
       await addResolvedMarker(runId, now);
       const fresh = await prisma.digestRun.findUnique({ where: { id: runId }, select: { alerts: true } });
       alerts = (fresh?.alerts ?? alerts) as AlertMap;
@@ -815,7 +819,7 @@ export function staffPushCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env
   const cutoff = `${cfg.cutoff} IST`;
   if (kind === 'ready_for_approval') {
     if (m.preview === true) {
-      return { title: "Today's digest is ready to review", body: 'Preview only: sending is off, so nothing goes to readers. Tap to compare it.' };
+      return { title: cfg.freeManual ? "Today's Premium digest is ready to review" : "Today's digest is ready to review", body: 'Preview only: sending is off, so nothing goes to readers. Tap to compare it.' };
     }
     const why =
       m.reason === 'complaint_hold'
@@ -823,11 +827,11 @@ export function staffPushCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env
         : m.reason === 'sanity_hold'
           ? 'Unusually many stories: check the list. '
           : '';
-    return { title: "Today's digest is ready — tap to review", body: `${why}Approve it before ${cutoff}, or it is skipped.` };
+    return { title: cfg.freeManual ? "Today's Premium digest is ready — tap to review" : "Today's digest is ready — tap to review", body: `${why}Approve it before ${cutoff}, or it is skipped.` };
   }
   if (kind === 'not_approved_yet') {
     return {
-      title: 'Digest still waiting for approval',
+      title: cfg.freeManual ? 'Premium digest still waiting for approval' : 'Digest still waiting for approval',
       body: `It was due at ${cfg.sendAt} IST. Not approved by ${cutoff}, it is skipped.`,
     };
   }

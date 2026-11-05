@@ -11,7 +11,7 @@ import { digestStatus } from '../services/digest/status';
 import { MockSenderInProductionError, mockSendersEnabled } from '../lib/mockSenderGuard';
 import { placeholderContent } from './digestPlaceholderContent';
 import { FakeSender } from './digestFakeSender';
-import { doorMessage, type DoorResult } from '../../admin/src/composables/digestView';
+import { approvalLine, doorMessage, manualFreeNote, type DoorResult } from '../../admin/src/composables/digestView';
 
 /**
  * Email digest task 7 (docs/EMAIL_DIGEST_DESIGN.md §6, §7, §9): the Digests
@@ -745,5 +745,27 @@ describe('doorMessage: the wording, from the per-version outcome alone (no strin
   it('a long or empty reason stays one readable clause', () => {
     expect(doorMessage('retry', false, run('failed', { FREE: v('FAILED', 'x'.repeat(400)), PREMIUM: v('FAILED', null) })).text).toContain('Premium — it did not work');
     expect(doorMessage('retry', false, run('failed', { FREE: v('FAILED', 'x'.repeat(400)) })).text.length).toBeLessThan(260);
+  });
+});
+
+describe('manualFreeNote / approvalLine (Free is manual-only)', () => {
+  const base = { state: 'CREATED' as const, pressedAt: null, pressedBy: null, notSentToday: false, scheduledAt: null, sentConfirmedAt: null, sendAfter: '2026-11-05T02:00:00Z' };
+  it('before the press: goes out only on Send Free, never "waiting for approval"', () => {
+    const t = manualFreeNote(base) as string;
+    expect(t).toBe('Goes out only when someone presses Send Free.');
+    expect(t.toLowerCase()).not.toContain('approval');
+  });
+  it('after the press: says who pressed it; unpressed at the cut-off reads Not sent today', () => {
+    expect(manualFreeNote({ ...base, pressedAt: '2026-11-05T06:00:00Z', pressedBy: 'a@x.in' })).toContain('pressed by a@x.in');
+    expect(manualFreeNote({ ...base, state: 'SKIPPED', notSentToday: true })).toMatch(/^Nobody pressed Send Free/);
+  });
+  it('a plain skip or failure is left to the usual notes', () => {
+    expect(manualFreeNote({ ...base, state: 'SKIPPED' })).toBeNull();
+    expect(manualFreeNote({ ...base, state: 'FAILED' })).toBeNull();
+  });
+  it('the run line speaks only about Premium when Free is manual; unchanged otherwise', () => {
+    expect(approvalLine('PENDING', null, null, true)).toBe('Premium: waiting for approval');
+    expect(approvalLine('PENDING', null, null, false)).toBe('Waiting for approval');
+    expect(approvalLine('HELD', null, null, true)).toContain('Held by an editor');
   });
 });

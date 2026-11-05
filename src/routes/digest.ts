@@ -7,7 +7,8 @@ import { recordAudit } from '../lib/audit';
 import { digestStatus } from '../services/digest/status';
 import { audienceCard } from '../services/audience/adminView';
 import { resumeBreaker } from '../services/audience/breaker';
-import { advanceRun, type DigestTrigger, type SelectItems } from '../services/digest/runner';
+import { advanceRun, pressSendFree, type DigestTrigger, type SelectItems } from '../services/digest/runner';
+import { approvalAudiences } from '../services/digest/holds';
 import { selectDigest } from '../services/digest/builder';
 import { isPastCutoff } from '../services/digest/retryPolicy';
 import { createMailercloudSender } from '../services/digest/mailercloud';
@@ -265,7 +266,11 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
     }
 
     const raw: unknown = req.body?.audiences;
-    const listed = (Array.isArray(raw) ? raw : []).map((a) => (typeof a === 'string' ? parseAudience(a) : null)).filter((a): a is DigestAudience => a !== null);
+    // DIGEST_FREE_MANUAL: Approve covers Premium only. A manual-only Free named here is ignored: its only door is Send Free.
+    const listed = approvalAudiences(
+      cfg,
+      (Array.isArray(raw) ? raw : []).map((a) => (typeof a === 'string' ? parseAudience(a) : null)).filter((a): a is DigestAudience => a !== null),
+    );
     const outcome = await prisma.$transaction(async (tx) => {
       const r = await tx.digestRun.updateMany({
         where: { id: run.id, approval: { in: ['PENDING', 'HELD'] } },
@@ -411,6 +416,56 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
   router.post('/runs/:id/retry', requireBearerOrUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {
     try {
       return await door(req, res, 'retry');
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /**
+   * Send Free (DIGEST_FREE_MANUAL, owner 2026-11-05): the only way the Free version goes out while the flag is on.
+   * Cookie session only (ADMIN or PUBLISHER, the people who may approve); the bearer token is refused. No send path of
+   * its own: `pressSendFree` checks every schedule gate, stamps the press (one winner) and advances the Free version
+   * through the existing steps. One audit row per real press, with the audience and who pressed it: no address, no headline.
+   */
+  router.post('/runs/:id/send-free', requireUser(['ADMIN', 'PUBLISHER']), async (req, res, next) => {
+    try {
+      const cfg = cfgOf();
+      if (!cfg.enabled) return notEnabled(res);
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({ error: 'confirm_required', message: 'Send Free must be confirmed.' });
+      }
+      const sender = senderOf(cfg);
+      if (!sender) return res.status(409).json({ error: 'provider_not_configured', message: PROVIDER_OFF });
+      // A LIVE clock, as in `door`: a slow create must not schedule after the cut-off on the strength of the request's start.
+      const clock = opts.clock ?? (() => new Date());
+      const out = await pressSendFree(req.params.id, req.user!.id, {
+        sender,
+        now: nowOf(),
+        clock,
+        cfg,
+        audience: audOf(),
+        quiet: quietOf(),
+        ...(opts.buildContent ? { buildContent: opts.buildContent } : {}),
+        selectItems: opts.selectItems ?? ((run, at) => selectDigest(run, at, { cfg })),
+        ...(opts.alerts === false ? { alerts: false as const } : {}),
+      });
+      if (!out.ok) return res.status(out.status).json({ error: out.code, message: out.message });
+      await recordAudit({
+        userId: req.user!.id,
+        action: 'DIGEST_FREE_PRESSED',
+        resourceType: 'DigestRun',
+        resourceId: req.params.id,
+        metadata: { audience: 'FREE', state: out.state, scheduled: out.scheduled },
+        ipAddress: requestClientIp(req),
+      });
+      return res.json({
+        ok: true,
+        state: out.state,
+        scheduled: out.scheduled,
+        message: out.scheduled
+          ? 'Free was handed to Mailercloud and is on its way to Free readers.'
+          : 'Send Free was pressed. It is being handed to Mailercloud and is retried by itself until the cut-off.',
+      });
     } catch (err) {
       return next(err);
     }

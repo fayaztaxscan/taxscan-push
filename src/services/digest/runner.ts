@@ -1,4 +1,4 @@
-import type { DigestAudience, DigestRun, DigestSend, Prisma, SenderErrorKind } from '@prisma/client';
+import type { DigestAudience, DigestRun, DigestSend, DigestSendState, Prisma, SenderErrorKind } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env, type AudienceEnv, type DigestEnv } from '../../lib/env';
 import { isQuietHours } from '../../lib/quietHours';
@@ -21,7 +21,16 @@ import { sendDigestAlerts } from './alerts';
 import { checkAudienceGuard } from '../audience/guard';
 import { recordRunAlert } from './runAlerts';
 import { checkWebhookLiveness } from './webhookLiveness';
-import { awaitingOwnApproval as variantAwaitingOwnApproval, isComplaintHeld, runNeedsApproval } from './holds';
+import {
+  approvalAudiences,
+  awaitingManualPress,
+  freePressRefusal,
+  awaitingOwnApproval as variantAwaitingOwnApproval,
+  isComplaintHeld,
+  isManualOnly,
+  MANUAL_NOT_SENT,
+  runNeedsApproval,
+} from './holds';
 import { isDuplicateNameError } from './sender';
 
 /**
@@ -110,7 +119,8 @@ import { isDuplicateNameError } from './sender';
 /** The builder as the runner sees it (default none = task-3 behaviour, no items). */
 export type SelectItems = (run: { id: string; portal: string; runDate: Date }, now: Date) => Promise<DigestSelection>;
 
-export type DigestTrigger = 'cron' | 'retry' | 'send_now' | 'health';
+/** `send_free`: the Send Free press (DIGEST_FREE_MANUAL). It advances the Free version only and never moves Premium. */
+export type DigestTrigger = 'cron' | 'retry' | 'send_now' | 'health' | 'send_free';
 
 export type AdvanceDeps = {
   sender: DigestSender;
@@ -458,6 +468,69 @@ export async function advanceRun(runId: string, trigger: DigestTrigger, deps: Ad
   }
 }
 
+/**
+ * Send Free (DIGEST_FREE_MANUAL, owner 2026-11-05): the ONE door through which a manual-only Free version is scheduled.
+ *
+ * It does not send by itself and has no send path of its own: it checks every gate the normal schedule passes (the same
+ * `scheduleBlocker`, the audience target and the audience guard), then stamps the press on the Free version and advances
+ * that version alone through the existing create → schedule steps (`trigger: 'send_free'`), so the write-ahead markers,
+ * the provider lookup and the one-a-day rule all still apply. Premium is never touched.
+ *
+ * Refused (nothing stamped, nothing sent) when a gate is closed, so a refusal never leaves a press that fires later. The
+ * stamp is a conditional update on `approvedAt IS NULL`: two presses, or two tabs, produce one winner; the loser gets
+ * `already_pressed`. The press is durable: if the schedule call itself fails, the tick resumes the version as it does
+ * any FAILED one, and a restart between the stamp and the call loses nothing and sends nothing twice.
+ */
+export type PressResult =
+  | { ok: true; state: DigestSendState; scheduled: boolean; steps: string[] }
+  | { ok: false; status: 404 | 409; code: string; message: string };
+
+export async function pressSendFree(runId: string, userId: string, deps: AdvanceDeps): Promise<PressResult> {
+  const cfg = deps.cfg ?? env.digest;
+  const refuse = (status: 404 | 409, code: string, x: Parameters<typeof freePressRefusal>[1] = {}): PressResult => ({
+    ok: false,
+    status,
+    code,
+    message: freePressRefusal(code, x),
+  });
+  if (!cfg.enabled || !cfg.freeManual) return refuse(409, 'not_manual');
+  const run = await prisma.digestRun.findUnique({ where: { id: runId } });
+  if (!run) return { ok: false, status: 404, code: 'not_found', message: 'That digest run does not exist.' };
+  const send = await prisma.digestSend.findUnique({ where: { runId_audience: { runId, audience: 'FREE' } } });
+  if (!send) return { ok: false, status: 404, code: 'no_free_version', message: 'This run has no Free version.' };
+
+  const now = deps.now ?? new Date();
+  const ctx = makeCtx(run, 'send_free', deps, cfg, now);
+  if (send.state === 'SENT' || send.state === 'PARTIALLY_SENT' || send.state === 'SCHEDULED') return refuse(409, 'already_sent');
+  if (send.state === 'SKIPPED') return refuse(409, 'skipped');
+  if (send.approvedAt) return refuse(409, 'already_pressed');
+  if (run.build !== 'BUILT') return refuse(409, 'not_built');
+  if (isPastCutoff(now, run.runDate, cfg.cutoff)) return refuse(409, 'past_cutoff', { cutoff: cfg.cutoff });
+  if (isTerminal(send)) return refuse(409, 'failed_final');
+  if (send.contentPendingAt !== null || send.html === null) return refuse(409, 'content_pending');
+  if (!send.mcCampaignId) return refuse(409, 'no_draft');
+  const target = audienceTarget(cfg, 'FREE', ctx.aud);
+  if (!target.ok) return refuse(409, 'config_invalid', { detail: target.reason });
+
+  // The gates the schedule step applies, asked as if the press had already happened.
+  const blocker = scheduleBlocker(ctx, { ...send, approvedAt: now, sendAfter: now });
+  if (blocker) return refuse(409, blocker, { quiet: ctx.quiet, cutoff: cfg.cutoff });
+  const held = await guardRefusal(ctx, 'FREE');
+  if (held) return refuse(409, 'audience_unverified', { detail: held.plain });
+
+  // The press: one winner. A repeat, a second tab or a Send now/Retry race finds `approvedAt` set and is refused.
+  const stamped = await prisma.digestSend.updateMany({
+    where: { id: send.id, approvedAt: null, state: { in: ['CREATED', 'FAILED'] }, mcCampaignId: { not: null } },
+    data: { approvedAt: now, approvedByUserId: userId, sendAfter: now },
+  });
+  if (stamped.count !== 1) return refuse(409, 'already_pressed');
+
+  const result = await advanceRun(runId, 'send_free', deps);
+  const after = await prisma.digestSend.findUniqueOrThrow({ where: { id: send.id }, select: { state: true } });
+  const scheduled = after.state === 'SCHEDULED' || after.state === 'SENT' || after.state === 'PARTIALLY_SENT';
+  return { ok: true, state: after.state, scheduled, steps: result.steps };
+}
+
 /** Alert passes started by `advanceRun` and not finished yet. */
 const inFlightAlerts = new Set<Promise<void>>();
 
@@ -477,12 +550,8 @@ async function afterAdvance(runId: string, deps: AdvanceDeps, cfg: DigestEnv): P
   }
 }
 
-async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: AdvanceDeps, cfg: DigestEnv): Promise<AdvanceResult> {
-  const run = await prisma.digestRun.findUnique({ where: { id: runId } });
-  if (!run) return { runId, outcome: 'not_found', steps: [], state: null };
-
-  const now = deps.now ?? new Date();
-  const ctx: Ctx = {
+function makeCtx(run: DigestRun, trigger: DigestTrigger, deps: AdvanceDeps, cfg: DigestEnv, now: Date): Ctx {
+  return {
     run,
     trigger,
     sender: deps.sender,
@@ -498,6 +567,14 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
     buildContent: deps.buildContent ?? renderDigestContent,
     emit: deps.log ?? consoleLog,
   };
+}
+
+async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: AdvanceDeps, cfg: DigestEnv): Promise<AdvanceResult> {
+  const run = await prisma.digestRun.findUnique({ where: { id: runId } });
+  if (!run) return { runId, outcome: 'not_found', steps: [], state: null };
+
+  const now = deps.now ?? new Date();
+  const ctx = makeCtx(run, trigger, deps, cfg, now);
 
   if (isPastCutoff(now, run.runDate, cfg.cutoff)) {
     await cutoffSweep(ctx);
@@ -524,7 +601,8 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
 
   // Re-read the run too: approval may have changed since the first read.
   ctx.run = await prisma.digestRun.findUniqueOrThrow({ where: { id: runId } });
-  for (const audience of AUDIENCES) {
+  // The Send Free press moves the Free version alone: Premium keeps its own routine untouched.
+  for (const audience of trigger === 'send_free' ? (['FREE'] as DigestAudience[]) : AUDIENCES) {
     const send = await prisma.digestSend.findUnique({ where: { runId_audience: { runId, audience } }, select: { id: true } });
     if (send) await advanceSend(ctx, send.id);
   }
@@ -544,8 +622,8 @@ async function advanceRunInner(runId: string, trigger: DigestTrigger, deps: Adva
 
 async function finish(ctx: Ctx, outcome: AdvanceResult['outcome'], reason?: string): Promise<AdvanceResult> {
   const run = await prisma.digestRun.findUniqueOrThrow({ where: { id: ctx.run.id } });
-  const sends = await prisma.digestSend.findMany({ where: { runId: run.id }, select: { state: true } });
-  return { runId: run.id, outcome, ...(reason ? { reason } : {}), steps: ctx.steps, state: digestRunState(run, sends) };
+  const sends = await prisma.digestSend.findMany({ where: { runId: run.id }, select: { state: true, lastError: true, audience: true, approvedAt: true } });
+  return { runId: run.id, outcome, ...(reason ? { reason } : {}), steps: ctx.steps, state: digestRunState(run, sends, { freeManual: ctx.cfg.freeManual }) };
 }
 
 
@@ -716,10 +794,12 @@ async function buildStep(ctx: Ctx, buildContent: BuildContent, selectItems?: Sel
   }
   // Re-read the run: the freeze transaction set candidateCount (and a sanity hold's approval).
   if (built) ctx.run = await prisma.digestRun.findUniqueOrThrow({ where: { id: ctx.run.id } });
-  if (built && approvalNeeded(ctx)) {
+  // DIGEST_FREE_MANUAL: Approve covers Premium only, so the "ready for approval" note names Premium alone.
+  const approvable = approvalAudiences(ctx.cfg, contents.map((c) => c.audience));
+  if (built && approvalNeeded(ctx) && approvable.length > 0) {
     // Task 13 (design §5 06:30 row): editors hear that today's version is ready to approve.
     await raiseAlert(ctx, 'ready_for_approval', {
-      audiences: contents.map((c) => c.audience),
+      audiences: approvable,
       ...(blocked.length ? { pending: blocked.map((b) => b.audience) } : {}),
       reason: holdReasonOf(ctx, selection),
       preview: !ctx.cfg.sendLive,
@@ -914,7 +994,7 @@ function holdReasonOf(ctx: Ctx, selection: DigestSelection | null): string {
  * after the build in approval mode (owner, 2026-10-23), or an adopted Mailercloud
  * draft in any mode (owner decision A, 2026-10-23).
  */
-function awaitingOwnApproval(ctx: Ctx, send: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt' | 'adoptedDraftAt'>): boolean {
+function awaitingOwnApproval(ctx: Ctx, send: Pick<DigestSend, 'audience' | 'ownApprovalRequired' | 'approvedAt' | 'adoptedDraftAt'>): boolean {
   return variantAwaitingOwnApproval(ctx.cfg, ctx.run, send);
 }
 
@@ -1066,7 +1146,7 @@ async function renderPendingStep(ctx: Ctx, send: DigestSend): Promise<DigestSend
 function failedBlock(trigger: DigestTrigger, s: DigestSend): string | null {
   const terminal = TERMINAL_ERRORS.find((e) => s.lastError?.startsWith(e));
   if (terminal) return `terminal:${terminal}`;
-  if (trigger === 'retry' || trigger === 'send_now') return null;
+  if (trigger === 'retry' || trigger === 'send_now' || trigger === 'send_free') return null;
   if (trigger === 'health' && s.lastErrorKind === 'FATAL') return null;
   return 'waiting_for_human';
 }
@@ -1371,8 +1451,14 @@ function scheduleBlocker(ctx: Ctx, send: DigestSend): string | null {
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
   if (sanityHeld(ctx)) return 'sanity_hold';
   if (isComplaintHeld(ctx.run) && ctx.run.approval !== 'APPROVED') return 'complaint_hold';
-  if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'awaiting_approval';
-  if (awaitingOwnApproval(ctx, send)) return 'awaiting_variant_approval';
+  if (isManualOnly(ctx.cfg, send.audience)) {
+    // DIGEST_FREE_MANUAL: Free goes out only on Send Free, in every approval mode, and does not wait for Premium's Approve.
+    // Every door (tick, Send now, Retry, health) meets this one gate. Editor, sanity and complaint holds above still apply.
+    if (awaitingManualPress(ctx.cfg, send)) return 'awaiting_manual_press';
+  } else {
+    if (ctx.cfg.approvalRequired && ctx.run.approval !== 'APPROVED') return 'awaiting_approval';
+    if (awaitingOwnApproval(ctx, send)) return 'awaiting_variant_approval';
+  }
   if (ctx.clock().getTime() < send.sendAfter.getTime()) return 'waiting_send_time';
   const clock = clockBlocker(ctx);
   if (clock) return clock;
@@ -1698,7 +1784,9 @@ async function auditSkipped(ctx: Ctx, send: DigestSend, reason: string): Promise
 /* ------------------------------------------------------------------ */
 
 /** Why an unfinished variant is being skipped at the cut-off. */
-function cutoffReason(ctx: Ctx, send?: Pick<DigestSend, 'ownApprovalRequired' | 'approvedAt' | 'adoptedDraftAt'>): string {
+function cutoffReason(ctx: Ctx, send?: Pick<DigestSend, 'audience' | 'ownApprovalRequired' | 'approvedAt' | 'adoptedDraftAt'>): string {
+  // Nobody was ever going to send an unpressed manual-only version: a routine day, whatever else holds the run.
+  if (send && awaitingManualPress(ctx.cfg, send)) return MANUAL_NOT_SENT;
   if (ctx.run.approval === 'HELD') return 'held_by_editor';
   if (sanityHeld(ctx)) return 'sanity_hold_expired';
   if (isComplaintHeld(ctx.run) && ctx.run.approval !== 'APPROVED') return 'complaint_hold_expired';
@@ -1756,7 +1844,8 @@ async function cutoffSweep(ctx: Ctx): Promise<void> {
     }
     const claimAt = await claimStep(s.id, { state: { in: ['PENDING', 'CREATED', 'FAILED'] }, scheduleAttemptedAt: null }, ctx);
     if (!claimAt) continue;
-    await finishStep(s.id, claimAt, { state: 'SKIPPED', nextAttemptAt: null });
+    // `lastError` carries the routine reason so the run state, banner and screen can stay calm (`runState.ts`).
+    await finishStep(s.id, claimAt, { state: 'SKIPPED', nextAttemptAt: null, ...(reason === MANUAL_NOT_SENT ? { lastError: MANUAL_NOT_SENT, lastErrorKind: null } : {}) });
     // A variant still waiting for its ads ends the way an unfillable run does.
     if (s.contentPendingAt !== null) await markSkipped(ctx, s, 'config_invalid', { source: 'ads', audience: s.audience });
     else await markSkipped(ctx, s, reason);
@@ -1764,6 +1853,12 @@ async function cutoffSweep(ctx: Ctx): Promise<void> {
 }
 
 async function markSkipped(ctx: Ctx, s: DigestSend, reason: string, extra: Record<string, unknown> = {}): Promise<void> {
+  if (reason === MANUAL_NOT_SENT) {
+    // Routine: no run-level skip reason (it would hide Premium's own), no alert; the audit row keeps the day's record.
+    await auditSkipped(ctx, s, reason);
+    log(ctx, s.audience, `cutoff:skipped:${reason}`);
+    return;
+  }
   await setRunSkipReason(ctx, reason);
   await raiseAlert(ctx, 'skipped', { reason, ...extra });
   await auditSkipped(ctx, s, reason);
