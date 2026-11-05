@@ -7,10 +7,10 @@ import { isQuietHours } from '../../lib/quietHours';
 import { authorityTier } from '../classify';
 import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, istInstant, runDateKey } from './retryPolicy';
-import { TERMINAL_ERRORS } from './runner';
+import { TERMINAL_ERRORS, audienceTarget } from './runner';
 import { safeDetail, skipWords } from './alerts';
 import { digestSendStats } from './stats';
-import { awaitingOwnApproval, runNeedsApproval } from './holds';
+import { MANUAL_NOT_SENT, awaitingOwnApproval, freePressRefusal, isComplaintHeld, isManualOnly, runNeedsApproval, type ManualCfg } from './holds';
 
 /**
  * Payloads for the Digests screen (docs/EMAIL_DIGEST_DESIGN.md §6, §7, task 7):
@@ -42,11 +42,13 @@ export type DigestActions = {
   hold: ScreenAction;
   sendNow: ScreenAction;
   retry: ScreenAction;
+  /** DIGEST_FREE_MANUAL: the one door that sends the Free version. Hidden when the flag is off. */
+  sendFree: ScreenAction;
   testSend: Record<DigestAudience, ScreenAction>;
 };
 
 export type ActionsInput = {
-  cfg: Pick<DigestEnv, 'enabled' | 'sendLive' | 'approvalRequired' | 'sanityMaxCandidates' | 'cutoff'>;
+  cfg: Pick<DigestEnv, 'enabled' | 'sendLive' | 'approvalRequired' | 'sanityMaxCandidates' | 'cutoff'> & ManualCfg;
   now: Date;
   quiet: { start: string; end: string };
   /** A provider client exists (key set, or a sender injected). */
@@ -85,13 +87,15 @@ export function isTerminalFailure(s: { state: DigestSendState; lastError: string
  * runner's gate is the same `awaitingOwnApproval`).
  */
 export function variantsAwaitingOwnApproval<T extends ActionsInput['sends'][number]>(
-  cfg: Pick<DigestEnv, 'approvalRequired' | 'sanityMaxCandidates'>,
+  cfg: Pick<DigestEnv, 'approvalRequired' | 'sanityMaxCandidates'> & ManualCfg,
   run: ActionsInput['run'],
   sends: ReadonlyArray<T>,
 ): T[] {
   return sends.filter(
     (s) =>
+      // A manual-only Free is never "waiting for approval": Approve does not cover it (`holds.ts`).
       awaitingOwnApproval(cfg, run, {
+        audience: s.audience,
         ownApprovalRequired: s.ownApprovalRequired === true,
         approvedAt: s.approvedAt ?? null,
         adoptedDraftAt: s.adoptedDraftAt ?? null,
@@ -128,7 +132,7 @@ function retryBlocker(i: ActionsInput): string | null {
 export function digestActions(i: ActionsInput): DigestActions {
   const testSend = {} as Record<DigestAudience, ScreenAction>;
   for (const a of AUDIENCES) testSend[a] = HIDDEN;
-  const none: DigestActions = { approve: HIDDEN, hold: HIDDEN, sendNow: HIDDEN, retry: HIDDEN, testSend };
+  const none: DigestActions = { approve: HIDDEN, hold: HIDDEN, sendNow: HIDDEN, retry: HIDDEN, sendFree: HIDDEN, testSend };
   if (!i.cfg.enabled) return none;
 
   const { run, sends } = i;
@@ -188,7 +192,36 @@ export function digestActions(i: ActionsInput): DigestActions {
             ? off('No longer stored: a digest email is kept for 30 days. Its stories, ads and counts are kept.')
             : on();
   }
-  return { approve, hold, sendNow, retry, testSend };
+  return { approve, hold, sendNow, retry, sendFree: sendFreeAction(i, pastCutoff), testSend };
+}
+
+/**
+ * Send Free (DIGEST_FREE_MANUAL). Stays on offer after Premium went out, until the cut-off: it is deliberately NOT tied
+ * to `open` (false once any version is handed over) or to `sendNow`'s `!skipped`. The reasons mirror the runner's
+ * `pressSendFree` in the same order, with the same words (`freePressRefusal`), so a pressed button almost never comes back
+ * refused. The checks only the server can make (the audience target and the guard) are added by `buildRunView`.
+ */
+function sendFreeAction(i: ActionsInput, pastCutoff: boolean): ScreenAction {
+  const free = i.sends.find((s) => s.audience === 'FREE');
+  if (!i.cfg.freeManual || !free || free.state === 'SKIPPED') return HIDDEN;
+  const { run } = i;
+  const reason = (() => {
+    if (free.state === 'SENT' || free.state === 'PARTIALLY_SENT' || free.state === 'SCHEDULED') return freePressRefusal('already_sent');
+    if (free.approvedAt) return freePressRefusal('already_pressed');
+    if (!i.providerReady) return PROVIDER_OFF_REASON;
+    if (run.build !== 'BUILT') return freePressRefusal('not_built');
+    if (pastCutoff) return freePressRefusal('past_cutoff', { cutoff: i.cfg.cutoff });
+    if (isTerminalFailure(free)) return freePressRefusal('failed_final');
+    if (!free.hasHtml) return freePressRefusal('content_pending');
+    if (!free.mcCampaignId) return freePressRefusal('no_draft');
+    if (!i.cfg.sendLive) return freePressRefusal('preview_only');
+    if (run.approval === 'HELD') return freePressRefusal('held_by_editor');
+    if (run.candidateCount > i.cfg.sanityMaxCandidates && run.approval !== 'APPROVED') return freePressRefusal('sanity_hold');
+    if (isComplaintHeld(run) && run.approval !== 'APPROVED') return freePressRefusal('complaint_hold');
+    if (isQuietHours(i.now, i.quiet.start, i.quiet.end)) return freePressRefusal('quiet_hours', { quiet: i.quiet });
+    return null;
+  })();
+  return reason ? off(reason) : on();
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,6 +263,7 @@ const AUDIT_WORDS: Record<string, string> = {
   DIGEST_SUBJECT_EDITED: 'Subject line changed',
   DIGEST_SCHEDULED: 'Handed to Mailercloud to send',
   DIGEST_SKIPPED: 'Skipped',
+  DIGEST_FREE_PRESSED: 'Send Free pressed',
 };
 
 const audienceWord = (a: unknown) => (a === 'FREE' ? 'Free' : a === 'PREMIUM' ? 'Premium' : null);
@@ -326,7 +360,9 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
    * not_needed | waiting | approved — per variant (owner 2026-10-23: a later-rendered one has
    * its own; decision A: so has an adopted Mailercloud draft, in every mode).
    */
-  const variantApproval = (s: { ownApprovalRequired: boolean; approvedAt: Date | null; adoptedDraftAt: Date | null }): 'not_needed' | 'waiting' | 'approved' => {
+  const variantApproval = (s: { audience: DigestAudience; ownApprovalRequired: boolean; approvedAt: Date | null; adoptedDraftAt: Date | null }): 'not_needed' | 'waiting' | 'approved' => {
+    // DIGEST_FREE_MANUAL: Free has no approval; it has a press (`pressedAt` below).
+    if (isManualOnly(cfg, s.audience)) return 'not_needed';
     if (s.ownApprovalRequired && (needsApproval || s.adoptedDraftAt)) return s.approvedAt ? 'approved' : 'waiting';
     if (!needsApproval) return 'not_needed';
     return run.approval === 'APPROVED' ? 'approved' : 'waiting';
@@ -374,11 +410,19 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
     }
   }
 
+  // The two checks only the server can make, so the button says why instead of failing on press.
+  if (actions.sendFree.enabled) {
+    const target = audienceTarget(cfg, 'FREE', aud);
+    const held = guardHeld.get('FREE');
+    if (!target.ok) actions.sendFree = off(freePressRefusal('config_invalid', { detail: target.reason }));
+    else if (held) actions.sendFree = off(freePressRefusal('audience_unverified', { detail: held.plain }));
+  }
+
   return {
     runId: run.id,
     runDate: runDateKey(run.runDate),
     isToday: run.runDate.getTime() === istDateOf(now).getTime(),
-    state: digestRunState(run, run.sends),
+    state: digestRunState(run, run.sends, { freeManual: cfg.freeManual }),
     build: run.build,
     skipReason: run.skipReason,
     skipText: run.skipReason ? skipWords(run.skipReason) : null,
@@ -412,8 +456,14 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       sentConfirmedAt: s.sentConfirmedAt,
       nextAttemptAt: s.nextAttemptAt,
       attempts: s.attempts,
-      lastError: s.lastError ? safeDetail(s.lastError, cfg) : null,
+      // `manual_not_sent` is a routine reason, not an error: it never shows as one.
+      lastError: s.lastError && s.lastError !== MANUAL_NOT_SENT ? safeDetail(s.lastError, cfg) : null,
       lastErrorKind: s.lastErrorKind as SenderErrorKind | null,
+      // DIGEST_FREE_MANUAL: this version goes out only on Send Free; who pressed it and when; "Not sent today" after the cut-off.
+      manual: isManualOnly(cfg, s.audience),
+      pressedAt: isManualOnly(cfg, s.audience) ? s.approvedAt : null,
+      pressedBy: isManualOnly(cfg, s.audience) && s.approvedByUserId ? (variantApprovers.get(s.approvedByUserId) ?? null) : null,
+      notSentToday: s.state === 'SKIPPED' && s.lastError === MANUAL_NOT_SENT,
       targeted: s.targeted,
       reached: s.reached,
       // Owner 2026-10-23: rendered after the build → its own approval, never the run's.
@@ -421,8 +471,8 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
       ownApproval: s.ownApprovalRequired,
       // Task 13, decision A: Mailercloud already had this draft; a person checks it there and approves.
       adoptedDraft: s.adoptedDraftAt !== null,
-      approvedAt: s.ownApprovalRequired ? s.approvedAt : run.approvedAt,
-      approvedBy: s.ownApprovalRequired ? (s.approvedByUserId ? (variantApprovers.get(s.approvedByUserId) ?? null) : null) : (approver?.email ?? null),
+      approvedAt: isManualOnly(cfg, s.audience) ? null : s.ownApprovalRequired ? s.approvedAt : run.approvedAt,
+      approvedBy: isManualOnly(cfg, s.audience) ? null : s.ownApprovalRequired ? (s.approvedByUserId ? (variantApprovers.get(s.approvedByUserId) ?? null) : null) : (approver?.email ?? null),
       // Owner 2026-10-23: the custom template failed; this copy uses the built-in template.
       templateFallback: s.templateFallbackFromId
         ? { fromId: s.templateFallbackFromId, reason: s.templateFallbackReason ? safeDetail(s.templateFallbackReason, cfg) : null }
@@ -519,7 +569,7 @@ export async function digestHistory(opts: { portal: string; days?: number; now?:
       skipReason: true,
       sends: {
         orderBy: { audience: 'asc' },
-        select: { id: true, audience: true, state: true, mcCampaignId: true, reached: true, clicks: true },
+        select: { id: true, audience: true, state: true, mcCampaignId: true, reached: true, clicks: true, lastError: true, approvedAt: true },
       },
       items: { select: { audience: true } },
     },
@@ -532,7 +582,7 @@ export async function digestHistory(opts: { portal: string; days?: number; now?:
     return {
       runId: r.id,
       runDate: runDateKey(r.runDate),
-      state: digestRunState(r, r.sends),
+      state: digestRunState(r, r.sends, { freeManual: (opts.cfg ?? env.digest).freeManual }),
       skipReason: r.skipReason,
       items,
       variants: r.sends.map((s) => ({
