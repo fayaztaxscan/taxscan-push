@@ -20,6 +20,9 @@ type Row = {
   actedAt: string | null;
   /** The exact WhatsApp post, built on the server. Copy and Share use it verbatim. */
   text: string;
+  /** Only on rows of the every-push rule: one row per push, and what was pushed. Absent on older article rows. */
+  rule?: 'push';
+  kind?: 'article' | 'course' | 'product';
 };
 type QueueResponse = {
   date: string;
@@ -46,7 +49,7 @@ const rows = ref<Row[]>([]);
 const counts = ref<QueueResponse['counts']>({ todo: 0, posted: 0, skipped: 0, all: 0 });
 const loading = ref(false);
 const error = ref<string | null>(null);
-const busyId = ref<string | null>(null);
+const busyId = ref<string | null>(null); // a row's articleKey: a repeat of one campaign is its own row
 const copiedId = ref<string | null>(null);
 const note = ref<string | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -112,14 +115,20 @@ function onPick(e: Event): void {
 }
 
 async function mark(r: Row, status: Status): Promise<void> {
-  busyId.value = r.campaignId;
+  busyId.value = r.articleKey;
   error.value = null;
   try {
-    await api.post(`/api/whatsapp/queue/${encodeURIComponent(r.campaignId)}`, { status });
+    // A row of the every-push rule is marked for that push alone, so its own key goes along; older rows send just the status.
+    await api.post(
+      `/api/whatsapp/queue/${encodeURIComponent(r.campaignId)}`,
+      r.rule === 'push' ? { status, articleKey: r.articleKey } : { status },
+    );
     // The server owns who/when and the counts; reload rather than guess.
     await load();
   } catch (e) {
-    error.value = apiErrorMessage(e);
+    const gone = (e as { status?: number })?.status === 404;
+    error.value = gone ? 'That push is no longer on the list (its time may have changed). The list has been reloaded.' : apiErrorMessage(e);
+    if (gone) await load();
   } finally {
     busyId.value = null;
   }
@@ -163,7 +172,7 @@ async function copy(r: Row): Promise<void> {
     note.value = 'Could not copy automatically — press and hold the post text to copy it.';
     return;
   }
-  copiedId.value = r.campaignId;
+  copiedId.value = r.articleKey;
   if (copiedTimer) clearTimeout(copiedTimer);
   copiedTimer = setTimeout(() => {
     copiedId.value = null;
@@ -193,6 +202,11 @@ function actedLine(r: Row): string {
       })
     : '';
   return `${word} by ${who}${when ? ' · ' + when : ''}`;
+}
+const KIND_LABEL = { article: 'Article', course: 'Course', product: 'Shop' } as const;
+/** Shown only on rows of the every-push rule; older rows carry no label. */
+function kindLabel(r: Row): string | null {
+  return r.rule === 'push' && r.kind ? KIND_LABEL[r.kind] : null;
 }
 function section(r: Row): string {
   return [r.authority, r.category].filter(Boolean).join(' · ');
@@ -255,12 +269,13 @@ onBeforeUnmount(() => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in shown" :key="r.campaignId" :class="{ 'wa-done': r.status !== 'TODO' }">
+          <tr v-for="r in shown" :key="r.articleKey" :class="{ 'wa-done': r.status !== 'TODO' }">
             <td data-label="Pushed" style="white-space: nowrap">
               <strong>{{ r.pushedTime }}</strong>
               <div v-if="r.pushedAgainTime" class="muted">pushed again {{ r.pushedAgainTime }}</div>
             </td>
             <td class="cell-lead">
+              <span v-if="kindLabel(r)" class="wa-kind" :class="'k-' + r.kind">{{ kindLabel(r) }}</span>
               {{ r.headline }}
               <div v-if="section(r)" class="muted">{{ section(r) }}</div>
             </td>
@@ -271,24 +286,24 @@ onBeforeUnmount(() => {
               <span class="wa-status" :class="'s-' + r.status">{{ actedLine(r) }}</span>
             </td>
             <td class="cell-actions wa-actions">
-              <button type="button" class="btn" :class="{ 'wa-copied': copiedId === r.campaignId }" @click="copy(r)">
-                {{ copiedId === r.campaignId ? 'Copied' : 'Copy' }}
+              <button type="button" class="btn" :class="{ 'wa-copied': copiedId === r.articleKey }" @click="copy(r)">
+                {{ copiedId === r.articleKey ? 'Copied' : 'Copy' }}
               </button>
               <button v-if="canShare" type="button" class="btn" @click="share(r)">Share</button>
               <template v-if="r.status === 'TODO'">
                 <button
                   type="button"
                   class="btn btn-primary"
-                  :disabled="busyId === r.campaignId"
+                  :disabled="busyId === r.articleKey"
                   @click="mark(r, 'POSTED')"
                 >
                   Posted
                 </button>
-                <button type="button" class="btn" :disabled="busyId === r.campaignId" @click="mark(r, 'SKIPPED')">
+                <button type="button" class="btn" :disabled="busyId === r.articleKey" @click="mark(r, 'SKIPPED')">
                   Skip
                 </button>
               </template>
-              <button v-else type="button" class="btn" :disabled="busyId === r.campaignId" @click="mark(r, 'TODO')">
+              <button v-else type="button" class="btn" :disabled="busyId === r.articleKey" @click="mark(r, 'TODO')">
                 Back to To do
               </button>
             </td>
@@ -365,6 +380,29 @@ onBeforeUnmount(() => {
 .wa-post-cell {
   min-width: 260px;
   max-width: 440px;
+}
+.wa-kind {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+}
+.wa-kind.k-course {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+.wa-kind.k-product {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
 }
 .wa-status {
   font-size: 12px;

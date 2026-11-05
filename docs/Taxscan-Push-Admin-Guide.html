@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.23 &nbsp;·&nbsp; Updated 5 November 2026
+    &nbsp;·&nbsp; Version 2.24 &nbsp;·&nbsp; Updated 5 November 2026
   </div>
 </div>
 
@@ -857,6 +857,19 @@ switched the feature on.</p>
       <strong>Back to To do</strong> undoes a mistake.</li>
   <li>An article pushed twice shows once, at its first position, with <em>pushed again</em> and the later time.</li>
 </ul>
+<h3>When every push gets a row</h3>
+<p>An administrator can switch on <strong>every push gets a row</strong> from a set time. From that time, <strong>every push</strong>
+has its own row on this screen: Taxscan articles, Academy courses and shop products. A push that is sent again is
+<strong>another row</strong>, with its own <strong>Posted</strong> and <strong>Skip</strong>: marking one never marks the other.
+Each row sits on the day it was pushed, at the time of that push. Courses and products carry a small label
+(<strong>Course</strong>, <strong>Shop</strong>; articles show <strong>Article</strong>), because they now share the list with
+articles. <strong>Before the set time nothing changes</strong>: those pushes keep the rule above (one row per article, with
+<em>pushed again</em>). Posting is still done by hand: Copy or Share the post, paste it into the channel, then press Posted. If a row
+disappears while you are working (its time was moved), the screen says so and reloads the list.</p>
+<div class="box warn"><span class="box-t">Administrators</span>
+  The time is <code>WHATSAPP_ALL_PUSHES_FROM</code>. <strong>Never move it earlier once it is set</strong>: pushes already handled would
+  appear as waiting again. After a restore from backup, set it to the restore time first, because the Posted and Skipped marks are not in
+  the backup.</div>
 <h3>Get notified on your phone</h3>
 <p>If an administrator has switched the nudge on, the WhatsApp screen shows a card, <em>Notify me on this device when articles
 are waiting</em>. Tap <strong>Notify me on this device</strong> and then <strong>Allow</strong> when the browser asks; the card
@@ -1142,7 +1155,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.23 · Updated 5 November 2026
+  Taxscan Push · Admin User Guide · Version 2.24 · Updated 5 November 2026
 </p>
 </section>
 
