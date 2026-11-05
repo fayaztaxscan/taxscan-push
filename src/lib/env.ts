@@ -407,6 +407,12 @@ export const ALL_PUSHES_FROM_VARS = {
   facebook: 'FACEBOOK_ALL_PUSHES_FROM',
 } as const;
 
+/**
+ * The WhatsApp queue's own "every push gets a row" switch (brief 2026-11-05-whatsapp-every-push), parsed with the same
+ * `parseAllPushesFrom`. Deliberately NOT in `ALL_PUSHES_FROM_VARS`: that list is the LinkedIn / Facebook pages' (their tests pin it).
+ */
+export const WHATSAPP_ALL_PUSHES_FROM_VAR = 'WHATSAPP_ALL_PUSHES_FROM';
+
 export function parseAllPushesFrom(src: NodeJS.ProcessEnv, name: string): { at: Date | null; off: string | null } {
   const raw = (src[name] ?? '').trim();
   if (!raw) return { at: null, off: `${name} is not set` };
@@ -666,7 +672,12 @@ export const env = {
   },
   // WhatsApp channel queue (brief 2026-11-02): a screen listing pushed articles as ready-to-copy posts. Default off = 404.
   // nudgeEnabled: a 5-minute tick that tells opted-in staff devices when articles are waiting for WhatsApp (needs queueEnabled).
-  whatsapp: { queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true', nudgeEnabled: process.env.WHATSAPP_NUDGE_ENABLED === 'true' },
+  whatsapp: {
+    queueEnabled: process.env.WHATSAPP_QUEUE_ENABLED === 'true',
+    nudgeEnabled: process.env.WHATSAPP_NUDGE_ENABLED === 'true',
+    // From this time every push (article, course, product) is its own row; null = today's rule (one row per article). Never move it earlier.
+    allPushesFrom: parseAllPushesFrom(process.env, WHATSAPP_ALL_PUSHES_FROM_VAR).at as Date | null,
+  },
   // LinkedIn page posting (docs/LINKEDIN_POSTING.md). Default off. `postFrom` is REQUIRED when enabled (the worker refuses to
   // start without a valid one; nothing pushed before it is ever posted). `pages` = the pages with a token of their own: only
   // `taxscan`. The Academy page (optional, own go-live time, the Taxscan token) is in `sharedPages` below.

@@ -67,7 +67,15 @@ const clip = (s: string): string => {
   const t = s.replace(/\s+/g, ' ').trim();
   return t.length > NUDGE_HEADLINE_MAX ? `${t.slice(0, NUDGE_HEADLINE_MAX - 1)}…` : t;
 };
-const plural = (n: number): string => `${n} article${n === 1 ? '' : 's'}`;
+const plural = (n: number, noun = 'article'): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/**
+ * "WhatsApp: 3 articles waiting" as ever; once the all-pushes rule lists a course or product among the waiting rows (a row whose `kind`
+ * is not article) it says "posts". Pure.
+ */
+export function nudgeTitle(waiting: { kind?: string }[]): string {
+  return `WhatsApp: ${plural(waiting.length, waiting.some((r) => r.kind && r.kind !== 'article') ? 'post' : 'article')} waiting`;
+}
 
 /** One tick. Never throws past the caller's try/catch; everything it needs is in Postgres. */
 export async function runWhatsAppNudge(d: NudgeDeps = {}): Promise<NudgeResult> {
@@ -101,7 +109,7 @@ export async function runWhatsAppNudge(d: NudgeDeps = {}): Promise<NudgeResult> 
   const newest = waiting.reduce((a, b) => (Date.parse(b.pushedAt) > Date.parse(a.pushedAt) ? b : a));
   const base = (env.appBaseUrl || 'https://push.taxscan.in').replace(/\/+$/, '');
   const payload = {
-    title: `WhatsApp: ${plural(waiting.length)} waiting`,
+    title: nudgeTitle(waiting),
     body: clip(newest.headline),
     url: `${base}/admin/whatsapp`,
     icon: DEFAULT_NOTIFICATION_ICON,

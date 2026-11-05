@@ -638,8 +638,19 @@ async function channelsFor(
   }
   const socialKeys = [...new Set([...keys, ...pushKeyOf.values(), ...ownKeyOf.values()])];
   const waPortal = env.rss.portal;
+  // WhatsApp's all-pushes rule (brief 2026-11-05-whatsapp-every-push): a push at or after WHATSAPP_ALL_PUSHES_FROM is its own row, so its mark
+  // is the status of ITS key. Today's rule (and every push while the time is unset) keeps the article mark: with it unset nothing here differs.
+  const waPushesFrom = waOn ? env.whatsapp.allPushesFrom : null;
+  const waPushKeyOf = new Map<string, string>(); // campaign id → its `push:` key (only while the time is set)
+  if (waPushesFrom) {
+    for (const c of campaigns) if (c.status === 'SENT' && c.lastSentAt && c.lastSentAt >= waPushesFrom && isAllPushesCampaign(c)) waPushKeyOf.set(c.id, pushKey({ id: c.id, lastSentAt: c.lastSentAt }));
+  }
+  // Today's rule reads the article keys. With the time set it also reads the pushes' own `push:` keys: its own rows, and, for a push the time
+  // handed back to today's rule (moved later), a mark made under the new rule (the same care as LinkedIn and Facebook). With the time UNSET
+  // the query is exactly today's: article keys only (an existing test pins it).
+  const waKeys = waPushesFrom ? [...new Set([...keys, ...waPushKeyOf.values(), ...ownKeyOf.values()])] : keys;
   const [wa, li, fb] = await Promise.all([
-    waOn && keys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: keys } }, include: { actedBy: { select: { email: true } } } }) : [],
+    waOn && waKeys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: waKeys } }, include: { actedBy: { select: { email: true } } } }) : [],
     liOn && socialKeys.length ? prisma.linkedInPost.findMany({ where: { page: PAGE_TAXSCAN, articleKey: { in: socialKeys } } }) : [],
     fbOn && socialKeys.length ? prisma.facebookPost.findMany({ where: { page: FB_PAGE_TAXSCAN, articleKey: { in: socialKeys } } }) : [],
   ]);
@@ -656,8 +667,14 @@ async function channelsFor(
     const pKey = pushKeyOf.get(c.id);
     const channels: CampaignChannels = { whatsapp: null, linkedin: null };
     const details: CampaignChannelDetails = {};
-    if (key && waOn && c.portal === waPortal) {
-      const p = waBy.get(key);
+    const waPKey = waPushKeyOf.get(c.id);
+    if (waOn && c.portal === waPortal && waPKey) {
+      // THE NEW RULE: this push is its own WhatsApp row (an article, a course or a product; a repeat is another row).
+      const p = waBy.get(waPKey);
+      channels.whatsapp = p ? p.status : 'TODO';
+      if (p) details.whatsapp = { by: p.actedBy?.email ?? null, at: p.actedAt.toISOString() };
+    } else if (key && waOn && c.portal === waPortal) {
+      const p = waBy.get(key) ?? (waPushesFrom ? viaPushRow(waBy, c, key) : undefined);
       channels.whatsapp = p ? p.status : 'TODO';
       if (p) details.whatsapp = { by: p.actedBy?.email ?? null, at: p.actedAt.toISOString() };
     }

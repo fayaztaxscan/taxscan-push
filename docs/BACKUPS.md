@@ -150,6 +150,9 @@ again. See `docs/FACEBOOK_POSTING.md`.
 **`WhatsAppPost` (the WhatsApp channel queue's Posted / Skipped marks) is deliberately NOT in the export.** It holds only
 "who marked which article, when" for a short-lived working list; losing it means a day's list shows To do again, and
 every article is still in `Campaign`. (Added 2026-11-02; the export format is unchanged.)
+**After a restore, set `WHATSAPP_ALL_PUSHES_FROM` to the restore time (or unset it).** Under the all-pushes rule every push is its own row and its
+mark lives only in `WhatsAppPost`, so with the marks gone an old value would list every push since that time as To do again (and the nudge would
+announce them). The restore time lists nothing from the past; later pushes list as they happen. (Added 2026-11-05; the export format is unchanged.)
 
 **EXPIRED subscribers are excluded**, and that is safe rather than merely
 smaller. A row expires when the push service answers 404/410, which means the
