@@ -13,7 +13,7 @@ import { istDateOf, istInstant, isPastCutoff, runDateKey } from './retryPolicy';
 import { digestRunState } from './runState';
 import { recordRunAlert } from './runAlerts';
 import { sendDigestAlerts } from './alerts';
-import { awaitingOwnApproval, runNeedsApproval, type ComplaintCheck } from './holds';
+import { awaitingOwnApproval, isManualOnly, runNeedsApproval, type ComplaintCheck } from './holds';
 import { digestSendStats } from './stats';
 import { healthSlots, runHealthChecks } from './health';
 
@@ -416,12 +416,15 @@ async function notApprovedYetOnce(runId: string, now: Date, cfg: DigestEnv, plan
     include: { sends: { select: { audience: true, state: true, html: true, contentPendingAt: true, ownApprovalRequired: true, approvedAt: true, adoptedDraftAt: true } } },
   });
   if (!run || run.build !== 'BUILT') return false;
-  const open = run.sends.filter((x) => (x.state === 'PENDING' || x.state === 'CREATED') && x.contentPendingAt === null && x.html !== null);
+  // DIGEST_FREE_MANUAL: an unpressed Free is waiting for a person's press, not for this approval, so it never raises the reminder.
+  const open = run.sends.filter(
+    (x) => (x.state === 'PENDING' || x.state === 'CREATED') && x.contentPendingAt === null && x.html !== null && !isManualOnly(cfg, x.audience),
+  );
   if (open.length === 0) return false;
   const runPending = runNeedsApproval(cfg, run) && run.approval === 'PENDING';
   const variants = open.filter((x) => awaitingOwnApproval(cfg, run, x)).map((x) => x.audience);
   if (!runPending && variants.length === 0) return false;
-  return recordRunAlert(runId, 'not_approved_yet', now, variants.length && !runPending ? { audiences: variants } : {});
+  return recordRunAlert(runId, 'not_approved_yet', now, variants.length && !runPending ? { audiences: variants } : cfg.freeManual ? { audiences: ['PREMIUM'] } : {});
 }
 
 /* ------------------------------------------------------------------ */

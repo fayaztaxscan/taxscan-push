@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.22 &nbsp;·&nbsp; Updated 4 November 2026
+    &nbsp;·&nbsp; Version 2.23 &nbsp;·&nbsp; Updated 5 November 2026
   </div>
 </div>
 
@@ -646,6 +646,20 @@ a day</strong> and is never sent again on a later day.</p>
 <div class="box info"><span class="box-t">Who can do what</span>
   <strong>Publishers</strong> can approve, hold, Send now, Retry now and test send — like Push now. <strong>Ads</strong> and
   <strong>Templates</strong> are open to <strong>everyone who is signed in</strong> — publishers and administrators alike. Only Users and the report email list are for administrators.</div>
+<h3>Send Free — the Free version only goes out when you press it</h3>
+<p>When the <strong>manual Free</strong> setting is on (<code>DIGEST_FREE_MANUAL</code>, switched on by an admin), the Premium version keeps its
+daily routine, but the <strong>Free</strong> version is no longer sent by itself. It is still built every morning and its
+preview and draft are ready as usual; it goes out <strong>only when someone presses Send Free</strong>, before 17:00.</p>
+<ul>
+  <li><strong>Send Free</strong> sits on the Free line at the top of Digests. It asks <em>"Send the Free digest to Free readers now?"</em> first
+      (Cancel is selected), then sends once. A second press, or a second person pressing at the same moment, sends nothing more.</li>
+  <li>The same people who may approve can press it. It also works after Premium has gone out.</li>
+  <li><strong>Approve covers Premium only.</strong> It never sends Free, and Free never shows "Waiting for approval".</li>
+  <li>It cannot be pressed at night (23:00–07:00), after 17:00, or while an editor has <strong>Held</strong> the digest. When it is greyed out, the reason is written under the button.</li>
+  <li>Before it is pressed the Free line reads <em>"Goes out only when someone presses Send Free"</em>; afterwards <em>"Send Free pressed by … at …"</em>.</li>
+  <li>You can still <strong>Edit subject</strong> on the Free version after Premium is approved; it locks when Free is pressed, or at the cut-off.</li>
+  <li>A day nobody presses it reads <strong>Not sent today</strong>. That is normal, not a fault: no alert, no amber notice. Its top stories roll into the next digest.</li>
+</ul>
 <div class="box tip"><span class="box-t">Failures retry by themselves</span>
   If Mailercloud doesn't answer, or the build fails, the system tries again <strong>1, 5 and 15 minutes</strong> later,
   then <strong>every hour</strong> until 17:00; <em>Retry now</em> just skips the wait. Errors a retry can't fix (a
@@ -1128,7 +1142,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.22 · Updated 4 November 2026
+  Taxscan Push · Admin User Guide · Version 2.23 · Updated 5 November 2026
 </p>
 </section>
 

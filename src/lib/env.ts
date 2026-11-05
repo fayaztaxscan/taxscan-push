@@ -103,6 +103,9 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
     // Off = the run stops at CREATED ("preview only"); nothing reaches an audience.
     sendLive: src.DIGEST_SEND_LIVE === 'true',
     approvalRequired: src.DIGEST_APPROVAL_REQUIRED !== 'false',
+    // The Free version is built, frozen and drafted every morning but goes out ONLY when a person presses
+    // "Send Free" on the Digests screen before the cut-off (owner, 2026-11-05). Off = both versions follow the routine.
+    freeManual: src.DIGEST_FREE_MANUAL === 'true',
     webhooksEnabled: src.DIGEST_WEBHOOKS_ENABLED === 'true',
     sendAt: (src.DIGEST_SEND_AT ?? '07:30').trim(),
     buildLeadMinutes: intFrom(src, 'DIGEST_BUILD_LEAD_MINUTES', 60),

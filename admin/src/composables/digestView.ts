@@ -165,3 +165,43 @@ export function doorMessage(kind: 'retry' | 'send_now', sendLive: boolean, r: Do
   }
   return { tone: 'ok', text: `Not sent yet. Today's digest is now: ${run}.` };
 }
+
+/* ------------------------------------------------------------------ */
+/* DIGEST_FREE_MANUAL: the Free version goes out only on "Send Free"    */
+/* ------------------------------------------------------------------ */
+
+export type ManualFreeView = {
+  state: SendState;
+  pressedAt?: string | null;
+  pressedBy?: string | null;
+  notSentToday?: boolean;
+  scheduledAt: string | null;
+  sentConfirmedAt: string | null;
+  sendAfter: string;
+};
+
+/**
+ * The one plain line for a Free version that is manual-only. Never "waiting for approval" (Approve does not cover it);
+ * a day nobody pressed it is "Not sent today" — routine, not a fault. Null = say nothing special (the usual notes apply).
+ */
+export function manualFreeNote(v: ManualFreeView): string | null {
+  if (v.notSentToday) return 'Nobody pressed Send Free before the cut-off. That is normal; nothing is wrong.';
+  if (v.state === 'SKIPPED' || v.state === 'FAILED') return null;
+  const pressed = v.pressedAt
+    ? `Send Free pressed${v.pressedBy ? ` by ${v.pressedBy}` : ''} at ${timeIst(v.pressedAt)} IST.`
+    : null;
+  if (!pressed) return v.state === 'PENDING' || v.state === 'CREATED' ? 'Goes out only when someone presses Send Free.' : null;
+  if (v.state === 'SENT' && v.sentConfirmedAt) return `${pressed} Confirmed sent at ${timeIst(v.sentConfirmedAt)} IST.`;
+  if (v.state === 'SCHEDULED' && v.scheduledAt) return `${pressed} Handed to Mailercloud at ${timeIst(v.scheduledAt)} IST.`;
+  return pressed;
+}
+
+/** The unsure-outcome sentence for Send Free (a press that got no reply). */
+export const SEND_FREE_UNKNOWN =
+  'No reply from the server in time — the Free digest may still be sending. Check this screen before pressing anything again.';
+
+/** Run-level approval line: with Free manual, Approve covers Premium only, so say so. */
+export function approvalLine(approval: string, approvedBy: string | null, approvedAt: string | null, freeManual: boolean): string {
+  const text = approvalLabel(approval, approvedBy, approvedAt);
+  return freeManual && (approval === 'PENDING' || approval === 'APPROVED') ? `Premium: ${text.charAt(0).toLowerCase()}${text.slice(1)}` : text;
+}

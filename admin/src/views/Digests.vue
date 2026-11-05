@@ -9,7 +9,9 @@ import {
   AUDIENCES,
   AUDIENCE_LABEL,
   MAILERCLOUD_CAMPAIGN_URL,
-  approvalLabel,
+  approvalLine,
+  manualFreeNote,
+  SEND_FREE_UNKNOWN,
   count,
   dateLabel,
   doorMessage,
@@ -77,6 +79,12 @@ type Variant = {
   templateFallback?: { fromId: string; reason: string | null } | null;
   /** Task 13: Mailercloud already had this draft (e.g. after a restore); a person checks it and approves. */
   adoptedDraft?: boolean;
+  /** DIGEST_FREE_MANUAL: this version goes out only on Send Free. */
+  manual?: boolean;
+  pressedAt?: string | null;
+  pressedBy?: string | null;
+  /** Free was not pressed before the cut-off: a routine "Not sent today". */
+  notSentToday?: boolean;
   /** CMS audience sync task 7: the send guard is holding this variant (null = not held / guard off). */
   audienceHold?: { check: string; plain: string } | null;
 };
@@ -110,6 +118,7 @@ type Detail = {
     hold: ScreenAction;
     sendNow: ScreenAction;
     retry: ScreenAction;
+    sendFree?: ScreenAction;
     testSend: Record<Audience, ScreenAction>;
   };
   audienceEstimate: Record<Audience, number | null>;
@@ -141,7 +150,7 @@ const loading = ref(false);
 const busy = ref<string | null>(null);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
-const confirming = ref<'send_now' | 'retry' | null>(null);
+const confirming = ref<'send_now' | 'retry' | 'send_free' | null>(null);
 
 const audience = ref<Audience>('FREE');
 const WIDTHS = PREVIEW_WIDTHS;
@@ -265,17 +274,20 @@ async function confirmDoor() {
   error.value = null;
   notice.value = null;
   let outcome: DoorMessage | null = null;
+  const path = kind === 'send_now' ? 'send-now' : kind === 'send_free' ? 'send-free' : 'retry';
+  const unknown = kind === 'send_free' ? SEND_FREE_UNKNOWN : DOOR_UNKNOWN;
   try {
-    const res = await api.post<{ result: DoorResult }>(
-      `/api/digest/runs/${detail.value.runId}/${kind === 'send_now' ? 'send-now' : 'retry'}`,
+    const res = await api.post<{ result?: DoorResult; message?: string }>(
+      `/api/digest/runs/${detail.value.runId}/${path}`,
       { confirm: true },
-      { timeoutMs: DISPATCH_TIMEOUT_MS, unknownMessage: DOOR_UNKNOWN },
+      { timeoutMs: DISPATCH_TIMEOUT_MS, unknownMessage: unknown },
     );
     // What really happened to each version, not a fixed sentence: red when a version failed.
-    outcome = doorMessage(kind, sendLive.value, res.result);
+    // Send Free answers in the server's own plain words.
+    outcome = kind === 'send_free' ? { tone: 'ok', text: res.message || 'Send Free pressed.' } : doorMessage(kind, sendLive.value, res.result as DoorResult);
   } catch (e) {
     const err = e as ApiError;
-    outcome = { tone: 'err', text: err.outcomeUnknown ? DOOR_UNKNOWN : apiErrorMessage(e) };
+    outcome = { tone: 'err', text: err.outcomeUnknown ? unknown : apiErrorMessage(e) };
   } finally {
     busy.value = null;
     confirming.value = null;
@@ -314,10 +326,20 @@ const confirmTitle = computed(() => {
   return present.map((a) => `${AUDIENCE_LABEL[a]}: ${est?.[a] ? `~${est[a]!.toLocaleString()} readers` : 'full list'}`).join('; ');
 });
 
+const freeConfirmTitle = computed(() => {
+  const n = detail.value?.audienceEstimate?.FREE;
+  return n ? `Free: ~${n.toLocaleString()} readers` : 'Free: full list';
+});
+
 /** One plain line per variant about what happens next. */
 function variantNote(v: Variant): string | null {
   if (v.audienceHold && (v.state === 'PENDING' || v.state === 'CREATED' || v.state === 'FAILED')) {
     return `Held — ${v.audienceHold.plain}. It is checked again every minute and goes out by itself once it passes; approval does not override it.`;
+  }
+  if (v.manual) {
+    const failing = !!v.lastError && (v.state === 'FAILED' || v.state === 'PENDING' || v.state === 'CREATED');
+    const note = failing ? null : manualFreeNote(v);
+    if (note) return note;
   }
   if (v.adoptedDraft && v.approval === 'waiting' && (v.state === 'PENDING' || v.state === 'CREATED')) {
     return 'Mailercloud already had this draft (it may be from before a database restore). Check it in Mailercloud, then approve — or delete it there and a fresh one is made.';
@@ -338,6 +360,7 @@ function variantNote(v: Variant): string | null {
   return null;
 }
 
+const freeManual = computed(() => !!detail.value?.variants.some((v) => v.manual));
 const disabledReasons = computed(() => {
   const a = detail.value?.actions;
   if (!a) return [];
@@ -418,12 +441,24 @@ onMounted(load);
           <div class="variant-rows">
             <div v-for="v in detail.variants" :key="v.audience" class="variant-row">
               <span class="variant-name">{{ AUDIENCE_LABEL[v.audience] }}</span>
-              <span class="badge" :class="sendStateBadge(v.state)">{{ sendStateLabel(v.state, sendLive) }}</span>
+              <span class="badge" :class="sendStateBadge(v.state)">{{ v.notSentToday ? 'Not sent today' : sendStateLabel(v.state, sendLive) }}</span>
               <span v-if="variantNote(v)" class="muted variant-note">{{ variantNote(v) }}</span>
+              <div v-if="v.audience === 'FREE' && detail.actions.sendFree?.show && !['SCHEDULED', 'SENT', 'PARTIALLY_SENT'].includes(v.state)" class="send-free">
+                <button
+                  class="btn btn-primary"
+                  :disabled="!!busy || !detail.actions.sendFree.enabled"
+                  @click="confirming = 'send_free'"
+                >
+                  {{ busy === 'send_free' ? 'Sending…' : 'Send Free' }}
+                </button>
+                <p v-if="!detail.actions.sendFree.enabled && detail.actions.sendFree.reason" class="muted reason" data-test="send-free-reason">
+                  {{ detail.actions.sendFree.reason }}
+                </p>
+              </div>
             </div>
           </div>
           <p class="facts">
-            <span>{{ approvalLabel(detail.approval, detail.approvedBy, detail.approvedAt) }}.</span>
+            <span>{{ approvalLine(detail.approval, detail.approvedBy, detail.approvedAt, freeManual) }}.</span>
             <span v-if="detail.readsLine">{{ detail.readsLine }}</span>
             <span v-if="!sendLive">Preview only: nothing is sent to readers while DIGEST_SEND_LIVE is off.</span>
             <span v-if="!viewingPast && status.today?.health?.checkedAt">
@@ -679,6 +714,16 @@ onMounted(load);
       @cancel="confirming = null"
     />
     <ConfirmPush
+      v-if="confirming === 'send_free' && detail"
+      heading="Send the Free digest to Free readers now?"
+      :title="freeConfirmTitle"
+      detail="It goes to the Free list straight away and only once today. Premium is not touched. A sent email can't be recalled."
+      confirm-label="Send Free"
+      :busy="busy === 'send_free'"
+      @confirm="confirmDoor"
+      @cancel="confirming = null"
+    />
+    <ConfirmPush
       v-if="confirming === 'retry' && detail"
       heading="Retry today's digest now?"
       :title="confirmTitle"
@@ -742,6 +787,13 @@ onMounted(load);
 }
 .reason {
   margin: 6px 0 0;
+}
+.send-free {
+  flex-basis: 100%;
+  margin: 4px 0 6px;
+}
+.send-free .reason {
+  margin-top: 6px;
 }
 .timeline {
   margin-top: 14px;
@@ -909,6 +961,10 @@ tr.picked td {
   }
   .action-row .btn {
     flex: 1 1 calc(50% - 4px);
+  }
+  .send-free .btn {
+    width: 100%;
+    min-height: 44px;
   }
   /* The inbox row wraps on a phone, like a mail app's two-line list item. */
   .inbox-row {

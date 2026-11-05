@@ -6,7 +6,7 @@ import { digestRunState, type DigestRunState } from './runState';
 import { istDateOf, runDateKey } from './retryPolicy';
 import { validateDigestSchedule } from './scheduler';
 import { BLOCKING_KINDS, INFO_KINDS, alertCopy, safeDetail, skipWords, type AlertMap } from './alerts';
-import { complaintCheckOf, isComplaintHeld, runNeedsApproval, type ComplaintCheck } from './holds';
+import { complaintCheckOf, isComplaintHeld, isManualOnly, runNeedsApproval, type ComplaintCheck, type ManualCfg } from './holds';
 import { noAddressRecently, webhookHealth, type WebhookHealth } from './webhookLiveness';
 
 /**
@@ -28,7 +28,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export type AttentionInput = {
   enabled: boolean;
   now: Date;
-  cfg: Pick<DigestEnv, 'sendLive' | 'approvalRequired' | 'sanityMaxCandidates' | 'cutoff'>;
+  cfg: Pick<DigestEnv, 'sendLive' | 'approvalRequired' | 'sanityMaxCandidates' | 'cutoff'> & ManualCfg;
   run: {
     build: DigestBuild;
     approval: DigestApproval;
@@ -152,7 +152,7 @@ function runAttention(i: AttentionInput): Attention | null {
   if (!i.run) return null;
   const { run, sends, cfg } = i;
   const cutoff = `${cfg.cutoff} IST`;
-  const state = digestRunState(run, sends);
+  const state = digestRunState(run, sends, { freeManual: cfg.freeManual });
 
   const fixAds = `Open Ads and give every slot an active or default ad, then press Retry now in Digests before ${cutoff}.`;
   if (state === 'failed') {
@@ -275,7 +275,8 @@ function runAttention(i: AttentionInput): Attention | null {
   if (unfinished && cfg.sendLive && cfg.approvalRequired && run.approval === 'PENDING') {
     const sendAt = sends.length ? Math.min(...sends.map((s) => s.sendAfter.getTime())) : null;
     if (sendAt !== null && i.now.getTime() >= sendAt) {
-      return attention('awaiting_approval', "Today's digest is waiting for approval.", `Approve or hold it in Digests before ${cutoff}, or it is skipped.`);
+      // DIGEST_FREE_MANUAL: Approve covers Premium only; Free waits for its own Send Free button and never shows here.
+      return attention('awaiting_approval', `${cfg.freeManual ? "Today's Premium digest" : "Today's digest"} is waiting for approval.`, `Approve or hold it in Digests before ${cutoff}, or it is skipped.`);
     }
   }
 
@@ -284,7 +285,7 @@ function runAttention(i: AttentionInput): Attention | null {
   // auto-mode day is covered too (QA of task 13: it was approval mode / sanity hold only here).
   const approvalNeeded = runNeedsApproval(cfg, run);
   const waitingOwn = sends.filter(
-    (s) => s.ownApprovalRequired && !s.approvedAt && (s.state === 'PENDING' || s.state === 'CREATED') && !s.contentPendingAt,
+    (s) => s.ownApprovalRequired && !s.approvedAt && (s.state === 'PENDING' || s.state === 'CREATED') && !s.contentPendingAt && !isManualOnly(cfg, s.audience ?? ''),
   );
   if (cfg.sendLive && approvalNeeded && run.approval === 'APPROVED' && waitingOwn.length > 0 && waitingOwn.some((s) => i.now.getTime() >= s.sendAfter.getTime())) {
     const names = waitingOwn.map((s) => audienceName(s.audience)).join(' and ');
@@ -456,7 +457,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
       },
     },
   });
-  const history = runs.map((r) => ({ runDate: runDateKey(r.runDate), state: digestRunState(r, r.sends) }));
+  const history = runs.map((r) => ({ runDate: runDateKey(r.runDate), state: digestRunState(r, r.sends, { freeManual: cfg.freeManual }) }));
   const run = runs.find((r) => r.runDate.getTime() === todayDate.getTime()) ?? null;
   if (!run) {
     return { ...base, webhook, today: null, attention: digestAttention({ enabled: cfg.enabled, now, cfg, run: null, sends: [], webhookSilent, webhookNoAddress }), history };
@@ -482,7 +483,7 @@ export async function digestStatus(opts: { portal?: string; now?: Date; cfg?: Di
     today: {
       runId: run.id,
       runDate: runDateKey(run.runDate),
-      state: digestRunState(run, run.sends),
+      state: digestRunState(run, run.sends, { freeManual: cfg.freeManual }),
       build: run.build,
       approval: run.approval,
       skipReason: run.skipReason,
