@@ -96,6 +96,16 @@ With `DIGEST_FREE_MANUAL` on: Premium keeps its routine; Free is still built, fr
 - **`makeCtx`** was extracted from `advanceRunInner` so the press can build the same context; behaviour unchanged (765 digest tests passed).
 - `railway ssh` etc. were never used; the build database is `taxscan_push_build_free-digest-manual-push`.
 
+## Follow-up 1 (owner, 2026-11-05): Free's subject stays editable until Send Free is pressed
+- **Code commit:** `20e50ce`, same branch. No migration, no new flag. No UI file changed: the Digests screen shows the edit control from the server's `subjectEdit` field, which comes from `subjectLock`, so it follows the new rule by itself.
+- **Change:** `subjectLock` (`src/services/digest/subjectEdit.ts`) uses `isManualOnly` from `holds.ts`. For a manual-only Free the "approved" lock is `approvedAt` (the press) alone; the run's Approve no longer locks it. Premium's rule is untouched. Not-today, not-built, past-cut-off, scheduled and create-in-flight locks all still apply to Free. `SubjectLockSend` gained an optional `audience` so older callers and tests compile unchanged.
+- **Race (test 6):** the existing conditional update (state CREATED, no schedule attempt, subject still the old one) did **not** cover a press: the press stamps `approvedAt` but changes neither state nor `scheduleAttemptedAt` until the schedule step claims. So `editSubject` now adds `approvedAt: null` to that guard for a manual-only Free. The test forces a press between the lock check and the write (spy on `digestSend.updateMany`); I confirmed it **fails without the guard (edit returned 200)** and passes with it (409 `changed`, subject unchanged, no provider call).
+- **Guide:** one sentence added to the Send Free section ("You can still Edit subject on the Free version after Premium is approved; it locks when Free is pressed, or at the cut-off"). Version left at 2.23 (same release day); bump it if you want one per change.
+- **Results (verbatim):** `npx tsc -p tsconfig.json --noEmit` clean; `npm run lint` clean; all `digest*` tests: `Test Suites: 26 passed, 26 total`, `Tests: 826 passed, 826 total` (includes the unchanged `digestSubjectEdit.test.ts`). No full suite, as the brief says.
+- **Acceptance:** 1 PASS (Premium approved, Free unpressed → 200, DB and provider draft both updated). 2 PASS (pressed → 409 `approved`, the existing text). 3 PASS (Premium after Approve still locked). 4 PASS (past cut-off, scheduled, not today, not built still refuse Free). 5 PASS (flag off: both versions lock on Approve as before; existing subject tests unchanged). 6 PASS (see Race above). Extra: the screen payload for the run shows Free editable after Approve and locked after the press, Premium locked.
+- **Not done:** no browser check of the edit control (no UI code changed; covered through the run-detail API test). Remaining window, same as for every edit today: a provider `updateSubject` already in flight when a press schedules the campaign (about a second, unchanged by this).
+- **Surprise:** `editSubject`'s existing guard never looked at approval at all; the lock check alone kept approved versions out. Only the manual-only Free needed the extra condition because its press is not a state change.
+
 ## Clean-up (planning runs this after merging)
 ```sh
 git worktree remove ../taxscan-push-worktrees/free-digest-manual-push
