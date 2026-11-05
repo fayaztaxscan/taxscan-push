@@ -27,6 +27,7 @@ import { startLinkedInWorker } from './services/linkedin/worker';
 import { startFacebookWorker } from './services/facebook/worker';
 import { startLinkedInTokenRenewal } from './services/linkedin/token';
 import { startWhatsAppNudge } from './services/whatsapp/nudge';
+import { logWhatsAppAllPushes } from './services/whatsapp/queue';
 import { startAudienceSync } from './services/audience/boot';
 import { createMockDigestSender } from './services/digest/mockSender';
 import { mockSendersEnabled } from './lib/mockSenderGuard';
@@ -86,4 +87,5 @@ app.listen(env.port, () => {
   startFacebookWorker();
   startLinkedInTokenRenewal();
   startWhatsAppNudge();
+  logWhatsAppAllPushes();
 });
