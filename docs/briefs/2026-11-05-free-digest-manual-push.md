@@ -87,3 +87,20 @@ Each one must PASS in the REPORT.
 - `advanceRun(id, 'send_now')` moves the send instant earlier for the run; Free must move without moving Premium.
 - `alerts.ts:111` `PREVIEW_ROUTINE_SKIPS` shows the pattern for skips that aren't alarms.
 - Design: `docs/EMAIL_DIGEST_DESIGN.md`. Runbook: `docs/DIGEST_PILOT_RUNBOOK.md` §4.
+
+## Follow-up 1 (owner, 2026-11-05): Free's subject stays editable until Send Free is pressed
+Same branch, same REPORT (add a "Follow-up 1" section). Base stays your current branch head.
+
+**In:** with `DIGEST_FREE_MANUAL` on, Premium's Approve no longer locks Free's subject. Free locks when Send Free is pressed (`approvedAt` set). In `subjectLock` (`src/services/digest/subjectEdit.ts`), use `isManualOnly` from `holds.ts`, not a second copy of the rule. Every other lock (not today, not built, past cut-off, scheduled, create in flight) still applies to Free. Also make the screen's edit control follow the same rule.
+
+**Out:** the history table's "Skipped" label; anything about Premium's subject.
+
+**Acceptance tests:**
+1. Flag on: Premium approved, Free unpressed → Free's subject can be edited; the Mailercloud draft is updated.
+2. Flag on: Free pressed → refused with the existing "approved" reason.
+3. Flag on: Premium's subject after Approve → still locked.
+4. Flag on: the other locks still refuse Free (past cut-off, scheduled).
+5. Flag off: subject locks as today for both versions, and the existing subject tests pass unchanged.
+6. A subject edit racing a press can't change the subject after the press: test this, or state in the REPORT how the existing conditional update already prevents it.
+
+**Constraints:** no migration. Full suite: no, area tests `digest*`. One sentence in the admin guide's Send Free section.
