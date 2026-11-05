@@ -13,6 +13,7 @@ import { digestTick, resetDigestTickLogForTests, type TickDeps } from '../servic
 import type { SelectItems } from '../services/digest/runner';
 import type { EmailSender } from '../lib/email';
 import { approvalAudiences, awaitingManualPress, freePressRefusal, isManualOnly, MANUAL_NOT_SENT } from '../services/digest/holds';
+import { editSubject, subjectLock, SUBJECT_LOCK_TEXT } from '../services/digest/subjectEdit';
 import { placeholderContent } from './digestPlaceholderContent';
 import { FakeSender } from './digestFakeSender';
 
@@ -745,5 +746,115 @@ describe('the tick: reminders and cut-off emails speak only about Premium', () =
     expect(like(d.mails, /still waiting for approval/)[0].subject).not.toMatch(/Premium/);
     await d.run(17, 0);
     expect(like(d.mails, /was skipped/)).toHaveLength(1);
+  });
+});
+
+describe('Follow-up 1: Free’s subject stays editable until Send Free is pressed', () => {
+  const NEW = 'A better subject line for Free readers';
+  const edit = (runId: string, audience: DigestAudience, sender: FakeSender, c: DigestEnv, now = ist(9, 0), raw: unknown = NEW) =>
+    editSubject({ runId, audience, raw, now, cfg: c, sender });
+  const providerSubject = (sender: FakeSender, id: string | null) => (id ? sender.campaigns.get(id)?.input.subject : undefined);
+
+  it('1. flag on, Premium approved, Free unpressed: Free’s subject can be edited and the draft is updated', async () => {
+    const c = cfg();
+    const { run, sender } = await createdRun(c);
+    await approveRun(run.id);
+    const r = await edit(run.id, 'FREE', sender, c);
+    expect(r.status).toBe(200);
+    const free = await sendOf(run.id, 'FREE');
+    expect(free.subject).toBe(NEW);
+    expect(providerSubject(sender, free.mcCampaignId)).toBe(NEW);
+    expect(sender.count('updateSubject')).toBe(1);
+  });
+
+  it('2. flag on, Free pressed: refused with the existing "approved" reason', async () => {
+    const c = cfg();
+    const { run, sender } = await createdRun(c);
+    expect((await press(run.id, ist(9, 0), sender, c)).ok).toBe(true);
+    const r = await edit(run.id, 'FREE', sender, c, ist(9, 5));
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ error: 'approved', message: SUBJECT_LOCK_TEXT.approved });
+    expect(sender.count('updateSubject')).toBe(0);
+  });
+
+  it('3. flag on: Premium’s subject after Approve is still locked', async () => {
+    const c = cfg();
+    const { run, sender } = await createdRun(c);
+    await approveRun(run.id);
+    const r = await edit(run.id, 'PREMIUM', sender, c);
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ error: 'approved' });
+    expect(sender.count('updateSubject')).toBe(0);
+  });
+
+  it('4. flag on: the other locks still refuse Free (past the cut-off, scheduled, not today, not built)', async () => {
+    const c = cfg();
+    const { run, sender } = await createdRun(c);
+    const past = await edit(run.id, 'FREE', sender, c, ist(17, 5));
+    expect(past.body).toMatchObject({ error: 'past_cutoff' });
+    const otherDay = await edit(run.id, 'FREE', sender, c, ist(9, 0, 24));
+    expect(otherDay.body).toMatchObject({ error: 'not_today' });
+    await prisma.digestSend.update({ where: { runId_audience: { runId: run.id, audience: 'FREE' } }, data: { scheduleAttemptedAt: ist(8, 0) } });
+    const sched = await edit(run.id, 'FREE', sender, c);
+    expect(sched.body).toMatchObject({ error: 'scheduled' });
+    // pure rule, same file: an unbuilt run
+    const free = { audience: 'FREE', state: 'CREATED' as const, scheduleAttemptedAt: null, createAttemptedAt: null, approvedAt: null };
+    expect(subjectLock({ runDate: new Date(Date.UTC(2026, 9, 23)), build: 'BUILDING', approval: 'PENDING' }, free, ist(9, 0), c)).toBe('not_built');
+    expect(sender.count('updateSubject')).toBe(0);
+  });
+
+  it('5. flag off: both versions lock on Approve exactly as before', () => {
+    const off = cfg({ DIGEST_FREE_MANUAL: 'false' });
+    const run = { runDate: new Date(Date.UTC(2026, 9, 23)), build: 'BUILT' as const, approval: 'APPROVED' as const };
+    for (const audience of ['FREE', 'PREMIUM']) {
+      const send = { audience, state: 'CREATED' as const, scheduleAttemptedAt: null, createAttemptedAt: null, approvedAt: null };
+      expect(subjectLock(run, send, ist(9, 0), off)).toBe('approved');
+    }
+    // the same inputs with the flag on: Premium locked, Free open
+    const on = cfg();
+    const free = { audience: 'FREE', state: 'CREATED' as const, scheduleAttemptedAt: null, createAttemptedAt: null, approvedAt: null };
+    expect(subjectLock(run, free, ist(9, 0), on)).toBeNull();
+    expect(subjectLock(run, { ...free, audience: 'PREMIUM' }, ist(9, 0), on)).toBe('approved');
+    expect(subjectLock(run, { ...free, approvedAt: ist(9, 1) }, ist(9, 2), on)).toBe('approved');
+  });
+
+  it('6. a press landing between the lock check and the write cannot be overtaken by the edit', async () => {
+    const c = cfg();
+    const { run, sender } = await createdRun(c);
+    const before = (await sendOf(run.id, 'FREE')).subject;
+    const real = prisma.digestSend.updateMany.bind(prisma.digestSend);
+    let stamped = false;
+    const spy = jest.spyOn(prisma.digestSend, 'updateMany').mockImplementation(((args: Parameters<typeof real>[0]) => {
+      if (!stamped) {
+        stamped = true;
+        // The press stamps `approvedAt` after the edit's lock check but before its conditional update.
+        return real({ where: { runId: run.id, audience: 'FREE' }, data: { approvedAt: ist(9, 0), approvedByUserId: publisher.id } }).then(() => real(args));
+      }
+      return real(args);
+    }) as never);
+    try {
+      const r = await edit(run.id, 'FREE', sender, c);
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ error: 'changed' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await sendOf(run.id, 'FREE')).subject).toBe(before);
+    expect(sender.count('updateSubject')).toBe(0);
+  });
+
+  it('the screen shows the same rule: Free editable after Approve, locked after the press; Premium locked', async () => {
+    const c = cfg();
+    const { run, sender } = await createdRun(c);
+    await approveRun(run.id);
+    const app = appFor(c, sender, run.portal, ist(9, 0));
+    const detail = async () => (await request(app).get(`/api/digest/runs/${run.id}`).set('Cookie', publisherCookie)).body;
+    let d = await detail();
+    const by = (a: string) => d.variants.find((v: { audience: string }) => v.audience === a).subjectEdit;
+    expect(by('FREE')).toEqual({ editable: true, reason: null });
+    expect(by('PREMIUM')).toMatchObject({ editable: false, reason: SUBJECT_LOCK_TEXT.approved });
+    await press(run.id, ist(9, 0), sender, c);
+    d = await detail();
+    expect(by('FREE')).toMatchObject({ editable: false, reason: SUBJECT_LOCK_TEXT.approved });
   });
 });

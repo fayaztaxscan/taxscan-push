@@ -1,6 +1,7 @@
 import type { DigestApproval, DigestAudience, DigestBuild, DigestSendState } from '@prisma/client';
 import type { DigestEnv } from '../../lib/env';
 import { prisma } from '../../lib/prisma';
+import { isManualOnly, type ManualCfg } from './holds';
 import { defuseMergeTags } from './renderer';
 import { istDateOf, isPastCutoff } from './retryPolicy';
 import { redactError, SenderError, type DigestSender } from './sender';
@@ -31,6 +32,8 @@ export const SUBJECT_LOCK_TEXT: Record<SubjectLockCode, string> = {
 
 export type SubjectLockRun = { runDate: Date; build: DigestBuild; approval: DigestApproval };
 export type SubjectLockSend = {
+  /** Which version. Only read for DIGEST_FREE_MANUAL (`holds.ts`); optional so older callers and tests need not pass it. */
+  audience?: string;
   state: DigestSendState;
   scheduleAttemptedAt: Date | null;
   /** The create step was claimed (a create may be in flight). */
@@ -40,10 +43,12 @@ export type SubjectLockSend = {
 };
 
 /** Why this version's subject cannot be edited now, or null. Checked in the brief's order. Pure. */
-export function subjectLock(run: SubjectLockRun, send: SubjectLockSend, now: Date, cfg: Pick<DigestEnv, 'cutoff'>): SubjectLockCode | null {
+export function subjectLock(run: SubjectLockRun, send: SubjectLockSend, now: Date, cfg: Pick<DigestEnv, 'cutoff'> & ManualCfg): SubjectLockCode | null {
   if (run.runDate.getTime() !== istDateOf(now).getTime()) return 'not_today';
   if (run.build !== 'BUILT') return 'not_built';
-  if (run.approval === 'APPROVED' || send.approvedAt) return 'approved';
+  // DIGEST_FREE_MANUAL (owner, 2026-11-05): the run's Approve does not cover a manual-only Free, so it does not lock its
+  // subject either; Free locks when Send Free is pressed (`approvedAt`). Every other lock below still applies to it.
+  if (isManualOnly(cfg, send.audience ?? '') ? send.approvedAt : run.approval === 'APPROVED' || send.approvedAt) return 'approved';
   if (isPastCutoff(now, run.runDate, cfg.cutoff)) return 'past_cutoff';
   if (send.scheduleAttemptedAt || (send.state !== 'PENDING' && send.state !== 'CREATED')) return 'scheduled';
   // A create in flight (or being retried) may build the draft from the old subject: not editable until it settles.
@@ -92,7 +97,7 @@ export async function editSubject(o: {
   if (!run) return fail(404, 'not_found', 'No such digest run.');
   const send = await prisma.digestSend.findUnique({
     where: { runId_audience: { runId: o.runId, audience: o.audience } },
-    select: { id: true, state: true, subject: true, mcCampaignId: true, scheduleAttemptedAt: true, createAttemptedAt: true, approvedAt: true },
+    select: { id: true, audience: true, state: true, subject: true, mcCampaignId: true, scheduleAttemptedAt: true, createAttemptedAt: true, approvedAt: true },
   });
   if (!send) return fail(404, 'not_found', 'That version does not exist for this run.');
 
@@ -111,9 +116,12 @@ export async function editSubject(o: {
   if (created && !send.mcCampaignId) return fail(409, 'changed', SUBJECT_LOCK_TEXT.changed);
   if (created && !o.sender) return fail(409, 'provider_not_configured', 'Mailercloud is not configured (MAILERCLOUD_API_KEY is not set).');
 
+  // A manual-only Free is also guarded on "not pressed": the press stamps `approvedAt` BEFORE it schedules, so an edit that
+  // passed the lock check just before a press can never write after it (409 `changed`).
+  const unpressed = isManualOnly(o.cfg, send.audience) ? { approvedAt: null } : {};
   const guard = created
-    ? { id: send.id, state: 'CREATED' as const, scheduleAttemptedAt: null, subject: old }
-    : { id: send.id, state: 'PENDING' as const, createAttemptedAt: null, scheduleAttemptedAt: null, subject: old };
+    ? { id: send.id, state: 'CREATED' as const, scheduleAttemptedAt: null, subject: old, ...unpressed }
+    : { id: send.id, state: 'PENDING' as const, createAttemptedAt: null, scheduleAttemptedAt: null, subject: old, ...unpressed };
   const r = await prisma.digestSend.updateMany({ where: guard, data: { subject: next } });
   if (r.count !== 1) return fail(409, 'changed', SUBJECT_LOCK_TEXT.changed);
 
