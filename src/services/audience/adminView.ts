@@ -54,12 +54,14 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
   if (role !== 'ADMIN') return { enabled: true as const, ok: premium.ok && !snap.breakerOpen, line };
 
   const since = new Date(now.getTime() - 24 * 3_600_000);
-  const [st, former, noMarketing, retryable, fatal, counters] = await Promise.all([
+  const [st, former, noMarketing, retryable, fatal, refusedPremium, refusedFormer, counters] = await Promise.all([
     prisma.audienceSyncState.findUnique({ where: { portal } }),
     prisma.audienceMember.count({ where: { desiredRole: 'FORMER' } }),
     prisma.audienceMember.count({ where: { noMarketing: true } }),
     prisma.audienceMember.count({ where: { lastErrorKind: 'RETRYABLE', updatedAt: { gte: since } } }),
     prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', updatedAt: { gte: since } } }),
+    prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'PREMIUM' } }),
+    prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'FORMER' } }),
     todaysCounters(prisma, portal, now),
   ]);
   const drift = (st?.drift ?? null) as { at?: unknown; premiumMailercloud?: unknown } | null;
@@ -79,6 +81,7 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
       pendingWrites: snap.pendingPremium,
     },
     last: { webhookAt: iso(st?.lastWebhookAt), incrementalAt: iso(st?.lastIncrOkAt), fullAt: iso(st?.lastFullOkAt) },
+    refused: { premium: refusedPremium, former: refusedFormer },
     errors24h: { writerRetryable: retryable, writerFatal: fatal, seqConflict: counters.seqConflict, unknownStatus: counters.unknownStatus },
     guard: premium.ok ? { ok: true as const } : { ok: false as const, check: premium.check, plain: premium.plain },
     breaker: {
