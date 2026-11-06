@@ -2,6 +2,7 @@ import type { AudienceMember } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env, type AudienceEnv, type DigestEnv } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
+import { redactText } from '../../lib/redact';
 import { breakerState, checkRemovalBreaker } from './breaker';
 import { isPullRunning } from './pull';
 import { raiseAudienceAlert, sendAudienceAlerts, type AudienceAlertDeps } from './alerts';
@@ -239,7 +240,7 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
 
   const client = deps.client ?? createContactClient(cfg);
   const pacer = new Pacer(cfg.thresholds.writeRps, deps.clock, deps.sleep);
-  const ctx: WriteCtx = { client, pacer, cfg, tags, report, names: null, now };
+  const ctx: WriteCtx = { client, pacer, cfg, tags, report, names: null, now, refused: new Map() };
   try {
     ctx.names = await resolveTagNames(ctx);
   } catch (err) {
@@ -258,6 +259,7 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
     if (r === 'fatal') fatalReason ??= 'contact_write';
   }
 
+  logRefusals(ctx.refused);
   if (fatalReason) await raiseAudienceAlert(portal, 'audience_writer_fatal', { count: report.fatal, reason: fatalReason }, now);
   // A retrying member always has nextAttemptAt set (FATAL ones have none): the filter lets the nextAttemptAt index serve this every-minute count.
   const failing = await prisma.audienceMember.count({ where: { nextAttemptAt: { not: null }, lastErrorKind: 'RETRYABLE', attempts: { gte: FAILING_ATTEMPTS } } });
@@ -281,7 +283,28 @@ type WriteCtx = {
   /** Tag id → name for our three tags (PUT / create send names — UNVERIFIED M-9). */
   names: Map<string, string> | null;
   now: Date;
+  /** FATAL reasons seen this tick: `op|http|text` → members refused (logged once per distinct reason). */
+  refused: Map<string, number>;
 };
+
+export const REFUSED_REASON_MAX = 120;
+
+/** `[audience] writer refused op=… http=… count=N reason="…"` — the provider's text only, redacted, never an address. */
+function noteRefusal(ctx: WriteCtx, err: unknown): void {
+  const e = err instanceof ContactError ? err : null;
+  const raw = e ? e.message.replace(/^mailercloud contacts [A-Za-z]+: /, '') : 'unknown';
+  const reason = redactText(raw).replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, REFUSED_REASON_MAX);
+  const key = `${e?.op ?? 'unknown'}|${e?.http ?? 'none'}|${reason}`;
+  ctx.refused.set(key, (ctx.refused.get(key) ?? 0) + 1);
+}
+
+function logRefusals(refused: Map<string, number>): void {
+  for (const [key, count] of refused) {
+    const [op, http, ...rest] = key.split('|');
+    // eslint-disable-next-line no-console
+    console.log(`[audience] writer refused op=${op} http=${http} count=${count} reason="${rest.join('|')}"`);
+  }
+}
 
 async function resolveTagNames(ctx: WriteCtx): Promise<Map<string, string>> {
   await ctx.pacer.take();
@@ -398,8 +421,10 @@ async function writeOne(m: AudienceMember, ctx: WriteCtx): Promise<'done' | 'ret
       console.error('[audience] writer member failed', safeErrorLog(err));
     }
     await finish(m, { applied: [...applied], mcState, resubDone, ok: false, kind }, ctx);
-    if (kind === 'FATAL') report.fatal += 1;
-    else report.retry += 1;
+    if (kind === 'FATAL') {
+      report.fatal += 1;
+      noteRefusal(ctx, err);
+    } else report.retry += 1;
     return kind === 'FATAL' ? 'fatal' : 'retry';
   }
 }
@@ -477,7 +502,7 @@ export async function driftCheck(deps: WriterDeps = {}): Promise<DriftReport> {
   try {
     const client = deps.client ?? createContactClient(cfg);
     const tags = ourTagIds(cfg);
-    const ctx: WriteCtx = { client, pacer: new Pacer(cfg.thresholds.writeRps, deps.clock, deps.sleep), cfg, tags, report: emptyFlush(false), names: null, now };
+    const ctx: WriteCtx = { client, pacer: new Pacer(cfg.thresholds.writeRps, deps.clock, deps.sleep), cfg, tags, report: emptyFlush(false), names: null, now, refused: new Map() };
     ctx.names = await resolveTagNames(ctx);
     out.premiumOurs = await prisma.audienceMember.count({ where: { appliedTags: { has: tags.premium } } });
     out.premiumMailercloud = cfg.mailercloud.premiumSegmentId
@@ -538,4 +563,35 @@ export async function driftCheck(deps: WriterDeps = {}): Promise<DriftReport> {
   } finally {
     writing = false;
   }
+}
+
+/**
+ * ADMIN "Retry refused": makes every FATAL member with an address due again (`nextAttemptAt` = now, attempts and
+ * error kind cleared). The writer's gates still apply on the next tick. Audited with counts only — no address.
+ * Erased members (`email` null) are left alone. `onlyHashes` is for tests only (the route never passes it). Returns the counts.
+ */
+export async function retryRefused(actorUserId: string | null, now: Date = new Date(), onlyHashes?: readonly string[]): Promise<{ premium: number; former: number; other: number; total: number }> {
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.audienceMember.findMany({ where: { lastErrorKind: 'FATAL', email: { not: null }, ...(onlyHashes ? { emailHash: { in: [...onlyHashes] } } : {}) }, select: { emailHash: true, desiredRole: true } });
+    const counts = { premium: 0, former: 0, other: 0, total: rows.length };
+    for (const r of rows) {
+      if (r.desiredRole === 'PREMIUM') counts.premium += 1;
+      else if (r.desiredRole === 'FORMER') counts.former += 1;
+      else counts.other += 1;
+    }
+    if (rows.length === 0) return counts;
+    await tx.audienceMember.updateMany({
+      where: { emailHash: { in: rows.map((r) => r.emailHash) }, lastErrorKind: 'FATAL', email: { not: null } },
+      data: { nextAttemptAt: now, attempts: 0, lastErrorKind: null },
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'AUDIENCE_REFUSED_RETRIED',
+        resourceType: 'audience_sync',
+        ...(actorUserId ? { userId: actorUserId } : {}),
+        metadata: { ...counts, at: now.toISOString() },
+      },
+    });
+    return counts;
+  });
 }

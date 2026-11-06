@@ -31,6 +31,7 @@ type Card =
       writesLive: boolean;
       guardActive: boolean;
       counts: Counts;
+      refused?: { premium: number; former: number };
       last: { webhookAt: string | null; incrementalAt: string | null; fullAt: string | null };
       errors24h: { writerRetryable: number; writerFatal: number; seqConflict: number; unknownStatus: number };
       guard: { ok: true } | { ok: false; check: string; plain: string };
@@ -43,6 +44,8 @@ const card = ref<Card | null>(null);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
 const confirming = ref(false);
+const retrying = ref(false);
+const retryBusy = ref(false);
 const busy = ref(false);
 
 const full = computed(() => (card.value && card.value.enabled && 'counts' in card.value ? card.value : null));
@@ -66,6 +69,11 @@ const reviewRows = computed(() =>
     .filter(([k]) => k !== 'reason')
     .map(([k, v]) => ({ label: REVIEW_LABEL[k] ?? k.replace(/([A-Z])/g, ' $1').toLowerCase(), value: v })),
 );
+
+const refusedPremium = computed(() => full.value?.refused?.premium ?? 0);
+const refusedFormer = computed(() => full.value?.refused?.former ?? 0);
+const refusedTotal = computed(() => refusedPremium.value + refusedFormer.value);
+const refusedLine = (n: number, role: string): string => `${n.toLocaleString('en-IN')} ${role} ${n === 1 ? 'reader was' : 'readers were'} refused by Mailercloud`;
 
 const num = (n: number | null): string => (n === null ? '—' : n.toLocaleString('en-IN'));
 function when(iso: string | null): string {
@@ -113,6 +121,24 @@ async function resume() {
   }
 }
 
+async function retryRefused() {
+  retryBusy.value = true;
+  error.value = null;
+  try {
+    const r = await api.post<{ ok: boolean; count: number }>('/api/digest/audience/retry-refused', {});
+    const n = r?.count ?? refusedTotal.value;
+    notice.value = `Done — ${n.toLocaleString('en-IN')} ${n === 1 ? 'reader' : 'readers'} will be tried again on the next run. Mailercloud writes pause 07:10–08:00 IST.`;
+    retrying.value = false;
+    await load();
+  } catch (e) {
+    retrying.value = false;
+    error.value = apiErrorMessage(e);
+    await load();
+  } finally {
+    retryBusy.value = false;
+  }
+}
+
 onMounted(load);
 defineExpose({ load });
 </script>
@@ -141,6 +167,12 @@ defineExpose({ load });
         <button class="btn btn-primary" :disabled="busy" @click="confirming = true">Resume</button>
       </div>
       <p v-else-if="!full.guard.ok" class="muted aud-held">Premium digest held: {{ full.guard.plain }}.</p>
+
+      <div v-if="refusedTotal > 0" class="aud-refused">
+        <p v-if="refusedPremium > 0">{{ refusedLine(refusedPremium, 'Premium') }} and have no tag.</p>
+        <p v-if="refusedFormer > 0">{{ refusedLine(refusedFormer, 'Former') }}.</p>
+        <button class="btn" :disabled="retryBusy" @click="retrying = true">Retry refused</button>
+      </div>
 
       <table class="stack aud-table">
         <thead>
@@ -203,6 +235,18 @@ defineExpose({ load });
     @confirm="resume"
     @cancel="confirming = false"
   />
+
+  <ConfirmPush
+    v-if="retrying && full"
+    heading="Retry refused readers?"
+    :title="`Try these ${refusedTotal.toLocaleString('en-IN')} ${refusedTotal === 1 ? 'reader' : 'readers'} again?`"
+    detail="They will be sent to Mailercloud again on the next run."
+    confirm-label="Retry refused"
+    busy-label="Retrying…"
+    :busy="retryBusy"
+    @confirm="retryRefused"
+    @cancel="retrying = false"
+  />
 </template>
 
 <style scoped>
@@ -238,6 +282,16 @@ defineExpose({ load });
   margin: 0;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+.aud-refused {
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+.aud-refused p {
+  margin: 0 0 6px;
+}
+.aud-refused .btn {
+  margin-top: 4px;
 }
 .aud-table {
   margin-top: 4px;

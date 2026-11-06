@@ -44,6 +44,8 @@ export class ContactError extends Error {
     readonly kind: ContactErrorKind,
     message: string,
     readonly http: number | null = null,
+    /** The operation that failed (`createContact`, …) — set by `McContactClient.err`, for the writer's refusal log. */
+    readonly op: string | null = null,
   ) {
     super(message);
     this.name = 'ContactError';
@@ -214,11 +216,11 @@ export class McContactClient {
       throw this.err('ABSENT', op, 'contact not found', status);
     }
     if (status === 429 || status === 408 || status >= 500) throw this.err('RETRYABLE', op, `HTTP ${status}`, status);
-    throw this.err('FATAL', op, `HTTP ${status}${msg ? `: ${msg.slice(0, 120)}` : ''}`, status);
+    throw this.err('FATAL', op, `HTTP ${status}${msg ? `: ${redactText(msg).slice(0, 120)}` : ''}`, status);
   }
 
   private err(kind: ContactErrorKind, op: string, message: string, http: number | null = null): ContactError {
-    return new ContactError(kind, redactText(`mailercloud contacts ${op}: ${message}`, [this.key]), http);
+    return new ContactError(kind, redactText(`mailercloud contacts ${op}: ${message}`, [this.key]), http, op);
   }
 }
 
