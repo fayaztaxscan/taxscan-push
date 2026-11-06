@@ -506,6 +506,45 @@ describe('drift check (acceptance 11)', () => {
   });
 });
 
+describe('refusal reasons in the log (brief audience-refused-contacts)', () => {
+  const refusedLines = () => logs.filter((l) => l.startsWith('[audience] writer refused'));
+  const run = (hs: string[]) => flushPending(deps({ onlyHashes: hs }));
+
+  it('a create answered 400 logs op, http, count and the provider text (acceptance 1)', async () => {
+    fake.failCreate = () => ({ status: 400, body: { errors: [{ field: 'email', message: 'Invalid email domain' }] } });
+    const m = await member('refused-a');
+    const r = await run([m.h]);
+    expect(r.fatal).toBe(1);
+    expect(refusedLines()).toEqual(['[audience] writer refused op=createContact http=400 count=1 reason="HTTP 400: Invalid email domain"']);
+    expect((await row(m.h))?.lastErrorKind).toBe('FATAL');
+  });
+
+  it('text that quotes the address logs [email], even cut at 120 characters; the key never appears (acceptance 2)', async () => {
+    const m = await member('refused-b');
+    fake.failCreate = (e) => ({ status: 400, body: { error: { message: `${'x'.repeat(100)} ${e} rejected, api_key=${KEY}` } } });
+    await run([m.h]);
+    const all = logs.join('\n');
+    expect(all).not.toContain(m.email);
+    expect(all).not.toContain(KEY);
+    expect(all).not.toMatch(/@example\.com/i);
+    expect(refusedLines()).toHaveLength(1);
+    const reason = /reason="(.*)"$/.exec(refusedLines()[0])![1];
+    expect(reason.length).toBeLessThanOrEqual(120);
+  });
+
+  it('same reason in one tick → one line with count 2; two reasons → two lines (acceptance 3)', async () => {
+    const a = await member('refused-c');
+    const b = await member('refused-d');
+    const c = await member('refused-e');
+    fake.failCreate = (e) => ({ status: 400, body: { error: { message: e === c.email ? 'Domain blocked' : 'Invalid email domain' } } });
+    await run([a.h, b.h, c.h]);
+    expect(refusedLines().sort()).toEqual([
+      '[audience] writer refused op=createContact http=400 count=1 reason="HTTP 400: Domain blocked"',
+      '[audience] writer refused op=createContact http=400 count=2 reason="HTTP 400: Invalid email domain"',
+    ]);
+  });
+});
+
 describe('logging', () => {
   it('no address and no key in any log line the writer wrote', () => {
     expect(logs.length).toBeGreaterThanOrEqual(0);

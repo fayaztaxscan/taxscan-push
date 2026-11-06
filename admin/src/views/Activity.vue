@@ -60,6 +60,7 @@ const ACTIONS = [
   'STAFF_PUSH_REMOVED',
   // CMS audience sync (written from audience tasks 5–8; the default summary shows their counts)
   'AUDIENCE_SYNC_RESUMED',
+  'AUDIENCE_REFUSED_RETRIED',
   'AUDIENCE_FULL_LOAD',
   'AUDIENCE_ERASURE',
   'AUDIENCE_RESUBSCRIBED',

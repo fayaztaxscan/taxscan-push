@@ -7,6 +7,7 @@ import { recordAudit } from '../lib/audit';
 import { digestStatus } from '../services/digest/status';
 import { audienceCard } from '../services/audience/adminView';
 import { resumeBreaker } from '../services/audience/breaker';
+import { retryRefused } from '../services/audience/writer';
 import { advanceRun, pressSendFree, type DigestTrigger, type SelectItems } from '../services/digest/runner';
 import { approvalAudiences } from '../services/digest/holds';
 import { selectDigest } from '../services/digest/builder';
@@ -135,6 +136,17 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
       const resumed = await resumeBreaker(portalOf(), req.user?.id ?? null, nowOf());
       if (!resumed) return res.status(409).json({ error: 'not_open', message: 'The audience sync is not paused.' });
       return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Make every Mailercloud-refused (FATAL) member due again. ADMIN only; audited with counts, never an address.
+  router.post('/audience/retry-refused', requireUser(['ADMIN']), async (req, res, next) => {
+    try {
+      if (!audOf().enabled) return res.status(409).json({ error: 'not_open', message: 'The audience sync is switched off.' });
+      const r = await retryRefused(req.user?.id ?? null, nowOf());
+      return res.json({ ok: true, count: r.total });
     } catch (err) {
       return next(err);
     }

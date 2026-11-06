@@ -31,6 +31,8 @@ export class FakeMailercloud {
   failNext: { status: number; times: number; body?: unknown } | null = null;
   /** Requests about these addresses answer this status (every time) — one member failing, not the whole API. */
   failEmails = new Map<string, number>();
+  /** A create (POST /contacts) answers this instead, per address (null = normal behaviour). */
+  failCreate: ((email: string) => { status: number; body: unknown } | null) | null = null;
   /** Called before a create is answered (to simulate the M-1 race). */
   beforeCreate: ((email: string) => void) | null = null;
   private server: Server | null = null;
@@ -84,6 +86,11 @@ export class FakeMailercloud {
       const b = req.body as Record<string, unknown>;
       const email = String(b.email);
       this.beforeCreate?.(email);
+      const refused = this.failCreate?.(email);
+      if (refused) {
+        res.status(refused.status).json(refused.body);
+        return;
+      }
       const existing = this.contacts.get(email);
       if (existing) {
         if (this.m1 === 'fail') {
