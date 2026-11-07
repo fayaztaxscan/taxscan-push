@@ -658,8 +658,8 @@ describe('9. fetching the page is safe', () => {
   it.each([
     ['another host', 'https://evil.example/products/x'],
     ['http', 'http://shop.taxscan.in/products/x'],
-    ['a collection', 'https://shop.taxscan.in/collections/gst'],
-    ['the academy home page', 'https://academy.taxscan.in/'],
+    // A shop collection and the academy home page used to be refused here. Since brief 2026-11-07-social-every-link they are "other pages" on a
+    // named allowed host and ARE fetched (https only, no redirects, 5 s, capped read); socialEveryLink.test.ts covers that and what stays refused.
     ['an article', 'https://www.taxscan.in/gst/x-1451580'],
     ['a port', 'https://shop.taxscan.in:8443/products/x'],
   ])('%s → page_host, and NO request is made', async (_n, u) => {

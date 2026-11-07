@@ -267,11 +267,16 @@ describe('7–8. the post text', () => {
     expect(t.split('\n\n')).toHaveLength(3);
   });
 
-  it('an empty body, or a body equal to the title, adds no paragraph; an off-allowlist or other link gives no post', () => {
+  it('an empty body, or a body equal to the title, adds no paragraph; an off-allowlist link gives no post; another allowed page has a course-shaped post', () => {
     expect(buildPushPostText({ id: 'c4', title: 'Only a title', body: '', url: product('only-title') })!.split('\n\n')).toHaveLength(2);
     expect(buildPushPostText({ id: 'c5', title: 'Same words', body: 'same  words', url: product('same-words') })!.split('\n\n')).toHaveLength(2);
     expect(buildPushPostText({ id: 'c6', title: 'T', body: 'B', url: 'https://evil.example/course/x' })).toBeNull();
-    expect(buildPushPostText({ id: 'c7', title: 'T', body: 'B', url: 'https://shop.taxscan.in/collections/all' })).toBeNull();
+    expect(buildPushPostText({ id: 'c7', title: 'T', body: 'B', url: 'https://evil.example/collections/all' })).toBeNull();
+    // Any OTHER allowed page (brief 2026-11-07-social-every-link) has the same shape as a course's post. Whether a push to it is listed at all
+    // is decided by `isAllPushesCampaign` and SOCIAL_ANY_LINK_FROM, never here (socialEveryLink.test.ts).
+    const page = buildPushPostText({ id: 'c7', title: 'T', body: 'B', url: 'https://shop.taxscan.in/collections/all' })!;
+    expect(page.split('\n\n').slice(0, 2)).toEqual(['*T*', 'B']);
+    expect(page.split('\n\n')[2]).toContain('utm_content=collections-all');
     // an article is exactly today's post
     const a = buildPushPostText({ id: 'c8', title: 'Headline', body: 'Short line', url: art('exact') })!;
     expect(a.split('\n\n')[0]).toBe('*Headline*');

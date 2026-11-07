@@ -1,5 +1,5 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
-import { storeLinkOf, storeUtmContent } from '../social/allPushes';
+import { pageLinkOf, pageUtmContent, storeLinkOf, storeUtmContent } from '../social/allPushes';
 import { articleContentOf, buildPostText, cleanHeadline, shortLine } from './postText';
 import { withWhatsAppUtm } from './utm';
 
@@ -8,19 +8,22 @@ import { withWhatsAppUtm } from './utm';
  *
  *   an article                       exactly today's post (`buildPostText`: *headline*, short line, link)
  *   an academy course / shop product *<push title>*, a blank line, the push body cut with `shortLine`, a blank line, the link
+ *   any other allowed page           the same shape as a course / product (brief 2026-11-07-social-every-link); `utm_content` is the path
+ *                                    segments joined by `-` (`home` for the root)
  *
  * The title goes through `cleanHeadline` so WhatsApp's own formatting characters (* _ ~ `) cannot break the bold; emoji survive. A body
  * that is empty, or only repeats the title, adds no paragraph (as for an article). The link is the push's own URL with the WhatsApp
  * UTMs SET (one set, the push's own `utm_*` gone): `utm_content` is the slug for a course or product (`storeUtmContent`). Null when the
- * URL is neither, or the final link is off `ALLOWED_PUSH_HOSTS`. No network.
+ * URL is none of the three kinds, or the final link is off `ALLOWED_PUSH_HOSTS`. No network.
  */
 export function buildPushPostText(c: { id: string; title: string; body: string; url: string }): string | null {
   if (articleContentOf(c) !== null) return buildPostText(c);
   const store = storeLinkOf(c.url);
-  if (!store || !isAllowedPushUrl(c.url.trim())) return null;
+  const other = store ? null : pageLinkOf(c.url);
+  if ((!store && !other) || !isAllowedPushUrl(c.url.trim())) return null;
   let link: string;
   try {
-    link = withWhatsAppUtm(c.url.trim(), storeUtmContent(store));
+    link = withWhatsAppUtm(c.url.trim(), store ? storeUtmContent(store) : pageUtmContent(other!));
   } catch {
     return null;
   }
@@ -31,8 +34,10 @@ export function buildPushPostText(c: { id: string; title: string; body: string; 
   return [`*${headline}*`, ...(line && !sameAsHeadline ? [line] : []), link].join('\n\n');
 }
 
-/** What a push is, for the row's small label. */
-export function pushKindOf(url: string): 'article' | 'course' | 'product' | null {
+/** What a push is, for the row's small label. `page` = any other allowed page (brief 2026-11-07-social-every-link). */
+export function pushKindOf(url: string): 'article' | 'course' | 'product' | 'page' | null {
   if (articleContentOf({ url }) !== null) return 'article';
-  return storeLinkOf(url)?.kind ?? null;
+  const store = storeLinkOf(url);
+  if (store) return store.kind;
+  return pageLinkOf(url) ? 'page' : null;
 }

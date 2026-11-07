@@ -1,0 +1,82 @@
+{
+ "liCourse": {
+  "commentary": "🚨COURSE STARTS TOMORROW 7 PM 🚨\n\n- GST for hotels\n- Live session \\(1 hour\\)\n\\#taxscan \\@taxscan Seats filling fast.\n\n{hashtag|\\#|taxscan}",
+  "title": "T & co | Taxscan",
+  "link": "https://academy.taxscan.in/course/navigating-gst?ref=keep&utm_source=taxscan-linkedin&utm_medium=social&utm_campaign=linkedin-taxscan&utm_content=navigating-gst#frag",
+  "hashtags": [
+   "taxscan"
+  ],
+  "hashtagSource": "fixed",
+  "description": "Card description.",
+  "coverImageUrl": "https://academy.taxscan.in/x.jpg"
+ },
+ "liCourseFail": {
+  "commentary": "🚨COURSE STARTS TOMORROW 7 PM 🚨\n\n- GST for hotels\n- Live session \\(1 hour\\)\n\\#taxscan \\@taxscan Seats filling fast.\n\n{hashtag|\\#|taxscan}",
+  "title": "🚨COURSE STARTS TOMORROW 7 PM 🚨",
+  "link": "https://academy.taxscan.in/course/navigating-gst?ref=keep&utm_source=taxscan-linkedin&utm_medium=social&utm_campaign=linkedin-taxscan&utm_content=navigating-gst#frag",
+  "hashtags": [
+   "taxscan"
+  ],
+  "hashtagSource": "fixed",
+  "description": "- GST for hotels - Live session (1 hour) #taxscan @taxscan Seats filling fast.",
+  "coverImageUrl": null,
+  "imageReason": "page_timeout"
+ },
+ "liProduct": {
+  "commentary": "Draft Replies to GST Notices: Practitioner's Handbook\n\nA handbook of issue-wise defences.\nModel formats included.\n\n{hashtag|\\#|taxscan}",
+  "title": "T & co | Taxscan",
+  "link": "https://shop.taxscan.in/products/draft-replies-ebook?utm_source=taxscan-linkedin&utm_medium=social&utm_campaign=linkedin-academy&utm_content=draft-replies-ebook",
+  "hashtags": [
+   "taxscan"
+  ],
+  "hashtagSource": "fixed",
+  "description": "Card description.",
+  "coverImageUrl": "https://academy.taxscan.in/x.jpg"
+ },
+ "liArticle": {
+  "commentary": "Supreme Court holds GST refund time limit is directory\n\n{hashtag|\\#|SupremeCourt} {hashtag|\\#|GST} {hashtag|\\#|taxscan}",
+  "title": "Supreme Court holds GST refund time limit is directory",
+  "link": "https://www.taxscan.in/gst/some-article-slug-123456?utm_source=taxscan-linkedin&utm_medium=social&utm_campaign=linkedin-taxscan&utm_content=123456",
+  "hashtags": [
+   "SupremeCourt",
+   "GST",
+   "taxscan"
+  ],
+  "hashtagSource": "fallback",
+  "description": "The Court held that the limitation is directory in nature.",
+  "coverImageUrl": null
+ },
+ "fbCourse": {
+  "message": "🚨COURSE STARTS TOMORROW 7 PM 🚨\n\n- GST for hotels\n- Live session (1 hour)\n#taxscan @taxscan Seats filling fast.\n\n#taxscan",
+  "link": "https://academy.taxscan.in/course/navigating-gst?ref=keep&utm_source=taxscan-facebook&utm_medium=social&utm_campaign=facebook-taxscan&utm_content=navigating-gst#frag",
+  "hashtags": [
+   "taxscan"
+  ],
+  "hashtagSource": "fixed"
+ },
+ "fbProduct": {
+  "message": "Draft Replies to GST Notices: Practitioner's Handbook\n\nA handbook of issue-wise defences.\nModel formats included.\n\n#taxscan",
+  "link": "https://shop.taxscan.in/products/draft-replies-ebook?utm_source=taxscan-facebook&utm_medium=social&utm_campaign=facebook-taxscan&utm_content=draft-replies-ebook",
+  "hashtags": [
+   "taxscan"
+  ],
+  "hashtagSource": "fixed"
+ },
+ "fbArticle": {
+  "message": "Supreme Court holds GST refund time limit is directory\n\n#SupremeCourt #GST #taxscan",
+  "link": "https://www.taxscan.in/gst/some-article-slug-123456?utm_source=taxscan-facebook&utm_medium=social&utm_campaign=facebook-taxscan&utm_content=123456",
+  "hashtags": [
+   "SupremeCourt",
+   "GST",
+   "taxscan"
+  ],
+  "hashtagSource": "fallback"
+ },
+ "waArticle": "*Supreme Court holds GST refund time limit is directory*\n\nThe Court held that the limitation is directory in nature.\n\nhttps://www.taxscan.in/gst/some-article-slug-123456?utm_source=taxscan-whatsapp&utm_medium=social&utm_campaign=whatsapp-channel&utm_content=123456",
+ "waPushArticle": "*Supreme Court holds GST refund time limit is directory*\n\nThe Court held that the limitation is directory in nature.\n\nhttps://www.taxscan.in/gst/some-article-slug-123456?utm_source=taxscan-whatsapp&utm_medium=social&utm_campaign=whatsapp-channel&utm_content=123456",
+ "waPushCourse": "*🚨COURSE STARTS TOMORROW 7 PM 🚨*\n\n- GST for hotels - Live session (1 hour) #taxscan @taxscan Seats filling fast.\n\nhttps://academy.taxscan.in/course/navigating-gst?ref=keep&utm_source=taxscan-whatsapp&utm_medium=social&utm_campaign=whatsapp-channel&utm_content=navigating-gst#frag",
+ "waPushProduct": "*Draft Replies to GST Notices: Practitioner's Handbook*\n\nA handbook of issue-wise defences. Model formats included.\n\nhttps://shop.taxscan.in/products/draft-replies-ebook?utm_source=taxscan-whatsapp&utm_medium=social&utm_campaign=whatsapp-channel&utm_content=draft-replies-ebook",
+ "liCourseFetchedUrl": [
+  "https://academy.taxscan.in/course/navigating-gst/"
+ ]
+}

@@ -1,6 +1,6 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import { ARTICLE_READ_BYTES, metaContent } from '../digest/articleImage';
-import { storeLinkOf } from './allPushes';
+import { pageLinkOf, storeLinkOf } from './allPushes';
 
 /**
  * The og tags of a course / shop-product page, for the LinkedIn card of a store post (brief 2026-11-04-academy-store-posts): the
@@ -86,9 +86,19 @@ async function readHead(res: Response, max: number): Promise<string> {
   return out;
 }
 
-/** ONE request for the page's head. Never throws. `pageUrl` must be a course / product link on an allowed host. */
+/**
+ * May this URL be fetched for a card? A course / product link (https only, by `storeLinkOf`), or, since brief
+ * 2026-11-07-social-every-link, any OTHER page on a host NAMED in ALLOWED_PUSH_HOSTS (`pageLinkOf`), https only. An article, an off-list
+ * host and a plain-http page are refused (`page_host`), so the fetch can never be pointed at a host nobody listed.
+ */
+function fetchable(pageUrl: string): boolean {
+  if (storeLinkOf(pageUrl)) return true;
+  return pageLinkOf(pageUrl) !== null && /^https:/i.test(String(pageUrl).trim());
+}
+
+/** ONE request for the page's head. Never throws. `pageUrl` must be a course / product link, or another page, on an allowed host. */
 export async function fetchStorePage(pageUrl: string, f: typeof fetch = fetch): Promise<StorePageResult> {
-  if (!storeLinkOf(pageUrl) || !isAllowedPushUrl(pageUrl)) return { ok: false, reason: 'page_host' };
+  if (!fetchable(pageUrl) || !isAllowedPushUrl(pageUrl)) return { ok: false, reason: 'page_host' };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), STORE_PAGE_TIMEOUT_MS);
   try {

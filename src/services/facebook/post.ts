@@ -1,7 +1,7 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import { articleContentOf } from '../whatsapp/postText';
 import { fetchCmsArticle, hashtagsFor, slugOf, FIXED_TAG, type CmsArticle } from '../linkedin/post';
-import { storeBodyLines, storeLinkOf, storeTitle, storeUtmContent } from '../social/allPushes';
+import { pageLinkOf, pageUtmContent, storeBodyLines, storeLinkOf, storeTitle, storeUtmContent } from '../social/allPushes';
 import { withFacebookUtm } from './pages';
 
 /**
@@ -58,9 +58,26 @@ export async function buildFacebookPost(
 export function buildFacebookStorePost(c: { title: string; url: string; body?: string | null }, page: string): FbPostPayload | null {
   const link = storeLinkOf(c.url);
   if (!link || !isAllowedPushUrl(c.url.trim())) return null;
+  return storeLikePost(c, page, storeUtmContent(link));
+}
+
+/**
+ * A push to ANY OTHER page on an allowed host (brief 2026-11-07-social-every-link) on Facebook: built exactly like a course / product
+ * post (`buildFacebookStorePost`), with `utm_content` = the path segments joined by `-` (`home` for the root). Pure, no network: Facebook
+ * builds the card from the page's og tags itself, so there is no page fetch here to fail. Null when the URL is not an allowed other page,
+ * or the final link is off `ALLOWED_PUSH_HOSTS`.
+ */
+export function buildFacebookPagePost(c: { title: string; url: string; body?: string | null }, page: string): FbPostPayload | null {
+  const link = pageLinkOf(c.url);
+  if (!link) return null;
+  return storeLikePost(c, page, pageUtmContent(link));
+}
+
+/** The shared body of a course / product / other-page post (moved out of `buildFacebookStorePost` unchanged). */
+function storeLikePost(c: { title: string; url: string; body?: string | null }, page: string, utmContent: string): FbPostPayload | null {
   let tagged: string;
   try {
-    tagged = withFacebookUtm(c.url.trim(), page, storeUtmContent(link));
+    tagged = withFacebookUtm(c.url.trim(), page, utmContent);
   } catch {
     return null;
   }

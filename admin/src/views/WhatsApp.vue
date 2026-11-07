@@ -22,7 +22,7 @@ type Row = {
   text: string;
   /** Only on rows of the every-push rule: one row per push, and what was pushed. Absent on older article rows. */
   rule?: 'push';
-  kind?: 'article' | 'course' | 'product';
+  kind?: 'article' | 'course' | 'product' | 'page';
 };
 type QueueResponse = {
   date: string;
@@ -203,7 +203,7 @@ function actedLine(r: Row): string {
     : '';
   return `${word} by ${who}${when ? ' · ' + when : ''}`;
 }
-const KIND_LABEL = { article: 'Article', course: 'Course', product: 'Shop' } as const;
+const KIND_LABEL = { article: 'Article', course: 'Course', product: 'Shop', page: 'Page' } as const;
 /** Shown only on rows of the every-push rule; older rows carry no label. */
 function kindLabel(r: Row): string | null {
   return r.rule === 'push' && r.kind ? KIND_LABEL[r.kind] : null;
@@ -403,6 +403,11 @@ onBeforeUnmount(() => {
   background: #fff7ed;
   border-color: #fed7aa;
   color: #9a3412;
+}
+.wa-kind.k-page {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #334155;
 }
 .wa-status {
   font-size: 12px;

@@ -51,7 +51,7 @@ export type QueueRow = {
   actedAt: string | null;
   text: string;
   /** Only on a row of the all-pushes rule: what was pushed. Absent on today's article rows (their output is unchanged). */
-  kind?: 'article' | 'course' | 'product';
+  kind?: 'article' | 'course' | 'product' | 'page';
   /** Only on a row of the all-pushes rule: this row is ONE push (its `articleKey` is `push:<id>:<ms>`), never grouped with a repeat. */
   rule?: 'push';
 };
