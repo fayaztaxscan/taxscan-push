@@ -8,7 +8,7 @@ status changes so a fresh Claude session can pick up cleanly.
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
 **⏳ PENDING (2026-11-07 18:30 IST) — the current list; the full version is memory `project_taxscan_push_state`. Older lists below are history.**
-0. Owner decides: (a) social rule for pushes to a collection or site page (3 missed since 4 Nov; `/pricing` goes 8 Nov 07:45 IST and will miss too); (b) whether the hand-made paid digest continues, now that none of the 79 refused readers are on `SffwSu`. Build brief `2026-11-07-free-digest-segment` when the owner says go.
+0. Owner decides: (a) social rule for pushes to a collection or site page (3 missed since 4 Nov; `/pricing` goes 8 Nov 07:45 IST and will miss too); (b) Retry refused for the 79 refused paid readers, who get no paid digest (the hand-made one no longer goes to paid readers, owner 7 Nov). Build brief `2026-11-07-free-digest-segment` when the owner says go.
 
 **(2026-11-06 13:05 IST list; items 1–6 still stand. Item 2 read 7 Nov: 0 unsubscribes, 0 hard bounces, 0 spam on both paid sends per Mailercloud's reports.)**
 1. Owner presses **Retry refused** once, after Anagha's hand test of 5 refused readers; planning then reads the `[audience] writer refused` log lines and decides the fix. Retry also syncs any reader tagged by hand.
