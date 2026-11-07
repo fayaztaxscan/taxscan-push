@@ -413,6 +413,14 @@ export const ALL_PUSHES_FROM_VARS = {
  */
 export const WHATSAPP_ALL_PUSHES_FROM_VAR = 'WHATSAPP_ALL_PUSHES_FROM';
 
+/**
+ * The "any link" switch (brief 2026-11-07-social-every-link): ONE strict ISO time for all four channels (LinkedIn Taxscan, LinkedIn
+ * Academy, Facebook, WhatsApp). From it on, a push to ANY other allowed page (a shop collection, the pricing page, the home page) is
+ * posted like an article, course or product; a push before it is never posted for this reason, however old or new. Unset or invalid =
+ * off: those pushes make no row anywhere. Parsed with the same `parseAllPushesFrom`. Never move it earlier.
+ */
+export const SOCIAL_ANY_LINK_FROM_VAR = 'SOCIAL_ANY_LINK_FROM';
+
 export function parseAllPushesFrom(src: NodeJS.ProcessEnv, name: string): { at: Date | null; off: string | null } {
   const raw = (src[name] ?? '').trim();
   if (!raw) return { at: null, off: `${name} is not set` };
@@ -677,6 +685,10 @@ export const env = {
     nudgeEnabled: process.env.WHATSAPP_NUDGE_ENABLED === 'true',
     // From this time every push (article, course, product) is its own row; null = today's rule (one row per article). Never move it earlier.
     allPushesFrom: parseAllPushesFrom(process.env, WHATSAPP_ALL_PUSHES_FROM_VAR).at as Date | null,
+  },
+  // Brief 2026-11-07-social-every-link: from this time a push to any other allowed page also reaches every social channel. Default off.
+  social: {
+    anyLinkFrom: parseAllPushesFrom(process.env, SOCIAL_ANY_LINK_FROM_VAR).at as Date | null,
   },
   // LinkedIn page posting (docs/LINKEDIN_POSTING.md). Default off. `postFrom` is REQUIRED when enabled (the worker refuses to
   // start without a valid one; nothing pushed before it is ever posted). `pages` = the pages with a token of their own: only

@@ -56,8 +56,8 @@ pushes on for LINKEDIN_TAXSCAN_ALL_PUSHES_FROM (from <ISO time>)`. Each page's l
 - **What qualifies** (`isAllPushesCampaign()` in `src/services/social/allPushes.ts`, a NEW rule beside `isPublicArticleCampaign()`,
   which is unchanged because the WhatsApp queue relies on it): a SENT campaign of a mapped portal with `lastSentAt` set, not
   test-segment-only, on `ALLOWED_PUSH_HOSTS`, whose URL is a taxscan.in article, `https://academy.taxscan.in/course/<slug>` or
-  `https://shop.taxscan.in/products/<slug>`. The home page, a section page, a collection, `/collections/<c>/products/<p>`, an http link
-  and every other page do not qualify.
+  `https://shop.taxscan.in/products/<slug>`. Any OTHER page on a named allowed host (the home page, a section page, a collection,
+  `/pricing`) qualifies **only under `SOCIAL_ANY_LINK_FROM`**, see "Other pages" below; an off-list host never does.
 - **One post per push.** The row key is `push:<campaignId>:<lastSentAt ms>` in `LinkedInPost.articleKey` (the same column and the same
   unique `(page, articleKey)`): a resend of the same campaign row has a new `lastSentAt`, so it posts again, while two overlapping ticks
   still cannot post the same push twice. Under the new rule the 14-day look-back and the "first push of the article" logic do not apply.
@@ -244,6 +244,7 @@ is that one token's status on both pages). Rows, counts and the banner follow `p
 | `LINKEDIN_ACADEMY_POST_FROM` | — | the Academy page's own go-live (ISO date or time); nothing pushed before it is ever posted to Academy. Set it to the moment you switch on |
 | `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` | — | **every push posts** on the Taxscan page from this time (strict ISO); a push before it keeps today's rule for good. Unset or invalid = today's rule (one boot line). Never earlier than `LINKEDIN_POST_FROM`. Set it to the moment you switch on |
 | `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` | — | the same for the Academy page; counts only while the Academy page is on; never earlier than `LINKEDIN_ACADEMY_POST_FROM` |
+| `SOCIAL_ANY_LINK_FROM` | — | **one time for all four channels**: from it on, a push to any OTHER allowed page (shop collection, pricing page, home page) is posted too, on every page whose all-pushes rule is on (strict ISO; a push before it never is; unset or invalid = off). See "Other pages" |
 
 There are no Academy token variables: the two Academy variables are the whole switch, and `LINKEDIN_POSTING_ENABLED` still governs
 everything (off = no worker for either page).
@@ -274,6 +275,32 @@ everything (off = no worker for either page).
    row has (POSTED, FAILED, SKIPPED, in flight). A new article posts once, as before; an article that never got a `push:` row still gets
    its one post. Set the variable again later and every push from that time posts, the past does not. (To stop all posting instead, set
    `LINKEDIN_POSTING_ENABLED=false`.)
+
+### Other pages (brief 2026-11-07-social-every-link)
+Off by default. **`SOCIAL_ANY_LINK_FROM`** is ONE strict ISO time for all four channels (LinkedIn Taxscan, LinkedIn Academy, Facebook and the
+WhatsApp list; `parseAllPushesFrom()`; unset or invalid = off). From it on, a push to **any other page on a host named in
+`ALLOWED_PUSH_HOSTS`** (a shop collection such as `https://shop.taxscan.in/collections/all`, `/pricing`, `/subscription`, the home page, a
+section page) is posted like a course or product. Until then such a push makes no row on any channel (as before: the owner asked on
+2026-11-07 why a push to `shop…/collections/all` reached no channel).
+- **What qualifies** (`pageLinkOf()` in `src/services/social/allPushes.ts`): a SENT campaign, not test-segment-only, whose URL is on a host
+  **named** in `ALLOWED_PUSH_HOSTS` (no userinfo, no port) and is not an article, course or product, **sent at or after
+  `SOCIAL_ANY_LINK_FROM`**, and on a page that already follows the all-pushes rule at that send time (the page's
+  `LINKEDIN_*_ALL_PUSHES_FROM` is set and the push is at or after it). A push **one second before** the time makes no row, however old or
+  new: switching it on posts nothing from the past. With the allowlist emptied (the operator's permissive mode) nothing counts as a page.
+- **The time check lives inside `isAllPushesCampaign()` itself**, so no caller can forget it: the LinkedIn and Facebook workers and screens,
+  the WhatsApp queue and its Posted / Skip marks, and the Campaigns Channels marks all call it with the campaign's `lastSentAt`. A push
+  with no send time never qualifies as an other page (fail closed). Articles, courses and products are untouched by the setting.
+- **One post per push**, the same key `push:<campaignId>:<lastSentAt ms>`; a resend is a new row, two overlapping ticks post one.
+- **The post** (`buildPagePost()` in `post.ts`) is built exactly like a course / product post: the push's own title and body as the
+  commentary; the link is the push's own URL with this page's UTMs (`utm_content` = the path segments joined by `-`, cut to 100:
+  `/collections/all` → `collections-all`, `/pricing` → `pricing`, `home` for the root path; the push's own `utm_*` are replaced, other query
+  parameters stay); the card's title, description and picture come from the page's og tags. The page is fetched on the push's own address
+  **without its query**, **https only**, host named in `ALLOWED_PUSH_HOSTS`, **no redirects**, 5 s, capped read (`fetchStorePage()`); a
+  failed, slow or redirecting fetch is **fail-open**: the post goes out with the push's own wording and no picture. Log lines carry
+  `kind=page`.
+- **Switching on:** set `SOCIAL_ANY_LINK_FROM` to the moment you switch on (UTC ISO) and redeploy; **never move it earlier**. **Switching off:**
+  remove it; nothing is reposted and the rows already made keep their status (the screens stop listing those pushes while it is unset).
+  After a restore, see `docs/BACKUPS.md`.
 
 ## Token renewal
 (brief `docs/briefs/2026-11-02-linkedin-token-refresh.md`; `src/services/linkedin/token.ts`.) The page's **access token lasts about 60

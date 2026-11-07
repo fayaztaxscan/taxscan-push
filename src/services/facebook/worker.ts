@@ -8,14 +8,14 @@ import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../l
 import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
-import { isAllPushesCampaign, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
+import { isAllPushesCampaign, pageLinkOf, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
 import { istDay, istDayBounds } from '../whatsapp/queue';
 import { pushOutOfQuietHours } from '../linkedin/worker';
 import type { CmsArticle } from '../linkedin/post';
 import { fetchCmsArticle } from '../linkedin/post';
 import { postToFacebook, type FacebookFailure } from './client';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
-import { buildFacebookPost, buildFacebookStorePost } from './post';
+import { buildFacebookPagePost, buildFacebookPost, buildFacebookStorePost } from './post';
 
 /**
  * The Facebook posting worker (brief 2026-11-03-facebook-page-posting, docs/FACEBOOK_POSTING.md). It mirrors the LinkedIn worker
@@ -197,12 +197,21 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
     }
     // A course / product post (its LINK says so: under "every push posts" every kind of row has a `push:` key) has its own builder: the
     // push's own wording, no CMS data. An article keeps the CMS one.
+    // Brief 2026-11-07-social-every-link: a push to any OTHER allowed page is a third kind (`kind=page`), built like a course / product
+    // post. The LINK alone decides the builder, never the time switch: a row that exists keeps being retried the same way.
     const link = storeLinkOf(campaign.url);
     const store = link !== null;
-    const kind = link ? ` kind=${link.kind}` : '';
-    const post = store ? buildFacebookStorePost(campaign, page) : await buildFacebookPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
+    const other = store ? null : pageLinkOf(campaign.url);
+    const kind = link ? ` kind=${link.kind}` : other ? ' kind=page' : '';
+    const post = store
+      ? buildFacebookStorePost(campaign, page)
+      : other
+        ? buildFacebookPagePost(campaign, page)
+        : await buildFacebookPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
     if (!post) {
-      await fail(store ? 'not a course or shop product link, or the link is not allowed' : 'not a taxscan.in article link, or the link is not allowed');
+      await fail(
+        store ? 'not a course or shop product link, or the link is not allowed' : other ? 'not an allowed page link, or the link is not allowed' : 'not a taxscan.in article link, or the link is not allowed',
+      );
       log(page, row.campaignId, 'failed', `reason=link${kind}`);
       return 'failed';
     }
