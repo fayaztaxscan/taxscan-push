@@ -417,6 +417,10 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
     if (!target.ok) actions.sendFree = off(freePressRefusal('config_invalid', { detail: target.reason }));
     else if (held) actions.sendFree = off(freePressRefusal('audience_unverified', { detail: held.plain }));
   }
+  // Brief 2026-11-07-free-digest-segment: the Send Free dialog tells the person to refresh the segment and read its count first, but only
+  // when a segment is the target. One safe boolean; the segment id itself never reaches the screen.
+  const freeTarget = audienceTarget(cfg, 'FREE', aud);
+  const freeTargetsSegment = freeTarget.ok && freeTarget.target.segmentIds.length > 0;
 
   return {
     runId: run.id,
@@ -482,6 +486,7 @@ export async function digestRunDetail(runId: string, opts: DetailOptions) {
     })),
     items,
     actions,
+    freeTargetsSegment,
     audienceEstimate: await audienceEstimate(run.portal),
     timeline: await runTimeline(run, cfg),
   };

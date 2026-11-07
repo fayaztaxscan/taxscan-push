@@ -297,8 +297,8 @@ export function digestProviderCampaignName(portal: string, runDate: Date, audien
 
 /**
  * The provider target for a variant, or why it may not be created. Fails
- * closed: Free needs a list AND a premium exclude; Premium needs a list,
- * segment or tag.
+ * closed: Free needs a list AND a premium exclude (or, with DIGEST_FREE_SEGMENT_IDS,
+ * a segment alone — see the Free branch); Premium needs a list, segment or tag.
  */
 export function audienceTarget(
   cfg: DigestEnv,
@@ -314,6 +314,23 @@ export function audienceTarget(
   }
   if (audience === 'FREE') {
     const a = cfg.audiences.free;
+    if (a.segmentIds.length > 0) {
+      // A Free SEGMENT carries its own exclusions, so nothing is added to the target, derived or not.
+      // Three refusals, each naming the settings (they stop the whole morning build — fail closed).
+      if (a.listIds.length > 0) {
+        return {
+          ok: false,
+          reason: 'DIGEST_FREE_SEGMENT_IDS and DIGEST_FREE_LIST_IDS are both set; Mailercloud may mail the union, which would reach the whole list. Set only one',
+        };
+      }
+      if (!cfg.freeManual) {
+        return { ok: false, reason: 'DIGEST_FREE_SEGMENT_IDS is set but DIGEST_FREE_MANUAL is not on; a segment of real readers is mailed only when Send Free is pressed' };
+      }
+      if (a.segmentIds.some((id) => cfg.audiences.premium.segmentIds.includes(id))) {
+        return { ok: false, reason: 'DIGEST_FREE_SEGMENT_IDS names a segment that is also in DIGEST_PREMIUM_SEGMENT_IDS; Free must never target the paid segment' };
+      }
+      return { ok: true, target: { listIds: [], segmentIds: a.segmentIds, tagIds: [], excludeListIds: [], excludeTagIds: [] } };
+    }
     if (a.listIds.length === 0) return { ok: false, reason: 'DIGEST_FREE_LIST_IDS is empty' };
     if (derived) {
       // Premium + No-marketing are excluded ALWAYS; config can add excludes but never remove these.

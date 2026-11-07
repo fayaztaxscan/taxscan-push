@@ -15,6 +15,7 @@ import {
   count,
   dateLabel,
   doorMessage,
+  freeConfirmDetail,
   kb,
   readLabel,
   runStateLabel,
@@ -121,6 +122,8 @@ type Detail = {
     sendFree?: ScreenAction;
     testSend: Record<Audience, ScreenAction>;
   };
+  /** The Free digest targets a Mailercloud segment (DIGEST_FREE_SEGMENT_IDS): the Send Free dialog adds a check-the-count line. The id never reaches the screen. */
+  freeTargetsSegment?: boolean;
   audienceEstimate: Record<Audience, number | null>;
   timeline: { at: string; text: string; by: string | null }[];
 };
@@ -717,7 +720,7 @@ onMounted(load);
       v-if="confirming === 'send_free' && detail"
       heading="Send the Free digest to Free readers now?"
       :title="freeConfirmTitle"
-      detail="It goes to the Free list straight away and only once today. Premium is not touched. A sent email can't be recalled."
+      :detail="freeConfirmDetail(detail.freeTargetsSegment)"
       confirm-label="Send Free"
       :busy="busy === 'send_free'"
       @confirm="confirmDoor"
