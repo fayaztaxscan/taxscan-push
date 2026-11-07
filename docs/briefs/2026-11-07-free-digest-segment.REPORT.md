@@ -73,3 +73,53 @@ git worktree remove ../taxscan-push-worktrees/free-digest-segment
 dropdb taxscan_push_build_free-digest-segment; dropdb taxscan_push_build_free-digest-segment_shadow
 git branch -D build/free-digest-segment; git push origin --delete build/free-digest-segment
 ```
+
+---
+
+# Follow-up 1: the Send Free dialog must not show a stale count
+
+- **Code commit:** `dc1f94c` — `feat(digest): Send Free dialog shows no stale count for a segment target (brief 2026-11-07-free-digest-segment, follow-up 1)`
+- **Branch:** `build/free-digest-segment` (same branch; `origin/develop` `bcb9765` was merged in first: a fast-forward, no conflicts, because `develop` already contained the first build).
+- Status: **built, all 3 acceptance tests PASS.**
+
+## What changed
+With `freeTargetsSegment` **true** (a real `true` only):
+- the title reads exactly `Free: the Free segment`, with no number, whatever the last Free send reported;
+- the first sentence reads `It goes to the Free segment straight away and only once today. Premium is not touched. A sent email can't be recalled.` followed by the existing check line (`Before you press: refresh the Free segment in Mailercloud and check its count.`).
+
+With it **false or missing**, the title (`Free: ~N readers`, with N from `toLocaleString()`, or `Free: full list`) and the text (`It goes to the Free list straight away…`) are exactly as before. Null, `'yes'`, `1` and `'true'` from a stale payload also keep today's output.
+
+## Files changed
+- `admin/src/composables/digestView.ts` — new pure `freeConfirmTitle(freeTargetsSegment, estimate)`; new constants `SEND_FREE_CONFIRM_DETAIL_SEGMENT` and `SEND_FREE_CONFIRM_TITLE_SEGMENT`; `freeConfirmDetail` uses the segment sentence for a real `true`. `SEND_FREE_CONFIRM_DETAIL` and `SEND_FREE_SEGMENT_CHECK` are byte-identical to before (ui-developer).
+- `admin/src/views/Digests.vue` — the Send Free `ConfirmPush` takes its title from the helper; the old local computed `freeConfirmTitle` became `sendFreeTitle` (the import would otherwise clash). Heading, button labels, the Cancel-focused default and every other use of `audienceEstimate` are untouched (ui-developer).
+- `src/__tests__/digestFreeConfirm.test.ts` — rewritten, 12 tests (was 4).
+- `docs/briefs/2026-11-07-free-digest-segment.shots/followup1-*.png` — 5 new screenshots; the earlier `dialog-*.png` are not overwritten.
+
+No backend, schema, env or flag change. No migration.
+
+## Test results (verbatim)
+- `npx tsc -p tsconfig.json --noEmit` → exit 0, no output.
+- `npm run lint` → `eslint "src/**/*.ts"`, exit 0, no output.
+- Area tests (`digestFreeConfirm`, `digestFreeSegment`, `digestFreeManual`): `Test Suites: 3 passed, 3 total` / `Tests: 87 passed, 87 total`.
+- `npm run build:admin` (includes `vue-tsc`): `✓ built in 2.36s`, exit 0.
+- **Full suite: not run, as the brief says** (area tests only). The Release check on `develop` `bcb9765` (2,444 passed) does not include this follow-up.
+
+## Acceptance tests
+| # | Result | Where |
+|---|---|---|
+| 1. True: no number in the title, and the sentence says "Free segment" | PASS | `digestFreeConfirm.test.ts` ("true: exactly …", "no digit anywhere in the title, even with a large stale estimate", "says the Free segment and never the Free list", "differs from the original in that one word only") and the browser check |
+| 2. False or missing: title and text exactly as today | PASS | `digestFreeConfirm.test.ts` (the original sentence pinned byte for byte; today's title for every estimate 10066 / 1 / null / 0 / undefined, computed with the same `toLocaleString()` call so no separator is hard-coded; stray truthy values) and the browser check |
+| 3. Browser check against a stubbed API at desktop and 375 px, screenshots in the same `.shots/` folder | PASS | ui-developer: Playwright Chromium against the Vite dev server, every `/api/*` call stubbed, `audienceEstimate: { FREE: 10066, PREMIUM: 1900 }` in every case so a leak would show; title and text matched exactly in all five cases; Cancel focused; both buttons inside the viewport; no horizontal overflow; no request left localhost; no write request. With the field true, `10,066` and `10066` appear nowhere in the dialog. |
+
+**Screenshots:** `followup1-dialog-segment-desktop.png` and `followup1-dialog-segment-375.png` (true: `Free: the Free segment`, the segment sentence and the check line; 3 text lines at 1280 px, 4 at 375 px, buttons side by side), `followup1-dialog-list-desktop.png` and `followup1-dialog-list-375.png` (false: `Free: ~10,066 readers` and the original sentence), `followup1-dialog-absent-375.png` (field missing: identical to false). I looked at `followup1-dialog-segment-375.png` and `followup1-dialog-list-desktop.png` myself.
+
+## Agents run
+- `ui-developer` (one, background): the helpers, `Digests.vue`, the rewritten test, the browser check and screenshots. I reviewed its diff and two screenshots, and ran the checks above myself.
+
+## Deviations from the brief
+None. (The only notable edit beyond the two rules is the local rename `freeConfirmTitle` → `sendFreeTitle` in `Digests.vue`, forced by importing the helper of the same name.)
+
+## Worth remembering
+- `docs/EMAIL_DIGEST_DESIGN.md` §5 (the `DIGEST_FREE_SEGMENT_IDS` row) still says the Send Free confirm "adds a line"; since this follow-up it also changes the title and the first sentence. The admin guide's bullet ("the confirm also asks you to refresh that segment in Mailercloud and check its count") is still true. The brief listed no docs for the follow-up, so I changed none; a half-sentence in §5 would make it complete.
+- The title now carries no figure at all for a segment. If a live count is ever shown (out of scope here), `freeConfirmTitle` is the one place to put it.
+- Not run, as instructed: the clean-up commands (planning keeps the worktrees and databases until the release).

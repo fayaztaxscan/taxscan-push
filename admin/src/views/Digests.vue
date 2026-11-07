@@ -16,6 +16,7 @@ import {
   dateLabel,
   doorMessage,
   freeConfirmDetail,
+  freeConfirmTitle,
   kb,
   readLabel,
   runStateLabel,
@@ -329,10 +330,8 @@ const confirmTitle = computed(() => {
   return present.map((a) => `${AUDIENCE_LABEL[a]}: ${est?.[a] ? `~${est[a]!.toLocaleString()} readers` : 'full list'}`).join('; ');
 });
 
-const freeConfirmTitle = computed(() => {
-  const n = detail.value?.audienceEstimate?.FREE;
-  return n ? `Free: ~${n.toLocaleString()} readers` : 'Free: full list';
-});
+/** The Send Free dialog's title: "Free: the Free segment" for a segment target, else the last Free send's size (rules in digestView). */
+const sendFreeTitle = computed(() => freeConfirmTitle(detail.value?.freeTargetsSegment, detail.value?.audienceEstimate?.FREE));
 
 /** One plain line per variant about what happens next. */
 function variantNote(v: Variant): string | null {
@@ -719,7 +718,7 @@ onMounted(load);
     <ConfirmPush
       v-if="confirming === 'send_free' && detail"
       heading="Send the Free digest to Free readers now?"
-      :title="freeConfirmTitle"
+      :title="sendFreeTitle"
       :detail="freeConfirmDetail(detail.freeTargetsSegment)"
       confirm-label="Send Free"
       :busy="busy === 'send_free'"
