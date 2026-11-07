@@ -74,3 +74,19 @@ Add this order to the runbook:
 3. Next morning, press Send Free. The test contact tagged Premium must receive nothing, and the untagged one must receive the digest.
 4. Glance at one real digest's unsubscribe headers.
 5. Only on the owner's yes, change to the real segment. Refresh and read the count before every Send Free.
+
+## Follow-up 1 (planning, 2026-11-07): the Send Free dialog must not show a stale count
+First merge `origin/develop` into `build/free-digest-segment`; the first build is already merged. Same branch, same REPORT (add a section). UI goes to `ui-developer`.
+
+With `freeTargetsSegment` true, the dialog must not state the size of the last Free send, because the first real press would show the staff list's size above a send to the whole segment.
+- `freeConfirmTitle` in `admin/src/views/Digests.vue` reads "Free: the Free segment" when `freeTargetsSegment` is true. It is unchanged when false.
+- The dialog's first sentence says "the Free segment" instead of "the Free list" when true. It stays word for word when false.
+
+Out: any live count, and any change to the other uses of `audienceEstimate`.
+
+Acceptance:
+1. True: no number in the title, and the sentence says "Free segment".
+2. False or missing: title and text are exactly as today.
+3. Browser check against a stubbed API at desktop and 375 px, with screenshots in the same `.shots/` folder.
+
+Full suite: no — area tests: `digestFreeConfirm`, `digestFreeSegment`, `digestFreeManual`. tsc, lint and build:admin as usual.
