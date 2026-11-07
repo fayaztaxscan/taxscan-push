@@ -8,7 +8,7 @@ status changes so a fresh Claude session can pick up cleanly.
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
 **⏳ PENDING (2026-11-07 18:30 IST) — the current list; the full version is memory `project_taxscan_push_state`. Older lists below are history.**
-0. **Monday 9 Nov (owner):** (a) ship develop, now holding `social-every-link` + `free-digest-segment` (both merged 7 Nov, settings unset; Release check, ~13:00 window, owner's yes, then set `SOCIAL_ANY_LINK_FROM` to the switch-on moment; Free stays staff-only until its runbook rollout; `/pricing` on 8 Nov 07:45 IST misses unless posted by hand); (b) owner presses Retry refused for the 79 refused paid readers, who get no paid digest (the hand-made one no longer goes to paid readers, owner 7 Nov). Build brief `2026-11-07-free-digest-segment` when the owner says go.
+0. **PR #106 LIVE 7 Nov ~19:14 IST (main 8bd1874), both settings unset.** Owner: (a) set `SOCIAL_ANY_LINK_FROM` to the switch-on moment (Free stays staff-only until its runbook rollout; `/pricing` on 8 Nov 07:45 IST misses unless posted by hand); (b) owner presses Retry refused for the 79 refused paid readers, who get no paid digest (the hand-made one no longer goes to paid readers, owner 7 Nov). Build brief `2026-11-07-free-digest-segment` when the owner says go.
 
 **(2026-11-06 13:05 IST list; items 1–6 still stand. Item 2 read 7 Nov: 0 unsubscribes, 0 hard bounces, 0 spam on both paid sends per Mailercloud's reports.)**
 1. Owner presses **Retry refused** once, after Anagha's hand test of 5 refused readers; planning then reads the `[audience] writer refused` log lines and decides the fix. Retry also syncs any reader tagged by hand.
