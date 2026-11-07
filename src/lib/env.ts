@@ -134,6 +134,9 @@ export function parseDigestEnv(src: NodeJS.ProcessEnv) {
       // Fail closed (later task): the Free campaign is never created without a premium exclude.
       free: {
         listIds: listEnv(src.DIGEST_FREE_LIST_IDS),
+        // Brief 2026-11-07-free-digest-segment: set → Free targets exactly these Mailercloud segments (the segment's own
+        // rules carry the exclusions). Unset (default) = the list + exclude path above, unchanged.
+        segmentIds: listEnv(src.DIGEST_FREE_SEGMENT_IDS),
         excludeListIds: listEnv(src.DIGEST_FREE_EXCLUDE_LIST_IDS),
         excludeTagIds: listEnv(src.DIGEST_FREE_EXCLUDE_TAG_IDS),
       },

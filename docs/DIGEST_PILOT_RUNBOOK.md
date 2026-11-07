@@ -427,6 +427,29 @@ support (design §12). Each one says when it must be done by.
   back into the hand-made digest the same day.
 - **Signs off:** the owner.
 
+### Free to real readers: the segment (brief 2026-11-07-free-digest-segment)
+
+Free reaches real readers only through a Mailercloud **segment**, set in `DIGEST_FREE_SEGMENT_IDS`, and only when someone
+presses **Send Free**. The segment's own rules carry the exclusions: the Free contact list, **not tagged** `TS Premium (auto)`,
+**not tagged** `TS No marketing (auto)`. Excluding by tag name in the campaign itself does not work (two real test sends,
+5 Nov); targeting by segment is proven (Premium has gone out that way since 6 Nov). In this order:
+
+1. Anagha creates a **small test segment** and the **real Free segment** in Mailercloud. Planning reads both rule sets with
+   `GET /v1/segments/{id}`.
+2. **Outside 06:15–17:00 IST**, set `DIGEST_FREE_SEGMENT_IDS` to the **test** segment and clear `DIGEST_FREE_LIST_IDS` in the
+   **same change**. Confirm `DIGEST_FREE_MANUAL` is on first. Why outside the window: any refusal below stops the whole
+   morning build, **Premium included** (fail closed, with the usual `config_invalid` alert).
+3. Next morning, press **Send Free**. The test contact tagged Premium must receive **nothing**; the untagged one must receive
+   the digest.
+4. Glance at one real digest's unsubscribe headers.
+5. Only on the owner's yes, change to the **real** segment. **Before every Send Free, refresh the segment in Mailercloud and
+   read its count** (the Send Free confirm says so when a segment is the target). A draft's own count is not live.
+
+The system refuses (`config_invalid`, on Digests and in the alert) if `DIGEST_FREE_SEGMENT_IDS` and `DIGEST_FREE_LIST_IDS` are
+both set (Mailercloud may mail the union, which would reach the whole list), if `DIGEST_FREE_MANUAL` is off, or if a Free
+segment id is also in `DIGEST_PREMIUM_SEGMENT_IDS`. **Roll back:** unset `DIGEST_FREE_SEGMENT_IDS` and put `DIGEST_FREE_LIST_IDS`
+(with its exclude) back, again outside 06:15–17:00 IST.
+
 ### Stage 4: full
 
 - **Before switching:**
