@@ -207,12 +207,29 @@ export const SEND_FREE_CONFIRM_DETAIL =
 /** Added to that explanation when the Free digest targets a Mailercloud segment: the segment's count is only as fresh as its last refresh. */
 export const SEND_FREE_SEGMENT_CHECK = 'Before you press: refresh the Free segment in Mailercloud and check its count.';
 
+/** The same explanation when the Free digest targets a Mailercloud segment: the first sentence names the segment, not the list. */
+export const SEND_FREE_CONFIRM_DETAIL_SEGMENT =
+  "It goes to the Free segment straight away and only once today. Premium is not touched. A sent email can't be recalled.";
+
+/** The Send Free dialog's title when the Free digest targets a segment: no number, because no stored figure describes the segment. */
+export const SEND_FREE_CONFIRM_TITLE_SEGMENT = 'Free: the Free segment';
+
 /**
  * The Send Free confirm dialog's detail text. With `freeTargetsSegment` (the server's boolean, never the segment id)
- * one line is added; false or missing leaves the text exactly as it was.
+ * the first sentence says "the Free segment" and one check line is added; false or missing leaves the text exactly as it was.
  */
 export function freeConfirmDetail(freeTargetsSegment: boolean | undefined): string {
-  return freeTargetsSegment === true ? `${SEND_FREE_CONFIRM_DETAIL} ${SEND_FREE_SEGMENT_CHECK}` : SEND_FREE_CONFIRM_DETAIL;
+  return freeTargetsSegment === true ? `${SEND_FREE_CONFIRM_DETAIL_SEGMENT} ${SEND_FREE_SEGMENT_CHECK}` : SEND_FREE_CONFIRM_DETAIL;
+}
+
+/**
+ * The Send Free confirm dialog's title. `estimate` is the `targeted` count of the LAST Free send — with a segment target it
+ * would be the size of some other audience (the staff list), so a real true drops it. False or missing: as it has always read,
+ * "Free: ~10,066 readers", or "Free: full list" when Mailercloud has reported no size before.
+ */
+export function freeConfirmTitle(freeTargetsSegment: boolean | undefined, estimate: number | null | undefined): string {
+  if (freeTargetsSegment === true) return SEND_FREE_CONFIRM_TITLE_SEGMENT;
+  return estimate ? `Free: ~${estimate.toLocaleString()} readers` : 'Free: full list';
 }
 
 /** Run-level approval line: with Free manual, Approve covers Premium only, so say so. */
