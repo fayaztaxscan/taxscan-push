@@ -9,7 +9,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 **⏳ PENDING (2026-11-07 evening) — the current list; the full 18-item version is memory `project_taxscan_push_state`. Older lists below are history.**
 PR #106 LIVE ~19:14 IST (main 8bd1874); `SOCIAL_ANY_LINK_FROM`=2026-11-07T13:45:53Z, never move it earlier; `DIGEST_FREE_SEGMENT_IDS` unset.
-a. Owner presses Retry refused (79 paid readers get no paid digest; hand-made no longer goes to paid readers). Anagha's hand test is now optional. Planning reads the log lines after.
+a. Retry refused pressed 7 Nov 19:26 IST: 0 of 79 paid got through, 1 of 295 former. Mailercloud answers "Invalid email" for well-formed addresses (74 of 79 on domains with MX). Next: Anagha tries 3 by hand; if the same, add them to the CMS signed-in notice.
 b. 8 Nov: planning checks the first real page post, `/pricing` 07:45 IST, on all channels. Team does not hand-post it.
 c. Free: dialog Follow-up 1 (merged to develop, next release: Release check + owner's yes) → Anagha's test + real segments → one real test send → credit stop-and-alert brief → real segment on the owner's yes.
 
