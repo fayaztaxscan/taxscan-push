@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.25 &nbsp;·&nbsp; Updated 6 November 2026
+    &nbsp;·&nbsp; Version 2.27 &nbsp;·&nbsp; Updated 7 November 2026
   </div>
 </div>
 
@@ -654,6 +654,7 @@ preview and draft are ready as usual; it goes out <strong>only when someone pres
   <li><strong>Send Free</strong> sits on the Free line at the top of Digests. It asks <em>"Send the Free digest to Free readers now?"</em> first
       (Cancel is selected), then sends once. A second press, or a second person pressing at the same moment, sends nothing more.</li>
   <li>The same people who may approve can press it. It also works after Premium has gone out.</li>
+  <li>When Free goes to a Mailercloud <strong>segment</strong>, the confirm also asks you to <strong>refresh that segment in Mailercloud and check its count</strong> before you press.</li>
   <li><strong>Approve covers Premium only.</strong> It never sends Free, and Free never shows "Waiting for approval".</li>
   <li>It cannot be pressed at night (23:00–07:00), after 17:00, or while an editor has <strong>Held</strong> the digest. When it is greyed out, the reason is written under the button.</li>
   <li>Before it is pressed the Free line reads <em>"Goes out only when someone presses Send Free"</em>; afterwards <em>"Send Free pressed by … at …"</em>.</li>
@@ -867,7 +868,9 @@ Each row sits on the day it was pushed, at the time of that push. Courses and pr
 (<strong>Course</strong>, <strong>Shop</strong>; articles show <strong>Article</strong>), because they now share the list with
 articles. <strong>Before the set time nothing changes</strong>: those pushes keep the rule above (one row per article, with
 <em>pushed again</em>). Posting is still done by hand: Copy or Share the post, paste it into the channel, then press Posted. If a row
-disappears while you are working (its time was moved), the screen says so and reloads the list.</p>
+disappears while you are working (its time was moved), the screen says so and reloads the list. <strong>From a second set time</strong> (one time
+for WhatsApp, LinkedIn and Facebook together) a push to <strong>any other page of ours</strong> &mdash; a shop collection, the pricing page, the home
+page &mdash; is listed and posted like these; its WhatsApp row carries the label <strong>Page</strong>, and nothing earlier than that time is ever added.</p>
 <div class="box warn"><span class="box-t">Administrators</span>
   The time is <code>WHATSAPP_ALL_PUSHES_FROM</code>. <strong>Never move it earlier once it is set</strong>: pushes already handled would
   appear as waiting again. After a restore from backup, set it to the restore time first, because the Posted and Skipped marks are not in
@@ -1157,7 +1160,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.24 · Updated 5 November 2026
+  Taxscan Push · Admin User Guide · Version 2.27 · Updated 7 November 2026
 </p>
 </section>
 

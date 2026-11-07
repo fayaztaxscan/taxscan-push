@@ -18,8 +18,15 @@ import { articleContentOf, UTM_CONTENT_MAX } from '../whatsapp/postText';
  *   a taxscan.in article                          `articleContentOf` (https://www.taxscan.in/<section>/<slug>, or the old …-<id> shape)
  *   https://academy.taxscan.in/course/<slug>      a course
  *   https://shop.taxscan.in/products/<slug>       a shop product
- * on ALLOWED_PUSH_HOSTS, and not test-segment-only. The home page, a section page, a collection and any other page do not qualify. The
- * caller has already selected `status = SENT`, `lastSentAt` set and the portal, exactly as for articles.
+ * on ALLOWED_PUSH_HOSTS, and not test-segment-only. The home page, a section page, a collection and any other page qualify ONLY under
+ * SOCIAL_ANY_LINK_FROM (below). The caller has already selected `status = SENT`, `lastSentAt` set and the portal, exactly as for articles.
+ *
+ * ANY OTHER LINK (brief 2026-11-07-social-every-link). A fourth kind, `page`: any other page on ALLOWED_PUSH_HOSTS (a shop collection,
+ * the pricing page, a home or section page), which is not an article, course or product. It qualifies ONLY from SOCIAL_ANY_LINK_FROM
+ * (one time for all four channels) and only for a push whose `lastSentAt` is at or after it. THE TIME CHECK LIVES IN
+ * `isAllPushesCampaign` ITSELF, so no caller can forget it: a push with no `lastSentAt` never qualifies as a page (fail closed). The
+ * channel's own all-pushes time is still the caller's split, as for every kind (a page push is a candidate only where the page already
+ * follows this rule at that send time). Articles, courses and products are untouched by it.
  *
  * One row per push: the key is `push:<campaignId>:<lastSentAt ms>`, stored in the same `articleKey` column, so a resend of the same
  * campaign row (a new `lastSentAt`) is a new key and posts again, while the unique (page, articleKey) still stops two ticks posting
@@ -53,14 +60,52 @@ export function storeLinkOf(url: string): StoreLink | null {
   return { kind: rule.kind, host, slug: m[1], base: `https://${host}/${rule.dir}/${m[1]}` };
 }
 
+export type PageLink = {
+  kind: 'page';
+  host: string;
+  /** The non-empty path segments, in order (empty for the root path). */
+  segments: string[];
+  /** `https://<host><path>`: no query, no fragment; the root path is `https://<host>/`. */
+  base: string;
+};
+
 /**
- * Does this push follow the new rule? ONE predicate for the LinkedIn and Facebook workers, the screens and the Channels marks. Looks
- * at what was sent, never at who sent it (as `isPublicArticleCampaign` does).
+ * Any OTHER page on an allowed host (brief 2026-11-07-social-every-link): not an article (`articleContentOf`), not a course or product
+ * (`storeLinkOf`), no userinfo, no port, on `ALLOWED_PUSH_HOSTS`. The host must be NAMED in that list: with the list emptied (the
+ * operator's "permissive" mode) nothing counts as a page, so the card fetch can never be pointed at a host nobody listed. null for
+ * anything else. Pure. It says what KIND of link this is, never whether it is time to post it (that is `isAllPushesCampaign`).
  */
-export function isAllPushesCampaign(c: { url: string; target?: unknown }, testTopic: string = env.testSegmentTopic): boolean {
+export function pageLinkOf(url: string): PageLink | null {
+  const raw = String(url ?? '').trim();
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username !== '' || u.password !== '' || u.port !== '') return null;
+  const host = u.hostname.toLowerCase();
+  if (!env.allowedPushHosts.includes(host) || !isAllowedPushUrl(raw)) return null;
+  if (articleContentOf({ url: raw }) !== null || storeLinkOf(raw) !== null) return null;
+  const segments = u.pathname.split('/').filter(Boolean);
+  return { kind: 'page', host, segments, base: `https://${host}${u.pathname}` };
+}
+
+/**
+ * Does this push follow the new rule? ONE predicate for the LinkedIn, Facebook and WhatsApp workers and queue, the screens and the
+ * Channels marks. Looks at what was sent, never at who sent it (as `isPublicArticleCampaign` does). Every caller passes the campaign
+ * with its `lastSentAt`: a push to any other page (`pageLinkOf`) counts only when that time is at or after SOCIAL_ANY_LINK_FROM.
+ */
+export function isAllPushesCampaign(
+  c: { url: string; target?: unknown; lastSentAt?: Date | null },
+  testTopic: string = env.testSegmentTopic,
+  anyLinkFrom: Date | null = env.social.anyLinkFrom,
+): boolean {
   const url = String(c.url ?? '').trim();
   if (isTestSegmentOnly(c.target, testTopic) || !isAllowedPushUrl(url)) return false;
-  return articleContentOf({ url }) !== null || storeLinkOf(url) !== null;
+  if (articleContentOf({ url }) !== null || storeLinkOf(url) !== null) return true;
+  // ANY OTHER LINK: only from SOCIAL_ANY_LINK_FROM, and only for a push SENT at or after it. A missing send time never qualifies.
+  return anyLinkFrom !== null && !!c.lastSentAt && c.lastSentAt.getTime() >= anyLinkFrom.getTime() && pageLinkOf(url) !== null;
 }
 
 /**
@@ -91,6 +136,22 @@ export function storeUtmContent(link: StoreLink): string {
     // keep the raw segment
   }
   return slug.slice(0, UTM_CONTENT_MAX);
+}
+
+/**
+ * `utm_content` for an other-page post: the path segments (each decoded) joined by `-`, cut to `UTM_CONTENT_MAX`; `home` for the root
+ * path. `/collections/all` → `collections-all`, `/pricing` → `pricing`, `/` → `home`.
+ */
+export function pageUtmContent(link: PageLink): string {
+  if (link.segments.length === 0) return 'home';
+  const parts = link.segments.map((seg) => {
+    try {
+      return decodeURIComponent(seg);
+    } catch {
+      return seg; // keep the raw segment
+    }
+  });
+  return parts.join('-').slice(0, UTM_CONTENT_MAX);
 }
 
 /**

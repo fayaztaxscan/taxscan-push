@@ -200,6 +200,21 @@ export function manualFreeNote(v: ManualFreeView): string | null {
 export const SEND_FREE_UNKNOWN =
   'No reply from the server in time — the Free digest may still be sending. Check this screen before pressing anything again.';
 
+/** The Send Free confirm dialog's explanation, word for word as it has always read. */
+export const SEND_FREE_CONFIRM_DETAIL =
+  "It goes to the Free list straight away and only once today. Premium is not touched. A sent email can't be recalled.";
+
+/** Added to that explanation when the Free digest targets a Mailercloud segment: the segment's count is only as fresh as its last refresh. */
+export const SEND_FREE_SEGMENT_CHECK = 'Before you press: refresh the Free segment in Mailercloud and check its count.';
+
+/**
+ * The Send Free confirm dialog's detail text. With `freeTargetsSegment` (the server's boolean, never the segment id)
+ * one line is added; false or missing leaves the text exactly as it was.
+ */
+export function freeConfirmDetail(freeTargetsSegment: boolean | undefined): string {
+  return freeTargetsSegment === true ? `${SEND_FREE_CONFIRM_DETAIL} ${SEND_FREE_SEGMENT_CHECK}` : SEND_FREE_CONFIRM_DETAIL;
+}
+
 /** Run-level approval line: with Free manual, Approve covers Premium only, so say so. */
 export function approvalLine(approval: string, approvedBy: string | null, approvedAt: string | null, freeManual: boolean): string {
   const text = approvalLabel(approval, approvedBy, approvedAt);

@@ -1,7 +1,7 @@
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import { articleContentOf } from '../whatsapp/postText';
 import { fetchStorePage, type StorePageFetch, type StorePageResult } from '../social/storePage';
-import { storeBodyLines, storeLinkOf, storeTitle, storeUtmContent } from '../social/allPushes';
+import { pageLinkOf, pageUtmContent, storeBodyLines, storeLinkOf, storeTitle, storeUtmContent } from '../social/allPushes';
 import { withLinkedInUtm } from './pages';
 
 /* ------------------------------------------------------------------ */
@@ -372,14 +372,43 @@ export async function buildStorePost(
 ): Promise<StorePostPayload | null> {
   const link = storeLinkOf(c.url);
   if (!link || !isAllowedPushUrl(c.url.trim())) return null;
+  return cardPost(c, page, storeUtmContent(link), `${link.base}/`, fetchPage);
+}
+
+/**
+ * The post for a push to ANY OTHER page on an allowed host (brief 2026-11-07-social-every-link: a shop collection, the pricing page, a
+ * home or section page), built exactly like a course / product post: the push's own title and body, the link with this page's LinkedIn
+ * UTMs (`utm_content` = the path segments joined by `-`, `home` for the root; the push's own `utm_*` replaced, other query parameters
+ * kept), the card from the page's og tags. The page is fetched on the push's own address WITHOUT its query (https, no redirects, 5 s,
+ * capped read: see `fetchStorePage`) and, as for a course, any problem there is fail-open: the post goes out with the push's own wording
+ * and no picture. Null when the URL is not an allowed other page, or the final link is off `ALLOWED_PUSH_HOSTS`.
+ */
+export async function buildPagePost(
+  c: { id: string; title: string; url: string; body?: string | null },
+  page: string,
+  fetchPage: StorePageFetch = (u) => fetchStorePage(u),
+): Promise<StorePostPayload | null> {
+  const link = pageLinkOf(c.url);
+  if (!link) return null;
+  return cardPost(c, page, pageUtmContent(link), link.base, fetchPage);
+}
+
+/** The shared body of a course / product / other-page post (moved out of `buildStorePost` unchanged). */
+async function cardPost(
+  c: { id: string; title: string; url: string; body?: string | null },
+  page: string,
+  utmContent: string,
+  fetchUrl: string,
+  fetchPage: StorePageFetch,
+): Promise<StorePostPayload | null> {
   let tagged: string;
   try {
-    tagged = withLinkedInUtm(c.url.trim(), page, storeUtmContent(link));
+    tagged = withLinkedInUtm(c.url.trim(), page, utmContent);
   } catch {
     return null;
   }
   if (!isAllowedPushUrl(tagged)) return null;
-  const got: StorePageResult = await fetchPage(`${link.base}/`).catch((): StorePageResult => ({ ok: false, reason: 'page_network' }));
+  const got: StorePageResult = await fetchPage(fetchUrl).catch((): StorePageResult => ({ ok: false, reason: 'page_network' }));
   const tags = got.ok ? got.tags : null;
   const title = storeTitle(c.title);
   return {

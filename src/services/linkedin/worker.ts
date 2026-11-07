@@ -9,13 +9,13 @@ import { isQuietHours } from '../../lib/quietHours';
 import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { fetchStorePage, type StorePageFetch } from '../social/storePage';
-import { isAllPushesCampaign, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
+import { isAllPushesCampaign, pageLinkOf, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
 import { istDay } from '../whatsapp/queue';
 import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
 import { fetchCoverImage } from './image';
 import { PAGE_ACADEMY, PAGE_TAXSCAN, academyActive, normalizePortals, pageAllPushesFrom, pageConfig, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
 import { refreshActiveTokens, tokenPageOf } from './token';
-import { buildPost, buildStorePost, fetchCmsArticle, type CmsArticle } from './post';
+import { buildPagePost, buildPost, buildStorePost, fetchCmsArticle, type CmsArticle } from './post';
 
 /**
  * The LinkedIn posting worker (brief 2026-11-02-linkedin-page-posting, docs/LINKEDIN_POSTING.md).
@@ -214,13 +214,26 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
     }
     // A course / product post (its LINK says so: under "every push posts" every kind of row has a `push:` key) has its own builder: the
     // push's own wording, UTMs and the page's og tags. An article is built exactly as before.
+    // Brief 2026-11-07-social-every-link: a push to any OTHER allowed page (a shop collection, the pricing page, the home page) is a third
+    // card post (`kind=page`), built like a course / product post. Which builder is decided by the LINK alone, never by the time switch:
+    // a row that exists keeps being retried the same way after SOCIAL_ANY_LINK_FROM is removed.
     const store = storeLinkOf(campaign.url);
-    const kind = store ? ` kind=${store.kind}` : '';
-    const post = store ? await buildStorePost(campaign, page, d.fetchStorePage ?? ((u) => fetchStorePage(u))) : await buildPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
+    const other = store ? null : pageLinkOf(campaign.url);
+    const kind = store ? ` kind=${store.kind}` : other ? ' kind=page' : '';
+    const fetchCard = d.fetchStorePage ?? ((u: string) => fetchStorePage(u));
+    const post = store
+      ? await buildStorePost(campaign, page, fetchCard)
+      : other
+        ? await buildPagePost(campaign, page, fetchCard)
+        : await buildPost(campaign, page, d.fetchCms ?? ((s) => fetchCmsArticle(s)));
     if (!post) {
       await prisma.linkedInPost.update({
         where: { id: row.id },
-        data: { status: 'FAILED', error: store ? 'not a course or shop product link, or the link is not allowed' : 'not a taxscan.in article link, or the link is not allowed', nextAttemptAt: null },
+        data: {
+          status: 'FAILED',
+          error: store ? 'not a course or shop product link, or the link is not allowed' : other ? 'not an allowed page link, or the link is not allowed' : 'not a taxscan.in article link, or the link is not allowed',
+          nextAttemptAt: null,
+        },
       });
       log(page, row.campaignId, 'failed', `reason=link${kind}`);
       return 'failed';

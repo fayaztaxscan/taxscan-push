@@ -55,6 +55,19 @@ FACEBOOK_ALL_PUSHES_FROM (from <ISO time>)`.
   per article before the time; **Campaigns -> Channels** shows a new-rule push the status of its own row. Both are exactly as before while the
   variable is unset.
 
+## Other pages (brief 2026-11-07-social-every-link)
+Off by default. `SOCIAL_ANY_LINK_FROM` (one strict ISO time for all four channels; the rule, the qualifying test and the switch-on are in
+`docs/LINKEDIN_POSTING.md`, "Other pages") makes a push to any OTHER page on a host named in `ALLOWED_PUSH_HOSTS` (a shop collection, the
+pricing page, the home page) post here too, **only if it was sent at or after that time and the page already follows the all-pushes rule at
+that send time** (`FACEBOOK_ALL_PUSHES_FROM`). A push one second before it makes no row. The check is inside `isAllPushesCampaign()`, which
+the worker, the screen and the Campaigns Channels mark all call.
+- **The post** (`buildFacebookPagePost()` in `post.ts`) is built exactly like a course / product post: the push title, a blank line, the push
+  body, a blank line, `#taxscan`; the link is the push's own URL with the Facebook UTMs (`utm_content` = the path segments joined by `-`,
+  `home` for the root; the push's own `utm_*` replaced, other query parameters kept). Facebook builds the card from the page's og tags
+  itself, so there is **no page fetch** here and nothing to fail. Log lines carry `kind=page`.
+- Same pacing, stops and key (`push:<campaignId>:<lastSentAt ms>`) as every other push. Removing the setting reposts nothing; rows keep their
+  status. After a restore see `docs/BACKUPS.md`.
+
 ## Pacing (account safety)
 - At most **one post attempt per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts.
 - At most `FACEBOOK_DAILY_CAP` (30) posts per IST day; the rest wait for the next day, however old they are by then.
@@ -87,6 +100,7 @@ The token never appears in a URL, log, `error` column, API response or e-mail.
 | `FACEBOOK_POSTING_ENABLED` | off | Worker, routes, menu. |
 | `FACEBOOK_POST_FROM` | - | ISO time, REQUIRED when on: nothing pushed before it is posted. |
 | `FACEBOOK_ALL_PUSHES_FROM` | - | **Every push posts** from this time (strict ISO); a push before it keeps today's rule for good. Unset or invalid = today's rule (one boot line). Never earlier than `FACEBOOK_POST_FROM`. Set it to the moment you switch on. |
+| `SOCIAL_ANY_LINK_FROM` | - | **One time for all four channels** (strict ISO): from it on, a push to any OTHER allowed page (shop collection, pricing page, home page) also posts here, if `FACEBOOK_ALL_PUSHES_FROM` is on for that push. A push before it never does. Unset or invalid = off. See "Other pages" |
 | `FACEBOOK_TAXSCAN_PAGE_ID` | - | Numeric page id. |
 | `FACEBOOK_TAXSCAN_PAGE_TOKEN` | - | Page access token (Railway only). A page token made from a long-lived user token does not expire on a timer; no renewal machinery. |
 | `FACEBOOK_GRAPH_VERSION` | `v25.0` | |

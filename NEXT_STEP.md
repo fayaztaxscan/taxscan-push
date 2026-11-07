@@ -7,7 +7,18 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
-**⏳ PENDING (2026-11-04 16:05 IST) — the current list; the full version is memory `project_taxscan_push_state`. The 2 Nov list below is history.**
+**⏳ PENDING (2026-11-07 18:30 IST) — the current list; the full version is memory `project_taxscan_push_state`. Older lists below are history.**
+0. **Monday 9 Nov (owner):** (a) ship develop, now holding `social-every-link` + `free-digest-segment` (both merged 7 Nov, settings unset; Release check, ~13:00 window, owner's yes, then set `SOCIAL_ANY_LINK_FROM` to the switch-on moment; Free stays staff-only until its runbook rollout; `/pricing` on 8 Nov 07:45 IST misses unless posted by hand); (b) owner presses Retry refused for the 79 refused paid readers, who get no paid digest (the hand-made one no longer goes to paid readers, owner 7 Nov). Build brief `2026-11-07-free-digest-segment` when the owner says go.
+
+**(2026-11-06 13:05 IST list; items 1–6 still stand. Item 2 read 7 Nov: 0 unsubscribes, 0 hard bounces, 0 spam on both paid sends per Mailercloud's reports.)**
+1. Owner presses **Retry refused** once, after Anagha's hand test of 5 refused readers; planning then reads the `[audience] writer refused` log lines and decides the fix. Retry also syncs any reader tagged by hand.
+2. Read the first paid send's unsubscribe and complaint rates after a day (go/no-go: unsubscribes < 0.5%, hard bounces < 2%, complaints < 0.1%).
+3. Before the send guard goes on: Audience card shows "Premium digest held" with the send guard off, because refused readers count as pending writes (79 against a limit of 27). Refused readers must not hold the digest. Also the guard's target must become the segment (`audienceTarget` passes tag ids, which Mailercloud refuses).
+4. Free digest: segment from `TaxscanNewsletterSubscribers`, not tagged Premium, not tagged No marketing; brief so Free can target a segment; one real test send. Waits for the owner's go.
+5. Plan with CMS: a signed-in notice for paid readers whose digest is off (338 unsubscribed: turn it on; 260 bounced: correct the address). Never by email.
+6. Brief: stop and alert when Mailercloud credit runs out. Tidy test contacts and campaigns. LinkedIn case CAS-12316619-W9J3R4. Soft-prompt compare 10 Nov.
+
+**(2026-11-04 16:05 IST list, history)**
 1. **Follow up until LinkedIn clears it:** Standard tier appeal, case CAS-12316619-W9J3R4 (denied 24 Jun, "Business verification failed"; appeal + certificate sent 4 Nov). No new app until it answers; never delete `taxscan_post_app`.
 2. First every-push posts (switches ON since 2026-11-04T10:26:26Z, none seen at 16:00 IST): check all 3 pages, a course and a shop post, red "already posted" rows, LinkedIn quota. Never move a time earlier.
 3. Soft prompt: first look ~19:00 IST 4 Nov, full compare 10 Nov; flag off if grants stay < ~4/day for a week.

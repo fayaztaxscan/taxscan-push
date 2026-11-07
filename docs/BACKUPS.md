@@ -154,6 +154,13 @@ every article is still in `Campaign`. (Added 2026-11-02; the export format is un
 mark lives only in `WhatsAppPost`, so with the marks gone an old value would list every push since that time as To do again (and the nudge would
 announce them). The restore time lists nothing from the past; later pushes list as they happen. (Added 2026-11-05; the export format is unchanged.)
 
+**After a restore, set `SOCIAL_ANY_LINK_FROM` to the restore time too (or unset it).** (Added 2026-11-07, brief 2026-11-07-social-every-link;
+the export format is unchanged.) It is the one time that lets a push to any other allowed page (a shop collection, the pricing page, the home
+page) reach LinkedIn (both pages), Facebook and the WhatsApp list. Those rows are in `LinkedInPost`, `FacebookPost` and `WhatsAppPost`, which
+are NOT in the backup, so with the rows gone an old value would post or list every such push since that time a second time. Set it **together
+with** the post-from and all-pushes times above: a page also needs its own all-pushes rule on for the push, and none of them reaches back
+before its own start. The restore time posts nothing from the past; later pushes post as they happen.
+
 **EXPIRED subscribers are excluded**, and that is safe rather than merely
 smaller. A row expires when the push service answers 404/410, which means the
 endpoint has been *permanently* retired and can never be presented again, so
