@@ -154,17 +154,17 @@ pacer), `FREQ_CAP_PER_DAY`=30 (manual non-force path only), `MIN_GAP_MINUTES`=0,
 `LINK_CHECK_ENABLED`=ON, **`SOFT_PROMPT_V2`=ON** (since 2026-10-22 10:43:51 UTC), `AUDIT_LOG_SWEEPER_ENABLED`=ON (90d / 30d failed logins),
 **`EVENT_RETENTION_ENABLED`=ON** (30d window, nightly 03:30 IST),
 **`BACKUP_ENABLED`=ON** (daily 02:20 IST to Cloudflare R2, `BACKUP_KEEP_DAYS`=14, `R2_*` creds).
-**Digest (since 2026-10-29): stage 2 — real sends to the STAFF list only.** `DIGEST_ENABLED`=ON,
+**Digest (since 2026-11-06): Premium goes to real paid readers, Free only to the STAFF list and only on Send Free.** `DIGEST_ENABLED`=ON,
 `DIGEST_WEBHOOKS_ENABLED`=ON, **`DIGEST_SEND_LIVE`=ON**, `DIGEST_APPROVAL_REQUIRED` unset (= true, owner: keep
 approval on); `DIGEST_RETENTION_ENABLED` off. `MAILERCLOUD_SENDER_EMAIL`=newsletter@hello.taxscan.in (sender name
 "Team Taxscan"; "noreply" is refused by design), `MAILERCLOUD_REPLY_EMAIL`=info@hello.taxscan.in (Mailercloud is
-restricted to @hello.taxscan.in; a reply-to must be on its **Reply IDs** list), `DIGEST_FREE_LIST_IDS` =
-`DIGEST_PREMIUM_LIST_IDS` = `hgvfXF` (staff trial: Anagha, Abdullah, Fayaz), `DIGEST_FREE_EXCLUDE_LIST_IDS`=`HwEWai`
+restricted to @hello.taxscan.in; a reply-to must be on its **Reply IDs** list), `DIGEST_PREMIUM_SEGMENT_IDS`=segment `TS Premium segment (auto)`
+(`DIGEST_PREMIUM_LIST_IDS` deleted), `DIGEST_FREE_MANUAL`=ON, `DIGEST_AUDIENCE_FROM_CMS` OFF, `DIGEST_FREE_LIST_IDS` = `hgvfXF` (staff trial), `DIGEST_FREE_EXCLUDE_LIST_IDS`=`HwEWai`
 (Mailercloud refuses an exclude list with no active contacts, so it holds one internal address), postal address +
 test recipients set; the Mailercloud webhook is registered (5 events, payload signing on, not yet verified by us).
-**Before any real reader is added, the lists change per the runbook's stage 3.**
-**CMS feeds (since 2026-10-29):** `AUDIENCE_SYNC_ENABLED`=ON (Feed 1 receiver + pulls write **Postgres only**;
-`AUDIENCE_SYNC_WRITE_MAILERCLOUD` unset = dry run), `CMS_FEED_INBOUND_SECRET`/`_PULL_SECRET`/`CMS_FEED_VIEWS_SECRET`
+**Before Free reaches real readers it needs a segment (brief `2026-11-07-free-digest-segment`).**
+**CMS feeds (since 2026-10-29):** `AUDIENCE_SYNC_ENABLED`=ON (Feed 1 receiver + pulls, all accounts since 2026-11-05);
+`AUDIENCE_SYNC_WRITE_MAILERCLOUD`=ON since 2026-11-05 (tags members in Mailercloud), `CMS_FEED_INBOUND_SECRET`/`_PULL_SECRET`/`CMS_FEED_VIEWS_SECRET`
 set (W/L/V, 48 chars, copied straight from the CMS box), `CMS_FEED_ALLOWED_IPS`=148.113.0.114 (the CMS sender),
 `CMS_FEED_BASE_URL` = default `https://api.taxscan.in`. **`CMS_VIEWS_ENABLED`=ON, `READS_SOURCE`=cms,
 `READS_CMS_FROM`=2026-10-08** (the CMS's earlier days are inflated by robots; owner accepted the counts are
@@ -229,6 +229,7 @@ Guide → v1.3. Suite **382**.
 
 **2026-10-29 (PRs #77–#82 LIVE; suite 1,571; guide v2.7):** two-session workflow (`docs/briefs/`); publishers use Ads/Templates; Activity ADMIN-only; digest look-alike + footer contact line + honest retry message; white-T badge; CMS importer tasks 1–6 and CMS reads (Feed 2) built, live, every flag OFF; **digest stage 1 (preview) ON since 29 Oct** (sender newsletter@hello.taxscan.in, reply-to info@hello.taxscan.in, staff list hgvfXF). Detail: `NEXT_STEP.md` top block.
 
+**7 Nov, findings (no code change; brief `2026-11-07-free-digest-segment` pushed, not built):** two paid digests sent with no hard bounces, spam complaints or unsubscribes reported: `KwHuHuf` 1,927 and `KwHEuHf` 1,924. **None of the 79 refused Premium readers are on the hand-made list `SffwSu`, so they get neither digest.** Of 2,535 tagged paid readers, 1,989 are on `SffwSu`; 1,833 on `SffwSu` are not Premium in the CMS. **Social gap:** `isAllPushesCampaign` accepts only articles, `/course/<slug>` and `/products/<slug>`, so 3 pushes since 4 Nov posted nowhere (`shop…/collections/all`, `/subscription`, `/trackers`), against the owner's "every push" rule; decision open.
 **6 Nov, PR #105 LIVE (~13:02 IST, main cd500da; guide v2.25; suite 2,359):** the audience writer logs why Mailercloud refuses a contact (`[audience] writer refused op=… http=… count=N reason="…"`, redacted, never an address); the Audience card shows refused counts (ADMIN); ADMIN **Retry refused** (`POST /api/digest/audience/retry-refused`, audit `AUDIENCE_REFUSED_RETRIED`, counts only).
 **6 Nov, FIRST PAID DIGEST SENT (approved 09:06 IST, confirmed 09:38 IST):** 1,927 sent and delivered, 0 hard bounces at first read. Flags: `AUDIENCE_SYNC_WRITE_MAILERCLOUD`=ON, `DIGEST_PREMIUM_SEGMENT_IDS`=segment `TS Premium segment (auto)` (no Premium list), `DIGEST_AUDIENCE_FROM_CMS` OFF, approval still ON. Audience: 2,622 CMS paid → 2,541 tagged (81 refused on create) → 2,540 after the No marketing rule → 1,927 mailable; the other 613 are unsubscribed, bounced or spam in Mailercloud's own status. **Refresh and read the segment before every approval.** A full tagging run takes ~2.5 h (~92 members a minute, Premium mixed with ~7,000 Former, writes pause 07:10–08:00 IST), not 20 minutes. Hand-made paid digest continues until the refused readers are fixed. **Free stays on the staff list:** Free accepts lists only and exclusions are unproven, so it needs a segment build first.
 **5 Nov, PRs #103 + #104 LIVE:** Send Free button (`DIGEST_FREE_MANUAL` ON: Approve covers Premium only, Free goes only on its own press); every push gets its own WhatsApp row (ON 16:14 IST).
