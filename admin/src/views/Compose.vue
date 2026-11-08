@@ -296,6 +296,7 @@ onMounted(() => {
               than 4:5. Best: 1080&nbsp;×&nbsp;1080 (square) or 1200&nbsp;×&nbsp;627 (wide).
             </p>
             <p class="muted pic-note">Used only on the LinkedIn and Facebook posts, not in the notification itself.</p>
+            <p class="muted pic-note">Clears after a successful send, so attach it again for the next push if needed.</p>
             <input
               v-if="!picture"
               id="social-picture"
