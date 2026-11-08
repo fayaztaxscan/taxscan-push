@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
+import { useAuth } from '../composables/useAuth';
 import { useTestDevice } from '../composables/useTestDevice';
 import ConfirmPush from '../components/ConfirmPush.vue';
 
@@ -16,6 +17,7 @@ type DispatchResult = {
 };
 
 const api = useApi();
+const { user } = useAuth();
 const testDevice = useTestDevice();
 // Destructure so the refs auto-unwrap in the template (testDevice.x would stay a Ref).
 const {
@@ -46,6 +48,49 @@ const breaking = ref(false);
 const force = ref(false);
 const scheduleMode = ref<'now' | 'later'>('now');
 const scheduledAtLocal = ref('');
+
+// Optional picture for the LinkedIn + Facebook posts (SOCIAL_PICTURE_ENABLED). Off = no field and nothing sent.
+// The server checks the rules and answers a plain sentence on refusal; Remove only drops the id (nothing is deleted).
+type SocialPicture = { id: string; url: string; width: number; height: number; size: number; deduped: boolean };
+const pictureOn = computed(() => user.value?.features?.socialPicture === true);
+const picture = ref<SocialPicture | null>(null);
+const pictureUploading = ref(false);
+const pictureError = ref<string | null>(null);
+
+/** Same-origin path of the stored picture, so the preview and download work from any admin host. */
+const pictureSrc = computed(() => {
+  if (!picture.value) return null;
+  try {
+    return new URL(picture.value.url, window.location.origin).pathname;
+  } catch {
+    return null;
+  }
+});
+
+async function onPictureFile(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  pictureUploading.value = true;
+  pictureError.value = null;
+  try {
+    picture.value = await api.upload<SocialPicture>('/api/social-picture', file);
+  } catch (e) {
+    picture.value = null;
+    // No reply in time: an upload is safe to repeat (the same bytes make the same picture), so say that, not "check before trying again".
+    pictureError.value = (e as { outcomeUnknown?: boolean })?.outcomeUnknown
+      ? 'The picture did not finish uploading. Choose the file again.'
+      : apiErrorMessage(e);
+  } finally {
+    pictureUploading.value = false;
+  }
+}
+
+function removePicture() {
+  picture.value = null;
+  pictureError.value = null;
+}
 
 const submitting = ref(false);
 const confirming = ref(false);
@@ -89,7 +134,7 @@ function newRequestId(): string {
 }
 
 watch(
-  [title, body, url, icon, targetMode, selectedTopics, breaking, force, scheduleMode, scheduledAtLocal],
+  [title, body, url, icon, targetMode, selectedTopics, breaking, force, scheduleMode, scheduledAtLocal, picture],
   () => {
     requestId.value = null;
   },
@@ -138,6 +183,7 @@ function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; s
   if (icon.value) payload.icon = icon.value;
   if (force.value) payload.force = true;
   if (requestId.value) payload.clientRequestId = requestId.value;
+  if (pictureOn.value && picture.value) payload.socialImageId = picture.value.id;
   // force is immediate-only — never attach a schedule when it's on.
   if (!force.value) {
     if (overrides.scheduledAt) payload.scheduledAt = overrides.scheduledAt;
@@ -216,6 +262,42 @@ onMounted(() => {
         </div>
       </div>
 
+      <div v-if="pictureOn" class="form-row">
+        <label for="social-picture">Picture for LinkedIn and Facebook (optional)</label>
+        <div class="pic-row">
+          <div class="pic-box" :class="{ has: pictureSrc }">
+            <img v-if="pictureSrc" :src="pictureSrc" alt="Picture for the LinkedIn and Facebook posts" />
+            <span v-else class="muted">No picture</span>
+          </div>
+          <div class="pic-side">
+            <p class="pic-rule">
+              JPEG or PNG, at most 2&nbsp;MB, at least 1080&nbsp;px wide. Square (1:1) to wide (1.91:1); portrait no taller
+              than 4:5. Best: 1080&nbsp;×&nbsp;1080 (square) or 1200&nbsp;×&nbsp;627 (wide).
+            </p>
+            <p class="muted pic-note">Used only on the LinkedIn and Facebook posts, not in the notification itself.</p>
+            <input
+              v-if="!picture"
+              id="social-picture"
+              type="file"
+              accept="image/jpeg,image/png"
+              :disabled="pictureUploading || submitting"
+              @change="onPictureFile"
+            />
+            <p v-if="pictureUploading" class="muted pic-note">Uploading…</p>
+            <template v-if="picture && pictureSrc">
+              <p class="pic-info">
+                {{ picture.width }} × {{ picture.height }} px, {{ Math.ceil(picture.size / 1024) }} KB
+              </p>
+              <div class="pic-actions">
+                <a class="btn btn-mini" :href="pictureSrc" download>Download</a>
+                <button type="button" class="btn btn-mini" :disabled="submitting" @click="removePicture">Remove</button>
+              </div>
+            </template>
+            <p v-if="pictureError" class="pic-err" role="alert">{{ pictureError }}</p>
+          </div>
+        </div>
+      </div>
+
       <div class="form-row">
         <label>Target</label>
         <div class="radio-row">
@@ -273,7 +355,7 @@ onMounted(() => {
         <button
           type="button"
           class="btn btn-primary"
-          :disabled="!canSend || submitting"
+          :disabled="!canSend || submitting || pictureUploading"
           @click="onSendClick"
         >
           {{ submitting ? 'Sending…' : scheduleMode === 'later' ? 'Schedule' : 'Send now' }}
@@ -335,3 +417,86 @@ onMounted(() => {
     />
   </main>
 </template>
+
+<style scoped>
+/* Same look as the Ads screen's picture fields: dashed box until a picture is in, rule text at full strength. */
+.pic-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.pic-box {
+  flex: 0 0 140px;
+  height: 140px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.pic-box.has {
+  border-style: solid;
+  background: #fff;
+}
+.pic-box img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+}
+.pic-side {
+  flex: 1;
+  min-width: 0;
+}
+.pic-rule {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+.pic-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.pic-info {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.pic-actions .btn {
+  text-decoration: none;
+}
+.pic-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pic-err {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+  font-weight: 600;
+}
+@media (max-width: 720px) {
+  .pic-row {
+    flex-direction: column;
+  }
+  .pic-box {
+    flex-basis: auto;
+    width: 100%;
+    max-width: 320px;
+    height: 200px;
+  }
+  /* An empty box is just a placeholder; on a phone it would push the rules a screen down. */
+  .pic-box:not(.has) {
+    display: none;
+  }
+  .pic-actions .btn {
+    min-height: 44px;
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+</style>

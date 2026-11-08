@@ -31,16 +31,28 @@ export type LinkedInRequest = {
   description?: string;
   /** An image URN from `uploadImage` for the card's thumbnail (omitted = a card without a picture). */
   thumbnail?: string;
+  /**
+   * An image URN for an IMAGE post (brief 2026-11-08-social-picture: the Compose picture, shown large). Set = the body carries
+   * `content.media` instead of the article card, and the commentary is expected to hold the link itself (`commentaryWithLink`).
+   */
+  image?: string;
 };
 
+/** The image post's alt text: the push title, cut to this many characters. */
+export const ALT_TEXT_MAX = 300;
+
 /** The Posts API body: PUBLIC, MAIN_FEED, PUBLISHED, an article card from the link. */
-export function postBody(r: Pick<LinkedInRequest, 'orgUrn' | 'commentary' | 'title' | 'link' | 'description' | 'thumbnail'>): Record<string, unknown> {
+export function postBody(r: Pick<LinkedInRequest, 'orgUrn' | 'commentary' | 'title' | 'link' | 'description' | 'thumbnail' | 'image'>): Record<string, unknown> {
+  // Image post (Posts API "Images" content: `content.media.id` = an urn:li:image, `altText` optional). Otherwise today's card, unchanged.
+  const content = r.image
+    ? { media: { id: r.image, altText: r.title.replace(/\s+/g, ' ').trim().slice(0, ALT_TEXT_MAX) } }
+    : { article: { source: r.link, title: r.title, ...(r.description ? { description: r.description } : {}), ...(r.thumbnail ? { thumbnail: r.thumbnail } : {}) } };
   return {
     author: r.orgUrn,
     commentary: r.commentary,
     visibility: 'PUBLIC',
     distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
-    content: { article: { source: r.link, title: r.title, ...(r.description ? { description: r.description } : {}), ...(r.thumbnail ? { thumbnail: r.thumbnail } : {}) } },
+    content,
     lifecycleState: 'PUBLISHED',
     isReshareDisabledByAuthor: false,
   };

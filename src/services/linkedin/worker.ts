@@ -15,7 +15,8 @@ import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type Link
 import { fetchCoverImage } from './image';
 import { PAGE_ACADEMY, PAGE_TAXSCAN, academyActive, normalizePortals, pageAllPushesFrom, pageConfig, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
 import { refreshActiveTokens, tokenPageOf } from './token';
-import { buildPagePost, buildPost, buildStorePost, fetchCmsArticle, type CmsArticle } from './post';
+import { buildPagePost, buildPost, buildStorePost, commentaryWithLink, fetchCmsArticle, type CmsArticle } from './post';
+import { campaignPicture } from '../social/picture';
 
 /**
  * The LinkedIn posting worker (brief 2026-11-02-linkedin-page-posting, docs/LINKEDIN_POSTING.md).
@@ -66,6 +67,8 @@ export type WorkerDeps = {
   /** Waits for the uploaded image to be AVAILABLE (tests mock it or pass a fake clock). */
   waitImage?: typeof waitForImage;
   fetchCms?: (slug: string) => Promise<CmsArticle | null>;
+  /** SOCIAL_PICTURE_ENABLED (tests pass it; default the env). */
+  socialPicture?: boolean;
   emailSender?: EmailSender;
   isEmailConfigured?: () => boolean;
   /** Active ADMIN emails; default reads the User table. */
@@ -238,12 +241,36 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       log(page, row.campaignId, 'failed', `reason=link${kind}`);
       return 'failed';
     }
+    // The Compose picture (brief 2026-11-08-social-picture; SOCIAL_PICTURE_ENABLED): an IMAGE post with our own bytes and the
+    // tagged link in the commentary. Fail-open to today's link post below: an upload that fails, a picture LinkedIn never makes
+    // ready, a commentary that would grow too long or an image post refused with a 4xx (`failed`: LinkedIn made nothing) all post
+    // the ordinary link post, and the row says why. A 401 / 403 from the upload is a login stop, as today.
+    let pictureResult: LinkedInResult | null = null;
+    let pictureFallback: string | null = null;
+    const picture = await campaignPicture(campaign, d.socialPicture);
+    if (picture) {
+      const commentary = commentaryWithLink(post.commentary, post.link);
+      if (!commentary) pictureFallback = 'commentary_too_long';
+      else {
+        const up = await (d.uploadImage ?? uploadImage)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, bytes: picture.bytes, contentType: picture.mime });
+        if (up.kind === 'auth') pictureResult = { kind: 'auth', status: up.status, error: up.error };
+        else if (up.kind === 'soft') pictureFallback = up.reason;
+        else {
+          const ready = await (d.waitImage ?? waitForImage)({ urn: up.urn, accessToken: cfg.accessToken });
+          if (ready.ok || isUnverifiedImage(ready.reason)) {
+            const r = await (d.post ?? postToLinkedIn)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, commentary, title: post.title, link: post.link, image: up.urn });
+            if (r.kind === 'failed') pictureFallback = `rejected_${r.status ?? 'unknown'}`;
+            else pictureResult = r;
+          } else pictureFallback = ready.reason;
+        }
+      }
+    }
     // The card's picture (fail-open): any problem fetching or uploading it posts WITHOUT a thumbnail. Only a 401 / 403 from the
     // upload registration counts as a login error, exactly like the post's own, and then no post call is made.
     let thumbnail: string | undefined;
-    let image = `none:${post.imageReason ?? 'no_cover'}`;
+    let image = pictureResult ? (pictureResult.kind === 'posted' ? 'picture' : 'picture_tried') : `none:${post.imageReason ?? 'no_cover'}`;
     let uploadAuth: LinkedInResult | null = null;
-    if (post.coverImageUrl) {
+    if (!pictureResult && post.coverImageUrl) {
       const img = await (d.fetchImage ?? fetchCoverImage)(post.coverImageUrl);
       if (!img.ok) image = `none:${img.reason}`;
       else {
@@ -266,20 +293,23 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
     }
     const send = (withThumbnail: boolean) =>
       (d.post ?? postToLinkedIn)({ orgUrn: cfg.orgUrn, accessToken: cfg.accessToken, commentary: post.commentary, title: post.title, link: post.link, description: post.description, ...(withThumbnail && thumbnail ? { thumbnail } : {}) });
-    let result: LinkedInResult = uploadAuth ?? (await send(true));
+    let result: LinkedInResult = pictureResult ?? uploadAuth ?? (await send(true));
     // A post REJECTED with a client error while it carried a thumbnail (a 4xx that is not 401 / 403 / 429: our `failed` verdict)
     // is repeated ONCE, right away, without the thumbnail. Safe: a 4xx means LinkedIn did not create the first post. A picture
     // must never stop a post. 2xx, 5xx, 429 and network errors are NOT repeated here (they follow the normal retry rules), and
     // neither is a DUPLICATE answer (its own kind, never `failed`): that is not the picture's fault, and repeating a post LinkedIn
     // refused as a copy would only hide the reason.
-    if (thumbnail && result.kind === 'failed') {
+    if (!pictureResult && thumbnail && result.kind === 'failed') {
       image = `dropped:${result.status ?? 'unknown'}`;
       result = await send(false);
     }
     if (result.kind === 'posted') {
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'POSTED', linkedinPostId: result.postId === 'unknown' ? null : result.postId, postedAt: now, error: null, nextAttemptAt: null } });
       if (result.postId === 'unknown') await prisma.linkedInPost.update({ where: { id: row.id }, data: { error: 'posted, but LinkedIn returned no post id — check the page' } });
-      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource} image=${image}${kind}`);
+      else if (pictureFallback) {
+        await prisma.linkedInPost.update({ where: { id: row.id }, data: { error: clip(`posted as a link post: the Compose picture could not be used (${pictureFallback})`) } });
+      }
+      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource} image=${image}${pictureFallback ? ` picture=fallback:${pictureFallback}` : ''}${kind}`);
       if (await readAuthState(page)) await clearAuthState(page); // it works again
       return 'posted';
     }

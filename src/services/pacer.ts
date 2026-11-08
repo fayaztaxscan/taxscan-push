@@ -153,7 +153,7 @@ async function clicksByCampaign(ids: string[]): Promise<Map<string, number>> {
  * original's stats stay intact. The clone keeps the original's createdAt (so it
  * is NOT mistaken for today's fresh content) but gets its own SENT events today.
  */
-async function cloneForResend(c: Campaign): Promise<Campaign> {
+export async function cloneForResend(c: Campaign): Promise<Campaign> {
   return prisma.campaign.create({
     data: {
       portal: c.portal,
@@ -166,6 +166,8 @@ async function cloneForResend(c: Campaign): Promise<Campaign> {
       sendQueue: c.sendQueue,
       authority: c.authority,
       createdAt: c.createdAt,
+      // The clone posts on social as its own push: it keeps the original's Compose picture (brief 2026-11-08-social-picture).
+      socialImageId: c.socialImageId ?? null,
     },
   });
 }

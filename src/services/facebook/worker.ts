@@ -15,7 +15,8 @@ import type { CmsArticle } from '../linkedin/post';
 import { fetchCmsArticle } from '../linkedin/post';
 import { postToFacebook, type FacebookFailure } from './client';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
-import { buildFacebookPagePost, buildFacebookPost, buildFacebookStorePost } from './post';
+import { buildFacebookPagePost, buildFacebookPost, buildFacebookStorePost, captionWithLink } from './post';
+import { campaignPicture, socialImageUrl } from '../social/picture';
 
 /**
  * The Facebook posting worker (brief 2026-11-03-facebook-page-posting, docs/FACEBOOK_POSTING.md). It mirrors the LinkedIn worker
@@ -51,6 +52,8 @@ export type WorkerDeps = {
   /** The Graph call (tests mock it). */
   post?: typeof postToFacebook;
   fetchCms?: (slug: string) => Promise<CmsArticle | null>;
+  /** SOCIAL_PICTURE_ENABLED (tests pass it; default the env). */
+  socialPicture?: boolean;
   emailSender?: EmailSender;
   isEmailConfigured?: () => boolean;
   /** Active ADMIN emails; default reads the User table. */
@@ -215,7 +218,20 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
       log(page, row.campaignId, 'failed', `reason=link${kind}`);
       return 'failed';
     }
-    const result = await (d.post ?? postToFacebook)({ pageId: cfg.pageId, accessToken: cfg.accessToken, message: post.message, link: post.link });
+    // The Compose picture (brief 2026-11-08-social-picture): a photo post, Facebook fetching our public picture URL, the tagged link
+    // in the caption. A photo post refused with a plain 4xx (`failed`: nothing was made, e.g. Facebook could not read the picture) is
+    // repeated ONCE as today's link post; every other answer (posted, rate, transient, auth, policy, duplicate) is handled as today.
+    const picture = await campaignPicture(campaign, d.socialPicture);
+    let pictureNote = picture ? 'picture' : '';
+    let result = picture
+      ? await (d.post ?? postToFacebook)({ pageId: cfg.pageId, accessToken: cfg.accessToken, message: captionWithLink(post.message, post.link), link: post.link, photoUrl: socialImageUrl(picture) })
+      : await (d.post ?? postToFacebook)({ pageId: cfg.pageId, accessToken: cfg.accessToken, message: post.message, link: post.link });
+    let pictureFallback: string | null = null;
+    if (picture && result.kind === 'failed') {
+      pictureFallback = `rejected_${result.status ?? 'unknown'}${result.code !== null ? `_code_${result.code}` : ''}`;
+      pictureNote = `picture=fallback:${pictureFallback}`;
+      result = await (d.post ?? postToFacebook)({ pageId: cfg.pageId, accessToken: cfg.accessToken, message: post.message, link: post.link });
+    }
     if (result.kind === 'posted') {
       await prisma.facebookPost.update({
         where: { id: row.id },
@@ -223,11 +239,16 @@ async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Att
           status: 'POSTED',
           facebookPostId: result.postId === 'unknown' ? null : result.postId,
           postedAt: now,
-          error: result.postId === 'unknown' ? 'posted, but Facebook returned no post id — check the page' : null,
+          error:
+            result.postId === 'unknown'
+              ? 'posted, but Facebook returned no post id — check the page'
+              : pictureFallback
+                ? clip(`posted as a link post: Facebook could not use the Compose picture (${pictureFallback})`)
+                : null,
           nextAttemptAt: null,
         },
       });
-      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource}${kind}`);
+      log(page, row.campaignId, 'posted', `hashtags=${post.hashtagSource}${pictureNote ? ` ${pictureNote === 'picture' ? 'image=picture' : pictureNote}` : ''}${kind}`);
       if (await readSetting(authKey(page))) await prisma.digestSetting.deleteMany({ where: { key: authKey(page) } }); // it works again
       return 'posted';
     }

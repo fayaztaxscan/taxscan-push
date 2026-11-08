@@ -68,6 +68,17 @@ the worker, the screen and the Campaigns Channels mark all call.
 - Same pacing, stops and key (`push:<campaignId>:<lastSentAt ms>`) as every other push. Removing the setting reposts nothing; rows keep their
   status. After a restore see `docs/BACKUPS.md`.
 
+## The Compose picture (brief 2026-11-08-social-picture)
+- Behind `SOCIAL_PICTURE_ENABLED` (default off). A push with a Compose picture (`Campaign.socialImageId`) posts to
+  `POST /<page-id>/photos` with `url` = the picture's public URL (`https://push.taxscan.in/social-images/<sha256>.<jpg|png>`: no login,
+  immutable; Facebook fetches it) and `caption` = today's message with the tagged link on its own line before the hashtags. The answer's
+  `post_id` (the feed post) is stored, else its `id`.
+- A photo post refused with a plain 4xx (`failed`: e.g. Facebook could not read the picture) is repeated **once**, in the same attempt,
+  as today's `/feed` link post; the row is POSTED with `error` = `posted as a link post: Facebook could not use the Compose picture
+  (rejected_<status>[_code_<n>])`. Every other answer (rate, transient, auth, policy, duplicate) is handled exactly as today.
+- No picture, or the setting off: today's `/feed` call, unchanged. Pacing, the policy stop and the 30/day cap are unchanged (the
+  fallback is part of the same attempt). After a restore the picture may be gone (`SocialImage` is not in the backup): today's link post.
+
 ## Pacing (account safety)
 - At most **one post attempt per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts.
 - At most `FACEBOOK_DAILY_CAP` (30) posts per IST day; the rest wait for the next day, however old they are by then.
@@ -100,6 +111,7 @@ The token never appears in a URL, log, `error` column, API response or e-mail.
 | `FACEBOOK_POSTING_ENABLED` | off | Worker, routes, menu. |
 | `FACEBOOK_POST_FROM` | - | ISO time, REQUIRED when on: nothing pushed before it is posted. |
 | `FACEBOOK_ALL_PUSHES_FROM` | - | **Every push posts** from this time (strict ISO); a push before it keeps today's rule for good. Unset or invalid = today's rule (one boot line). Never earlier than `FACEBOOK_POST_FROM`. Set it to the moment you switch on. |
+| `SOCIAL_PICTURE_ENABLED` | off | A picture uploaded on Compose goes on the Facebook (photo post) and LinkedIn posts. See "The Compose picture" |
 | `SOCIAL_ANY_LINK_FROM` | - | **One time for all four channels** (strict ISO): from it on, a push to any OTHER allowed page (shop collection, pricing page, home page) also posts here, if `FACEBOOK_ALL_PUSHES_FROM` is on for that push. A push before it never does. Unset or invalid = off. See "Other pages" |
 | `FACEBOOK_TAXSCAN_PAGE_ID` | - | Numeric page id. |
 | `FACEBOOK_TAXSCAN_PAGE_TOKEN` | - | Page access token (Railway only). A page token made from a long-lived user token does not expire on a timer; no renewal machinery. |

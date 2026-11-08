@@ -163,6 +163,9 @@ model Campaign {
   /// means the process died mid-send; recoverStrandedClaims() closes it out as
   /// SENT or FAILED — never re-sends it. Null for every other path.
   claimedAt         DateTime?
+  /// The Compose picture for the LinkedIn + Facebook posts (SocialImage.id, brief 2026-11-08-social-picture). A plain id, no
+  /// foreign key: SocialImage is not in the backup, Campaign is. Null = no picture (every RSS push, every older campaign).
+  socialImageId     String?
 
   createdBy   User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events      Event[]
@@ -793,6 +796,19 @@ model DigestSetting {
   value           String
   updatedAt       DateTime @updatedAt
   updatedByUserId String?
+}
+
+/// A picture uploaded on Compose for a push's LinkedIn + Facebook posts (brief 2026-11-08-social-picture). Same shape as
+/// DigestAdImage; served publicly at /social-images/<id>.<ext>. NOT in the backup (like WhatsAppPost and the social post rows):
+/// `Campaign.socialImageId` is a plain id with no foreign key, so a restored campaign whose picture is gone posts as a link post.
+model SocialImage {
+  id        String   @id // sha256 hex of the bytes
+  mime      String // image/jpeg | image/png (sniffed, not declared)
+  width     Int
+  height    Int
+  size      Int
+  bytes     Bytes
+  createdAt DateTime @default(now())
 }
 
 model DigestAdImage {

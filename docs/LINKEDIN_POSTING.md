@@ -190,6 +190,21 @@ So, in each attempt, after the CMS article is read for the hashtags (`src/servic
    inside one attempt. Time budget per attempt: CMS 5 s + picture 10 s + registration 15 s + upload 15 s + post 15 s, far inside the 10-minute stale window.
 Log line: `[linkedin] page=taxscan campaign=… outcome=posted hashtags=cms|fallback image=ok|none:<reason>|dropped:<status>`.
 
+## The Compose picture (brief 2026-11-08-social-picture)
+
+Behind `SOCIAL_PICTURE_ENABLED` (default off). A push sent from Compose with a picture attached (`Campaign.socialImageId`, a
+`SocialImage` row) posts on BOTH pages as an **image post**: our own bytes uploaded through the same Images API (no host allowlist: they
+are already ours), `content.media = { id: <urn:li:image>, altText: <push title> }`, and today's commentary (text + hashtags) with the
+tagged link (same UTMs as today) on its own line just before the hashtags, escaped as little text. Order inside one attempt: upload →
+wait until AVAILABLE (an unverified status counts as ready, as for the thumbnail) → image post. **Fail-open to today's link post**:
+a soft upload failure, a picture never ready, a commentary that would pass 3,000 characters, or an image post refused with a plain 4xx
+(`failed`: LinkedIn made nothing) all post today's link post (cover thumbnail and all) in the same attempt; the row is POSTED with
+`error` = `posted as a link post: the Compose picture could not be used (<reason>)`, and the log line adds `picture=fallback:<reason>`.
+A 401 / 403 from the picture upload is a login stop exactly as today. Other answers (retry, duplicate, auth) are handled as today; a
+retried attempt uploads the picture again. A posted image post logs `image=picture`. No picture, or the setting off: the request is
+byte-for-byte today's. A backfill clone or a re-send of the campaign uses the same picture. After a restore the picture may be gone
+(`SocialImage` is not in the backup): the post is then today's link post.
+
 ## Pages
 `LinkedInPost.page` is a plain string: a page is its env variables plus a place in the portal → pages map (`portalPages()` in
 `src/services/linkedin/pages.ts`). No schema change, no migration. One portal can post to several pages.
@@ -244,6 +259,7 @@ is that one token's status on both pages). Rows, counts and the banner follow `p
 | `LINKEDIN_ACADEMY_POST_FROM` | — | the Academy page's own go-live (ISO date or time); nothing pushed before it is ever posted to Academy. Set it to the moment you switch on |
 | `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` | — | **every push posts** on the Taxscan page from this time (strict ISO); a push before it keeps today's rule for good. Unset or invalid = today's rule (one boot line). Never earlier than `LINKEDIN_POST_FROM`. Set it to the moment you switch on |
 | `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` | — | the same for the Academy page; counts only while the Academy page is on; never earlier than `LINKEDIN_ACADEMY_POST_FROM` |
+| `SOCIAL_PICTURE_ENABLED` | off | a picture uploaded on Compose goes on the LinkedIn (both pages) and Facebook posts; see "The Compose picture" |
 | `SOCIAL_ANY_LINK_FROM` | — | **one time for all four channels**: from it on, a push to any OTHER allowed page (shop collection, pricing page, home page) is posted too, on every page whose all-pushes rule is on (strict ISO; a push before it never is; unset or invalid = off). See "Other pages" |
 
 There are no Academy token variables: the two Academy variables are the whole switch, and `LINKEDIN_POSTING_ENABLED` still governs

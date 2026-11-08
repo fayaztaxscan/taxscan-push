@@ -161,6 +161,12 @@ are NOT in the backup, so with the rows gone an old value would post or list eve
 with** the post-from and all-pushes times above: a page also needs its own all-pushes rule on for the push, and none of them reaches back
 before its own start. The restore time posts nothing from the past; later pushes post as they happen.
 
+**`SocialImage` (the Compose pictures for LinkedIn + Facebook) is deliberately NOT in the export.** (Added 2026-11-08, brief
+2026-11-08-social-picture; the export format is unchanged.) `Campaign.socialImageId` IS exported (it is a column of `Campaign`) and has no
+foreign key, so a restored campaign may name a picture that is gone. Nothing breaks: the LinkedIn and Facebook workers then post today's
+link post, the Campaigns screen shows no "Download picture" link, and `/social-images/<id>` answers 404. Re-upload on Compose if a
+picture is needed again. The pictures are up to 2 MB each in `bytea`, which is why they stay out of a daily export.
+
 **EXPIRED subscribers are excluded**, and that is safe rather than merely
 smaller. A row expires when the push service answers 404/410, which means the
 endpoint has been *permanently* retired and can never be presented again, so
