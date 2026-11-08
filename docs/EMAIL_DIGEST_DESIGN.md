@@ -479,6 +479,10 @@ platform, from values the owner supplies; *Default* = leave unset unless there i
 | `DIGEST_PREMIUM_LIST_IDS` / `_SEGMENT_IDS` / `_TAG_IDS` | — | Who the Premium digest goes to; at least one is required. | Platform |
 | `DIGEST_TEST_RECIPIENTS` | — | Addresses (comma-separated) allowed to use "Test send to me". The viewer's own login address must be listed. Never logged. | Platform |
 | `DIGEST_POSTAL_ADDRESS` | — | The footer's postal address. **Required**: the build fails closed when empty. | Platform |
+| `AUDIENCE_FREE_READERS` | `false` | CMS audience sync (brief 2026-11-08-free-cms-readers): a CMS `free` account whose consent is not `false` gives its address the role FREE, stored and tagged `TS Free reader (auto)` in Mailercloud, so a Free segment can include it. Off: a `free` account stays NONE. Not a digest setting: the digest reaches these readers only through `DIGEST_FREE_SEGMENT_IDS`. Order: `docs/DIGEST_PILOT_RUNBOOK.md` "Free to CMS free readers". | Owner |
+| `AUDIENCE_MC_TAG_FREE` | — | The Mailercloud tag id of `TS Free reader (auto)`. Unset with `AUDIENCE_FREE_READERS` on: a boot warning and no FREE writes (Premium / Former go on). | Platform |
+| `AUDIENCE_FREE_ADMIT_PER_DAY` | `0` | Most new FREE members admitted into Mailercloud per IST day (those Mailercloud already holds first). `0` = none admitted, no Mailercloud call for any. Removals are never capped. | Owner |
+| `AUDIENCE_PULL_PAGE_PAUSE_MS` | `2000` | The wait between CMS list pages in both audience pulls (owner, 8 Nov, at the CMS's request). `0` = no pause. | Default |
 
 **Timing and content**
 

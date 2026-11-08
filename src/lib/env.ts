@@ -81,6 +81,14 @@ function intFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+/** Non-negative integer from `src[name]` (0 allowed: "none"), else `fallback`. */
+function nonNegIntFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = src[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
 /** Positive finite number from `src[name]` (decimals allowed), else `fallback`. */
 function posNumFrom(src: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = src[name];
@@ -285,6 +293,13 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
     erasePathRemovedButSet: src.AUDIENCE_ERASE_IN_MAILERCLOUD !== undefined && src.AUDIENCE_ERASE_IN_MAILERCLOUD.trim() !== '',
     // Settings (not behaviour switches): owner Q1 / Q2 defaults.
     formerToFree: src.AUDIENCE_FORMER_TO_FREE !== 'false',
+    // Brief 2026-11-08-free-cms-readers: a plain `free` CMS account becomes a FREE member (stored address,
+    // the Free-reader tag), admitted into Mailercloud at most `freeAdmitPerDay` new members per IST day.
+    // Off (default) = the rule is unchanged: a `free` account stays NONE. 0 a day = none admitted.
+    freeReaders: src.AUDIENCE_FREE_READERS === 'true',
+    freeAdmitPerDay: nonNegIntFrom(src, 'AUDIENCE_FREE_ADMIT_PER_DAY', 0),
+    // Wait between CMS list pages (both pulls; owner 8 Nov, at the CMS's request). 0 = no pause.
+    pullPagePauseMs: nonNegIntFrom(src, 'AUDIENCE_PULL_PAGE_PAUSE_MS', 2000),
     consentRule: 'exclude_false' as const,
     thresholds: {
       maxStaleHours: intFrom(src, 'AUDIENCE_MAX_STALE_HOURS', 26),
@@ -311,6 +326,9 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
       tagPremium: (src.AUDIENCE_MC_TAG_PREMIUM ?? '').trim(),
       tagFormer: (src.AUDIENCE_MC_TAG_FORMER ?? '').trim(),
       tagNoMarketing: (src.AUDIENCE_MC_TAG_NO_MARKETING ?? '').trim(),
+      // `TS Free reader (auto)`: FREE members only. Unset with AUDIENCE_FREE_READERS on = a boot warning and
+      // no FREE writes (Premium / Former writes go on).
+      tagFree: (src.AUDIENCE_MC_TAG_FREE ?? '').trim(),
       // Optional (M-5 fallback): a Mailercloud segment "tag = TS Premium (auto)" whose active_count the
       // nightly drift check compares with our applied Premium count. Unset → the tag's own count, if any.
       premiumSegmentId: (src.AUDIENCE_MC_PREMIUM_SEGMENT_ID ?? '').trim(),

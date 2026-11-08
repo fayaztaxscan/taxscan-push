@@ -857,7 +857,7 @@ model CmsAccount {
 model AudienceMember {
   emailHash          String    @id
   email              String? // normalised; NEVER logged; not in backups
-  desiredRole        String // PREMIUM | FORMER | NONE (memberRole(), the single definition)
+  desiredRole        String // PREMIUM | FORMER | FREE | NONE (memberRole(), the single definition)
   noMarketing        Boolean   @default(false) // any linked account said consent=false
   suppressed         Boolean   @default(false) // EmailSuppression by address OR by any linked accountId
   appliedTags        String[]  @default([]) // what Mailercloud has acknowledged; [] = nothing of ours
@@ -867,12 +867,14 @@ model AudienceMember {
   lastErrorKind      String? // RETRYABLE | FATAL — never a provider message
   syncedAt           DateTime?
   resubscribePending Boolean   @default(false) // ingest lifted a suppression on this address; held (with the address) until the writer has handled the lift
+  admittedAt         DateTime? // FREE only: when the writer admitted it under AUDIENCE_FREE_ADMIT_PER_DAY (the per-IST-day count reads this); null = waiting
   eraseRequestedAt   DateTime? // UNUSED since 24 Oct (owner: the CMS erases in Mailercloud; we null `email` at ingest). Kept: migrations are additive-only
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@index([nextAttemptAt])
   @@index([desiredRole])
+  @@index([admittedAt])
 }
 
 /// Door W replay/dedupe (contract v1.1 §3): `eventId` (= X-CMS-Event-Id = body event_id) →
