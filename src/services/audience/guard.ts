@@ -1,4 +1,4 @@
-import type { DigestAudience } from '@prisma/client';
+import type { DigestAudience, Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { env, type AudienceEnv } from '../../lib/env';
 
@@ -141,6 +141,14 @@ function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * Members whose Premium role and Premium tag disagree (`pendingPremium`): Premium without the tag, or the tag on a non-Premium member.
+ * The single definition; exported so a test can scope it to its own rows.
+ */
+export function pendingPremiumWhere(tag: string): Prisma.AudienceMemberWhereInput {
+  return { OR: [{ desiredRole: 'PREMIUM', NOT: { appliedTags: { has: tag } } }, { desiredRole: { not: 'PREMIUM' }, appliedTags: { has: tag } }] };
+}
+
 /** The snapshot, from Postgres only. */
 export async function loadGuardSnapshot(portal: string, cfg: AudienceEnv = env.audience): Promise<GuardSnapshot> {
   const st = await prisma.audienceSyncState.findUnique({ where: { portal } });
@@ -149,9 +157,7 @@ export async function loadGuardSnapshot(portal: string, cfg: AudienceEnv = env.a
     prisma.audienceMember.count({ where: { desiredRole: 'PREMIUM' } }),
     tag ? prisma.audienceMember.count({ where: { appliedTags: { has: tag } } }) : Promise.resolve(0),
     tag
-      ? prisma.audienceMember.count({
-          where: { OR: [{ desiredRole: 'PREMIUM', NOT: { appliedTags: { has: tag } } }, { desiredRole: { not: 'PREMIUM' }, appliedTags: { has: tag } }] },
-        })
+      ? prisma.audienceMember.count({ where: pendingPremiumWhere(tag) })
       : prisma.audienceMember.count({ where: { desiredRole: 'PREMIUM' } }),
   ]);
   const drift = (st?.drift ?? null) as { premiumOurs?: unknown; premiumMailercloud?: unknown } | null;

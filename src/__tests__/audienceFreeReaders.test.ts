@@ -10,7 +10,7 @@ import { applyAccountSnapshot, countsAsRoleChange } from '../services/audience/i
 import { parseCmsListRow } from '../services/audience/snapshot';
 import { runPull, type PullDeps } from '../services/audience/pull';
 import { resumeBreaker } from '../services/audience/breaker';
-import { audienceGuard, loadGuardSnapshot } from '../services/audience/guard';
+import { audienceGuard, pendingPremiumWhere } from '../services/audience/guard';
 import { audienceCard } from '../services/audience/adminView';
 import { freeConfigProblems, startAudienceSync } from '../services/audience/boot';
 import { desiredTags, diffMember, flushPending, resetWriterForTests, type WriterDeps } from '../services/audience/writer';
@@ -437,20 +437,35 @@ describe('writer admission (acceptance 4, 5, 6, 7, 11)', () => {
 describe('guard, target, card (acceptance 9, 10, 12)', () => {
   const now = new Date('2027-08-01T10:00:00Z');
 
-  it('9. 1,000 FREE members waiting leave pending_writes unchanged', async () => {
+  it('9. 1,000 FREE members waiting add nothing to pending_writes', async () => {
+    // Scoped to this test's own rows (Follow-up 1 of brief 2026-11-08-social-picture): the guard's counts are global, and other test files
+    // add Premium members to the same database while this runs. The guard's own predicate (`pendingPremiumWhere`) on our rows only.
     const cfg = FREE_ON(0);
-    const before = await loadGuardSnapshot(PORTAL, cfg);
+    const tag = cfg.mailercloud.tagPremium;
     const rows = Array.from({ length: 1000 }, (_, i) => {
       const email = addr(`g9-${i}`);
       return { emailHash: sha(email), email, desiredRole: 'FREE', nextAttemptAt: now };
     });
-    await prisma.audienceMember.createMany({ data: rows });
-    const after = await loadGuardSnapshot(PORTAL, cfg);
-    expect(after.pendingPremium).toBe(before.pendingPremium);
-    expect(after.premiumDesired).toBe(before.premiumDesired);
-    const r = audienceGuard('PREMIUM', { ...after, pendingPremium: 0, premiumDesired: 0 }, now, cfg.thresholds);
-    if (!r.ok) expect(r.check).not.toBe('pending_writes');
-    await prisma.audienceMember.deleteMany({ where: { emailHash: { in: rows.map((r) => r.emailHash) } } });
+    // A control row the predicate MUST count: Premium without the Premium tag.
+    const controlEmail = addr('g9-control');
+    const control = { emailHash: sha(controlEmail), email: controlEmail, desiredRole: 'PREMIUM', nextAttemptAt: now };
+    await prisma.audienceMember.createMany({ data: [...rows, control] });
+    const own = { emailHash: { in: rows.map((r) => r.emailHash) } };
+    try {
+      expect(await prisma.audienceMember.count({ where: { AND: [own, pendingPremiumWhere(tag)] } })).toBe(0);
+      expect(await prisma.audienceMember.count({ where: { AND: [own, { desiredRole: 'PREMIUM' }] } })).toBe(0);
+      expect(await prisma.audienceMember.count({ where: { AND: [{ emailHash: control.emailHash }, pendingPremiumWhere(tag)] } })).toBe(1);
+      // The pure guard: with nothing pending from these rows, pending_writes is not the refusal.
+      const r = audienceGuard(
+        'PREMIUM',
+        { lastFullOkAt: now, lastIncrOkAt: now, lastWebhookAt: null, breakerOpen: false, pendingPremium: 0, premiumDesired: 0, premiumApplied: 0, driftOurs: 0, driftMailercloud: 0, cmsPremium: 0 },
+        now,
+        cfg.thresholds,
+      );
+      expect(r).toEqual({ ok: true });
+    } finally {
+      await prisma.audienceMember.deleteMany({ where: { emailHash: { in: [...rows.map((r) => r.emailHash), control.emailHash] } } });
+    }
   });
 
   it('10. Free with two segment ids targets both, and still refuses an id shared with Premium', () => {

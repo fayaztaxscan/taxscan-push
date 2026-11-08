@@ -44,6 +44,8 @@ type Campaign = {
   };
   /** IST day (YYYY-MM-DD) of the push: which day to open on the channel screen. */
   channelDay?: string | null;
+  /** The Compose picture for LinkedIn + Facebook; present only when the campaign has one and the setting is on. */
+  pictureUrl?: string;
 };
 
 const api = useApi();
@@ -74,6 +76,15 @@ type SortKey =
   | 'deliveryRate';
 const sortKey = ref<SortKey>('sentAt');
 const sortDir = ref<'asc' | 'desc'>('desc');
+
+/** Same-origin path of a stored picture, so `download` works (browsers ignore it across origins). */
+function pictureHref(u: string): string {
+  try {
+    return new URL(u, window.location.origin).pathname;
+  } catch {
+    return u;
+  }
+}
 
 function setSort(key: SortKey): void {
   if (sortKey.value === key) {
@@ -373,7 +384,17 @@ onMounted(load);
             <td :class="c.sentAt ? '' : 'muted'" data-label="Pushed" style="white-space: nowrap">
               {{ c.sentAt ? fmtDate(c.sentAt) : '—' }}
             </td>
-            <td class="cell-lead">{{ c.title }}</td>
+            <td class="cell-lead">
+              {{ c.title }}
+              <a
+                v-if="c.pictureUrl"
+                class="pic-link"
+                :href="pictureHref(c.pictureUrl)"
+                download
+                title="The picture used on the LinkedIn and Facebook posts"
+                @click.stop
+              >Download picture</a>
+            </td>
             <td data-label="Source">
               <template v-if="c.createdBy">
                 <span class="tag-manual">Manual</span>
@@ -471,6 +492,14 @@ onMounted(load);
   font-size: 11px;
   font-weight: 600;
 }
+.pic-link {
+  display: block;
+  width: fit-content;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--primary);
+}
 .ch-marks {
   display: inline-flex;
   flex-wrap: nowrap;
@@ -503,6 +532,10 @@ onMounted(load);
   border-color: #fecaca;
 }
 @media (max-width: 720px) {
+  .pic-link {
+    padding: 10px 0;
+    font-size: 13px;
+  }
   .ch-mark {
     min-height: 44px;
     min-width: 56px;

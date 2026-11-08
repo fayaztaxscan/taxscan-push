@@ -24,6 +24,7 @@ export const ERROR_MAX = 240;
 const TIMEOUT_MS = 15_000;
 
 export const feedUrl = (pageId: string): string => `https://graph.facebook.com/${env.facebook.graphVersion}/${pageId}/feed`;
+export const photosUrl = (pageId: string): string => `https://graph.facebook.com/${env.facebook.graphVersion}/${pageId}/photos`;
 export const pageUrl = (pageId: string): string => `https://graph.facebook.com/${env.facebook.graphVersion}/${pageId}?fields=name`;
 
 /** Short, token-free text for the `error` column, a log or an email. */
@@ -73,10 +74,15 @@ export function classify(status: number, e: GraphError | null, token: string): F
   return { kind: 'failed', ...base };
 }
 
-export type FacebookRequest = { pageId: string; accessToken: string; message: string; link: string };
+/**
+ * `photoUrl` set (brief 2026-11-08-social-picture: the Compose picture's public URL) = a PHOTO post: `POST /<page-id>/photos` with
+ * `url` + `caption` (the caller puts the tagged link in the message, `captionWithLink`). Unset = today's `/feed` link post, unchanged.
+ */
+export type FacebookRequest = { pageId: string; accessToken: string; message: string; link: string; photoUrl?: string };
 
-/** The form body of a post: `message`, `link`, `access_token`. */
+/** The form body of a post: `message`, `link`, `access_token`; of a photo post: `url`, `caption`, `access_token`. */
 export function postForm(r: FacebookRequest): string {
+  if (r.photoUrl) return new URLSearchParams({ url: r.photoUrl, caption: r.message, access_token: r.accessToken }).toString();
   return new URLSearchParams({ message: r.message, link: r.link, access_token: r.accessToken }).toString();
 }
 
@@ -84,7 +90,7 @@ export async function postToFacebook(r: FacebookRequest, fetchImpl: FetchLike = 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetchImpl(feedUrl(r.pageId), {
+    const res = await fetchImpl(r.photoUrl ? photosUrl(r.pageId) : feedUrl(r.pageId), {
       method: 'POST',
       signal: ctrl.signal,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -92,14 +98,17 @@ export async function postToFacebook(r: FacebookRequest, fetchImpl: FetchLike = 
     });
     if (res.status >= 200 && res.status < 300) {
       let id = '';
+      let photoJson: unknown = null;
       try {
         const j = (await res.json()) as { id?: unknown };
         if (typeof j.id === 'string') id = j.id;
+        if (r.photoUrl) photoJson = j;
       } catch {
         // no body
       }
-      // A 2xx with no id still means "posted": never re-post it. Keep a marker the screen can't link.
-      return { kind: 'posted', postId: id || 'unknown' };
+      // A 2xx with no id still means "posted": never re-post it. Keep a marker the screen can't link. (A photo answers
+      // { id, post_id }: `post_id` is the feed post, `id` the photo; prefer the post.)
+      return { kind: 'posted', postId: postIdOf(photoJson) || id || 'unknown' };
     }
     return classify(res.status, await graphError(res), r.accessToken);
   } catch (err) {
@@ -108,6 +117,11 @@ export async function postToFacebook(r: FacebookRequest, fetchImpl: FetchLike = 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** A photo answer's `post_id` (the feed post), or ''. */
+function postIdOf(j: unknown): string {
+  return j && typeof j === 'object' && typeof (j as { post_id?: unknown }).post_id === 'string' ? (j as { post_id: string }).post_id : '';
 }
 
 /** The connection check's verdict: a page name, or an error class (never a body). */
