@@ -5,6 +5,16 @@ Every behaviour sits behind flags that default OFF.
 
 **Owner rulings this design is bound by:**
 
+- **2026-11-08 (latest; supersedes the 24 Oct "Free = `TaxscanNewsletterSubscribers` only" ruling below).** Free =
+  (a) every contact on `TaxscanNewsletterSubscribers` (`SwZafy`) + (b) every CMS account with status `free` or
+  `ended`, one copy per address. Excluded: consent `false`, our unsubscribes, deleted accounts, Premium. Rolled out
+  in steps of about 10k a day, and sent only when there is credit. **Built (brief 2026-11-08-free-cms-readers):** with
+  `AUDIENCE_FREE_READERS` on, a `free` account gives its address the role **FREE** (§4), stored like FORMER, tagged
+  `TS Free reader (auto)` (`AUDIENCE_MC_TAG_FREE`); the writer admits at most `AUDIENCE_FREE_ADMIT_PER_DAY` new FREE
+  members per IST day (§6.4a). `ended` was already FORMER. Free then targets two Mailercloud segments (`SwZafy` minus
+  the Premium and No-marketing tags; Former OR Free-reader tag) via `DIGEST_FREE_SEGMENT_IDS`. Also 8 Nov: both pulls
+  pause `AUDIENCE_PULL_PAGE_PAUSE_MS` (2 s) between CMS pages, at the CMS's request (§5.2).
+
 - **2026-10-24 (latest; supersedes the erasure parts below and the v1.3 email-on-erasure idea).** On
   `erasure: true` the **CMS deletes the contact from Mailercloud itself** (whole account, idempotent, CMS alarms on
   failure) and **sends us no email**. We only erase our own records keyed by `account_id` (hash kept so we never mail
@@ -209,7 +219,8 @@ model CmsAccount {
 model AudienceMember {
   emailHash       String    @id
   email           String                         // normalised; NEVER logged; not in backups
-  desiredRole     String    // PREMIUM|FORMER|NONE   (memberRole(), the single definition)
+  desiredRole     String    // PREMIUM|FORMER|FREE|NONE   (memberRole(), the single definition)
+  admittedAt      DateTime? // FREE only: admitted under the daily cap (8 Nov); null = waiting
   noMarketing     Boolean   // any linked account said consent=false
   suppressed      Boolean   // EmailSuppression by address OR by any linked accountId
   appliedTags     String[]  // what Mailercloud has acknowledged; [] = nothing of ours
@@ -248,9 +259,14 @@ accounts that share an address:
 
 - **PREMIUM** if any account is `active` or `cancelled`;
 - otherwise **FORMER** if any is `ended`;
+- otherwise, with `AUDIENCE_FREE_READERS` on, **FREE** if any is `free` and its consent is not an explicit `false`
+  (`null` counts as consent);
 - otherwise **NONE**.
 
-A plain `free` account is NONE: the Free digest reaches free sign-ups through the existing hand lists, not through us.
+Precedence PREMIUM > FORMER > FREE > NONE. With `AUDIENCE_FREE_READERS` off a plain `free` account is NONE (the Free
+digest then reaches free sign-ups only through the hand list). Moves between NONE and FREE never count toward the
+`change_too_large` cap (FREE counts as NONE there; a move between FREE and PREMIUM or FORMER still counts), and the
+send guard's `pending_writes` stays about Premium only.
 
 `noMarketing` is true if any of those accounts has `consentValue === false`.
 
@@ -258,6 +274,8 @@ A plain `free` account is NONE: the Free digest reaches free sign-ups through th
 
 - PREMIUM;
 - FORMER;
+- FREE (flag on; the first full load after the switch stores the ~74k free readers' addresses: an equal-seq list
+  row that would make a new FREE member is applied, not skipped);
 - `noMarketing` (~27 today);
 - in the middle of an erasure or email-change clean-up.
 
@@ -364,6 +382,9 @@ higher `seq` (for example `account.created` with `reactivated: true`) revives th
   harmless), 5,000 rows a page. When it finishes it stores `meta.as_of` from the first page.
 - **Full pull**, nightly at 04:30 IST: before the backup has aged and before the 06:30 build. It is also the
   **first load**.
+- **Page pause** (8 Nov, owner yes at the CMS's request: the 04:30 full pull's 17 pages back to back set off a
+  7-hour CMS outage the CMS team traced to its own bug): both pulls wait `AUDIENCE_PULL_PAGE_PAUSE_MS` (default 2 s,
+  `0` = none) after applying a page and before requesting the next; no wait after the last page.
 
 ### 5.3 Full-load acceptance and the absence rule
 
@@ -499,6 +520,24 @@ inserted** (`createManyAndReturn` already returns them).
 
 ---
 
+### 6.4a FREE admission (8 Nov, brief 2026-11-08-free-cms-readers)
+
+A FREE member we have never written (no `admittedAt`, none of our tags) **waits**. Each writer tick:
+
+1. every other due member first (PREMIUM, FORMER, removals): never held by FREE admissions;
+2. due FREE members already admitted, or already carrying one of our tags (a role swap such as FORMER → FREE is
+   never capped);
+3. only while the IST day has room under `AUDIENCE_FREE_ADMIT_PER_DAY`: waiting members not looked up yet get our GET
+   (no write; it records `mcState`); then the waiting ones Mailercloud already holds (on `SwZafy` or any list) are
+   admitted first, in email-hash order; the rest only once no waiting member is still unlooked-up, also in email-hash
+   order. Admitting = stamping `admittedAt` and writing the member in the same tick (create into
+   `AUDIENCE_MC_LIST_ID` after a 404, as today). Suppressed waiting members are never admitted.
+
+Removals are never capped: a FREE member that turns NONE, deleted or unsubscribed loses the Free tag at once (a
+suppressed FREE member no longer wants the Free tag). Cap `0` = no FREE member is looked up or admitted. The drift
+sample leaves waiting members out. Refusals, Retry refused, pacing and the 07:10–08:00 pause apply to FREE as to
+everyone. Audience card (ADMIN): one FREE line, counts only.
+
 ## 7. The digest's audience wiring
 
 ### 7.1 Targets: one definition, derived
@@ -625,6 +664,11 @@ premium exclude cannot be trusted, and paid members would be shown the subscript
 **Settings:**
 
 - `AUDIENCE_FORMER_TO_FREE` = `true` (Q1; `false` means ended members get no Former tag);
+- `AUDIENCE_FREE_READERS` = off (8 Nov): `free` accounts become FREE members (§4); needs `AUDIENCE_MC_TAG_FREE`
+  (the `TS Free reader (auto)` tag id; unset with the flag on = a boot warning `[audience] config problem: …` and no
+  FREE writes, Premium / Former writes go on);
+- `AUDIENCE_FREE_ADMIT_PER_DAY` = `0` (8 Nov): most new FREE members admitted into Mailercloud per IST day; `0` = none;
+- `AUDIENCE_PULL_PAGE_PAUSE_MS` = `2000` (8 Nov): the wait between CMS list pages in both pulls; `0` = none;
 - `AUDIENCE_CONSENT_RULE` = `exclude_false`;
 - the thresholds named above.
 

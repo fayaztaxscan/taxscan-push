@@ -60,11 +60,19 @@ export function cronPull(mode: PullMode, deps: PullDeps = {}, attempt = 0, wait:
   });
 }
 
+/** FREE-reader config faults (variable names only). */
+export function freeConfigProblems(cfg: AudienceEnv): string[] {
+  return cfg.freeReaders && !cfg.mailercloud.tagFree ? ['AUDIENCE_FREE_READERS is on but AUDIENCE_MC_TAG_FREE is unset — FREE members are not written'] : [];
+}
+
 export function startAudienceSync(cfg: AudienceEnv = env.audience, opts: AudienceStartOptions = {}): AudienceBootState {
   /* eslint-disable no-console */
   if (cfg.erasePathRemovedButSet) {
     console.warn('[audience] AUDIENCE_ERASE_IN_MAILERCLOUD is set but was removed (the CMS erases in Mailercloud) — ignored; unset it');
   }
+  // Brief 2026-11-08-free-cms-readers: shown while off too (names only). Not a `problems` entry: it must
+  // not stop the sync — only FREE writes are skipped; Premium / Former writes go on.
+  for (const p of freeConfigProblems(cfg)) console.warn(`[audience] config problem: ${p}`);
   if (!cfg.enabled) {
     console.log('[audience] disabled (set AUDIENCE_SYNC_ENABLED=true to start)');
     // Shown while off too, so a bad variable is fixed BEFORE the flag goes on (names only).
@@ -94,7 +102,8 @@ export function startAudienceSync(cfg: AudienceEnv = env.audience, opts: Audienc
   }
   console.log(
     `[audience] enabled — CMS webhook ingest on; pulls ${pullsReady ? 'on (incremental hourly at :10, full 04:30 IST)' : 'off (CMS_FEED_PULL_SECRET / CMS_FEED_BASE_URL unset)'}` +
-      `; Mailercloud writer ${cfg.writeMailercloud ? 'LIVE (tags written, drift check 05:30 IST)' : 'dry-run (counts only)'}`,
+      `; Mailercloud writer ${cfg.writeMailercloud ? 'LIVE (tags written, drift check 05:30 IST)' : 'dry-run (counts only)'}` +
+      `; free readers ${cfg.freeReaders ? `on (admit ${cfg.freeAdmitPerDay}/day)` : 'off'}; CMS page pause ${cfg.pullPagePauseMs} ms`,
   );
   return 'enabled';
   /* eslint-enable no-console */

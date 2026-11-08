@@ -7,10 +7,13 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
-**⏳ PENDING (2026-11-07 18:30 IST) — the current list; the full version is memory `project_taxscan_push_state`. Older lists below are history.**
-0. **Monday 9 Nov (owner):** (a) ship develop, now holding `social-every-link` + `free-digest-segment` (both merged 7 Nov, settings unset; Release check, ~13:00 window, owner's yes, then set `SOCIAL_ANY_LINK_FROM` to the switch-on moment; Free stays staff-only until its runbook rollout; `/pricing` on 8 Nov 07:45 IST misses unless posted by hand); (b) owner presses Retry refused for the 79 refused paid readers, who get no paid digest (the hand-made one no longer goes to paid readers, owner 7 Nov). Build brief `2026-11-07-free-digest-segment` when the owner says go.
+**⏳ PENDING (2026-11-07 evening) — the current list; the full 18-item version is memory `project_taxscan_push_state`. Older lists below are history.**
+PR #106 LIVE ~19:14 IST (main 8bd1874); `SOCIAL_ANY_LINK_FROM`=2026-11-07T13:45:53Z, never move it earlier; `DIGEST_FREE_SEGMENT_IDS` unset.
+a. Retry refused pressed 7 Nov 19:26 IST: 0 of 79 paid got through, 1 of 295 former. Mailercloud answers "Invalid email" for well-formed addresses (74 of 79 on domains with MX). Next: Anagha tries 3 by hand; if the same, add them to the CMS signed-in notice.
+b. 8 Nov: planning checks the first real page post, `/pricing` 07:45 IST, on all channels. Team does not hand-post it.
+c. Free: dialog Follow-up 1 (merged to develop, next release: Release check + owner's yes) → Anagha's test + real segments → one real test send → credit stop-and-alert brief → real segment on the owner's yes.
 
-**(2026-11-06 13:05 IST list; items 1–6 still stand. Item 2 read 7 Nov: 0 unsubscribes, 0 hard bounces, 0 spam on both paid sends per Mailercloud's reports.)**
+**(2026-11-06 13:05 IST list, kept for items 2, 3, 5, 6; items 1 + 4 are superseded above. Item 2 read 7 Nov: 0 unsubscribes, 0 hard bounces, 0 spam on both paid sends.)**
 1. Owner presses **Retry refused** once, after Anagha's hand test of 5 refused readers; planning then reads the `[audience] writer refused` log lines and decides the fix. Retry also syncs any reader tagged by hand.
 2. Read the first paid send's unsubscribe and complaint rates after a day (go/no-go: unsubscribes < 0.5%, hard bounces < 2%, complaints < 0.1%).
 3. Before the send guard goes on: Audience card shows "Premium digest held" with the send guard off, because refused readers count as pending writes (79 against a limit of 27). Refused readers must not hold the digest. Also the guard's target must become the segment (`audienceTarget` passes tag ids, which Mailercloud refuses).

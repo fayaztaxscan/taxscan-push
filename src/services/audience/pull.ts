@@ -38,8 +38,10 @@ import { raiseAudienceAlert, sendAudienceAlerts, type AudienceAlertDeps } from '
  * Applying:
  *  - each page's stored accounts are pre-fetched; a row whose seq is lower than ours, a live row for
  *    an erased account, and an EQUAL-seq row whose content already matches are skipped without a
- *    transaction — except an equal-seq row with a consent lift due (the lift's retry path) or whose
- *    member row lost its address (after a restore: the full load refills addresses);
+ *    transaction — except an equal-seq row with a consent lift due (the lift's retry path), whose
+ *    member row lost its address (after a restore: the full load refills addresses), or — with
+ *    AUDIENCE_FREE_READERS on — a live, consenting `free` row whose address has no member row yet (the
+ *    first full load after the switch stores the ~74k free readers' addresses we never kept);
  *  - the rest go in chunked transactions with `{ timeout }`; a chunk that fails on a deadlock /
  *    serialization failure / P2002 (two first sightings racing) is retried once, then each of its
  *    rows is applied on its own (retried ×3). A row that still fails is counted, never aborts the
@@ -58,6 +60,9 @@ import { raiseAudienceAlert, sendAudienceAlerts, type AudienceAlertDeps } from '
  * `lastFullOkAt`, `lastFullRowCount` and `cmsCounts` (`meta.counts`, if the CMS sends it). An
  * incremental load pages from `updated_since = max(lastIncrAsOf, lastFullAsOf) − 10 min` and, when
  * every page answered, stores `lastIncrAsOf` / `lastIncrOkAt`; it needs a complete full load first.
+ *
+ * Page pause (owner 8 Nov, at the CMS's request): after applying a page and before requesting the next,
+ * both pulls wait AUDIENCE_PULL_PAGE_PAUSE_MS (default 2 s; 0 = none). No wait after the last page.
  *
  * Single-flight: one pull at a time per process (`isPullRunning`; the writer waits for it). Logs one
  * line per run, counts only.
@@ -108,7 +113,11 @@ export type PullDeps = {
   /** false = do not email alerts after the run (tests). Markers are still recorded. */
   sendAlerts?: boolean;
   alertDeps?: AudienceAlertDeps;
+  /** The wait between pages (tests inject one that does not sleep). */
+  pause?: (ms: number) => Promise<void>;
 };
+
+const realPause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 let running: PullMode | null = null;
 
@@ -192,7 +201,8 @@ async function pullOnce(mode: PullMode, deps: PullDeps): Promise<PullReport> {
   }
 
   const runStartedAt = now();
-  const mailedBefore = await prisma.audienceMember.count({ where: { desiredRole: { not: 'NONE' } } });
+  // FREE members are left out: their moves never count toward the change cap (`countsAsRoleChange`).
+  const mailedBefore = await prisma.audienceMember.count({ where: { desiredRole: { notIn: ['NONE', 'FREE'] } } });
   const ctx: Ctx = {
     mode,
     cfg,
@@ -248,6 +258,7 @@ async function pullOnce(mode: PullMode, deps: PullDeps): Promise<PullReport> {
         break;
       }
       cursors.add(cursor);
+      if (cfg.pullPagePauseMs > 0) await (deps.pause ?? realPause)(cfg.pullPagePauseMs);
     }
   } catch (err) {
     pageError = err instanceof CmsPullError ? `page_failed${err.http ? `_${err.http}` : ''}` : 'apply_failed';
@@ -377,15 +388,19 @@ async function applySnapshots(snaps: AccountSnapshot[], ctx: Ctx): Promise<void>
   const equalSeq = snaps.filter((s) => stored.get(s.accountId)?.seq === s.seq);
   const eqHashes = [...new Set(equalSeq.map(hashOf).filter((h): h is string => !!h))];
   const liftHashes = [...new Set(equalSeq.filter((s) => s.consentValue === true && s.consentAt).map(hashOf).filter((h): h is string => !!h))];
-  const [addressless, liftable] = await Promise.all([
+  const [members, liftable] = await Promise.all([
     eqHashes.length
-      ? prisma.audienceMember.findMany({ where: { emailHash: { in: eqHashes }, email: null }, select: { emailHash: true } })
+      ? prisma.audienceMember.findMany({ where: { emailHash: { in: eqHashes } }, select: { emailHash: true, email: true } })
       : Promise.resolve([]),
     liftHashes.length
       ? prisma.emailSuppression.findMany({ where: { emailHash: { in: liftHashes }, reason: { in: [...LIFTABLE_REASONS] } }, select: { emailHash: true, lastSeenAt: true } })
       : Promise.resolve([]),
   ]);
-  const refill = new Set(addressless.map((m) => m.emailHash));
+  const refill = new Set(members.filter((m) => m.email === null).map((m) => m.emailHash));
+  const hasMember = new Set(members.map((m) => m.emailHash));
+  // A row that would make a NEW FREE member (no member row for its address yet) is applied, not skipped.
+  const wouldBeNewFree = (s: AccountSnapshot, h: string | null): boolean =>
+    ctx.cfg.freeReaders && !!h && !hasMember.has(h) && s.status === 'free' && !s.deleted && s.consentValue !== false;
 
   const todo: AccountSnapshot[] = [];
   for (const s of snaps) {
@@ -407,7 +422,7 @@ async function applySnapshots(snaps: AccountSnapshot[], ctx: Ctx): Promise<void>
           !!s.consentAt &&
           s.consentAt.getTime() <= now.getTime() + CONSENT_FUTURE_TOLERANCE_MS &&
           liftable.some((r) => r.emailHash === h && s.consentAt!.getTime() > r.lastSeenAt.getTime());
-        if (!liftDue && !(h && refill.has(h))) {
+        if (!liftDue && !(h && refill.has(h)) && !wouldBeNewFree(s, h)) {
           ctx.report.unchanged += 1;
           continue;
         }

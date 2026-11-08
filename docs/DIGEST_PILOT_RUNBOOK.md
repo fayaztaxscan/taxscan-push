@@ -450,6 +450,28 @@ both set (Mailercloud may mail the union, which would reach the whole list), if 
 segment id is also in `DIGEST_PREMIUM_SEGMENT_IDS`. **Roll back:** unset `DIGEST_FREE_SEGMENT_IDS` and put `DIGEST_FREE_LIST_IDS`
 (with its exclude) back, again outside 06:15–17:00 IST.
 
+### Free to CMS free readers, in daily batches (brief 2026-11-08-free-cms-readers)
+
+Owner, 8 Nov: Free = `SwZafy` + every CMS `free` / `ended` account, one copy per address; about 10k new readers a day;
+sent only when there is credit. `ended` readers already carry the Former tag. In this order:
+
+1. The owner creates the tag `TS Free reader (auto)` in Mailercloud. Its id goes into `AUDIENCE_MC_TAG_FREE`; then
+   `AUDIENCE_FREE_READERS`=true with `AUDIENCE_FREE_ADMIT_PER_DAY` still `0`. After the next 04:30 full load: the Audience
+   card's Free readers line shows ~74k eligible and nothing admitted, and **no breaker opened** (NONE ⇄ FREE does not
+   count toward the change cap). Boot line: `free readers on (admit 0/day)`. With the flag on and the tag unset, boot warns
+   `[audience] config problem: … AUDIENCE_MC_TAG_FREE …` and nothing is written for FREE members.
+2. Set `AUDIENCE_FREE_ADMIT_PER_DAY`=10000. Readers Mailercloud already holds (e.g. on `SwZafy`) are admitted first; the rest
+   are created in `AUDIENCE_MC_LIST_ID`. ~92 members a minute ≈ 2 h of writes a day, clear of the 07:10–08:00 pause.
+   **Each day before the next batch:** read the Free line's refused count (about 4 % "Invalid email" is expected), then
+   bounces and complaints on the last Free send.
+3. Anagha builds the two Free segments: `SwZafy` minus the Premium and No-marketing tags; and tagged Former **or**
+   `TS Free reader (auto)`. Both ids go into `DIGEST_FREE_SEGMENT_IDS` (comma-separated), changed only outside
+   06:15–17:00 IST (the section above applies). Free goes on **Send Free** only, and only when there is credit.
+
+**Roll back:** `AUDIENCE_FREE_ADMIT_PER_DAY`=0 stops admissions at once (already-tagged readers keep their tag). Turning
+`AUDIENCE_FREE_READERS` off stops FREE writes; members already FREE keep that role until a CMS change to their account
+recomputes them, so to empty the Free audience take the Free-reader segment out of `DIGEST_FREE_SEGMENT_IDS`.
+
 ### Stage 4: full
 
 - **Before switching:**

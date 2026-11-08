@@ -38,7 +38,8 @@ const addr = (local: string) => {
   return e;
 };
 
-const cfg: AudienceEnv = parseAudienceEnv({ AUDIENCE_SYNC_ENABLED: 'true' });
+// The 2 s CMS page pause (brief 2026-11-08-free-cms-readers) is tested in audienceFreeReaders.test.ts; off here.
+const cfg: AudienceEnv = parseAudienceEnv({ AUDIENCE_SYNC_ENABLED: 'true', AUDIENCE_PULL_PAGE_PAUSE_MS: '0' });
 const noSleep = () => Promise.resolve();
 
 let fake: FakeCms;
