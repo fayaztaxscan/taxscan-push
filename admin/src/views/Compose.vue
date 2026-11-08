@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
+import { apiErrorMessage, DISPATCH_TIMEOUT_MS, PUSH_REQUEST, useApi } from '../composables/useApi';
+import type { RequestOptions } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { useTestDevice } from '../composables/useTestDevice';
 import ConfirmPush from '../components/ConfirmPush.vue';
@@ -57,6 +58,13 @@ const picture = ref<SocialPicture | null>(null);
 const pictureUploading = ref(false);
 const pictureError = ref<string | null>(null);
 
+// A 2 MB picture on a phone connection can outlast the shared 15 s, so the upload gets the push budget (90 s).
+// A POST is never retried by useApi. With no reply in time the server may still store it, and the same file
+// always gives the same stored picture, so choosing it again is safe and is how the preview comes back.
+const PICTURE_MAYBE_UPLOADING =
+  'The picture may still be uploading. In a moment, choose the same file again to see its preview.';
+const PICTURE_UPLOAD: RequestOptions = { timeoutMs: DISPATCH_TIMEOUT_MS, unknownMessage: PICTURE_MAYBE_UPLOADING };
+
 /** Same-origin path of the stored picture, so the preview and download work from any admin host. */
 const pictureSrc = computed(() => {
   if (!picture.value) return null;
@@ -75,12 +83,11 @@ async function onPictureFile(ev: Event) {
   pictureUploading.value = true;
   pictureError.value = null;
   try {
-    picture.value = await api.upload<SocialPicture>('/api/social-picture', file);
+    picture.value = await api.upload<SocialPicture>('/api/social-picture', file, PICTURE_UPLOAD);
   } catch (e) {
     picture.value = null;
-    // No reply in time: an upload is safe to repeat (the same bytes make the same picture), so say that, not "check before trying again".
     pictureError.value = (e as { outcomeUnknown?: boolean })?.outcomeUnknown
-      ? 'The picture did not finish uploading. Choose the file again.'
+      ? PICTURE_MAYBE_UPLOADING
       : apiErrorMessage(e);
   } finally {
     pictureUploading.value = false;
@@ -133,9 +140,17 @@ function newRequestId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
+// Set while a successful send clears its picture, so that clearing alone doesn't mint a new id:
+// pressing Send again on the unchanged text must still meet the server's duplicate_send refusal.
+let keepRequestIdOnce = false;
+
 watch(
   [title, body, url, icon, targetMode, selectedTopics, breaking, force, scheduleMode, scheduledAtLocal, picture],
   () => {
+    if (keepRequestIdOnce) {
+      keepRequestIdOnce = false;
+      return;
+    }
     requestId.value = null;
   },
   { deep: true },
@@ -201,6 +216,12 @@ async function send() {
   try {
     const res = await api.post<DispatchResult>('/api/send', buildPayload(), PUSH_REQUEST);
     result.value = res;
+    // The picture belongs to the push just accepted; left attached it would silently ride on the next push's
+    // LinkedIn and Facebook posts. Every other field stays. A refusal or no reply lands in catch and keeps it.
+    if (picture.value) {
+      keepRequestIdOnce = true;
+      removePicture();
+    }
   } catch (e) {
     errorBanner.value = apiErrorMessage(e);
   } finally {
