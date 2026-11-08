@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma';
 import { env, type AudienceEnv } from '../../lib/env';
 import { todaysCounters } from './breaker';
 import { GUARD_SHORT, audienceGuard, loadGuardSnapshot, type GuardResult } from './guard';
+import { freeAdmittedToday } from './writer';
 
 /**
  * The Digests → Audience card payload (docs/CMS_AUDIENCE_SYNC_DESIGN.md §10.2). Postgres only — it never calls the
@@ -64,6 +65,7 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
     prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'FORMER' } }),
     todaysCounters(prisma, portal, now),
   ]);
+  const free = cfg.freeReaders ? await freeCounts(now, cfg) : null;
   const drift = (st?.drift ?? null) as { at?: unknown; premiumMailercloud?: unknown } | null;
   return {
     enabled: true as const,
@@ -82,6 +84,8 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
     },
     last: { webhookAt: iso(st?.lastWebhookAt), incrementalAt: iso(st?.lastIncrOkAt), fullAt: iso(st?.lastFullOkAt) },
     refused: { premium: refusedPremium, former: refusedFormer },
+    // AUDIENCE_FREE_READERS on only (absent when off). Counts only.
+    ...(free ? { free } : {}),
     errors24h: { writerRetryable: retryable, writerFatal: fatal, seqConflict: counters.seqConflict, unknownStatus: counters.unknownStatus },
     guard: premium.ok ? { ok: true as const } : { ok: false as const, check: premium.check, plain: premium.plain },
     breaker: {
@@ -92,4 +96,22 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
       review: st?.breakerOpenAt ? reviewCounts(st.pendingReview) : {},
     },
   };
+}
+
+/**
+ * The FREE line (brief 2026-11-08-free-cms-readers): eligible = desired FREE; admitted = admitted under the
+ * cap (ever); tagged = carrying the Free tag; refused = Mailercloud refused it (FATAL); waiting = not admitted
+ * yet (never written, not suppressed); admittedToday against `cap` (AUDIENCE_FREE_ADMIT_PER_DAY).
+ */
+async function freeCounts(now: Date, cfg: AudienceEnv) {
+  const tag = cfg.mailercloud.tagFree;
+  const [eligible, admitted, tagged, refused, waiting, admittedToday] = await Promise.all([
+    prisma.audienceMember.count({ where: { desiredRole: 'FREE' } }),
+    prisma.audienceMember.count({ where: { desiredRole: 'FREE', admittedAt: { not: null } } }),
+    tag ? prisma.audienceMember.count({ where: { appliedTags: { has: tag } } }) : Promise.resolve(0),
+    prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'FREE' } }),
+    prisma.audienceMember.count({ where: { desiredRole: 'FREE', admittedAt: null, appliedTags: { isEmpty: true }, email: { not: null }, suppressed: false } }),
+    freeAdmittedToday(now),
+  ]);
+  return { eligible, admitted, tagged, refused, waiting, admittedToday, cap: cfg.freeAdmitPerDay, tagConfigured: tag !== '' };
 }

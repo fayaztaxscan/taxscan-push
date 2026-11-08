@@ -379,13 +379,13 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
 
   for (const h of list) {
     const linked = byHash.get(h)!;
-    const { role, noMarketing } = memberRole(linked, { formerToFree: cfg.formerToFree });
+    const { role, noMarketing } = memberRole(linked, { formerToFree: cfg.formerToFree, freeReaders: cfg.freeReaders });
     const liveIds = linked.filter(isLive).map((a) => a.accountId);
     await tx.$queryRaw`SELECT 1 FROM "AudienceMember" WHERE "emailHash" = ${h} FOR UPDATE`;
     const existing = await tx.audienceMember.findUnique({ where: { emailHash: h } });
     const erase = opts.eraseHash === h && liveIds.length === 0;
     const resubscribePending = !erase && (opts.resubscribeHash === h || (existing?.resubscribePending ?? false));
-    // Fast path (most of a first full load: plain free readers): nothing held, nothing to hold.
+    // Fast path (plain free readers while AUDIENCE_FREE_READERS is off): nothing held, nothing to hold.
     if (!existing && role === 'NONE' && !noMarketing && !resubscribePending) continue;
     // By address OR by any live account holding it (an opt-out follows an email change). A plain
     // read: the lock order stays EmailSuppression (writers) → AudienceMember.
@@ -400,7 +400,7 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
       if (existing) {
         await tx.audienceMember.delete({ where: { emailHash: h } });
         out.changes += 1;
-        if (existing.desiredRole !== 'NONE') out.roleChanges += 1;
+        if (countsAsRoleChange(existing.desiredRole, 'NONE')) out.roleChanges += 1;
         if (existing.desiredRole === 'PREMIUM') out.premiumRemovals += 1;
       }
       continue;
@@ -418,16 +418,28 @@ export async function recomputeMembers(tx: Tx, hashes: readonly string[], opts: 
     if (!existing) {
       await tx.audienceMember.create({ data: { emailHash: h, ...data, nextAttemptAt: now } });
       out.changes += 1;
-      if (role !== 'NONE') out.roleChanges += 1;
+      if (countsAsRoleChange('NONE', role)) out.roleChanges += 1;
       continue;
     }
     if (memberUnchanged(existing, data)) continue;
     await tx.audienceMember.update({ where: { emailHash: h }, data: { ...data, nextAttemptAt: erase ? null : now } });
     out.changes += 1;
-    if (existing.desiredRole !== role) out.roleChanges += 1;
+    if (countsAsRoleChange(existing.desiredRole, role)) out.roleChanges += 1;
     if (existing.desiredRole === 'PREMIUM' && role !== 'PREMIUM') out.premiumRemovals += 1;
   }
   return out;
+}
+
+/**
+ * Whether a role move counts toward the breaker's `change_too_large` cap. FREE counts as NONE here (brief
+ * 2026-11-08-free-cms-readers): switching AUDIENCE_FREE_READERS on creates ~74k FREE members at once, and FREE
+ * reaches Mailercloud only through the daily admission cap, so NONE ⇄ FREE never counts. A move between FREE
+ * and PREMIUM or FORMER still counts (a mass FREE → PREMIUM is a Premium change), and a Premium member that
+ * stops being Premium is still a Premium removal (`premiumRemovals`).
+ */
+export function countsAsRoleChange(from: string, to: string): boolean {
+  const eff = (r: string) => (r === 'FREE' ? 'NONE' : r);
+  return eff(from) !== eff(to);
 }
 
 /** Recompute one address (e.g. after a suppression changed). */

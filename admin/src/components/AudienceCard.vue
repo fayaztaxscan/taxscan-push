@@ -32,6 +32,8 @@ type Card =
       guardActive: boolean;
       counts: Counts;
       refused?: { premium: number; former: number };
+      /** Present only when AUDIENCE_FREE_READERS is on (brief 2026-11-08-free-cms-readers). Counts only. */
+      free?: { eligible: number; admitted: number; tagged: number; refused: number; waiting: number; admittedToday: number; cap: number; tagConfigured: boolean };
       last: { webhookAt: string | null; incrementalAt: string | null; fullAt: string | null };
       errors24h: { writerRetryable: number; writerFatal: number; seqConflict: number; unknownStatus: number };
       guard: { ok: true } | { ok: false; check: string; plain: string };
@@ -72,8 +74,22 @@ const reviewRows = computed(() =>
 
 const refusedPremium = computed(() => full.value?.refused?.premium ?? 0);
 const refusedFormer = computed(() => full.value?.refused?.former ?? 0);
-const refusedTotal = computed(() => refusedPremium.value + refusedFormer.value);
+// FREE refusals count too: Retry refused retries every refused member (brief 2026-11-08-free-cms-readers).
+const refusedFree = computed(() => full.value?.free?.refused ?? 0);
+const refusedTotal = computed(() => refusedPremium.value + refusedFormer.value + refusedFree.value);
 const refusedLine = (n: number, role: string): string => `${n.toLocaleString('en-IN')} ${role} ${n === 1 ? 'reader was' : 'readers were'} refused by Mailercloud`;
+
+/** The one FREE line: eligible · admitted (today of cap) · tagged · refused · waiting, plus the two plain warnings. */
+const freeLine = computed(() => {
+  const f = full.value?.free;
+  if (!f) return null;
+  const n = (v: number) => v.toLocaleString('en-IN');
+  const today = f.cap === 0 ? 'adding is paused: daily limit 0' : `${n(f.admittedToday)} today of ${n(f.cap)}`;
+  return {
+    counts: `Free readers: ${n(f.eligible)} eligible · ${n(f.admitted)} admitted (${today}) · ${n(f.tagged)} tagged · ${n(f.refused)} refused · ${n(f.waiting)} waiting to be added.`,
+    warn: f.tagConfigured ? null : 'The Free tag isn’t set, so nothing is written to Mailercloud for free readers.',
+  };
+});
 
 const num = (n: number | null): string => (n === null ? '—' : n.toLocaleString('en-IN'));
 function when(iso: string | null): string {
@@ -171,8 +187,14 @@ defineExpose({ load });
       <div v-if="refusedTotal > 0" class="aud-refused">
         <p v-if="refusedPremium > 0">{{ refusedLine(refusedPremium, 'Premium') }} and have no tag.</p>
         <p v-if="refusedFormer > 0">{{ refusedLine(refusedFormer, 'Former') }}.</p>
+        <p v-if="refusedFree > 0">{{ refusedLine(refusedFree, 'Free') }}.</p>
         <button class="btn" :disabled="retryBusy" @click="retrying = true">Retry refused</button>
       </div>
+
+      <p v-if="freeLine" class="aud-free">
+        {{ freeLine.counts }}
+        <span v-if="freeLine.warn" class="aud-free-warn">{{ freeLine.warn }}</span>
+      </p>
 
       <table class="stack aud-table">
         <thead>
@@ -292,6 +314,17 @@ defineExpose({ load });
 }
 .aud-refused .btn {
   margin-top: 4px;
+}
+.aud-free {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.aud-free-warn {
+  display: block;
+  margin-top: 4px;
+  color: var(--warn);
+  font-weight: 600;
 }
 .aud-table {
   margin-top: 4px;

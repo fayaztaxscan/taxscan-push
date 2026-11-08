@@ -29,6 +29,19 @@ import { ContactError, createContactClient, type McContact, type McContactClient
  *    the No-marketing tag, an exclusion; removals are always allowed;
  *  - NO delete calls at all (owner 24 Oct: the CMS deletes on erasure).
  *
+ * FREE members (brief 2026-11-08-free-cms-readers, AUDIENCE_FREE_READERS): the Free-reader tag only.
+ * A FREE member we have never written (no `admittedAt`, none of our tags) WAITS until the IST day has room
+ * under AUDIENCE_FREE_ADMIT_PER_DAY (0 = none admitted, no Mailercloud call for any). Each tick:
+ *  1. every other due member first (PREMIUM, FORMER, NONE removals) — never held by FREE admissions;
+ *  2. due FREE members already admitted (or already carrying one of our tags: a role swap, never capped);
+ *  3. only with room today: waiting members not looked up yet get our GET (no write), then the
+ *     waiting ones Mailercloud already holds are admitted first, in email-hash order; the rest (absent in
+ *     Mailercloud) only once no waiting member is still unlooked-up, also in email-hash order. Admitting =
+ *     stamping `admittedAt` and writing it in the same tick. Suppressed waiting members are never admitted.
+ * Removals are never capped: a FREE member that turns NONE / unsubscribed / deleted loses the Free tag at
+ * once (a suppressed FREE member no longer wants the Free tag). With AUDIENCE_MC_TAG_FREE unset, FREE
+ * members are skipped entirely and every other write goes on (boot warns).
+ *
  * Gates, in order: the pull running (wait), the 07:10–08:00 IST send window (DIGEST_SEND_AT − 20 /
  * + 30 min: the audience the guard approved is the audience Mailercloud resolves), no complete full
  * load yet, the breaker open, then AUDIENCE_SYNC_WRITE_MAILERCLOUD: off = DRY RUN (counts only, rows
@@ -50,7 +63,9 @@ export const DRIFT_SAMPLE = 50;
 /** Premium count tolerance for the drift alert (the send guard's numbers, design §7.2). */
 export const DRIFT_MIN_ABS = 25;
 
-export type TagRole = 'premium' | 'former' | 'noMarketing';
+export type TagRole = 'premium' | 'former' | 'free' | 'noMarketing';
+/** Our tag ids by role; `free` may be absent (= unset: AUDIENCE_FREE_READERS off or AUDIENCE_MC_TAG_FREE empty). */
+export type TagIds = Record<Exclude<TagRole, 'free'>, string> & { free?: string };
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
 
@@ -68,16 +83,33 @@ export function retryDelayMin(attempts: number): number {
   return RETRY_DELAYS_MIN[attempts - 1] ?? RETRY_HOURLY_MIN;
 }
 
-/** Our three tag ids (empty when unset). */
-export function ourTagIds(cfg: AudienceEnv): Record<TagRole, string> {
-  return { premium: cfg.mailercloud.tagPremium, former: cfg.mailercloud.tagFormer, noMarketing: cfg.mailercloud.tagNoMarketing };
+/** Our tag ids (empty when unset). `free` is empty unless AUDIENCE_FREE_READERS is on. */
+export function ourTagIds(cfg: AudienceEnv): TagIds {
+  return {
+    premium: cfg.mailercloud.tagPremium,
+    former: cfg.mailercloud.tagFormer,
+    free: cfg.freeReaders ? cfg.mailercloud.tagFree : '',
+    noMarketing: cfg.mailercloud.tagNoMarketing,
+  };
+}
+
+/** The configured ids among ours (an unset Free tag is no tag at all). */
+function configuredIds(tags: TagIds): string[] {
+  return Object.values(tags).filter((t): t is string => typeof t === 'string' && t !== '');
+}
+
+/** FREE writes can run: the flag on and the Free tag configured. */
+export function freeWritesReady(cfg: AudienceEnv): boolean {
+  return cfg.freeReaders && cfg.mailercloud.tagFree !== '';
 }
 
 /** The tags a member should carry (ids), from `desiredRole` + `noMarketing` — memberRole decided both. */
-export function desiredTags(m: Pick<AudienceMember, 'desiredRole' | 'noMarketing'>, tags: Record<TagRole, string>): string[] {
+export function desiredTags(m: Pick<AudienceMember, 'desiredRole' | 'noMarketing'> & { suppressed?: boolean }, tags: TagIds): string[] {
   const out: string[] = [];
   if (m.desiredRole === 'PREMIUM') out.push(tags.premium);
   if (m.desiredRole === 'FORMER') out.push(tags.former);
+  // An unsubscribed / suppressed FREE member loses the Free tag (brief test 7); never pushes an unset id.
+  if (m.desiredRole === 'FREE' && tags.free && !m.suppressed) out.push(tags.free);
   if (m.noMarketing) out.push(tags.noMarketing);
   return out;
 }
@@ -88,9 +120,9 @@ export function desiredTags(m: Pick<AudienceMember, 'desiredRole' | 'noMarketing
  */
 export function diffMember(
   m: Pick<AudienceMember, 'desiredRole' | 'noMarketing' | 'suppressed' | 'appliedTags'>,
-  tags: Record<TagRole, string>,
+  tags: TagIds,
 ): { adds: string[]; removes: string[] } {
-  const ours = new Set(Object.values(tags));
+  const ours = new Set(configuredIds(tags));
   const want = new Set(desiredTags(m, tags));
   const have = new Set(m.appliedTags);
   const adds = [...want].filter((t) => !have.has(t) && (!m.suppressed || t === tags.noMarketing));
@@ -141,6 +173,9 @@ export type FlushReport = {
   removed: number;
   resubscribed: number;
   resubscribeSkipped: number;
+  /** FREE: waiting members looked up in Mailercloud (GET only) / admitted under today's cap. */
+  looked: number;
+  admitted: number;
   done: number;
   deleted: number;
   retry: number;
@@ -149,7 +184,7 @@ export type FlushReport = {
 };
 
 function emptyFlush(dryRun: boolean): FlushReport {
-  return { dryRun, members: 0, wouldAdd: 0, wouldRemove: 0, created: 0, tagged: 0, removed: 0, resubscribed: 0, resubscribeSkipped: 0, done: 0, deleted: 0, retry: 0, fatal: 0, requests: 0 };
+  return { dryRun, members: 0, wouldAdd: 0, wouldRemove: 0, created: 0, tagged: 0, removed: 0, resubscribed: 0, resubscribeSkipped: 0, looked: 0, admitted: 0, done: 0, deleted: 0, retry: 0, fatal: 0, requests: 0 };
 }
 
 /** What a write needs configured (names only). */
@@ -208,16 +243,30 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
   if (skipped) return { ...report, skipped };
 
   const tags = ourTagIds(cfg);
-  const due = await prisma.audienceMember.findMany({
-    where: { nextAttemptAt: { lte: now }, email: { not: null }, ...(deps.onlyHashes ? { emailHash: { in: [...deps.onlyHashes] } } : {}) },
+  const batch = deps.batch ?? WRITER_BATCH;
+  const only = deps.onlyHashes ? { emailHash: { in: [...deps.onlyHashes] } } : {};
+  const dueWhere = { nextAttemptAt: { lte: now }, email: { not: null }, ...only };
+  // 1. Everything but FREE first: PREMIUM / FORMER / removals are never held by FREE admissions.
+  const first = await prisma.audienceMember.findMany({
+    where: { ...dueWhere, desiredRole: { not: 'FREE' } },
     orderBy: { nextAttemptAt: 'asc' },
-    take: deps.batch ?? WRITER_BATCH,
+    take: batch,
   });
+  // 2. FREE members already admitted, or already carrying one of our tags (a role swap is never capped).
+  const admittedFree =
+    first.length < batch
+      ? await prisma.audienceMember.findMany({
+          where: { ...dueWhere, desiredRole: 'FREE', OR: [{ admittedAt: { not: null } }, { appliedTags: { isEmpty: false } }] },
+          orderBy: { nextAttemptAt: 'asc' },
+          take: batch - first.length,
+        })
+      : [];
+  const due = [...first, ...admittedFree];
   report.members = due.length;
 
   if (dry) {
     for (const m of due) {
-      const d = diffMember(m, { premium: tags.premium || 'premium', former: tags.former || 'former', noMarketing: tags.noMarketing || 'no_marketing' });
+      const d = diffMember(m, { premium: tags.premium || 'premium', former: tags.former || 'former', free: cfg.freeReaders ? tags.free || 'free' : '', noMarketing: tags.noMarketing || 'no_marketing' });
       report.wouldAdd += d.adds.length;
       report.wouldRemove += d.removes.length;
     }
@@ -236,7 +285,8 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
     console.warn(`[audience] writer not configured — nothing written: ${problems.join(', ')} unset`);
     return { ...report, skipped: 'not_configured' };
   }
-  if (due.length === 0) return report;
+  const admitBudget = freeWritesReady(cfg) && cfg.freeAdmitPerDay > 0 ? batch - due.length : 0;
+  if (due.length === 0 && admitBudget <= 0) return report;
 
   const client = deps.client ?? createContactClient(cfg);
   const pacer = new Pacer(cfg.thresholds.writeRps, deps.clock, deps.sleep);
@@ -258,6 +308,11 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
     const r = await writeOne(fresh, ctx);
     if (r === 'fatal') fatalReason ??= 'contact_write';
   }
+  // 3. Admit waiting FREE members, only with room under today's cap.
+  if (admitBudget > 0) {
+    const r = await admitFree(ctx, admitBudget, deps.onlyHashes);
+    if (r === 'fatal') fatalReason ??= 'contact_write';
+  }
 
   logRefusals(ctx.refused);
   if (fatalReason) await raiseAudienceAlert(portal, 'audience_writer_fatal', { count: report.fatal, reason: fatalReason }, now);
@@ -269,7 +324,7 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
   // eslint-disable-next-line no-console
   console.log(
     `[audience] writer members=${report.members} created=${report.created} tagged=${report.tagged} removed=${report.removed}` +
-      ` resubscribed=${report.resubscribed} done=${report.done} deleted=${report.deleted} retry=${report.retry} fatal=${report.fatal} requests=${report.requests}`,
+      ` resubscribed=${report.resubscribed} looked=${report.looked} admitted=${report.admitted} done=${report.done} deleted=${report.deleted} retry=${report.retry} fatal=${report.fatal} requests=${report.requests}`,
   );
   return report;
 }
@@ -278,7 +333,7 @@ type WriteCtx = {
   client: McContactClient;
   pacer: Pacer;
   cfg: AudienceEnv;
-  tags: Record<TagRole, string>;
+  tags: TagIds;
   report: FlushReport;
   /** Tag id → name for our three tags (PUT / create send names — UNVERIFIED M-9). */
   names: Map<string, string> | null;
@@ -311,7 +366,7 @@ async function resolveTagNames(ctx: WriteCtx): Promise<Map<string, string>> {
   ctx.report.requests += 1;
   const catalogue = await ctx.client.listTags();
   const names = new Map<string, string>();
-  for (const id of Object.values(ctx.tags)) {
+  for (const id of configuredIds(ctx.tags)) {
     const t = catalogue.find((c) => c.id === id);
     if (!t) throw new ContactError('FATAL', 'mailercloud contacts listTags: a configured tag id does not exist');
     names.set(id, t.name);
@@ -342,6 +397,80 @@ async function call<T>(ctx: WriteCtx, fn: () => Promise<T>): Promise<T> {
 async function mailercloudBlocksAddress(emailHash: string): Promise<boolean> {
   const n = await prisma.emailSuppression.count({ where: { emailHash, reason: { in: ['UNSUBSCRIBE', 'HARD_BOUNCE', 'SPAM'] } } });
   return n > 0;
+}
+
+/** 00:00 IST of `now`'s IST day. */
+function istDayStartOf(now: Date): Date {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - IST_OFFSET_MS);
+}
+
+/** FREE members admitted in `now`'s IST day (the cap reads `admittedAt`). */
+export async function freeAdmittedToday(now: Date): Promise<number> {
+  const start = istDayStartOf(now);
+  return prisma.audienceMember.count({ where: { admittedAt: { gte: start, lt: new Date(start.getTime() + 24 * 3_600_000) } } });
+}
+
+/** A FREE member never written by us: no admission, none of our tags. Suppressed ones are never admitted. */
+const waitingWhere = (only?: readonly string[]) => ({
+  desiredRole: 'FREE',
+  admittedAt: null,
+  appliedTags: { isEmpty: true },
+  email: { not: null },
+  suppressed: false,
+  ...(only ? { emailHash: { in: [...only] } } : {}),
+});
+
+/**
+ * Step 3 of a tick (see the header). `budget` = members this tick may still touch (lookups + admissions).
+ * Lookups are a GET only: they record `mcState` so the ones Mailercloud already holds go first. A RETRYABLE
+ * lookup error stops the lookups for this tick; a FATAL one marks the member ABSENT (its create then
+ * surfaces the refusal the usual way), so one bad address never blocks the rest.
+ */
+async function admitFree(ctx: WriteCtx, budget: number, only?: readonly string[]): Promise<'ok' | 'fatal'> {
+  const room = ctx.cfg.freeAdmitPerDay - (await freeAdmittedToday(ctx.now));
+  if (room <= 0) return 'ok';
+  let left = budget;
+
+  const unknown = await prisma.audienceMember.findMany({
+    where: { ...waitingWhere(only), mcState: 'UNKNOWN' },
+    orderBy: { emailHash: 'asc' },
+    take: left,
+  });
+  for (const m of unknown) {
+    let state: 'PRESENT' | 'ABSENT';
+    try {
+      state = (await call(ctx, () => ctx.client.getContact(m.email!))) ? 'PRESENT' : 'ABSENT';
+    } catch (err) {
+      if (!(err instanceof ContactError) || err.kind !== 'FATAL') break;
+      state = 'ABSENT';
+    }
+    left -= 1;
+    ctx.report.looked += 1;
+    await prisma.audienceMember.updateMany({ where: { emailHash: m.emailHash, updatedAt: m.updatedAt }, data: { mcState: state } });
+  }
+
+  const take = Math.min(room, left);
+  if (take <= 0) return 'ok';
+  const picks = await prisma.audienceMember.findMany({ where: { ...waitingWhere(only), mcState: 'PRESENT' }, orderBy: { emailHash: 'asc' }, take });
+  if (picks.length < take && (await prisma.audienceMember.count({ where: { ...waitingWhere(only), mcState: 'UNKNOWN' } })) === 0) {
+    picks.push(
+      ...(await prisma.audienceMember.findMany({ where: { ...waitingWhere(only), mcState: 'ABSENT' }, orderBy: { emailHash: 'asc' }, take: take - picks.length })),
+    );
+  }
+  let result: 'ok' | 'fatal' = 'ok';
+  for (const p of picks) {
+    const stamped = await prisma.audienceMember.updateMany({
+      where: { emailHash: p.emailHash, desiredRole: 'FREE', admittedAt: null, suppressed: false },
+      data: { admittedAt: ctx.now },
+    });
+    if (stamped.count !== 1) continue;
+    const fresh = await prisma.audienceMember.findUnique({ where: { emailHash: p.emailHash } });
+    if (!fresh?.email) continue;
+    ctx.report.admitted += 1;
+    if ((await writeOne(fresh, ctx)) === 'fatal') result = 'fatal';
+  }
+  return result;
 }
 
 async function writeOne(m: AudienceMember, ctx: WriteCtx): Promise<'done' | 'retry' | 'fatal'> {
@@ -513,11 +642,13 @@ export async function driftCheck(deps: WriterDeps = {}): Promise<DriftReport> {
       ? await prisma.$queryRaw<{ emailHash: string }[]>`
           SELECT "emailHash" FROM "AudienceMember"
            WHERE email IS NOT NULL AND (cardinality("appliedTags") > 0 OR "desiredRole" <> 'NONE' OR "noMarketing")
+             AND NOT ("desiredRole" = 'FREE' AND "admittedAt" IS NULL AND cardinality("appliedTags") = 0)
              AND "emailHash" = ANY(${only}::text[])
            ORDER BY random() LIMIT ${DRIFT_SAMPLE}`
       : await prisma.$queryRaw<{ emailHash: string }[]>`
           SELECT "emailHash" FROM "AudienceMember"
            WHERE email IS NOT NULL AND (cardinality("appliedTags") > 0 OR "desiredRole" <> 'NONE' OR "noMarketing")
+             AND NOT ("desiredRole" = 'FREE' AND "admittedAt" IS NULL AND cardinality("appliedTags") = 0)
            ORDER BY random() LIMIT ${DRIFT_SAMPLE}`;
     for (const { emailHash } of sample) {
       const m = await prisma.audienceMember.findUnique({ where: { emailHash } });
@@ -525,7 +656,7 @@ export async function driftCheck(deps: WriterDeps = {}): Promise<DriftReport> {
       const contact = await call(ctx, () => client.getContact(m.email!));
       out.sampled += 1;
       const observed = contact ? oursIn(contact, ctx).sort() : [];
-      const applied = m.appliedTags.filter((t) => Object.values(tags).includes(t)).sort();
+      const applied = m.appliedTags.filter((t) => configuredIds(tags).includes(t)).sort();
       if (observed.join(',') !== applied.join(',')) {
         out.mismatched += 1;
         await prisma.audienceMember.updateMany({
