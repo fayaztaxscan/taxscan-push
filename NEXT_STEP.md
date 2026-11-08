@@ -7,6 +7,13 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**⏳ PENDING (2026-11-08) — on top of the 7 Nov list below.**
+PR #107 LIVE ~10:50 IST (main fd4c0ed): FREE role for CMS free readers (`AUDIENCE_FREE_READERS` OFF, cap 0, tag unset) + 2 s CMS page pause (live). Owner ruling 8 Nov: Free = `SwZafy` + every CMS free/ended account (~88k), ~10k/day, sent manually only when there is credit.
+x. Rollout (runbook "Free to CMS free readers"): ✅ 8 Nov 10:33 IST tag SwfaE + flag ON, cap 0. Remaining: owner creates tag `TS Free reader (auto)` → `AUDIENCE_MC_TAG_FREE` + `AUDIENCE_FREE_READERS`=true (cap 0) → next 04:30 load: card ~74k eligible, no breaker → cap 10000 → Anagha builds the SwZafy segment + the Former/Free-reader segment → `DIGEST_FREE_SEGMENT_IDS` (outside 06:15–17:00 IST).
+y. 9 Nov: check the 04:30 full load completed with the page pause (17 pages, +~32 s) and the "overdue" card line cleared.
+w. LinkedIn case CAS-12316619-W9J3R4: read Mon + Thu; 18 Nov one follow-up on the case if no reply (owner's yes to post); mid-Jan 2027 decide new app vs other route. Current app stays.
+z. Small: alert email subjects date in UTC (8 Nov 04:31 IST alert said 2026-11-07).
+
 **⏳ PENDING (2026-11-07 evening) — the current list; the full 18-item version is memory `project_taxscan_push_state`. Older lists below are history.**
 PR #106 LIVE ~19:14 IST (main 8bd1874); `SOCIAL_ANY_LINK_FROM`=2026-11-07T13:45:53Z, never move it earlier; `DIGEST_FREE_SEGMENT_IDS` unset.
 a. Retry refused pressed 7 Nov 19:26 IST: 0 of 79 paid got through, 1 of 295 former. Mailercloud answers "Invalid email" for well-formed addresses (74 of 79 on domains with MX). Next: Anagha tries 3 by hand; if the same, add them to the CMS signed-in notice.

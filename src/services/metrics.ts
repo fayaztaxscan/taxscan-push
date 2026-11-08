@@ -8,6 +8,7 @@ import { isAllPushesCampaign, newRuleFrom, pushKey } from './social/allPushes';
 import { PAGE_TAXSCAN, pageAllPushesFrom, portalPages } from './linkedin/pages';
 import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
+import { socialImageUrl } from './social/picture';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -127,6 +128,8 @@ const campaignSelect = {
   portal: true,
   target: true,
   lastSentAt: true,
+  // the Compose picture (brief 2026-11-08-social-picture): `pictureUrl` on the row, for downloading it
+  socialImageId: true,
 } as const;
 
 // ---- Per-campaign stats: rolled-up + live ----
@@ -551,6 +554,7 @@ export async function listCampaigns(
   const cmsMode = env.cmsViews.source === 'cms';
   const [stats, reads] = await Promise.all([campaignStats(ids), readsForPaths(uniquePaths, { portal: env.rss.portal })]);
   const channels = await channelsFor(campaigns);
+  const pictures = await pictureUrlsFor(campaigns);
   return campaigns.map((c) => {
     const { sent, clicked, failed, sentAt } = stats.get(c.id) ?? { sent: 0, clicked: 0, failed: 0, sentAt: null };
     const path = pathByCampaign.get(c.id);
@@ -575,8 +579,27 @@ export async function listCampaigns(
       pushReads: r ? r.pushViews : null,
       ...(cmsMode && r ? { readsFrom: [...(r.usedGa ? (['ga'] as const) : []), ...(r.usedCms ? (['cms'] as const) : [])] } : {}),
       ...(channels ? channels.get(c.id) ?? {} : {}),
+      ...(pictures.has(c.id) ? { pictureUrl: pictures.get(c.id) } : {}),
     };
   });
+}
+
+/**
+ * Campaign id → the public URL of its Compose picture (SOCIAL_PICTURE_ENABLED on, picture still stored). One query; empty when off.
+ * Read by the Campaigns screen's "Download picture" link (brief 2026-11-08-social-picture).
+ */
+async function pictureUrlsFor(campaigns: { id: string; socialImageId: string | null }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!env.social.pictureEnabled) return out;
+  const ids = [...new Set(campaigns.map((c) => c.socialImageId).filter((x): x is string => !!x))];
+  if (ids.length === 0) return out;
+  const rows = await prisma.socialImage.findMany({ where: { id: { in: ids } }, select: { id: true, mime: true } });
+  const url = new Map(rows.map((r) => [r.id, socialImageUrl(r)]));
+  for (const c of campaigns) {
+    const u = c.socialImageId ? url.get(c.socialImageId) : undefined;
+    if (u) out.set(c.id, u);
+  }
+  return out;
 }
 
 /**

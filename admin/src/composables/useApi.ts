@@ -178,13 +178,20 @@ export function useApi() {
       request<T>(path, { method: 'POST', body: JSON.stringify(body) }, opts),
     put: <T = unknown>(path: string, body: unknown) =>
       request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
-    /** Raw file upload (the Ads screen's image): the bytes as the body, the name in X-Filename. */
-    upload: <T = unknown>(path: string, file: File) =>
-      request<T>(path, {
-        method: 'POST',
-        body: file,
-        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
-      }),
+    /**
+     * Raw file upload (Ads, Templates, Compose picture): the bytes as the body, the name in X-Filename.
+     * A POST, so never retried; `opts` as for `post` (default: the 15 s budget).
+     */
+    upload: <T = unknown>(path: string, file: File, opts?: RequestOptions) =>
+      request<T>(
+        path,
+        {
+          method: 'POST',
+          body: file,
+          headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+        },
+        opts,
+      ),
     patch: <T = unknown>(path: string, body: unknown) =>
       request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
     del: <T = unknown>(path: string) => request<T>(path, { method: 'DELETE' }),

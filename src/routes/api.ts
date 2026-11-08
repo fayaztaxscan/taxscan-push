@@ -123,6 +123,9 @@ const SendSchema = z.object({
   // One-time id per composed message (the SPA's Compose screen). A repeat with
   // the same id is refused with 409 — see duplicateSend below.
   clientRequestId: z.string().min(8).max(100).optional(),
+  // The Compose picture for LinkedIn + Facebook (brief 2026-11-08-social-picture): a SocialImage id from POST /api/social-picture.
+  // Ignored (never stored) while SOCIAL_PICTURE_ENABLED is off.
+  socialImageId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 
 /** P2002 on Campaign.clientRequestId: a concurrent twin of this send won the create. */
@@ -327,7 +330,16 @@ export function createApiRouter(
     try {
       const parsed = SendSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
-      const { scheduledAt, ...input } = parsed.data;
+      const { scheduledAt, socialImageId: pictureId, ...rest } = parsed.data;
+      // The picture is kept only with the setting on, and only when it was really uploaded.
+      let socialImageId: string | null = null;
+      if (pictureId && env.social.pictureEnabled) {
+        if (!(await prisma.socialImage.findUnique({ where: { id: pictureId }, select: { id: true } }))) {
+          return res.status(400).json({ error: 'unknown_picture', message: 'The picture for social posts was not found. Upload it again.' });
+        }
+        socialImageId = pictureId;
+      }
+      const input = { ...rest, ...(socialImageId ? { socialImageId } : {}) };
 
       // `force` is only honored on immediate dispatch. A future-scheduled send
       // is persisted as a SCHEDULED Campaign and later run by the sweeper, which
@@ -390,6 +402,7 @@ export function createApiRouter(
                 scheduledAt: when,
                 createdByUserId,
                 clientRequestId: input.clientRequestId ?? null,
+                socialImageId,
               },
             });
             return {

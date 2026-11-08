@@ -26,6 +26,19 @@ export function buildCommentary(headline: string, tags: readonly string[]): stri
   return tags.length ? `${head}\n\n${tags.map(hashtagTemplate).join(' ')}` : head;
 }
 
+/**
+ * The commentary of an IMAGE post (brief 2026-11-08-social-picture): today's commentary with the tagged link on its own line, put
+ * just before the hashtag line (so it shows before LinkedIn's "…more"), or at the end when there are no hashtags. The link is
+ * escaped as little text like everything else in the commentary (UTM names hold `_`). Null when the result would pass
+ * `COMMENTARY_MAX`: the caller then posts today's link post instead.
+ */
+export function commentaryWithLink(commentary: string, link: string): string | null {
+  const line = escapeLittleText(link.trim());
+  const at = commentary.lastIndexOf('\n\n{hashtag|');
+  const out = at >= 0 ? `${commentary.slice(0, at)}\n\n${line}${commentary.slice(at)}` : `${commentary}\n\n${line}`;
+  return out.length <= COMMENTARY_MAX ? out : null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Hashtags, per article, from the CMS's own editorial data            */
 /* ------------------------------------------------------------------ */

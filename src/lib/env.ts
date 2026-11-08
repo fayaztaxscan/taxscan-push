@@ -710,6 +710,9 @@ export const env = {
   // Brief 2026-11-07-social-every-link: from this time a push to any other allowed page also reaches every social channel. Default off.
   social: {
     anyLinkFrom: parseAllPushesFrom(process.env, SOCIAL_ANY_LINK_FROM_VAR).at as Date | null,
+    // Brief 2026-11-08-social-picture: a picture uploaded on Compose goes on the push's LinkedIn + Facebook posts. Default off:
+    // Compose shows no upload, /api/send ignores `socialImageId`, and the workers ignore any stored picture.
+    pictureEnabled: process.env.SOCIAL_PICTURE_ENABLED === 'true',
   },
   // LinkedIn page posting (docs/LINKEDIN_POSTING.md). Default off. `postFrom` is REQUIRED when enabled (the worker refuses to
   // start without a valid one; nothing pushed before it is ever posted). `pages` = the pages with a token of their own: only

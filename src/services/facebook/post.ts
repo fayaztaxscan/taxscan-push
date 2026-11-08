@@ -18,6 +18,15 @@ export function buildMessage(headline: string, tags: readonly string[]): string 
   return `${head}\n\n${all.join(' ')}`;
 }
 
+/**
+ * A photo post's caption (brief 2026-11-08-social-picture): today's message with the tagged link on its own line, just before the
+ * hashtag line (or at the end when there is none). Plain text, nothing to escape.
+ */
+export function captionWithLink(message: string, link: string): string {
+  const at = message.lastIndexOf('\n\n#');
+  return at >= 0 ? `${message.slice(0, at)}\n\n${link.trim()}${message.slice(at)}` : `${message}\n\n${link.trim()}`;
+}
+
 export type FbPostPayload = {
   message: string;
   link: string;

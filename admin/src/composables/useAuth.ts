@@ -7,7 +7,7 @@ export type UserSummary = {
   passwordResetRequired: boolean;
   lastLoginAt: string | null;
   /** Server switches the menu needs (the endpoints answer 404 when off). */
-  features?: { whatsappQueue?: boolean; linkedinPosting?: boolean; facebookPosting?: boolean };
+  features?: { whatsappQueue?: boolean; linkedinPosting?: boolean; facebookPosting?: boolean; socialPicture?: boolean };
 };
 
 export class AuthError extends Error {

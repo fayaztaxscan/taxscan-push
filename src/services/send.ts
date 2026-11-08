@@ -115,6 +115,8 @@ export type CampaignInput = {
    * create — before anything is sent. See /api/send.
    */
   clientRequestId?: string | null;
+  /** The Compose picture for the LinkedIn + Facebook posts (SocialImage.id; brief 2026-11-08-social-picture). */
+  socialImageId?: string | null;
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -372,6 +374,7 @@ export async function dispatchCampaign(
       authority: input.authority ?? null,
       categories: input.categories ?? [],
       clientRequestId: input.clientRequestId ?? null,
+      socialImageId: input.socialImageId ?? null,
     },
   });
 

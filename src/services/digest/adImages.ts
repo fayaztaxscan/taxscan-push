@@ -44,7 +44,18 @@ export const roleSizeText = (r: ImageRole): string => `${ROLE_SIZE[r].width} × 
 export type ImageMime = 'image/jpeg' | 'image/png';
 export const EXT_OF: Record<ImageMime, 'jpg' | 'png'> = { 'image/jpeg': 'jpg', 'image/png': 'png' };
 
-export type ImageProblem = 'empty' | 'too_big' | 'wrong_type' | 'type_mismatch' | 'unreadable' | 'too_wide' | 'too_tall' | 'too_tall_for_width' | 'wrong_size';
+export type ImageProblem =
+  | 'empty'
+  | 'too_big'
+  | 'wrong_type'
+  | 'type_mismatch'
+  | 'unreadable'
+  | 'too_wide'
+  | 'too_tall'
+  | 'too_tall_for_width'
+  | 'wrong_size'
+  | 'too_narrow'
+  | 'too_wide_shape';
 /** The tallest image accepted: JPEG's own maximum. A PNG header can claim up to 2^32-1, which overflows the Int column (500). */
 export const MAX_IMAGE_HEIGHT = 65_535;
 /**
@@ -130,15 +141,11 @@ function extMime(filename: string | undefined): ImageMime | 'other' | null {
 const LABEL: Record<ImageMime, string> = { 'image/jpeg': 'JPEG', 'image/png': 'PNG' };
 
 /**
- * Validates an upload. Throws ImageRejected with a plain-words message the
- * Ads screen shows as is. Pure.
+ * The real type and pixel size from the bytes: JPEG or PNG only, a declared Content-Type / file name that disagrees with the bytes
+ * refused, an unreadable header refused. No size or dimension limits (each caller has its own). Also used by the Compose social
+ * picture (src/services/social/picture.ts). Throws ImageRejected. Pure.
  */
-export function validateImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: ImageRole): ImageInfo {
-  if (!buf || buf.length === 0) throw new ImageRejected('empty', 'The file is empty.');
-  const limit = role ? ROLE_MAX_BYTES : MAX_IMAGE_BYTES;
-  if (buf.length > limit) {
-    throw new ImageRejected('too_big', `The image is ${Math.ceil(buf.length / 1024)} KB; the limit is ${limit / 1024} KB. Export it smaller (JPEG quality ~75 usually does it).`);
-  }
+export function imageHeader(buf: Buffer, declared: { contentType?: string; filename?: string } = {}): ImageInfo {
   const mime = sniffMime(buf);
   if (!mime) throw new ImageRejected('wrong_type', 'Only JPEG or PNG images are accepted.');
   for (const claimed of [declaredMime(declared.contentType), extMime(declared.filename)]) {
@@ -149,6 +156,20 @@ export function validateImage(buf: Buffer, declared: { contentType?: string; fil
   }
   const size = mime === 'image/png' ? pngSize(buf) : jpegSize(buf);
   if (!size || size.width <= 0 || size.height <= 0) throw new ImageRejected('unreadable', 'The image header could not be read; re-export the file.');
+  return { mime, ...size };
+}
+
+/**
+ * Validates an upload. Throws ImageRejected with a plain-words message the
+ * Ads screen shows as is. Pure.
+ */
+export function validateImage(buf: Buffer, declared: { contentType?: string; filename?: string } = {}, role?: ImageRole): ImageInfo {
+  if (!buf || buf.length === 0) throw new ImageRejected('empty', 'The file is empty.');
+  const limit = role ? ROLE_MAX_BYTES : MAX_IMAGE_BYTES;
+  if (buf.length > limit) {
+    throw new ImageRejected('too_big', `The image is ${Math.ceil(buf.length / 1024)} KB; the limit is ${limit / 1024} KB. Export it smaller (JPEG quality ~75 usually does it).`);
+  }
+  const { mime, ...size } = imageHeader(buf, declared);
   if (role) {
     const want = ROLE_SIZE[role];
     if (size.width !== want.width || size.height !== want.height) {
