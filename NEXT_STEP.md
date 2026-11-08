@@ -9,7 +9,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 **⏳ PENDING (2026-11-08) — on top of the 7 Nov list below.**
 PR #107 LIVE ~10:50 IST (main fd4c0ed): FREE role for CMS free readers (`AUDIENCE_FREE_READERS` OFF, cap 0, tag unset) + 2 s CMS page pause (live). Owner ruling 8 Nov: Free = `SwZafy` + every CMS free/ended account (~88k), ~10k/day, sent manually only when there is credit.
-x. Rollout (runbook "Free to CMS free readers"): owner creates tag `TS Free reader (auto)` → `AUDIENCE_MC_TAG_FREE` + `AUDIENCE_FREE_READERS`=true (cap 0) → next 04:30 load: card ~74k eligible, no breaker → cap 10000 → Anagha builds the SwZafy segment + the Former/Free-reader segment → `DIGEST_FREE_SEGMENT_IDS` (outside 06:15–17:00 IST).
+x. Rollout (runbook "Free to CMS free readers"): ✅ 8 Nov 10:33 IST tag SwfaE + flag ON, cap 0. Remaining: owner creates tag `TS Free reader (auto)` → `AUDIENCE_MC_TAG_FREE` + `AUDIENCE_FREE_READERS`=true (cap 0) → next 04:30 load: card ~74k eligible, no breaker → cap 10000 → Anagha builds the SwZafy segment + the Former/Free-reader segment → `DIGEST_FREE_SEGMENT_IDS` (outside 06:15–17:00 IST).
 y. 9 Nov: check the 04:30 full load completed with the page pause (17 pages, +~32 s) and the "overdue" card line cleared.
 z. Small: alert email subjects date in UTC (8 Nov 04:31 IST alert said 2026-11-07).
 
