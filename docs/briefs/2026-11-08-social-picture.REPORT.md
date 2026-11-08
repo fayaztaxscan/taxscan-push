@@ -81,3 +81,34 @@ git worktree remove ../taxscan-push-worktrees/social-picture
 dropdb taxscan_push_build_social-picture; dropdb taxscan_push_build_social-picture_shadow
 git branch -D build/social-picture; git push origin --delete build/social-picture
 ```
+
+---
+
+# Follow-up 1
+
+- **Code commit:** `e7fd23e` on `build/social-picture` (same branch; brief text as relayed by planning from `origin/develop` 876d52f)
+- **UI by:** `ui-developer` agent (items 1, 2); item 3 by the build session
+
+## Files changed
+- `admin/src/views/Compose.vue`: the picture is cleared only after `/api/send` answers 2xx (Send now or Schedule). A 400, a 409 (`duplicate_send`, `quiet_hours`) or no reply all keep it. A one-shot `keepRequestIdOnce` keeps the one-time send id through that clearing. The picture upload passes `{ timeoutMs: DISPATCH_TIMEOUT_MS (90 s), unknownMessage }`.
+- `admin/src/composables/useApi.ts`: `upload(path, file, opts?)` takes the same request options as `post`. Without them nothing changes (Ads, Templates: 15 s). It is still a POST, so never retried.
+- `src/services/audience/guard.ts`: exports `pendingPremiumWhere(tag)`, the single definition `loadGuardSnapshot` now uses. No behaviour change.
+- `src/__tests__/audienceFreeReaders.test.ts`: test 9 checks that predicate on its own 1,000 FREE rows (0 pending, 0 Premium) plus one control row the predicate must count (1), and the pure guard on a clean snapshot. It no longer reads global counts.
+- `docs/Taxscan-Push-Admin-Guide.html`: two bullets in "Picture for LinkedIn and Facebook" (the picture is cleared after a send; slow uploads). Still v2.29: same unreleased build.
+
+## Test results (verbatim)
+- tsc: no output (pass); lint: no output (pass); admin build: `✓ built in 3.54s`
+- Area tests (`social*`, `audience*`): `Tests: 623 passed, 623 total`. There is no backend Compose test file; Compose is SPA-only, with no SPA test setup.
+- **Full suite** (`useApi` is a shared foundation): `Tests: 2487 passed, 2487 total`
+
+## Acceptance
+14. After a successful Schedule and Send now, Compose shows no picture, and a reload doesn't bring it back: Compose has no draft autosave (no `localStorage` or `sessionStorage` anywhere in `admin/src`). After a refused send (400, off-allowlist URL) and after a dropped connection, the picture is still attached. Checked in a real browser at 1280 px and 375 px: **PASS**
+15. The upload runs with the 90 s budget and no retry. Confirmed in the browser with a held-open request and a moved page clock: one request, still uploading at 16 s, the message at 91 s, and the only long timer was 90,000 ms. In code, POST is not idempotent in `request()`, so the retry branch never runs: **PASS**
+16. `audienceFreeReaders.test.ts` passes inside the full-suite run above (2,487/2,487): **PASS**
+
+## Deviations
+- **Timeout wording:** "The picture may still be uploading. In a moment, choose the same file again to see its preview." The brief said "check the preview", but with no reply the client never gets the picture's id, so the preview can't appear by itself. Choosing the same file finds the stored picture (same sha256) and shows it. "Try again" is not used.
+- **Kept the duplicate-send guard** (found by ui-developer): Compose throws away the one-time send id whenever a field changes, and the picture counts as one. Clearing it after a successful send would have let a second press on the same message send again. `keepRequestIdOnce` keeps the id through that one clearing. Checked: a second Schedule after success gets 409 `duplicate_send` and sends nothing. Editing any field or attaching a new picture still starts a new message.
+
+## Release check note
+`Release check` on develop `876d52f` (run before this follow-up) FAILED only on the old test 9 (Expected 851, Received 1101), which this follow-up fixes.
