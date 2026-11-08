@@ -80,3 +80,11 @@ Each one must PASS in the REPORT.
 - LinkedIn picture upload today: `src/services/linkedin/image.ts` (cover image fetched by URL; for us the bytes are already in hand) and the encoded image URN fix from PR #99.
 - Facebook post today: `src/services/facebook/client.ts` (`/feed` with `message` + `link`). Use the Page token, as today.
 - Every push posts: `src/services/social/allPushes.ts` and `publicCampaign.ts` decide which pushes post; this brief only changes how a post looks.
+
+## Follow-up 1 (planning review, 8 Nov): three small fixes before merge
+1. **Compose clears the picture after a successful Send now or Schedule.** Unlike the text fields, a picture left attached would silently go on the NEXT push's LinkedIn and Facebook posts, which is a real risk of a Diwali poster on a court ruling. On a failed or refused send it stays attached. Draft autosave (if Compose has one) must not bring it back after a send.
+2. **Picture upload uses a longer timeout:** 90 s, like `PUSH_REQUEST` in `useApi`, instead of the shared 15 s. The upload is a POST: no retry, and a timeout says "may still be uploading, check the preview", never "try again".
+3. **Fix the flaky `audienceFreeReaders` test 9:** it compares a global Premium count, so rows from other test files leak in. Scope it to the test's own rows (e.g. a test-only hash prefix or `onlyHashes`), so it passes inside the full suite as it does alone.
+
+**Acceptance (add to the REPORT):** 14. After a successful send/schedule, Compose shows no picture; after a refused send it still shows it. 15. The upload request uses the 90 s budget and no retry. 16. `audienceFreeReaders` passes inside a full-suite run.
+Run the area tests (social*, compose, audience*) plus one full suite at the end.
