@@ -84,8 +84,10 @@ If-None-Match: "<etag from your last 200>"   (optional)
 - Pull once a day **after 05:30 IST** (our 04:30 load and the writer are done by then). Replace your copy whole: an account
   absent from the list stops seeing the notice.
 - `bad_address` wins over `unsubscribed` for the same account. Spam complainers and consent=false accounts never appear.
-- We need from the CMS: the egress IP the pull comes from (for `CMS_FEED_ALLOWED_IPS`) and a new 48-char secret
-  `CMS_FEED_NOTICES_SECRET`, generated on the CMS box like W/L/V.
+- From the CMS (confirmed 9 Nov, cms-platform-29): the pull comes from **148.113.0.114**, the address already in
+  `CMS_FEED_ALLOWED_IPS` (door W's box), so no new IP is needed. A new 48-char `CMS_FEED_NOTICES_SECRET` is generated on their box
+  when their build is approved; the owner carries it to us. **CMS rule:** after 7 days of 404/503 in a row they hide the notice
+  from everyone. Every 200 resets that, and a 304 counts as fresh.
 
 ## Acceptance tests
 Each one must PASS in the REPORT.
