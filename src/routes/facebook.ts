@@ -11,7 +11,8 @@ import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey }
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PORTAL_TO_PAGE, PAGE_TAXSCAN, pageConfig, postUrlOf } from '../services/facebook/pages';
 import { checkConnection } from '../services/facebook/client';
-import { loginProblem, policyProblem, resumePolicy, retryNow, skipPost, type WorkerDeps } from '../services/facebook/worker';
+import { COMPOSE_SKIP, loginProblem, policyProblem, resumePolicy, retryNow, skipPost, type WorkerDeps } from '../services/facebook/worker';
+import { facebookSkipKey, isComposeSkipped } from '../services/social/pages';
 import type { FetchLike } from '../services/linkedin/post';
 
 /**
@@ -69,7 +70,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const since = new Date(start.getTime() - MAX_DAYS_BACK * 24 * 60 * 60_000);
       const sent = await prisma.campaign.findMany({
         where: { portal: { in: Object.keys(portals) }, status: 'SENT', lastSentAt: { gte: since } },
-        select: { id: true, title: true, url: true, target: true, lastSentAt: true },
+        select: { id: true, title: true, url: true, target: true, lastSentAt: true, socialSkip: true },
         orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
       });
       const postFrom = postFromOf();
@@ -79,8 +80,20 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const first = new Map<string, (typeof sent)[number]>();
       // For each of today's-rule rows, the id of EVERY push of that article in this window (the `push:` fallback below needs them all).
       const idsOfArticle = new Map<string, string[]>();
+      // Pushes whose sender unticked THIS page on Compose (brief 2026-11-09-compose-skip-pages): each is its own row under its own push key, shown
+      // as skipped, and takes no part in the article grouping (the same split the worker makes), so it never hides a later push of the same URL.
+      const composeKeys = new Set<string>();
+      const skipKey = facebookSkipKey(pageOf());
       for (const c of sent) {
         if (!c.lastSentAt) continue;
+        if (postFrom && c.lastSentAt >= postFrom && isComposeSkipped(c, skipKey)) {
+          if (pushesFrom && c.lastSentAt >= pushesFrom ? isAllPushesCampaign(c) : isPublicArticleCampaign(c)) {
+            const pk = pushKey({ id: c.id, lastSentAt: c.lastSentAt });
+            first.set(pk, c);
+            composeKeys.add(pk);
+          }
+          continue;
+        }
         const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
         if (k !== null) idsOfArticle.get(k)?.push(c.id);
         if (pushesFrom && c.lastSentAt >= pushesFrom) {
@@ -123,9 +136,11 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const rows = inDay.map(([k, c]) => {
         const p = byKey.get(k) ?? (isPushKey(k) ? undefined : viaPush(k, c));
         let status: ScreenStatus;
+        const composeSkipped = composeKeys.has(k);
         // No row yet: pushed since go-live (the new rule never starts before it) → the worker will post it, however long ago (no age
-        // limit); before go-live → never.
-        if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
+        // limit); before go-live → never. An unticked Compose push is skipped whether or not the worker has written its row yet.
+        if (composeSkipped) status = 'SKIPPED';
+        else if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
         else status = postFrom && c.lastSentAt! >= postFrom ? 'WAITING' : 'NOT_POSTED';
         return {
           id: p?.id ?? null,
@@ -142,6 +157,8 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
           postUrl: p?.status === 'POSTED' && p.facebookPostId ? postUrlOf(p.facebookPostId) : null,
           /** Retry on this row needs "check the page first" (the outcome is unknown). */
           unknownOutcome: p?.status === 'FAILED' && (p.error ?? '').startsWith('unknown'),
+          // `compose_skip`: the sender unticked this page on Compose for this push. Present only on such a row.
+          ...(composeSkipped || (p?.status === 'SKIPPED' && p.error === COMPOSE_SKIP) ? { skipReason: COMPOSE_SKIP } : {}),
         };
       });
       const n = (s: ScreenStatus) => rows.filter((r) => r.status === s).length;

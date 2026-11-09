@@ -17,6 +17,8 @@ import { postToFacebook, type FacebookFailure } from './client';
 import { PORTAL_TO_PAGE, pageConfig } from './pages';
 import { buildFacebookPagePost, buildFacebookPost, buildFacebookStorePost, captionWithLink } from './post';
 import { campaignPicture, socialImageUrl } from '../social/picture';
+import { COMPOSE_SKIP, facebookSkipKey } from '../social/pages';
+import { composeSkippedPushes, skipRows } from '../social/composeSkip';
 
 /**
  * The Facebook posting worker (brief 2026-11-03-facebook-page-posting, docs/FACEBOOK_POSTING.md). It mirrors the LinkedIn worker
@@ -46,6 +48,8 @@ export const TRANSIENT_DELAYS_MIN = [1, 5, 15] as const;
 const EARLIER_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 export const UNKNOWN_ERROR = 'unknown — check the page';
 export const DUPLICATE_ERROR = 'Facebook says this was already posted';
+/** The reason on a row written for a push whose sender unticked this page on Compose (brief 2026-11-09-compose-skip-pages). */
+export { COMPOSE_SKIP };
 
 export type WorkerDeps = {
   now?: () => Date;
@@ -342,6 +346,27 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
   };
 
   for (const page of pages) {
+    // COMPOSE SKIPS (brief 2026-11-09-compose-skip-pages): a push whose sender unticked THIS page gets a SKIPPED row (reason `compose_skip`)
+    // under its OWN push key and is taken out of this page's candidates below. DB only: no call, no pacing (the gap and the daily cap
+    // count posts), and not gated by a stop; so the row exists at once whatever the page is waiting for.
+    // null = today's rule only (see step 3).
+    const pushesFrom = d.allPushesFrom === undefined ? env.facebook.allPushesFrom : d.allPushesFrom;
+    const pagePortals = Object.keys(portals).filter((p) => portals[p] === page);
+    const composeSkipped = await composeSkippedPushes(pagePortals, facebookSkipKey(page), postFrom);
+    if (composeSkipped.length > 0) {
+      const wanted = skipRows(composeSkipped, pushesFrom);
+      const have = new Set((await prisma.facebookPost.findMany({ where: { page, articleKey: { in: wanted.map((w) => w.key) } }, select: { articleKey: true } })).map((r) => r.articleKey));
+      for (const w of wanted) {
+        if (have.has(w.key)) continue;
+        try {
+          await prisma.facebookPost.create({ data: { page, articleKey: w.key, campaignId: w.campaignId, status: 'SKIPPED', attempts: 0, error: COMPOSE_SKIP } });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
+          throw err;
+        }
+      }
+    }
+    const skippedIds = new Set(composeSkipped.map((c) => c.id));
     if (await policyProblem(page)) {
       out.policyStopped = true;
       continue;
@@ -385,8 +410,6 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
     //    AFTER it follows the new rule: every qualifying push (article, course, product) is its own candidate, keyed
     //    `push:<campaign id>:<send time ms>`, repeats included. Both kinds are merged by the time of the push, oldest first.
     // null = today's rule only. The read below starts at the page's own go-live, so the new rule can never reach back before it, whatever time is set.
-    const pushesFrom = d.allPushesFrom === undefined ? env.facebook.allPushesFrom : d.allPushesFrom;
-    const pagePortals = Object.keys(portals).filter((p) => portals[p] === page);
     // The read stays `select`-narrow: only what the rules need, and `lastSentAt` too ONLY while the all-pushes time is set (it is what
     // splits the pushes at that time and merges the two rules by time). With the time unset the read is exactly today's.
     const campaigns: { id: string; url: string; target: unknown; lastSentAt?: Date | null }[] = await prisma.campaign.findMany({
@@ -399,6 +422,7 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
     // below needs them all (a repeat of an article can have a `push:` row while its oldest push does not).
     const idsOfArticle = new Map<string, string[]>();
     for (const c of campaigns) {
+      if (skippedIds.has(c.id)) continue; // unticked on Compose for this page: its SKIPPED row is written above; it is nobody's candidate
       const sentAt = c.lastSentAt ?? null; // only read while the all-pushes time is set
       const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
       if (k !== null) idsOfArticle.get(k)?.push(c.id); // a later push of an article that follows today's rule

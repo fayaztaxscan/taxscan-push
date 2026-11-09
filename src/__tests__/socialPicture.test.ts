@@ -198,7 +198,6 @@ describe('send path (acceptance 1, 6, 9)', () => {
   it('9. Test on this device with a picture attached creates no campaign and no social post rows', async () => {
     env.social.pictureEnabled = true;
     const title = `Test device pic ${RUN}`;
-    const before = await Promise.all([prisma.campaign.count(), prisma.linkedInPost.count(), prisma.facebookPost.count()]);
     const t = createApp({ rateLimit: { publicPerMin: 10000, loginPerMin: 10000 }, sender: async () => ({ ok: true }) as never });
     const res = await request(t)
       .post('/api/send/test-device')
@@ -206,9 +205,11 @@ describe('send path (acceptance 1, 6, 9)', () => {
       .send({ subscription: { endpoint: 'https://push.example.test/ep', keys: { p256dh: 'p', auth: 'a' } }, title, body: 'b', url: 'https://www.taxscan.in/pricing', socialImageId: pic });
     expect(res.status).toBeLessThan(500);
     expect(await prisma.campaign.count({ where: { title } })).toBe(0);
-    const after = await Promise.all([prisma.campaign.count(), prisma.linkedInPost.count(), prisma.facebookPost.count()]);
-    expect(after[1]).toBe(before[1]);
-    expect(after[2]).toBe(before[2]);
+    // No post rows for this push. Counted for THIS push's campaigns, not table-wide: other test files write LinkedIn / Facebook rows in
+    // parallel on the same database, and a table-wide before / after count then fails at random (it did, with the Compose-skip tests added).
+    const mine = (await prisma.campaign.findMany({ where: { title }, select: { id: true } })).map((c) => c.id);
+    expect(await prisma.linkedInPost.count({ where: { campaignId: { in: mine } } })).toBe(0);
+    expect(await prisma.facebookPost.count({ where: { campaignId: { in: mine } } })).toBe(0);
   });
 });
 

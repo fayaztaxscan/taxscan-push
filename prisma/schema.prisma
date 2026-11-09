@@ -166,6 +166,11 @@ model Campaign {
   /// The Compose picture for the LinkedIn + Facebook posts (SocialImage.id, brief 2026-11-08-social-picture). A plain id, no
   /// foreign key: SocialImage is not in the backup, Campaign is. Null = no picture (every RSS push, every older campaign).
   socialImageId     String?
+  /// The social pages the sender UNTICKED on Compose for this one push (brief 2026-11-09-compose-skip-pages): keys from
+  /// `activeSocialPages()` (`linkedin:academy`, `facebook:taxscan`, `whatsapp`, ...). Empty = every page, exactly as before: the pacer,
+  /// Push now, Breaking and the morning backfill never set it. Stored as sent, never edited; each social worker writes that page's SKIPPED
+  /// row (reason `compose_skip`) and makes no call.
+  socialSkip        String[]  @default([])
 
   createdBy   User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   events      Event[]

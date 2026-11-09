@@ -9,6 +9,7 @@ import { PAGE_TAXSCAN, pageAllPushesFrom, portalPages } from './linkedin/pages';
 import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
 import { socialImageUrl } from './social/picture';
+import { COMPOSE_SKIP, WHATSAPP_SKIP_KEY, facebookSkipKey, isComposeSkipped, linkedinSkipKey } from './social/pages';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -47,9 +48,10 @@ export type CampaignChannels = {
 };
 /** The words behind a mark's tooltip; only present where there is something to say. */
 export type CampaignChannelDetails = {
-  whatsapp?: { by: string | null; at: string };
-  linkedin?: { error: string | null; at: string | null; postUrl: string | null };
-  facebook?: { error: string | null; at: string | null; postUrl: string | null };
+  /** `skipReason: 'compose_skip'` (brief 2026-11-09-compose-skip-pages): the sender unticked this channel on Compose; the mark is SKIPPED. */
+  whatsapp?: { by: string | null; at: string; skipReason?: typeof COMPOSE_SKIP };
+  linkedin?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
+  facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
 };
 
 export type CampaignStat = {
@@ -130,6 +132,8 @@ const campaignSelect = {
   lastSentAt: true,
   // the Compose picture (brief 2026-11-08-social-picture): `pictureUrl` on the row, for downloading it
   socialImageId: true,
+  // the social pages the sender unticked on Compose (brief 2026-11-09-compose-skip-pages): the Channels marks read SKIPPED from it
+  socialSkip: true,
 } as const;
 
 // ---- Per-campaign stats: rolled-up + live ----
@@ -613,7 +617,7 @@ async function pictureUrlsFor(campaigns: { id: string; socialImageId: string | n
  * today's article mark; with the variables unset nothing here differs from before. WhatsApp never changes (article keys only).
  */
 async function channelsFor(
-  campaigns: { id: string; url: string; status: string; portal: string; target: unknown; lastSentAt: Date | null }[],
+  campaigns: { id: string; url: string; status: string; portal: string; target: unknown; lastSentAt: Date | null; socialSkip?: string[] | null }[],
 ): Promise<Map<string, { channels: CampaignChannels; channelDetails: CampaignChannelDetails; channelDay: string | null }> | null> {
   const waOn = env.whatsapp.queueEnabled;
   const liOn = env.linkedin.enabled;
@@ -720,6 +724,24 @@ async function channelsFor(
         const p = fbBy.get(fbKey) ?? (fbNew ? undefined : viaPushRow(fbBy, c, key));
         channels.facebook = p ? p.status : 'PENDING';
         if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null };
+      }
+    }
+    // COMPOSE SKIPS (brief 2026-11-09-compose-skip-pages): a channel the sender unticked for THIS push reads SKIPPED, whatever rows exist (the
+    // worker may not have written its row yet, and under today's rule the article's row may belong to another push). Only where the channel
+    // applies to the push at all (a mark that is null stays null).
+    if (c.socialSkip?.length && c.lastSentAt) {
+      const at = c.lastSentAt.toISOString();
+      if (channels.whatsapp !== null && isComposeSkipped(c, WHATSAPP_SKIP_KEY)) {
+        channels.whatsapp = 'SKIPPED';
+        details.whatsapp = { by: null, at, skipReason: COMPOSE_SKIP };
+      }
+      if (channels.linkedin !== null && isComposeSkipped(c, linkedinSkipKey(PAGE_TAXSCAN))) {
+        channels.linkedin = 'SKIPPED';
+        details.linkedin = { error: null, at, postUrl: null, skipReason: COMPOSE_SKIP };
+      }
+      if (channels.facebook != null && isComposeSkipped(c, facebookSkipKey(FB_PAGE_TAXSCAN))) {
+        channels.facebook = 'SKIPPED';
+        details.facebook = { error: null, at, postUrl: null, skipReason: COMPOSE_SKIP };
       }
     }
     out.set(c.id, { channels, channelDetails: details, channelDay: c.lastSentAt ? istDay(c.lastSentAt) : null });

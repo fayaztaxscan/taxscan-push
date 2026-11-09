@@ -8,7 +8,8 @@ import { isPublicArticleCampaign } from '../services/social/publicCampaign';
 import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
-import { QUOTA_HEADROOM, loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
+import { COMPOSE_SKIP, QUOTA_HEADROOM, loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
+import { isComposeSkipped, linkedinSkipKey } from '../services/social/pages';
 import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
 
 /**
@@ -73,7 +74,7 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
       const since = new Date(start.getTime() - MAX_DAYS_BACK * 24 * 60 * 60_000);
       const sent = await prisma.campaign.findMany({
         where: { portal: { in: portalsOfPage(portals, page) }, status: 'SENT', lastSentAt: { gte: since } },
-        select: { id: true, title: true, url: true, target: true, lastSentAt: true },
+        select: { id: true, title: true, url: true, target: true, lastSentAt: true, socialSkip: true },
         orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
       });
       // This page's OWN go-live (Academy has its own), and its all-pushes time (null = it stays on today's rule).
@@ -84,8 +85,20 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
       const first = new Map<string, (typeof sent)[number]>();
       // For each of today's-rule rows, the id of EVERY push of that article in this window (the `push:` fallback below needs them all).
       const idsOfArticle = new Map<string, string[]>();
+      // Pushes whose sender unticked THIS page on Compose (brief 2026-11-09-compose-skip-pages): each is its own row under its own push key, shown
+      // as skipped, and takes no part in the article grouping (the same split the worker makes), so it never hides a later push of the same URL.
+      const composeKeys = new Set<string>();
+      const skipKey = linkedinSkipKey(page);
       for (const c of sent) {
         if (!c.lastSentAt) continue;
+        if (postFrom && c.lastSentAt >= postFrom && isComposeSkipped(c, skipKey)) {
+          if (pushesFrom && c.lastSentAt >= pushesFrom ? isAllPushesCampaign(c) : isPublicArticleCampaign(c)) {
+            const pk = pushKey({ id: c.id, lastSentAt: c.lastSentAt });
+            first.set(pk, c);
+            composeKeys.add(pk);
+          }
+          continue;
+        }
         const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
         if (k !== null) idsOfArticle.get(k)?.push(c.id);
         if (pushesFrom && c.lastSentAt >= pushesFrom) {
@@ -128,9 +141,11 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
       const rows = inDay.map(([k, c]) => {
         const p = byKey.get(k) ?? (isPushKey(k) ? undefined : viaPush(k, c));
         let status: ScreenStatus;
+        const composeSkipped = composeKeys.has(k);
         // No row yet: pushed since go-live (the new rule never starts before it) → the worker will post it, however long ago (no age
-        // limit); before go-live → never.
-        if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
+        // limit); before go-live → never. An unticked Compose push is skipped whether or not the worker has written its row yet.
+        if (composeSkipped) status = 'SKIPPED';
+        else if (p) status = p.status === 'PENDING' ? (p.nextAttemptAt ? 'RETRYING' : 'WAITING') : (p.status as ScreenStatus);
         else status = postFrom && c.lastSentAt! >= postFrom ? 'WAITING' : 'NOT_POSTED';
         return {
           id: p?.id ?? null,
@@ -150,6 +165,8 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
           // Present (`quota_headroom`) only on a row the daily quota guard held (brief 2026-11-09-linkedin-shopscan-page): the screen
           // says it in words. Absent on every other row, so the answer for them is unchanged.
           ...(p?.status === 'SKIPPED' && p.error === QUOTA_HEADROOM ? { skipReason: QUOTA_HEADROOM } : {}),
+          // `compose_skip`: the sender unticked this page on Compose for this push. Present only on such a row.
+          ...(composeSkipped || (p?.status === 'SKIPPED' && p.error === COMPOSE_SKIP) ? { skipReason: COMPOSE_SKIP } : {}),
         };
       });
       const n = (s: ScreenStatus) => rows.filter((r) => r.status === s).length;
