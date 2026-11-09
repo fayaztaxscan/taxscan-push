@@ -385,7 +385,7 @@ describe('every call site of isAllPushesCampaign (source scan): a new or removed
       return statSync(p).isDirectory() ? files(p) : p.endsWith('.ts') ? [p] : [];
     });
   }
-  it('exactly these 8 calls, in 6 files — each covered by a behaviour test below', () => {
+  it('exactly these 9 calls, in 7 files — each covered by a behaviour test below', () => {
     const root = path.join(__dirname, '..');
     const found: Record<string, number> = {};
     for (const f of files(root)) {
@@ -397,12 +397,13 @@ describe('every call site of isAllPushesCampaign (source scan): a new or removed
       if (n > 0) found[path.relative(root, f)] = n;
     }
     expect(found).toEqual({
-      'routes/facebook.ts': 1, // the Facebook screen            → "the screens" below
-      'routes/linkedin.ts': 1, // the LinkedIn screen            → "the screens" below
+      'routes/facebook.ts': 2, // the Facebook screen (+1: an unticked Compose push's row) → "the screens" below; src/__tests__/socialComposeSkip.test.ts
+      'routes/linkedin.ts': 2, // the LinkedIn screen (+1: an unticked Compose push's row) → "the screens" below; src/__tests__/socialComposeSkip.test.ts
       'services/facebook/worker.ts': 1, // the Facebook worker   → "Facebook worker" below
       'services/linkedin/worker.ts': 1, // the LinkedIn worker   → "LinkedIn worker" below
       'services/metrics.ts': 2, // the Channels marks (LinkedIn + Facebook, and WhatsApp) → "Channels marks" below
-      'services/whatsapp/queue.ts': 2, // getQueue and markArticle → "WhatsApp" below
+      'services/social/composeSkip.ts': 1, // which unticked Compose pushes would have posted → src/__tests__/socialComposeSkip.test.ts
+      'services/whatsapp/queue.ts': 3, // getQueue, markArticle and (+1) getQueue's unticked Compose pushes → "WhatsApp" below; src/__tests__/socialComposeSkip.test.ts
     });
   });
 });

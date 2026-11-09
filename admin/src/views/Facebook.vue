@@ -19,6 +19,8 @@ type Row = {
   postedAt: string | null;
   postUrl: string | null;
   unknownOutcome: boolean;
+  /** Present ONLY on a SKIPPED row whose sender unticked this page on Compose: the single value 'compose_skip'. Never shown as a code. */
+  skipReason?: string;
 };
 type Counts = { waiting: number; posted: number; failed: number; skipped: number; notPosted: number; all: number };
 type ListResponse = {
@@ -286,7 +288,11 @@ const STATUS_LABEL: Record<Status, string> = {
   SKIPPED: 'Skipped',
   NOT_POSTED: 'Not posted',
 };
+// A push whose sender unticked this page on Compose: SKIPPED, counted under Skipped, and (like every SKIPPED row) no buttons.
+const COMPOSE_SKIP = 'compose_skip';
+const COMPOSE_SKIP_TEXT = 'Skipped in Compose';
 function statusText(r: Row): string {
+  if (r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP) return COMPOSE_SKIP_TEXT;
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
   return STATUS_LABEL[r.status];
 }

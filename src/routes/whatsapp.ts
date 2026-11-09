@@ -58,7 +58,8 @@ export function createWhatsAppRouter(o: WhatsAppRouterOptions = {}): Router {
         ...rule(),
         ...(parsed.data.articleKey ? { key: parsed.data.articleKey } : {}),
       });
-      if (!r.ok) return res.status(404).json({ error: 'not_found' });
+      // 409: the sender unticked WhatsApp on Compose for this push (brief 2026-11-09-compose-skip-pages); nothing was changed.
+      if (!r.ok) return r.reason === 'compose_skip' ? res.status(409).json({ error: 'compose_skip' }) : res.status(404).json({ error: 'not_found' });
       return res.json({ ok: true, status: r.status });
     } catch (err) {
       console.error('[whatsapp] mark failed', safeErrorLog(err));

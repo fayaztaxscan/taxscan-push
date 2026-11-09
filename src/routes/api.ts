@@ -25,6 +25,7 @@ import { isQuietHours, nextAllowedAt } from '../lib/quietHours';
 import { isAllowedPushUrl } from '../lib/urlAllowlist';
 import { makePublicLimiter } from '../lib/rateLimit';
 import { recordAudit } from '../lib/audit';
+import { unknownSocialKeys } from '../services/social/pages';
 import { backfillConfigProblem, getBackfillRun, startBackfill, validateBackfillRange } from '../services/cmsViews/backfill';
 import { isViewsSyncRunning } from '../services/cmsViews/sync';
 import { requestClientIp } from '../lib/clientIp';
@@ -126,6 +127,10 @@ const SendSchema = z.object({
   // The Compose picture for LinkedIn + Facebook (brief 2026-11-08-social-picture): a SocialImage id from POST /api/social-picture.
   // Ignored (never stored) while SOCIAL_PICTURE_ENABLED is off.
   socialImageId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  // The social pages the sender UNTICKED on Compose for this one push (brief 2026-11-09-compose-skip-pages): keys from
+  // GET /api/social/pages. Each must be an ACTIVE page at send time (400 unknown_social_page otherwise, nothing sent). Missing or empty =
+  // today's behaviour (every page). Stored on the Campaign as sent.
+  socialSkip: z.array(z.string().min(1).max(80)).max(40).optional(),
 });
 
 /** P2002 on Campaign.clientRequestId: a concurrent twin of this send won the create. */
@@ -330,7 +335,20 @@ export function createApiRouter(
     try {
       const parsed = SendSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, parsed.error);
-      const { scheduledAt, socialImageId: pictureId, ...rest } = parsed.data;
+      const { scheduledAt, socialImageId: pictureId, socialSkip: skipSent, ...rest } = parsed.data;
+      // The unticked social pages: each name once, every one an ACTIVE page right now. Checked FIRST, before anything is read or created,
+      // so a refusal leaves no campaign, no send and no rows.
+      const socialSkip = [...new Set(skipSent ?? [])];
+      if (socialSkip.length) {
+        const unknown = unknownSocialKeys(socialSkip);
+        if (unknown.length) {
+          return res.status(400).json({
+            error: 'unknown_social_page',
+            keys: unknown,
+            message: 'Some of the pages you unticked are not in use any more. Reload Compose and try again; nothing was sent.',
+          });
+        }
+      }
       // The picture is kept only with the setting on, and only when it was really uploaded.
       let socialImageId: string | null = null;
       if (pictureId && env.social.pictureEnabled) {
@@ -339,7 +357,7 @@ export function createApiRouter(
         }
         socialImageId = pictureId;
       }
-      const input = { ...rest, ...(socialImageId ? { socialImageId } : {}) };
+      const input = { ...rest, ...(socialImageId ? { socialImageId } : {}), ...(socialSkip.length ? { socialSkip } : {}) };
 
       // `force` is only honored on immediate dispatch. A future-scheduled send
       // is persisted as a SCHEDULED Campaign and later run by the sweeper, which
@@ -403,6 +421,8 @@ export function createApiRouter(
                 createdByUserId,
                 clientRequestId: input.clientRequestId ?? null,
                 socialImageId,
+                // a scheduled send keeps its unticked pages until it fires; the workers honour them then
+                socialSkip,
               },
             });
             return {

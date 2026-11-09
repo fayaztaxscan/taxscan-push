@@ -79,6 +79,16 @@ the worker, the screen and the Campaigns Channels mark all call.
 - No picture, or the setting off: today's `/feed` call, unchanged. Pacing, the policy stop and the 30/day cap are unchanged (the
   fallback is part of the same attempt). After a restore the picture may be gone (`SocialImage` is not in the backup): today's link post.
 
+## Compose: untick the page for one push (brief 2026-11-09-compose-skip-pages)
+Compose's **Post to** list (`GET /api/social/pages`) offers `facebook:<page>` for every Facebook page with a valid id and token while
+`FACEBOOK_POSTING_ENABLED` is on; a later Facebook page (Academy, Shopscan) joins the list by its own name with no change to Compose.
+Unticking it means the page gets nothing for THIS one push; the pacer, Push now and the backfill post as ever. The worker reads
+`Campaign.socialSkip` and writes ONE `FacebookPost` row, status SKIPPED, error `compose_skip`, attempts 0, **no Graph call**; the row is written at
+once whatever the page is waiting for (the gap between posts, the daily cap, a stop), because it is a database write that makes no post, and it
+costs the tick's one attempt nothing. Its key is always the push's own (`push:<id>:<ms>`) and the push is taken out of the page's candidates, so
+under today's rule a later push of the same URL still posts (see `docs/LINKEDIN_POSTING.md`, "Compose: untick a page for one push", for why).
+The screen shows it as SKIPPED with `skipReason: "compose_skip"` ("Skipped in Compose") and no Retry or Skip.
+
 ## Pacing (account safety)
 - At most **one post attempt per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts.
 - At most `FACEBOOK_DAILY_CAP` (30) posts per IST day; the rest wait for the next day, however old they are by then.

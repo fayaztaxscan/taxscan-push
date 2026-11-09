@@ -17,6 +17,8 @@ import { PAGE_ACADEMY, PAGE_SHOPSCAN, PAGE_TAXSCAN, academyActive, normalizePort
 import { refreshActiveTokens, tokenPageOf } from './token';
 import { buildPagePost, buildPost, buildStorePost, commentaryWithLink, fetchCmsArticle, type CmsArticle } from './post';
 import { campaignPicture } from '../social/picture';
+import { COMPOSE_SKIP, linkedinSkipKey } from '../social/pages';
+import { composeSkippedPushes, skipRows } from '../social/composeSkip';
 
 /**
  * The LinkedIn posting worker (brief 2026-11-02-linkedin-page-posting, docs/LINKEDIN_POSTING.md).
@@ -69,6 +71,8 @@ export const UNKNOWN_ERROR = 'unknown — check the page';
 export const DUPLICATE_ERROR = 'LinkedIn says this was already posted';
 /** The reason on a row a held page SKIPPED (the daily quota guard). The screen turns it into words. */
 export const QUOTA_HEADROOM = 'quota_headroom';
+/** The reason on a row written for a push whose sender unticked this page on Compose (brief 2026-11-09-compose-skip-pages). */
+export { COMPOSE_SKIP };
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
 
 export type WorkerDeps = {
@@ -429,6 +433,27 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
   };
 
   for (const page of pages) {
+    // COMPOSE SKIPS (brief 2026-11-09-compose-skip-pages): a push whose sender unticked THIS page gets a SKIPPED row (reason `compose_skip`)
+    // under its OWN push key and is taken out of this page's candidates below. DB only: no call, no budget, and not gated by a login stop.
+    const postFrom = resolvePostFrom(d.postFrom, page) as Date; // startupProblem has made sure every page has one
+    // null = today's rule only. The read below starts at THIS page's own go-live, so the new rule can never reach back before it, whatever time is set.
+    const pushesFrom = resolveAllPushesFrom(d.allPushesFrom, page);
+    const pagePortals = portalsOfPage(portals, page);
+    const composeSkipped = await composeSkippedPushes(pagePortals, linkedinSkipKey(page), postFrom);
+    if (composeSkipped.length > 0) {
+      const wanted = skipRows(composeSkipped, pushesFrom);
+      const have = new Set((await prisma.linkedInPost.findMany({ where: { page, articleKey: { in: wanted.map((w) => w.key) } }, select: { articleKey: true } })).map((r) => r.articleKey));
+      for (const w of wanted) {
+        if (have.has(w.key)) continue;
+        try {
+          await prisma.linkedInPost.create({ data: { page, articleKey: w.key, campaignId: w.campaignId, status: 'SKIPPED', attempts: 0, error: COMPOSE_SKIP } });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
+          throw err;
+        }
+      }
+    }
+    const skippedIds = new Set(composeSkipped.map((c) => c.id));
     if (isStopped(page)) {
       out.authStopped = true; // "some page is stopped": it never gates ANOTHER page
       continue;
@@ -459,10 +484,6 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     //    never floods the page with the past, and a pre-time article that has no row yet still gets its one post. A push AT or
     //    AFTER it follows the new rule: every qualifying push (article, course, product) is its own candidate, keyed
     //    `push:<campaign id>:<send time ms>`, repeats included. Both kinds are merged by the time of the push, oldest first.
-    const postFrom = resolvePostFrom(d.postFrom, page) as Date; // startupProblem has made sure every page has one
-    // null = today's rule only. The read below starts at THIS page's own go-live, so the new rule can never reach back before it, whatever time is set.
-    const pushesFrom = resolveAllPushesFrom(d.allPushesFrom, page);
-    const pagePortals = portalsOfPage(portals, page);
     // The daily quota guard (see the header): is this page held by today's count? Decided here because a held page also needs to know
     // WHO sent each push (`createdByUserId`, `scheduledAt`), so a manual immediate push is not held; every other page reads exactly as before.
     const headroom = pageHeadroom(page);
@@ -486,6 +507,7 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     // below needs them all (a repeat of an article can have a `push:` row while its oldest push does not).
     const idsOfArticle = new Map<string, string[]>();
     for (const c of campaigns) {
+      if (skippedIds.has(c.id)) continue; // unticked on Compose for this page: its SKIPPED row is written above; it is nobody's candidate
       if (held && isManualImmediatePush(c)) manualIds.add(c.id);
       const sentAt = c.lastSentAt ?? null; // only read while the all-pushes time is set
       const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
