@@ -459,15 +459,58 @@ export function parseAllPushesFrom(src: NodeJS.ProcessEnv, name: string): { at: 
  * never their values; it is the one boot line the worker prints.
  */
 export function parseLinkedInAcademyEnv(src: NodeJS.ProcessEnv): { page: SharedLinkedInPage | null; off: string | null } {
-  const urn = (src.LINKEDIN_ACADEMY_ORG_URN ?? '').trim();
-  const from = (src.LINKEDIN_ACADEMY_POST_FROM ?? '').trim();
-  if (!urn && !from) return { page: null, off: 'not configured (it needs both LINKEDIN_ACADEMY_ORG_URN and LINKEDIN_ACADEMY_POST_FROM)' };
+  return parseSharedLinkedInPage(src, 'ACADEMY');
+}
+
+/**
+ * The Shopscan LinkedIn page (brief 2026-11-09-linkedin-shopscan-page): built exactly like Academy, with its own variables
+ * LINKEDIN_SHOPSCAN_ORG_URN and LINKEDIN_SHOPSCAN_POST_FROM, the Taxscan page's token and its own go-live. From that go-live it posts
+ * EVERY push (there is no LINKEDIN_SHOPSCAN_ALL_PUSHES_FROM: see `pageAllPushesFrom`).
+ */
+export function parseLinkedInShopscanEnv(src: NodeJS.ProcessEnv): { page: SharedLinkedInPage | null; off: string | null } {
+  return parseSharedLinkedInPage(src, 'SHOPSCAN');
+}
+
+/**
+ * ONE parser for a page that posts with the Taxscan page's token (Academy, Shopscan): `prefix` is the page's name in its variables
+ * (`ACADEMY` → LINKEDIN_ACADEMY_ORG_URN / LINKEDIN_ACADEMY_POST_FROM). Active only when BOTH are valid; anything else is OFF with a
+ * reason in fixed words that name the variables, never their values. The words are Academy's since 2026-11-04 and must not change.
+ */
+export function parseSharedLinkedInPage(src: NodeJS.ProcessEnv, prefix: string): { page: SharedLinkedInPage | null; off: string | null } {
+  const urnVar = `LINKEDIN_${prefix}_ORG_URN`;
+  const fromVar = `LINKEDIN_${prefix}_POST_FROM`;
+  const urn = (src[urnVar] ?? '').trim();
+  const from = (src[fromVar] ?? '').trim();
+  if (!urn && !from) return { page: null, off: `not configured (it needs both ${urnVar} and ${fromVar})` };
   const t = ISO_DATE_START.test(from) ? Date.parse(from) : Number.NaN;
   const bad: string[] = [];
-  if (!LINKEDIN_ORG_URN.test(urn)) bad.push('LINKEDIN_ACADEMY_ORG_URN is missing or not urn:li:organization:<digits>');
-  if (Number.isNaN(t)) bad.push('LINKEDIN_ACADEMY_POST_FROM is missing or not a valid ISO time');
+  if (!LINKEDIN_ORG_URN.test(urn)) bad.push(`${urnVar} is missing or not urn:li:organization:<digits>`);
+  if (Number.isNaN(t)) bad.push(`${fromVar} is missing or not a valid ISO time`);
   if (bad.length) return { page: null, off: bad.join('; ') };
   return { page: { orgUrn: urn, postFrom: new Date(t), tokenFrom: 'taxscan' }, off: null };
+}
+
+/**
+ * The daily LinkedIn quota guard (briefs 2026-11-09-linkedin-shopscan-page + Follow-up 1). All pages post with ONE member token on
+ * the Development tier: 100 `posts` CREATE calls per member per 24 h. Counting today's (IST day) create attempts across ALL pages, a
+ * page below holds ITSELF once the count reaches its threshold, so the Taxscan page (never held) keeps room: Academy first, then
+ * Shopscan. Invalid or unset → the default (an invalid one also says so in the boot note). Pure (takes the source as a parameter).
+ */
+export const LINKEDIN_HEADROOM_VARS = {
+  academy: 'LINKEDIN_ACADEMY_DAILY_HEADROOM',
+  shopscan: 'LINKEDIN_SHOPSCAN_DAILY_HEADROOM',
+} as const;
+export const LINKEDIN_HEADROOM_DEFAULTS: Readonly<Record<keyof typeof LINKEDIN_HEADROOM_VARS, number>> = { academy: 75, shopscan: 85 };
+export const LINKEDIN_DAILY_LIMIT = 100;
+
+export function parseLinkedInHeadroom(src: NodeJS.ProcessEnv, page: keyof typeof LINKEDIN_HEADROOM_VARS): { value: number; note: string | null } {
+  const name = LINKEDIN_HEADROOM_VARS[page];
+  const dflt = LINKEDIN_HEADROOM_DEFAULTS[page];
+  const raw = (src[name] ?? '').trim();
+  if (!raw) return { value: dflt, note: null };
+  const n = Number(raw);
+  if (/^\d+$/.test(raw) && n >= 1 && n <= LINKEDIN_DAILY_LIMIT) return { value: n, note: null };
+  return { value: dflt, note: `${name} is not a whole number from 1 to ${LINKEDIN_DAILY_LIMIT} (using ${dflt})` };
 }
 
 export const env = {
@@ -738,12 +781,22 @@ export const env = {
     } as Record<string, { orgUrn: string; accessToken: string; refreshToken?: string; refreshExpiresAt?: Date | null }>,
     // Pages that post with ANOTHER page's token, kept OUT of `pages` on purpose: every token loop (renewal, `LinkedInToken` rows,
     // the active-token cache) walks `pages`, and a page without a token of its own must never get a row or a renewal. Today only
-    // `academy`, and only while it is ACTIVE (both LINKEDIN_ACADEMY_* variables valid, see parseLinkedInAcademyEnv). Read at call
-    // time everywhere, so a test can add a private page here.
+    // `academy` and `shopscan`, each only while it is ACTIVE (both of its LINKEDIN_<PAGE>_* variables valid, see parseSharedLinkedInPage).
+    // Read at call time everywhere, so a test can add a private page here.
     sharedPages: (() => {
+      const out: Record<string, SharedLinkedInPage> = {};
       const academy = parseLinkedInAcademyEnv(process.env).page;
-      return academy ? { academy } : {};
+      if (academy) out.academy = academy;
+      const shopscan = parseLinkedInShopscanEnv(process.env).page;
+      if (shopscan) out.shopscan = shopscan;
+      return out;
     })() as Record<string, SharedLinkedInPage>,
+    // The daily quota guard (see LINKEDIN_HEADROOM_VARS): a page named here holds itself once today's create attempts, across ALL
+    // pages, reach its number. Taxscan is never in it. Read at call time everywhere, so a test can give a private page a number.
+    dailyHeadroom: {
+      academy: parseLinkedInHeadroom(process.env, 'academy').value,
+      shopscan: parseLinkedInHeadroom(process.env, 'shopscan').value,
+    } as Record<string, number>,
     // "Every push posts" (brief 2026-11-04-academy-store-posts): one time per page, null = that page stays on today's rule (one
     // post per article). The Academy one is used only while the Academy page is active (see `pageAllPushesFrom`). Read at call time
     // everywhere, so a test can set a private page here.

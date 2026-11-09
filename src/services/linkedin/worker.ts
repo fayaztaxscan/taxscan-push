@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { createHash } from 'node:crypto';
 import { Prisma, type LinkedInPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, parseLinkedInAcademyEnv, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
+import { env, parseLinkedInAcademyEnv, parseLinkedInShopscanEnv, parseLinkedInHeadroom, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
@@ -10,10 +10,10 @@ import { articleKey } from '../reports';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { fetchStorePage, type StorePageFetch } from '../social/storePage';
 import { isAllPushesCampaign, pageLinkOf, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
-import { istDay } from '../whatsapp/queue';
+import { istDay, istDayBounds } from '../whatsapp/queue';
 import { isUnverifiedImage, postToLinkedIn, uploadImage, waitForImage, type LinkedInResult } from './client';
 import { fetchCoverImage } from './image';
-import { PAGE_ACADEMY, PAGE_TAXSCAN, academyActive, normalizePortals, pageAllPushesFrom, pageConfig, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
+import { PAGE_ACADEMY, PAGE_SHOPSCAN, PAGE_TAXSCAN, academyActive, normalizePortals, pageAllPushesFrom, pageConfig, pageHeadroom, pagesOf, portalPages, portalsOfPage, postFromVarOf, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from './pages';
 import { refreshActiveTokens, tokenPageOf } from './token';
 import { buildPagePost, buildPost, buildStorePost, commentaryWithLink, fetchCmsArticle, type CmsArticle } from './post';
 import { campaignPicture } from '../social/picture';
@@ -23,7 +23,8 @@ import { campaignPicture } from '../social/picture';
  *
  * A 1-minute tick that READS Campaign rows (never touches the send path) and posts each pushed taxscan.in article to
  * its LinkedIn page(s), oldest first, at most 3 per tick across ALL pages (Taxscan first; the optional Academy page, brief
- * 2026-11-04-linkedin-academy-page, posts the same articles with its own rows, go-live time and org URN, and the Taxscan token).
+ * 2026-11-04-linkedin-academy-page, and then the optional Shopscan page, brief 2026-11-09-linkedin-shopscan-page, post the same
+ * articles with their own rows, go-live times and org URNs, and the Taxscan token).
  * Safety rules, all enforced here, PER PAGE:
  *  - the `LinkedInPost` row is created (PENDING, in flight = `nextAttemptAt` null) BEFORE the API call, one article at a
  *    time, and its unique (page, articleKey) makes a second tick (or a re-push / the morning-backfill clone) a no-op;
@@ -44,6 +45,17 @@ import { campaignPicture } from '../social/picture';
  * first), MAX_PER_TICK, the retries, the stale rule, the per-page login stop. A course / product post has its own builder (the push's
  * own title and body, the card from the page's og tags); an article post is built exactly as before. LinkedIn's duplicate answer
  * (422 DUPLICATE_POST) is a plain FAILED: no retry, no repeat without the picture, no stop, no alert. See src/services/social/allPushes.ts.
+ * The Shopscan page is an every-push page from its first day (its go-live IS its all-pushes time).
+ *
+ * THE DAILY QUOTA GUARD (briefs 2026-11-09-linkedin-shopscan-page + Follow-up 1). Every page posts with ONE member token on the
+ * Development tier: 100 `posts` CREATE calls per member per 24 h. At the start of each tick the worker reads how many create attempts
+ * were made today (IST day) across ALL pages; Academy holds itself at LINKEDIN_ACADEMY_DAILY_HEADROOM (default 75), Shopscan at
+ * LINKEDIN_SHOPSCAN_DAILY_HEADROOM (default 85), Taxscan never. A held page makes no API call: each push it would have posted gets a
+ * SKIPPED row with the reason `quota_headroom`, which is never retried and never posted later (a late post of an old push is worse than
+ * none). The count is taken ONCE per tick, before anything posts, so one push posts to every page the same way; a tick makes at most 3
+ * posts, so a page can pass its number by at most 2.
+ * A MANUAL IMMEDIATE PUSH IS NEVER HELD (Follow-up 2, owner 9 Nov: it may be viral, important news): Compose Send now, Breaking, and
+ * Queue / Review Push now post on every page whatever today's count. See `isManualImmediatePush`. It still counts toward the day.
  */
 
 export const MAX_PER_TICK = 3;
@@ -55,6 +67,8 @@ export const MAX_ATTEMPTS = RETRY_DELAYS_MIN.length + 1;
 const EARLIER_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 export const UNKNOWN_ERROR = 'unknown — check the page';
 export const DUPLICATE_ERROR = 'LinkedIn says this was already posted';
+/** The reason on a row a held page SKIPPED (the daily quota guard). The screen turns it into words. */
+export const QUOTA_HEADROOM = 'quota_headroom';
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
 
 export type WorkerDeps = {
@@ -93,7 +107,9 @@ const stoppedFor = new Map<string, string>(); // page → token fingerprint it w
 /** Test hook: forget every stop (a restart does the same). */
 export function resetLinkedInStops(): void {
   stoppedFor.clear();
+  holdLoggedDay.clear();
 }
+const holdLoggedDay = new Map<string, string>(); // page → the IST day its quota_headroom line was last logged
 const fingerprint = (token: string): string => createHash('sha256').update(token).digest('hex').slice(0, 16);
 export const authKey = (page: string): string => `linkedin:auth:${page}`;
 type AuthState = { stoppedAt: string; alertedDay: string | null; status: number | null };
@@ -351,17 +367,37 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
 export type TickResult = { posted: number; retried: number; failed: number; staleClosed: number; authStopped: boolean; refused: string | null };
 
 /**
- * Why the worker must not run, or null. Checked for every page the worker handles, Taxscan first: an Academy page is active only
- * with its own two variables valid and borrows the Taxscan token, so once Taxscan itself is sound Academy can never be the reason.
+ * Why the worker must not run, or null. Checked for every page the worker handles, Taxscan first: an Academy or Shopscan page is
+ * active only with its own two variables valid and borrows the Taxscan token, so once Taxscan itself is sound neither can be the reason.
  */
 export function startupProblem(d: Pick<WorkerDeps, 'postFrom' | 'portals'> = {}): string | null {
   const pages = pagesOf(normalizePortals(d.portals ?? portalPages()));
   for (const page of pages) {
-    if (!resolvePostFrom(d.postFrom, page)) return `${page === PAGE_ACADEMY ? 'LINKEDIN_ACADEMY_POST_FROM' : 'LINKEDIN_POST_FROM'} is missing or not a valid ISO time (nothing would be safe to post)`;
+    if (!resolvePostFrom(d.postFrom, page)) return `${postFromVarOf(page)} is missing or not a valid ISO time (nothing would be safe to post)`;
   }
   for (const page of pages) if (!pageConfig(page)) return `LINKEDIN_${page.toUpperCase()}_ORG_URN / _ACCESS_TOKEN are not both set`;
   return null;
 }
+
+/**
+ * How many `posts` CREATE attempts were made today (the IST day of `now`), across ALL pages: the sum of `attempts` over the rows
+ * touched today. Nothing new is stamped for it. It counts attempts, not calls (a picture post repeated as a link post is one attempt and
+ * two calls), and a row retried across midnight counts all its attempts: the margin below LinkedIn's 100 absorbs both.
+ */
+export async function postsCreatedToday(now: Date): Promise<number> {
+  const { start, end } = istDayBounds(istDay(now));
+  const r = await prisma.linkedInPost.aggregate({ _sum: { attempts: true }, where: { updatedAt: { gte: start, lt: end }, attempts: { gte: 1 } } });
+  return r._sum.attempts ?? 0;
+}
+
+/**
+ * A push a person sent RIGHT NOW from the admin: Compose Send now (also as Breaking), Queue Push now, Review Push now. The send path
+ * records it without a new column: those four doors set `createdByUserId` and leave `scheduledAt` empty. Everything else is automatic
+ * as far as the guard is concerned: the pacer, the morning-backfill clone (`cloneForResend` copies neither field), an RSS capture and a
+ * bearer / curl send have no `createdByUserId`; a scheduled Compose send, and a Compose send the night rule deferred to 07:00, keep
+ * their `scheduledAt` after the sweeper sends them. Pure; the worker reads both columns only for a held page.
+ */
+export const isManualImmediatePush = (c: { createdByUserId?: string | null; scheduledAt?: Date | null }): boolean => !!c.createdByUserId && !c.scheduledAt;
 
 export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
   const now = (d.now ?? (() => new Date()))();
@@ -370,7 +406,9 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
   const problem = startupProblem(d);
   if (problem) return { ...out, refused: problem };
   const portals = normalizePortals(d.portals ?? portalPages());
-  const pages = pagesOf(portals); // Taxscan first: it is handled first, so a busy Taxscan page only delays Academy to a later tick
+  const pages = pagesOf(portals); // Taxscan first: it is handled first, so a busy Taxscan page only delays the others to a later tick
+  // The daily quota guard: today's create attempts across ALL pages, read ONCE, before anything in this tick posts.
+  const createsToday = pages.some((p) => pageHeadroom(p) !== null) ? await postsCreatedToday(now) : 0;
 
   // 1. In-flight rows with no result after 10 minutes: unknown, never re-posted. Only the pages THIS tick handles: a row of a page
   //    it does not post for is not its to judge (in production that is every page; it matters when ticks of different pages overlap).
@@ -425,18 +463,30 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     // null = today's rule only. The read below starts at THIS page's own go-live, so the new rule can never reach back before it, whatever time is set.
     const pushesFrom = resolveAllPushesFrom(d.allPushesFrom, page);
     const pagePortals = portalsOfPage(portals, page);
+    // The daily quota guard (see the header): is this page held by today's count? Decided here because a held page also needs to know
+    // WHO sent each push (`createdByUserId`, `scheduledAt`), so a manual immediate push is not held; every other page reads exactly as before.
+    const headroom = pageHeadroom(page);
+    const held = headroom !== null && createsToday >= headroom;
     // The read stays `select`-narrow: only what the rules need, and `lastSentAt` too ONLY while the all-pushes time is set (it is what
     // splits the pushes at that time and merges the two rules by time). With the time unset the read is exactly today's.
-    const campaigns: { id: string; url: string; target: unknown; lastSentAt?: Date | null }[] = await prisma.campaign.findMany({
+    const campaigns: { id: string; url: string; target: unknown; lastSentAt?: Date | null; createdByUserId?: string | null; scheduledAt?: Date | null }[] = await prisma.campaign.findMany({
       where: { portal: { in: pagePortals }, status: 'SENT', lastSentAt: { gte: postFrom } },
-      select: pushesFrom ? { id: true, url: true, target: true, lastSentAt: true } : { id: true, url: true, target: true },
+      select: {
+        id: true,
+        url: true,
+        target: true,
+        ...(pushesFrom ? { lastSentAt: true } : {}),
+        ...(held ? { createdByUserId: true, scheduledAt: true } : {}),
+      },
       orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
     });
+    const manualIds = new Set<string>(); // held page only: the pushes a person sent right now (never held)
     const firstOf = new Map<string, string>(); // post key → the id of the push it is posted for; both rules insert as the pushes come, oldest first
     // TODAY'S-RULE candidates (an article's oldest push) and, for each, the id of EVERY push of that article in this read: the guard
     // below needs them all (a repeat of an article can have a `push:` row while its oldest push does not).
     const idsOfArticle = new Map<string, string[]>();
     for (const c of campaigns) {
+      if (held && isManualImmediatePush(c)) manualIds.add(c.id);
       const sentAt = c.lastSentAt ?? null; // only read while the all-pushes time is set
       const k = isPublicArticleCampaign(c) ? articleKey(c) : null; // null: not a public article
       if (k !== null) idsOfArticle.get(k)?.push(c.id); // a later push of an article that follows today's rule
@@ -469,10 +519,25 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     // and the article keys come from the pushes already read: no extra query. Any status counts (POSTED, FAILED, SKIPPED, in flight).
     const handled = pushedCampaignIds(have);
     if (handled.size > 0) for (const [k, ids] of idsOfArticle) if (ids.some((id) => handled.has(id))) firstOf.delete(k);
+    // The daily quota guard: a held page (Academy, Shopscan) makes NO call for an automatic push. Each one it would have posted gets a
+    // SKIPPED row instead, reason `quota_headroom`: never retried, never posted later. That costs no budget, and ALL of its automatic
+    // candidates are skipped in this tick, so none is left to post after midnight when the count resets (a late post of an old push is
+    // worse than none). A MANUAL IMMEDIATE push (`manualIds`) is not held: it posts below like on any page, whatever the count.
+    let heldCount = 0;
     // Oldest first across both rules: the read orders the pushes by send time (then id) and each rule inserts as it goes.
     for (const [key, campaignId] of firstOf) {
-      if (budget <= 0 || stopped) break;
       if (have.has(key)) continue;
+      if (held && !manualIds.has(campaignId)) {
+        try {
+          await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId, status: 'SKIPPED', attempts: 0, error: QUOTA_HEADROOM } });
+          heldCount += 1;
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
+          throw err;
+        }
+        continue;
+      }
+      if (budget <= 0 || stopped) break;
       // No row: this article / push was never handled (an earlier push of it that was handled would have left its row).
       let row: LinkedInPost;
       try {
@@ -483,6 +548,12 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
       }
       budget -= 1;
       if (note(await attempt(row, d, now))) stopped = true;
+    }
+    // ONE line per held page per IST day (the first tick that skipped something): how many it skipped in that tick.
+    if (heldCount > 0 && holdLoggedDay.get(page) !== istDay(now)) {
+      holdLoggedDay.set(page, istDay(now));
+      // eslint-disable-next-line no-console
+      console.log(`[linkedin] page=${page} ${QUOTA_HEADROOM} skipped=${heldCount}`);
     }
   }
   return out;
@@ -549,6 +620,22 @@ export function startLinkedInWorker(): void {
   const academy = env.linkedin.sharedPages[PAGE_ACADEMY];
   // eslint-disable-next-line no-console
   console.log(academy ? `[linkedin] academy page on (post from ${academy.postFrom.toISOString()})` : `[linkedin] academy page off: ${parseLinkedInAcademyEnv(process.env).off ?? 'not configured'}`);
+  // The Shopscan page's ONE boot line, worded like Academy's: on with its go-live (it posts every push from then), or off and why.
+  const shopscan = env.linkedin.sharedPages[PAGE_SHOPSCAN];
+  // eslint-disable-next-line no-console
+  console.log(shopscan ? `[linkedin] shopscan page on (post from ${shopscan.postFrom.toISOString()}; every push from then)` : `[linkedin] shopscan page off: ${parseLinkedInShopscanEnv(process.env).off ?? 'not configured'}`);
+  // The daily quota guard: which active pages hold themselves, at what number (names capitalised: the page lines above are the
+  // lowercase ones). An invalid number says so and uses the default, active page or not (it was typed for a reason).
+  const guarded = ([PAGE_ACADEMY, PAGE_SHOPSCAN] as const).filter((p) => env.linkedin.sharedPages[p]);
+  if (guarded.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[linkedin] daily quota guard: ${guarded.map((p) => `${p[0].toUpperCase()}${p.slice(1)} held at ${pageHeadroom(p)}`).join(', ')} posts a day, counted across all pages (Taxscan never held)`);
+  }
+  for (const p of [PAGE_ACADEMY, PAGE_SHOPSCAN] as const) {
+    const bad = parseLinkedInHeadroom(process.env, p).note;
+    // eslint-disable-next-line no-console
+    if (bad) console.log(`[linkedin] quota guard: ${bad}`);
+  }
   // "Every push posts" (brief 2026-11-04-academy-store-posts): ONE line per page, on with its time, or off (the page stays on today's
   // rule, one post per article) and why, in fixed words naming the variable, never its value. The line names the page through its
   // variable. The Academy page needs both its page and its own variable.

@@ -8,7 +8,7 @@ import { isPublicArticleCampaign } from '../services/social/publicCampaign';
 import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
-import { loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
+import { QUOTA_HEADROOM, loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
 import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
 
 /**
@@ -19,7 +19,9 @@ import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
  *   GET  /api/linkedin/posts?date=YYYY-MM-DD&page=<key>
  *                                                IST day, default today, up to 14 days back. `page` = one of the ACTIVE pages
  *                                                (`pages` in the answer, Taxscan first), default the first (taxscan); anything
- *                                                else (an unknown page, or `academy` while it is not active) is 400 invalid_page.
+ *                                                else (an unknown page, or `academy` / `shopscan` while it is not active) is 400 invalid_page.
+ *                                                A row the daily quota guard held (Academy / Shopscan) is SKIPPED with `skipReason: 'quota_headroom'`
+ *                                                (present only then); it has no Retry and no Skip.
  *   POST /api/linkedin/posts/:id/retry          a FAILED row: post it now
  *   POST /api/linkedin/posts/:id/skip           a FAILED row, or one waiting for a retry
  *
@@ -61,7 +63,7 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
       const problem = dayProblem(day, now);
       if (problem) return res.status(400).json({ error: 'invalid_date', message: problem });
       // The ACTIVE pages, Taxscan first (the SPA shows a page switch only when there is more than one). `?page=` must be one of them:
-      // an unknown page, or `academy` while it is not active, is refused before anything is read.
+      // an unknown page, or `academy` / `shopscan` while it is not active, is refused before anything is read.
       const portals = normalizePortals(portalsOf());
       const pages = pagesOf(portals);
       const wanted = req.query.page;
@@ -145,6 +147,9 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
           postUrl: p?.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null,
           /** Retry on this row needs "check the page first" (the outcome is unknown). */
           unknownOutcome: p?.status === 'FAILED' && (p.error ?? '').startsWith('unknown'),
+          // Present (`quota_headroom`) only on a row the daily quota guard held (brief 2026-11-09-linkedin-shopscan-page): the screen
+          // says it in words. Absent on every other row, so the answer for them is unchanged.
+          ...(p?.status === 'SKIPPED' && p.error === QUOTA_HEADROOM ? { skipReason: QUOTA_HEADROOM } : {}),
         };
       });
       const n = (s: ScreenStatus) => rows.filter((r) => r.status === s).length;

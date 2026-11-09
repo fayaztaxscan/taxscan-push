@@ -136,7 +136,8 @@ to keep.
 **`LinkedInPost` (the LinkedIn page posting log) is deliberately NOT in the export either.** After a restore keep
 `LINKEDIN_POSTING_ENABLED` off and set `LINKEDIN_POST_FROM` to the restore time before switching it back on; with the rows
 gone and no age limit on posting (since 2026-11-04), EVERYTHING pushed earlier would otherwise post to LinkedIn a second time. If the Academy page is on,
-set `LINKEDIN_ACADEMY_POST_FROM` to the restore time too. **The two LinkedIn "every push posts" variables (`LINKEDIN_TAXSCAN_ALL_PUSHES_FROM`,
+set `LINKEDIN_ACADEMY_POST_FROM` to the restore time too; likewise `LINKEDIN_SHOPSCAN_POST_FROM` if the Shopscan page is on (it is also
+Shopscan's every-push time). **The two LinkedIn "every push posts" variables (`LINKEDIN_TAXSCAN_ALL_PUSHES_FROM`,
 `LINKEDIN_ACADEMY_ALL_PUSHES_FROM`) get the same treatment: set each one that is in use to the restore time (or unset it).** Their `push:<id>:<ms>`
 rows are gone with the rest, and an old value would post every push since then (articles, courses and products, repeats included) a second time.
 See `docs/LINKEDIN_POSTING.md`.
