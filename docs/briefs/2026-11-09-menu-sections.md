@@ -29,7 +29,7 @@ and a phone shows ~17 rows. Telegram would push the row to ~1510 px.
   (`localStorage`, wrapped in try/catch; fall back to the first tab: Compose / the first active social channel / Digests).
 - **Phones (≤ 720 px):** ☰ opens one list: sections as headings with their screens beneath (same order as desktop), then
   Admin, then Account. Close ☰ on **any route change** (today it closes only on a link click, so Back leaves it open).
-- **CSS:** rewrite the nav block in `app.css`, delete the 1430/1700 px squeeze tuning, and move the ☰ cut-off to 720 px. Keep
+- **CSS:** rewrite the nav block in `app.css`, delete the 1430/1700 px squeeze tuning (and the Telegram build's interim **1500 px** fold, added because four Social links wrapped the row), and move the ☰ cut-off to 720 px. Keep
   the existing colours, type, active-state emphasis and `data-group` attributes.
 - **Accessibility:** the tab row is a `nav` with `aria-current="page"` on the active tab; the dropdowns open by click and Enter,
   close on Escape and outside click (as Admin ▾ does today).

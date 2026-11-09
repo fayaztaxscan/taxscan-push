@@ -76,7 +76,7 @@ browsers after endpoint rotation, so it barely grows the base.
   (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
   Manual/Automatic — Push-now sets `createdByUserId`), **Reports**,
   **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (one HTML copy; "Print / Save as PDF" makes a PDF on the spot — the stored PDF and `build:guide` were removed 2026-10-29).
-  Responsive phone→tablet→desktop (nav collapses to a hamburger below **1430 px** — `app.css` `max-width: 1429px`; corrected 9 Nov). **Phones (≤720px,
+  Responsive phone→tablet→desktop (nav collapses to a hamburger below **1500 px** since the Telegram build, was 1430; interim until brief `2026-11-09-menu-sections` makes it phones-only). **Phones (≤720px,
   2026-10-07):** data tables carry `class="stack"` and render one card per row — `data-label` on each
   `<td>` names it, `cell-lead/-wide/-full/-late/-actions` place it (app.css); fields are 16px (no iOS
   zoom); Reports heat-table row labels are sticky; **Share image** (Web Share, touch devices only).
