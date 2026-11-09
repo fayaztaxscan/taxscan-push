@@ -4,6 +4,7 @@ import type { User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { env } from '../lib/env';
+import { telegramActive } from '../services/telegram/pages';
 
 /**
  * Brief 2026-11-02-whatsapp-channel-queue, acceptance 3–6: the queue for an IST day, the one-row-per-article rule,
@@ -226,6 +227,7 @@ describe('6. roles and the flag', () => {
       whatsappQueue: env.whatsapp.queueEnabled,
       linkedinPosting: env.linkedin.enabled,
       facebookPosting: env.facebook.enabled,
+      telegramPosting: telegramActive(), // brief 2026-11-09-telegram-channel: on only when the flag AND all four variables are valid
       socialPicture: env.social.pictureEnabled, // brief 2026-11-08-social-picture
     });
   });

@@ -75,6 +75,9 @@ export function logSecrets(): string[] {
     env.audience.cms.inboundSecretPrevious,
     env.audience.cms.pullSecret,
     env.audience.mailercloud.syncApiKey,
+    // The Telegram bot token sits in the Bot API URL path, so any error that quotes a URL would print it (brief 2026-11-09-telegram-channel).
+    env.telegram.config?.token,
+    (process.env.TELEGRAM_BOT_TOKEN ?? '').trim(),
     // The RAW values as well: one under 32 characters counts as unset above, yet is still a secret.
     ...AUDIENCE_SECRET_NAMES.map((name) => (process.env[name] ?? '').trim()),
   ].filter((x, i, all): x is string => typeof x === 'string' && x !== '' && all.indexOf(x) === i);

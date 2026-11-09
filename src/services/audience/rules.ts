@@ -29,6 +29,12 @@
 
 export type MemberRole = 'PREMIUM' | 'FORMER' | 'FREE' | 'NONE';
 
+/**
+ * The statuses that make an account PREMIUM: `active`, and `cancelled` (cancelled = still paid until the period ends, when the CMS
+ * moves it to `ended`). The ONE list: `memberRole` below and the CMS digest-notice list (`digestNoticeList`) both read it.
+ */
+export const PAID_STATUSES = ['active', 'cancelled'] as const;
+
 export type RuleAccount = {
   status: string;
   consentValue: boolean | null;
@@ -51,7 +57,7 @@ export function memberRole(all: readonly RuleAccount[], opts: RuleOptions): { ro
   const accounts = all.filter(inScope);
   const live = accounts.filter(isLive);
   let role: MemberRole = 'NONE';
-  if (live.some((a) => a.status === 'active' || a.status === 'cancelled')) role = 'PREMIUM';
+  if (live.some((a) => (PAID_STATUSES as readonly string[]).includes(a.status))) role = 'PREMIUM';
   else if (opts.formerToFree && live.some((a) => a.status === 'ended' && a.consentValue !== false)) role = 'FORMER';
   else if (opts.freeReaders && live.some((a) => a.status === 'free' && a.consentValue !== false)) role = 'FREE';
   const noMarketing = live.some((a) => a.consentValue === false) || (live.length === 0 && accounts.length > 0);

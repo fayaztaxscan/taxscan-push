@@ -376,7 +376,7 @@ export function mergeSuppressionForRestore(existing: SuppressionFacts, incoming:
 }
 
 /** `CASE <col> WHEN 'UNSUBSCRIBE' THEN 1 … ELSE 0 END`, built from SUPPRESSION_RANK (constants only). */
-function rankSql(col: string): Prisma.Sql {
+export function rankSql(col: string): Prisma.Sql {
   const arms = Object.entries(SUPPRESSION_RANK)
     .map(([reason, rank]) => `WHEN '${reason.replace(/'/g, "''")}' THEN ${Number(rank)}`)
     .join(' ');

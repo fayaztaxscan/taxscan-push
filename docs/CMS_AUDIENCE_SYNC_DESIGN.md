@@ -386,6 +386,85 @@ higher `seq` (for example `account.created` with `reactivated: true`) revives th
   7-hour CMS outage the CMS team traced to its own bug): both pulls wait `AUDIENCE_PULL_PAGE_PAUSE_MS` (default 2 s,
   `0` = none) after applying a page and before requesting the next; no wait after the last page.
 
+### 5.2a Door N — the signed daily list for the CMS's "your digest isn't reaching you" notice (9 Nov, brief 2026-11-09-digest-notice-list)
+
+The CMS pulls, once a day, a signed list of **paid** accounts whose daily digest cannot reach them, with a reason, and shows each
+one a signed-in notice on taxscan.in. We build the list and the door; the CMS builds the banner. Nothing is emailed, nothing is written
+to the CMS, and the list changes nobody's mail: it reads what Mailercloud and the writer already know.
+
+**The list (one function, the single definition):** `digestNoticeList(portal, now)` in `src/services/audience/notices.ts`. One row per CMS
+**account**, sorted by account id (so the ETag is stable):
+- accounts that **currently receive the paid digest's role** (`memberRole()` = PREMIUM: `active`, or `cancelled` with time left, i.e. still inside the period they paid for), never ended / free / deleted / erased / out of scope, with an address on file (`emailHash`); the paid test is `memberRole` itself (`PAID_STATUSES` in `rules.ts`), applied to the account, so the list cannot drift from who gets the paid digest;
+- joined by `emailHash` to `AudienceMember` (`desiredRole = PREMIUM`, `noMarketing = false`) and to `EmailSuppression` (by `emailHash`, or by
+  `accountId` for an opt-out that follows the account);
+- **`bad_address`**: the member is FATAL in the writer (`lastErrorKind = 'FATAL'`: Mailercloud refuses the address), or a `HARD_BOUNCE`
+  suppression; it **wins** over `unsubscribed`;
+- **`unsubscribed`**: an `UNSUBSCRIBE` suppression;
+- **never listed**: a `SPAM`, `MANUAL` or `ACCOUNT_DELETED` suppression, consent = false (`noMarketing`), a non-PREMIUM member, any account that
+  is not live, and an `ended` account (even beside a paid one on the same address).
+- Two accounts that share one address both appear; one account appears once.
+
+**The door:**
+```
+GET https://push.taxscan.in/api/integrations/cms/digest-notices?nonce=<32 hex>
+X-CMS-Timestamp: <unix seconds>
+X-CMS-Signature: sha256=<hex HMAC-SHA256(CMS_FEED_NOTICES_SECRET, "<ts>.GET./api/integrations/cms/digest-notices.<canonical query>")>
+If-None-Match: "<etag from your last 200>"   (optional)
+
+200  ETag: "<sha256 of the items>"
+{ "as_of": "<ISO time the list was built>", "portal": "taxscan",
+  "count": N,
+  "items": [ { "account_id": "…", "reason": "bad_address" | "unsubscribed" } ] }
+304  unchanged since your ETag (no body)
+401  any auth failure (same body every time)
+404  the door is switched off on our side: keep your current copy
+503  {"error":"not_ready"}: we can't vouch for the list right now; keep your current copy
+```
+- A 200 with `count: 0` / `items: []` means **no one should see a notice**. "No data" is never sent as empty; it is a 503 or 404.
+- Pull once a day **after 05:30 IST** (our 04:30 load and the writer are done by then). Replace your copy whole: an account absent from the
+  list stops seeing the notice. `bad_address` wins over `unsubscribed` for the same account. Spam complainers and consent=false accounts never appear.
+- **Signing** is the doors L / V rule mirrored (`src/lib/cmsSignature.ts`, `verifyCmsNoticesGet`): the signed string is
+  `<ts>.GET.<path>.<canonical query>`, the path is the CONSTANT above (never the path the request claims), the canonical query carries a
+  SIGNED `nonce` (32 lower-case hex, **single use for 10 minutes**, kept in `DigestSetting`, no migration) and nothing else (any other
+  parameter is refused), no body on the GET, ±300 s skew, the current or the previous `CMS_FEED_NOTICES_SECRET` (`_PREVIOUS` during a
+  rotation). One secret per door: it must differ from every other door's secret.
+- **Order of checks:** flag (`DIGEST_NOTICES_ENABLED`, default off → **404**, as if the door did not exist) → the IP fence
+  (`CMS_FEED_ALLOWED_IPS` through `cmsClientIp`, never `req.ip`; an empty list rejects everything; the CMS pulls from `148.113.0.114`, door W's
+  box, already in the list) → rate limit (30 requests an hour per client → 429; only a fenced client reaches it) → headers, signature, a signed
+  nonce and no other parameter → the nonce is spent → freshness → the list. **Every failure of the fence, the signature and the nonce is the
+  same `401 {"code":"UNAUTHORISED"}`**; the log gets a step code only.
+- **Freshness (503 `not_ready`):** no COMPLETE full CMS load in the last 48 hours, or the audience breaker is open. Checked before a 304, so a
+  matching `If-None-Match` is still a 503 while we cannot vouch.
+- **CMS rule (confirmed 9 Nov, cms-platform-29):** after **7 days of 404/503 in a row** they hide the notice from everyone. Every 200 resets
+  that, and a 304 counts as fresh. A new 48-character `CMS_FEED_NOTICES_SECRET` is generated on their box when their build is approved; the
+  owner carries it to us.
+- **Re-subscribe is unchanged:** a CMS `account.updated` with `marketing_consent {value: true, at}` dated **after** an `UNSUBSCRIBE`
+  suppression's `lastSeenAt` lifts it (§6.3, `liftOnConsent`), so the account leaves the list on the next build. Nothing new.
+
+**The one-time import of Mailercloud's status export (ADMIN; Digests → Audience card → "Import Mailercloud statuses",
+`POST /api/digest/audience/import-statuses`).** Mailercloud's API shows no per-contact status (`GET /v1/contacts/{email}` has none), and our
+`EmailSuppression` (fed by Mailercloud webhooks since 29 Oct) holds only what arrived since, so the paid readers Mailercloud already refuses
+(unsubscribed, hard-bounced) are invisible to the list until an ADMIN uploads the contacts export once. After that the webhooks keep it
+current; there is no recurring sync (the API has none).
+- A CSV (raw body, at most 5 MB, comma / semicolon / tab, BOM and quoted fields fine) with an email column and a status column. Header names
+  accepted (case and `_ - .` ignored): email: `Email`, `Email Address`, `Email ID`, `E-mail`, `Mail`, `Contact Email`; status: `Status`,
+  `Contact Status`, `Subscription Status`, `Subscriber Status`, `State`. `Unsubscribed` → UNSUBSCRIBE; `Hard bounce` / `Hard bounced` /
+  `Bounced` / `Bounce` → HARD_BOUNCE; `Spam` / `Complained` / `Complaint` / `Spam complaint` → SPAM; every other status is ignored.
+- Only an address a CMS account holds is written; the rest are counted (`notInCms`) and left alone. An `EmailSuppression` upsert on
+  `emailHash`, `source = 'mailercloud_export'`, with the existing escalation rule (`SUPPRESSION_RANK`: SPAM > HARD_BOUNCE > UNSUBSCRIBE, MANUAL
+  above all, never downgraded), written **only when the incoming reason strictly outranks the row's**, so re-importing the same file changes
+  nothing (not even `lastSeenAt`). `firstSeenAt` / `lastSeenAt` are the import time: a later CMS opt-in must be dated after it to lift an
+  imported opt-out. A new or escalated row goes through `afterSuppressionWrite`, exactly like a webhook opt-out.
+- Addresses are normalised and hashed and **never logged, audited or returned**. The reply is counts only (`read`, `invalid`, `ignored`,
+  `notInCms`, `matched` per reason, `created`, `upgraded`, `unchanged`); audit entry `AUDIENCE_STATUSES_IMPORTED` with the same counts. A file
+  that is empty, over 5 MB, binary or without an email or status column is a plain 400 in words.
+- **What a new suppression row changes downstream** (proved in `audienceStatusImport.test.ts` against a fake Mailercloud): who receives the
+  digest does not change: the digest send never reads `EmailSuppression` (only the webhook, the writer, ingest and the pull do), and Mailercloud
+  already excludes these contacts. In the writer the member becomes `suppressed` and due; its tick makes no contact call and no write: an
+  already-tagged reader keeps its tag and role, a never-tagged one is never tagged (adds stop for a suppressed member), and a refused (FATAL)
+  reader has its FATAL flag cleared because there is nothing left to write (its notice then comes from the suppression row). The Audience card's
+  "refused" count therefore falls as those readers are filed as suppressed.
+
 ### 5.3 Full-load acceptance and the absence rule
 
 A full load is **complete** only when all of these hold:

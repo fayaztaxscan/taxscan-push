@@ -25,10 +25,12 @@ import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
 import { startLinkedInWorker } from './services/linkedin/worker';
 import { startFacebookWorker } from './services/facebook/worker';
+import { startTelegramWorker } from './services/telegram/worker';
 import { startLinkedInTokenRenewal } from './services/linkedin/token';
 import { startWhatsAppNudge } from './services/whatsapp/nudge';
 import { logWhatsAppAllPushes } from './services/whatsapp/queue';
 import { startAudienceSync } from './services/audience/boot';
+import { noticesBootLine } from './services/audience/notices';
 import { createMockDigestSender } from './services/digest/mockSender';
 import { mockSendersEnabled } from './lib/mockSenderGuard';
 import { setStaffPushTransport } from './services/staffPush';
@@ -83,8 +85,11 @@ app.listen(env.port, () => {
   startMetricsWarmer();
   startDigestScheduler(undefined, undefined, mockDigestSender ? { sender: mockDigestSender } : {});
   startAudienceSync();
+  // eslint-disable-next-line no-console
+  console.log(noticesBootLine(env.notices, env.audience.cms.allowedIps));
   startLinkedInWorker();
   startFacebookWorker();
+  startTelegramWorker();
   startLinkedInTokenRenewal();
   startWhatsAppNudge();
   logWhatsAppAllPushes();

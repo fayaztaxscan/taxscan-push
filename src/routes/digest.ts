@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type NextFunction, type Request, type Response } from 'express';
 import type { DigestAudience } from '@prisma/client';
 import { requireBearerOrUser, requireUser } from '../lib/auth';
 import { env, type AudienceEnv, type DigestEnv } from '../lib/env';
@@ -8,6 +8,7 @@ import { digestStatus } from '../services/digest/status';
 import { audienceCard } from '../services/audience/adminView';
 import { resumeBreaker } from '../services/audience/breaker';
 import { retryRefused } from '../services/audience/writer';
+import { IMPORT_MAX_BYTES, ImportRejected, importMailercloudStatuses } from '../services/audience/statusImport';
 import { advanceRun, pressSendFree, type DigestTrigger, type SelectItems } from '../services/digest/runner';
 import { approvalAudiences } from '../services/digest/holds';
 import { selectDigest } from '../services/digest/builder';
@@ -150,6 +151,32 @@ export function createDigestRouter(opts: DigestRouterOptions = {}): Router {
     } catch (err) {
       return next(err);
     }
+  });
+
+  // The one-time import of Mailercloud's own status export (brief 2026-11-09-digest-notice-list): an ADMIN uploads the contacts CSV
+  // (raw body, at most 5 MB) and gets COUNTS back, never an address. Works whatever DIGEST_NOTICES_ENABLED says. A bad file is a
+  // plain 400 in words; the route's own raw parser is the only body here over the global 64 KB limit.
+  router.post(
+    '/audience/import-statuses',
+    requireUser(['ADMIN']),
+    express.raw({ type: () => true, limit: IMPORT_MAX_BYTES }),
+    async (req, res, next) => {
+      try {
+        const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const counts = await importMailercloudStatuses(buf, { userId: req.user?.id ?? null, now: nowOf(), ip: requestClientIp(req) });
+        return res.json({ ok: true, counts });
+      } catch (err) {
+        if (err instanceof ImportRejected) return res.status(400).json({ error: err.code, message: err.message });
+        return next(err);
+      }
+    },
+  );
+  // A file over the limit never reaches the handler: our words, a 400 (not a bare 413 page).
+  router.use('/audience/import-statuses', (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if ((err as { type?: string } | undefined)?.type === 'entity.too.large') {
+      return res.status(400).json({ error: 'too_big', message: 'The file is over 5 MB. Export only the paid readers, or split it.' });
+    }
+    return next(err);
   });
 
   // 14-day history (status only carries date + state).

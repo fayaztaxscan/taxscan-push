@@ -50,10 +50,12 @@ const force = ref(false);
 const scheduleMode = ref<'now' | 'later'>('now');
 const scheduledAtLocal = ref('');
 
-// Optional picture for the LinkedIn + Facebook posts (SOCIAL_PICTURE_ENABLED). Off = no field and nothing sent.
+// Optional picture for the LinkedIn + Facebook (+ Telegram) posts (SOCIAL_PICTURE_ENABLED). Off = no field and nothing sent.
 // The server checks the rules and answers a plain sentence on refusal; Remove only drops the id (nothing is deleted).
 type SocialPicture = { id: string; url: string; width: number; height: number; size: number; deduped: boolean };
 const pictureOn = computed(() => user.value?.features?.socialPicture === true);
+// The pages the picture goes to: the Telegram channel uses the Compose picture too, but only while it is active.
+const pictureNames = computed(() => (user.value?.features?.telegramPosting === true ? 'LinkedIn, Facebook and Telegram' : 'LinkedIn and Facebook'));
 const picture = ref<SocialPicture | null>(null);
 const pictureUploading = ref(false);
 const pictureError = ref<string | null>(null);
@@ -337,10 +339,10 @@ onMounted(() => {
       </div>
 
       <div v-if="pictureOn" class="form-row">
-        <label for="social-picture">Picture for LinkedIn and Facebook (optional)</label>
+        <label for="social-picture">Picture for {{ pictureNames }} (optional)</label>
         <div class="pic-row">
           <div class="pic-box" :class="{ has: pictureSrc }">
-            <img v-if="pictureSrc" :src="pictureSrc" alt="Picture for the LinkedIn and Facebook posts" />
+            <img v-if="pictureSrc" :src="pictureSrc" :alt="`Picture for the ${pictureNames} posts`" />
             <span v-else class="muted">No picture</span>
           </div>
           <div class="pic-side">
@@ -348,7 +350,7 @@ onMounted(() => {
               JPEG or PNG, at most 2&nbsp;MB, at least 1080&nbsp;px wide. Square (1:1) to wide (1.91:1); portrait no taller
               than 4:5. Best: 1080&nbsp;×&nbsp;1080 (square) or 1200&nbsp;×&nbsp;627 (wide).
             </p>
-            <p class="muted pic-note">Used only on the LinkedIn and Facebook posts, not in the notification itself.</p>
+            <p class="muted pic-note">Used only on the {{ pictureNames }} posts, not in the notification itself.</p>
             <p class="muted pic-note">Clears after a successful send, so attach it again for the next push if needed.</p>
             <input
               v-if="!picture"

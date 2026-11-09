@@ -9,7 +9,8 @@ import { PAGE_TAXSCAN, pageAllPushesFrom, portalPages } from './linkedin/pages';
 import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
 import { socialImageUrl } from './social/picture';
-import { COMPOSE_SKIP, WHATSAPP_SKIP_KEY, facebookSkipKey, isComposeSkipped, linkedinSkipKey } from './social/pages';
+import { COMPOSE_SKIP, WHATSAPP_SKIP_KEY, facebookSkipKey, isComposeSkipped, linkedinSkipKey, telegramSkipKey } from './social/pages';
+import { PAGE_TAXSCAN as TG_PAGE_TAXSCAN, PORTAL_TO_PAGE as TG_PORTAL_TO_PAGE, messageUrlOf as tgMessageUrlOf, telegramConfig } from './telegram/pages';
 
 const IST_OFFSET_MIN = 5 * 60 + 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -45,6 +46,8 @@ export type CampaignChannels = {
   linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
   /** Only present while FACEBOOK_POSTING_ENABLED (the payload is unchanged when it is off). Same meaning as `linkedin`. */
   facebook?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
+  /** Only present while the Telegram channel is ACTIVE (brief 2026-11-09-telegram-channel). Same meaning as `facebook`. */
+  telegram?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
 };
 /** The words behind a mark's tooltip; only present where there is something to say. */
 export type CampaignChannelDetails = {
@@ -52,6 +55,7 @@ export type CampaignChannelDetails = {
   whatsapp?: { by: string | null; at: string; skipReason?: typeof COMPOSE_SKIP };
   linkedin?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
   facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
+  telegram?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
 };
 
 export type CampaignStat = {
@@ -622,7 +626,8 @@ async function channelsFor(
   const waOn = env.whatsapp.queueEnabled;
   const liOn = env.linkedin.enabled;
   const fbOn = env.facebook.enabled;
-  if (!waOn && !liOn && !fbOn) return null;
+  const tg = telegramConfig(); // null while the channel is off or any of its four variables is missing or invalid
+  if (!waOn && !liOn && !fbOn && !tg) return null;
   const eligible = campaigns.filter((c) => c.status === 'SENT' && isPublicArticleCampaign(c));
   const keyOf = new Map(eligible.map((c) => [c.id, articleKey(c)]));
   const keys = [...new Set(keyOf.values())]; // ARTICLE keys: WhatsApp reads only these
@@ -676,14 +681,19 @@ async function channelsFor(
   // handed back to today's rule (moved later), a mark made under the new rule (the same care as LinkedIn and Facebook). With the time UNSET
   // the query is exactly today's: article keys only (an existing test pins it).
   const waKeys = waPushesFrom ? [...new Set([...keys, ...waPushKeyOf.values(), ...ownKeyOf.values()])] : keys;
-  const [wa, li, fb] = await Promise.all([
+  // Telegram posts EVERY push from its go-live, always under the push's own key: ONE more batched query, none when the channel is off.
+  const tgKeyOf = new Map<string, string>(); // campaign id → its `push:` key
+  if (tg) for (const c of campaigns) if (c.status === 'SENT' && c.lastSentAt && c.lastSentAt >= tg.postFrom && TG_PORTAL_TO_PAGE[c.portal] === TG_PAGE_TAXSCAN && isAllPushesCampaign(c)) tgKeyOf.set(c.id, pushKey({ id: c.id, lastSentAt: c.lastSentAt }));
+  const [wa, li, fb, tgPosts] = await Promise.all([
     waOn && waKeys.length ? prisma.whatsAppPost.findMany({ where: { portal: waPortal, articleKey: { in: waKeys } }, include: { actedBy: { select: { email: true } } } }) : [],
     liOn && socialKeys.length ? prisma.linkedInPost.findMany({ where: { page: PAGE_TAXSCAN, articleKey: { in: socialKeys } } }) : [],
     fbOn && socialKeys.length ? prisma.facebookPost.findMany({ where: { page: FB_PAGE_TAXSCAN, articleKey: { in: socialKeys } } }) : [],
+    tg && tgKeyOf.size ? prisma.telegramPost.findMany({ where: { page: TG_PAGE_TAXSCAN, pushKey: { in: [...tgKeyOf.values()] } } }) : [],
   ]);
   const waBy = new Map(wa.map((p) => [p.articleKey, p]));
   const liBy = new Map(li.map((p) => [p.articleKey, p]));
   const fbBy = new Map(fb.map((p) => [p.articleKey, p]));
+  const tgBy = new Map(tgPosts.map((p) => [p.pushKey, p]));
   // The LinkedIn mark means the TAXSCAN page, whether or not the Academy page is also posting (it has its own rows and its own screen).
   const liPortals = portalPages();
   const from = env.linkedin.postFrom;
@@ -726,6 +736,15 @@ async function channelsFor(
         if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null };
       }
     }
+    if (tg) {
+      channels.telegram = null;
+      const tgKey = tgKeyOf.get(c.id);
+      if (tgKey) {
+        const p = tgBy.get(tgKey);
+        channels.telegram = p ? p.status : 'PENDING';
+        if (p) details.telegram = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.messageId !== null ? tgMessageUrlOf(tg.channel, p.messageId) : null };
+      }
+    }
     // COMPOSE SKIPS (brief 2026-11-09-compose-skip-pages): a channel the sender unticked for THIS push reads SKIPPED, whatever rows exist (the
     // worker may not have written its row yet, and under today's rule the article's row may belong to another push). Only where the channel
     // applies to the push at all (a mark that is null stays null).
@@ -742,6 +761,10 @@ async function channelsFor(
       if (channels.facebook != null && isComposeSkipped(c, facebookSkipKey(FB_PAGE_TAXSCAN))) {
         channels.facebook = 'SKIPPED';
         details.facebook = { error: null, at, postUrl: null, skipReason: COMPOSE_SKIP };
+      }
+      if (channels.telegram != null && isComposeSkipped(c, telegramSkipKey(TG_PAGE_TAXSCAN))) {
+        channels.telegram = 'SKIPPED';
+        details.telegram = { error: null, at, postUrl: null, skipReason: COMPOSE_SKIP };
       }
     }
     out.set(c.id, { channels, channelDetails: details, channelDay: c.lastSentAt ? istDay(c.lastSentAt) : null });

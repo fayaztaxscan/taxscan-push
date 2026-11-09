@@ -3,13 +3,15 @@ import { env, type AudienceEnv } from '../../lib/env';
 import { todaysCounters } from './breaker';
 import { GUARD_SHORT, audienceGuard, loadGuardSnapshot, type GuardResult } from './guard';
 import { freeAdmittedToday } from './writer';
+import { digestNoticeList, noticeCounts, noticesNotReady } from './notices';
 
 /**
  * The Digests → Audience card payload (docs/CMS_AUDIENCE_SYNC_DESIGN.md §10.2). Postgres only — it never calls the
  * CMS or Mailercloud on the request path. Counts, reason codes and times; never an address, a hash or an account id.
  *
  *  - PUBLISHER: `line` (number-free) and `ok`, nothing else;
- *  - ADMIN: the same plus counts, last syncs, errors in the last 24 h, the breaker and its reviewed counts.
+ *  - ADMIN: the same plus counts, last syncs, errors in the last 24 h, the breaker and its reviewed counts, and `notices`
+ *    (brief 2026-11-09-digest-notice-list): how many paid accounts the CMS's daily list holds, by reason, built now.
  * `enabled: false` (AUDIENCE_SYNC_ENABLED off) → the card is hidden entirely.
  */
 
@@ -66,6 +68,9 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
     todaysCounters(prisma, portal, now),
   ]);
   const free = cfg.freeReaders ? await freeCounts(now, cfg) : null;
+  // The CMS digest-notice list, built now (the same single definition the door serves); counts only. `ready` is the door's own
+  // freshness rule (a complete full load within 48 h and the breaker closed); `enabled` is DIGEST_NOTICES_ENABLED.
+  const [noticeList, notReady] = await Promise.all([digestNoticeList(portal, now), noticesNotReady(portal, now)]);
   const drift = (st?.drift ?? null) as { at?: unknown; premiumMailercloud?: unknown } | null;
   return {
     enabled: true as const,
@@ -86,6 +91,7 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
     refused: { premium: refusedPremium, former: refusedFormer },
     // AUDIENCE_FREE_READERS on only (absent when off). Counts only.
     ...(free ? { free } : {}),
+    notices: { enabled: env.notices.enabled, ready: notReady === null, ...noticeCounts(noticeList), asOf: now.toISOString() },
     errors24h: { writerRetryable: retryable, writerFatal: fatal, seqConflict: counters.seqConflict, unknownStatus: counters.unknownStatus },
     guard: premium.ok ? { ok: true as const } : { ok: false as const, check: premium.check, plain: premium.plain },
     breaker: {

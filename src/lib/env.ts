@@ -374,6 +374,27 @@ export function parseReadsEnv(src: NodeJS.ProcessEnv) {
 export type ReadsEnv = ReturnType<typeof parseReadsEnv>;
 
 /**
+ * Door N — the signed daily list for the CMS's "your digest isn't reaching you" notice (brief 2026-11-09-digest-notice-list):
+ *  - DIGEST_NOTICES_ENABLED          off (default): the door answers 404, as if it did not exist;
+ *  - CMS_FEED_NOTICES_SECRET         the CMS signs its GET with it (≥ 32 chars, never another door's secret);
+ *  - CMS_FEED_NOTICES_SECRET_PREVIOUS  accepted too during a rotation.
+ * The IP fence is the audience one (`CMS_FEED_ALLOWED_IPS`). Problems name variables, never values; a fault never crashes the app.
+ */
+export function parseNoticesEnv(src: NodeJS.ProcessEnv) {
+  const problems: string[] = [];
+  const secret = secretFrom(src, 'CMS_FEED_NOTICES_SECRET', problems);
+  const secretPrevious = secretFrom(src, 'CMS_FEED_NOTICES_SECRET_PREVIOUS', problems);
+  const others = [src.CMS_FEED_PULL_SECRET, src.CMS_FEED_INBOUND_SECRET, src.CMS_FEED_INBOUND_SECRET_PREVIOUS, src.CMS_FEED_VIEWS_SECRET]
+    .map((v) => (v ?? '').trim())
+    .filter(Boolean);
+  if ((secret && others.includes(secret)) || (secretPrevious && others.includes(secretPrevious))) {
+    problems.push('CMS_FEED_NOTICES_SECRET must differ from the other door secrets (one secret per door)');
+  }
+  return { enabled: src.DIGEST_NOTICES_ENABLED === 'true', secret, secretPrevious, problems };
+}
+export type NoticesEnv = ReturnType<typeof parseNoticesEnv>;
+
+/**
  * The webhook IP fence (design §5.1 step 2). Both sides in canonical form (`canonicalIp`), so
  * `::ffff:1.2.3.4` matches `1.2.3.4` and `2001:DB8::0:1` matches `2001:db8::1`. An EMPTY
  * allow-list, no IP, or an IP that does not parse is a rejection (fail closed).
@@ -394,6 +415,8 @@ export const AUDIENCE_SECRET_NAMES = [
   'CMS_FEED_INBOUND_SECRET_PREVIOUS',
   'CMS_FEED_PULL_SECRET',
   'CMS_FEED_VIEWS_SECRET',
+  'CMS_FEED_NOTICES_SECRET',
+  'CMS_FEED_NOTICES_SECRET_PREVIOUS',
   'MAILERCLOUD_SYNC_API_KEY',
 ] as const;
 
@@ -447,6 +470,37 @@ export function parseAllPushesFrom(src: NodeJS.ProcessEnv, name: string): { at: 
   if (!raw) return { at: null, off: `${name} is not set` };
   const at = parseIsoTime(raw);
   return at ? { at, off: null } : { at: null, off: `${name} is not a valid ISO time` };
+}
+
+/**
+ * The Telegram channel (brief 2026-11-09-telegram-channel). It is ACTIVE only when ALL FOUR are valid:
+ *   TELEGRAM_POSTING_ENABLED  `true`
+ *   TELEGRAM_BOT_TOKEN        the bot's token (`<digits>:<secret>`); it sits in the Bot API URL path, so it is redacted everywhere
+ *   TELEGRAM_CHANNEL          `@channelname` or a numeric `-100…` id
+ *   TELEGRAM_POST_FROM        a strict ISO time; it is also the every-push time (nothing pushed before it is ever posted)
+ * Anything else (the flag off, any variable missing or invalid) leaves it OFF: no rows, no failures, no refusal to start. Pure (takes the
+ * source as a parameter) so tests can feed it any input. `off` says why in fixed words that NAME the variables and never print a value; it
+ * is what the one boot line shows.
+ */
+export const TELEGRAM_TOKEN_SHAPE = /^\d{5,20}:[A-Za-z0-9_-]{20,}$/;
+export const TELEGRAM_CHANNEL_SHAPE = /^(?:@[A-Za-z][A-Za-z0-9_]{3,31}|-100\d{5,15})$/;
+export type TelegramConfig = { token: string; channel: string; postFrom: Date };
+export function parseTelegramEnv(src: NodeJS.ProcessEnv): { enabled: boolean; config: TelegramConfig | null; off: string | null } {
+  const enabled = (src.TELEGRAM_POSTING_ENABLED ?? '').trim() === 'true';
+  if (!enabled) return { enabled: false, config: null, off: 'TELEGRAM_POSTING_ENABLED is not true' };
+  const token = (src.TELEGRAM_BOT_TOKEN ?? '').trim();
+  const channel = (src.TELEGRAM_CHANNEL ?? '').trim();
+  const rawFrom = (src.TELEGRAM_POST_FROM ?? '').trim();
+  const postFrom = parseIsoTime(rawFrom);
+  const problems: string[] = [];
+  if (!token) problems.push('TELEGRAM_BOT_TOKEN is not set');
+  else if (!TELEGRAM_TOKEN_SHAPE.test(token)) problems.push('TELEGRAM_BOT_TOKEN is not a valid bot token');
+  if (!channel) problems.push('TELEGRAM_CHANNEL is not set');
+  else if (!TELEGRAM_CHANNEL_SHAPE.test(channel)) problems.push('TELEGRAM_CHANNEL is not a valid @name or -100… id');
+  if (!rawFrom) problems.push('TELEGRAM_POST_FROM is not set');
+  else if (!postFrom) problems.push('TELEGRAM_POST_FROM is not a valid ISO time');
+  if (problems.length > 0 || !postFrom) return { enabled: true, config: null, off: problems.join('; ') };
+  return { enabled: true, config: { token, channel, postFrom }, off: null };
 }
 
 /**
@@ -848,10 +902,14 @@ export const env = {
     // "Every push posts" (brief 2026-11-04-academy-store-posts): the page's time for it, null = the page stays on today's rule.
     allPushesFrom: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).at as Date | null,
   },
+  // Telegram channel posting (docs/TELEGRAM_POSTING.md) — see parseTelegramEnv above. Default off; all four variables are needed.
+  telegram: parseTelegramEnv(process.env),
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
   // CMS audience sync — see parseAudienceEnv above. Every flag default off.
   audience: parseAudienceEnv(process.env),
+  // Door N (the CMS digest-notice list) — see parseNoticesEnv above. Default off: the door answers 404.
+  notices: parseNoticesEnv(process.env),
   // Digest task 14: staff push notifications for digest approval. A KILL-SWITCH,
   // default ON: nothing is ever sent unless DIGEST_ENABLED is on too (the push rides
   // on the digest's own editor alerts) AND a staff member tapped "Notify me on this

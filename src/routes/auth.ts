@@ -15,6 +15,7 @@ import { passwordIssue } from '../lib/passwordPolicy';
 import { recordAudit } from '../lib/audit';
 import { hashInviteToken } from '../lib/invites';
 import { requestClientIp } from '../lib/clientIp';
+import { telegramActive } from '../services/telegram/pages';
 
 const BCRYPT_COST = 12;
 
@@ -141,6 +142,7 @@ export function createAuthRouter(
         whatsappQueue: env.whatsapp.queueEnabled,
         linkedinPosting: env.linkedin.enabled,
         facebookPosting: env.facebook.enabled,
+        telegramPosting: telegramActive(),
         socialPicture: env.social.pictureEnabled,
       },
     });

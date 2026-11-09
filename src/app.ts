@@ -12,9 +12,11 @@ import { createAuditRouter } from './routes/audit';
 import { createWhatsAppRouter, type WhatsAppRouterOptions } from './routes/whatsapp';
 import { createLinkedInRouter, type LinkedInRouterOptions } from './routes/linkedin';
 import { createFacebookRouter, type FacebookRouterOptions } from './routes/facebook';
+import { createTelegramRouter, type TelegramRouterOptions } from './routes/telegram';
 import { createDigestRouter, type DigestRouterOptions } from './routes/digest';
 import { createWebhooksRouter, type WebhookRouterOptions } from './routes/webhooks';
 import { createIntegrationsRouter, type CmsEventsRouterOptions } from './routes/cmsEvents';
+import { createNoticesRouter, type NoticesRouterOptions } from './routes/cmsNotices';
 import { createStaffPushRouter, type StaffPushRouterOptions } from './routes/staffPush';
 import { emailAssetsHandler } from './routes/digestAds';
 import { createSocialPictureRouter, socialImagesHandler, type SocialPictureRouterOptions } from './routes/socialPicture';
@@ -47,6 +49,7 @@ export type CreateAppOptions = {
   linkedin?: LinkedInRouterOptions;
   // Facebook page posting screen — tests inject the flag, clock, portals and the Graph calls.
   facebook?: FacebookRouterOptions;
+  telegram?: TelegramRouterOptions;
   // Provider webhooks (Mailercloud) — tests inject config, clock, rate limit.
   webhooks?: WebhookRouterOptions;
   // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
@@ -56,6 +59,8 @@ export type CreateAppOptions = {
   socialPages?: SocialPagesRouterOptions;
   // CMS account events (audience sync task 4) — tests inject config, clock, rate limit.
   cmsEvents?: CmsEventsRouterOptions;
+  // Door N: the CMS's signed digest-notice list (brief 2026-11-09-digest-notice-list) — tests inject config, clock, list, limit.
+  cmsNotices?: NoticesRouterOptions;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -86,6 +91,8 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/webhooks', createWebhooksRouter(opts.webhooks));
   // CMS account events (door W): HMAC over the RAW body, so ahead of every JSON parser too.
   // Always mounted; answers 401 to everything while AUDIENCE_SYNC_ENABLED is off (contract v1.2 §3).
+  // Door N (the CMS pulls the digest-notice list): its own router FIRST, because door W's router ends in a catch-all 404.
+  app.use('/api/integrations', createNoticesRouter(opts.cmsNotices));
   app.use('/api/integrations', createIntegrationsRouter(opts.cmsEvents));
   // Digest templates (task 10; ADMIN or PUBLISHER since 29 Oct) carry a whole email layout: their own,
   // larger JSON limit, ahead of the global one (which then skips a parsed body).
@@ -116,6 +123,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/whatsapp', createWhatsAppRouter(opts.whatsapp));
   app.use('/api/linkedin', createLinkedInRouter(opts.linkedin));
   app.use('/api/facebook', createFacebookRouter(opts.facebook));
+  app.use('/api/telegram', createTelegramRouter(opts.telegram));
   app.use('/api/staff-push', createStaffPushRouter(opts.staffPush));
   app.use('/api/social-picture', createSocialPictureRouter(opts.socialPicture));
   app.use('/api/social', createSocialPagesRouter(opts.socialPages));
