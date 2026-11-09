@@ -10,10 +10,13 @@ import { nextTick, onMounted, ref } from 'vue';
  * Compose reuses it for "Send now" with its own wording (audience, no queue);
  * the defaults are the Queue / Review "Push now" text. `note` is an optional
  * extra line under the detail (Compose: "Not posted to: …"); empty = nothing shown.
+ *
+ * Page Pause / Resume (the social screens) reuses it with no article line (`title` left out) and a default slot for its one optional
+ * field; nothing changes for a caller that passes a title and no slot.
  */
 withDefaults(
   defineProps<{
-    title: string;
+    title?: string;
     busy?: boolean;
     heading?: string;
     detail?: string;
@@ -24,6 +27,7 @@ withDefaults(
   }>(),
   {
     busy: false,
+    title: '',
     note: '',
     heading: 'Send to everyone now?',
     detail:
@@ -47,9 +51,10 @@ onMounted(async () => {
     <div class="modal-overlay" @click.self="emit('cancel')" @keydown.esc="emit('cancel')">
       <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-push-title" :aria-describedby="note ? 'confirm-push-desc confirm-push-note' : 'confirm-push-desc'">
         <h2 id="confirm-push-title">{{ heading }}</h2>
-        <p class="confirm-push-article">{{ title }}</p>
+        <p v-if="title" class="confirm-push-article">{{ title }}</p>
         <p id="confirm-push-desc" class="muted">{{ detail }}</p>
         <p v-if="note" id="confirm-push-note" class="confirm-push-note">{{ note }}</p>
+        <slot />
         <div class="modal-actions">
           <button ref="cancelBtn" type="button" class="btn" @click="emit('cancel')">{{ cancelLabel }}</button>
           <button type="button" class="btn btn-primary" :disabled="busy" @click="emit('confirm')">

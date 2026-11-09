@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { useApi } from '../composables/useApi';
 import { useAuth, type UserSummary } from '../composables/useAuth';
 import { telegramErrorText } from '../composables/telegramErrors';
+import { PAGE_PAUSED } from '../composables/socialPages';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
 import CampaignDetail from '../components/CampaignDetail.vue';
 
@@ -41,7 +42,7 @@ type Campaign = {
     telegram?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
   };
   channelDetails?: {
-    /** `skipReason: 'compose_skip'` = the sender unticked this channel on Compose for this push (its mark is SKIPPED). */
+    /** `skipReason: 'compose_skip'` = the sender unticked this channel on Compose for this push; `'page_paused'` = an administrator paused the page (LinkedIn / Facebook / Telegram). The mark is SKIPPED either way. */
     whatsapp?: { by: string | null; at: string; skipReason?: string };
     linkedin?: { error: string | null; at: string; postUrl: string | null; skipReason?: string };
     facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: string };
@@ -217,6 +218,8 @@ function namePart(email: string | null | undefined): string {
 }
 /** True when the sender unticked this channel on Compose for the push: the mark stays the usual SKIPPED one, only its tooltip says why. */
 const composeSkipped = (d: { skipReason?: string } | undefined): boolean => d?.skipReason === 'compose_skip';
+/** True when an administrator paused the page: the mark is SKIPPED, only its tooltip says why (the push was never posted there, and never will be). */
+const pagePaused = (d: { skipReason?: string } | undefined): boolean => d?.skipReason === PAGE_PAUSED;
 function marksFor(c: Campaign): Mark[] {
   const out: Mark[] = [];
   const ch = c.channels;
@@ -256,7 +259,9 @@ function marksFor(c: Campaign): Mark[] {
             : s === 'SKIPPED'
               ? composeSkipped(d?.linkedin)
                 ? 'LinkedIn: skipped in Compose'
-                : 'LinkedIn: skipped'
+                : pagePaused(d?.linkedin)
+                  ? 'LinkedIn: skipped — page paused'
+                  : 'LinkedIn: skipped'
               : 'LinkedIn: waiting',
     });
   }
@@ -276,7 +281,9 @@ function marksFor(c: Campaign): Mark[] {
             : s === 'SKIPPED'
               ? composeSkipped(d?.facebook)
                 ? 'Facebook: skipped in Compose'
-                : 'Facebook: skipped'
+                : pagePaused(d?.facebook)
+                  ? 'Facebook: skipped — page paused'
+                  : 'Facebook: skipped'
               : 'Facebook: waiting',
     });
   }
@@ -296,7 +303,9 @@ function marksFor(c: Campaign): Mark[] {
             : s === 'SKIPPED'
               ? composeSkipped(d?.telegram)
                 ? 'Telegram: skipped in Compose'
-                : 'Telegram: skipped'
+                : pagePaused(d?.telegram)
+                  ? 'Telegram: skipped — page paused'
+                  : 'Telegram: skipped'
               : 'Telegram: waiting',
     });
   }

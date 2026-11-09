@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.35 &nbsp;·&nbsp; Updated 9 November 2026
+    &nbsp;·&nbsp; Version 2.36 &nbsp;·&nbsp; Updated 9 November 2026
   </div>
 </div>
 
@@ -422,7 +422,7 @@ The picture is used only on those posts, never in the notification itself.</p>
 <em>LinkedIn &middot; Taxscan</em>, <em>LinkedIn &middot; Academy</em>, <em>LinkedIn &middot; Shopscan</em>, <em>Facebook &middot; Taxscan</em>,
 <em>Telegram &middot; Taxscan</em> and <em>WhatsApp channel</em>. They are all ticked, which means &ldquo;post everywhere&rdquo;, exactly as before. <strong>Untick a page
 and that page gets nothing for this one push</strong> &mdash; no post, and nothing waiting to do. The list shows only what is in use, so
-a page appears here the day an administrator switches it on; if nothing is switched on, the group is not shown at all.</p>
+a page appears here the day an administrator switches it on; if nothing is switched on, the group is not shown at all. A page an administrator has <strong>paused</strong> (sections 12&ndash;14) shows <em>(paused)</em> next to its name, unticked and greyed out: nothing is posted there either way, and the send is not refused.</p>
 <ul>
   <li>When anything is unticked, <strong>Send now</strong> asks you to confirm and adds one line:
       <em>Not posted to: LinkedIn &middot; Academy, &hellip;</em> &mdash; check it before you confirm.</li>
@@ -483,7 +483,7 @@ notification will look before sending it to anyone.</p>
 <p>When WhatsApp, LinkedIn, Facebook or Telegram is switched on, a <strong>Channels</strong> column shows where else each article went, as small
 labelled marks (never colour alone). <strong>WA</strong> is WhatsApp: <strong>WA&nbsp;✓</strong> posted, <strong>WA&nbsp;–</strong>
 skipped, <strong>WA&nbsp;…</strong> still to do. <strong>in</strong> is LinkedIn: <strong>in&nbsp;✓</strong> posted,
-<strong>in&nbsp;✕</strong> failed, <strong>in&nbsp;…</strong> waiting. <strong>fb</strong> is Facebook and reads the same way: <strong>fb&nbsp;✓</strong> posted, <strong>fb&nbsp;✕</strong> failed, <strong>fb&nbsp;…</strong> waiting, <strong>fb&nbsp;–</strong> skipped. <strong>tg</strong> is Telegram, with the same four marks. No mark means the channel does not apply to that row (it is
+<strong>in&nbsp;✕</strong> failed, <strong>in&nbsp;…</strong> waiting. <strong>fb</strong> is Facebook and reads the same way: <strong>fb&nbsp;✓</strong> posted, <strong>fb&nbsp;✕</strong> failed, <strong>fb&nbsp;…</strong> waiting, <strong>fb&nbsp;–</strong> skipped. <strong>tg</strong> is Telegram, with the same four marks. On a page an administrator has paused, the mark is the skipped one and its tooltip reads <em>skipped &mdash; page paused</em>. No mark means the channel does not apply to that row (it is
 switched off, or the item is not one that channel posts). Hover a mark &mdash; or touch and hold on a phone &mdash; for the full
 wording, such as <em>WhatsApp: posted by anagha at 10:42</em> or <em>LinkedIn: failed &mdash; the reason</em>. Click a mark to open
 that channel's screen on the day the article was pushed. The Channels column is not sortable. Where an administrator has
@@ -999,7 +999,7 @@ that line the page is on the old one. Each page has its own switch and time, so 
     <tr><td><strong>Waiting</strong></td><td>Pushed, not on LinkedIn yet. <em>Waiting &mdash; retry 14:35</em> means LinkedIn was busy and it will try again at that time (up to three tries).</td></tr>
     <tr><td><strong>Posted</strong></td><td>On the page. <em>View on LinkedIn</em> opens the post.</td></tr>
     <tr><td><strong>Failed</strong></td><td>It did not go out; the reason is shown under the status. Use <strong>Retry</strong> or <strong>Skip</strong>.</td></tr>
-    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted; or (Academy and Shopscan only) <em>daily LinkedIn limit kept for Taxscan</em>, see the box above; or <em>LinkedIn&rsquo;s daily limit for this page</em> (LinkedIn answered <em>&ldquo;Organization post creation limit reached&rdquo;</em>, so the app stops asking for that page until 00:00 UTC, 5:30 am IST; every push in between is skipped and is not posted later; nothing is broken and the other pages keep posting); or the sender unticked this page on Compose (<em>Skipped in Compose</em>: a choice, not a fault). None of the last three has Retry or Skip.</td></tr>
+    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted; or (Academy and Shopscan only) <em>daily LinkedIn limit kept for Taxscan</em>, see the box above; or <em>LinkedIn&rsquo;s daily limit for this page</em> or <em>page paused</em> (see the banners below) (LinkedIn answered <em>&ldquo;Organization post creation limit reached&rdquo;</em>, so the app stops asking for that page until 00:00 UTC, 5:30 am IST; every push in between is skipped and is not posted later; nothing is broken and the other pages keep posting); or the sender unticked this page on Compose (<em>Skipped in Compose</em>: a choice, not a fault). None of the last three has Retry or Skip.</td></tr>
     <tr><td><strong>Not posted</strong></td><td>Pushed before this feature started. It is never posted.</td></tr>
   </tbody>
 </table>
@@ -1032,6 +1032,21 @@ and Shopscan pages</em>: they post with a single token.</p>
   With several pages the banner can appear on <strong>one page only</strong> &mdash; the other pages keep posting. Seen on
   <strong>Academy</strong> or <strong>Shopscan</strong> alone, it usually means the LinkedIn account behind the shared token is not an
   administrator of that page. Either way, tell the owner.</div>
+
+<h3>When the page stops posting: banners, emails and Pause</h3>
+<p>If this page stops posting you hear about it <strong>the same day</strong>: administrators get <strong>one email per page per kind per day</strong>
+(<em>posting is held</em>, or <em>the last 2 posts failed</em>), and the screen shows a banner above the rows in words:</p>
+<table>
+  <thead><tr><th>Banner</th><th>What it means and what to do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Paused by &hellip; at &hellip;</strong></td><td>An administrator paused this page (see below). Every push is skipped here, with no post, until it is resumed.</td></tr>
+    <tr><td><strong>Held by LinkedIn&rsquo;s daily limit for this page until 05:30 IST</strong> <span class="muted">(LinkedIn only)</span></td><td>LinkedIn refused new posts for this page today (<em>Organization post creation limit reached</em>), so the app stops asking until the day turns at 05:30 IST. <strong>Nothing is broken.</strong> Pushes in between are skipped and <strong>not posted later</strong>; the other pages keep posting.</td></tr>
+    <tr><td><strong>Last 2 posts failed &mdash; HTTP 422</strong></td><td>The last two posts to this page failed, with no good post after them; the short reason code is shown (never the platform&rsquo;s own text). Look at the failed rows and <strong>Retry</strong> or <strong>Skip</strong> them. If it keeps failing, an administrator can Pause the page. A good post clears the banner.</td></tr>
+  </tbody>
+</table>
+<p><strong>Pause this page</strong> (administrators only, no Railway change): the button on this screen asks you to confirm, with an optional one-line note (up to 200 characters). While a page is paused <strong>every push for it is skipped</strong> &mdash; the row reads <em>Skipped &mdash; page paused</em>, nothing is sent to the platform, and a skipped push is <strong>never posted later</strong> (a late post of an old push is worse than none). A paused page also skips the retries that were waiting, a manual <em>Send now</em> or <em>Push now</em> included. <strong>Resume posting</strong> starts again from the next push; nothing missed is posted. The pause survives a restart, and both the pause and the resume are recorded in <strong>Activity</strong>. Editors see the banner but not the button.</p>
+<div class="box tip"><span class="box-t">A paused page in Compose and on Campaigns</span>
+  On <strong>Compose</strong>, a paused page shows <em>(paused)</em> next to its name, unticked and greyed out under <strong>Post to</strong>; the send works as always for the other pages. On <strong>Campaigns</strong> its mark reads <em>skipped &mdash; page paused</em>.</div>
 </section>
 
 <!-- 13 -->
@@ -1085,6 +1100,20 @@ on the old one. The pacing below is the same either way.</p>
   The page's access token has expired or been withdrawn, so posting is stopped (admins also get one email a day). Editors cannot
   fix this from the app: tell the owner, who sets a new token in Railway. Posting resumes by itself afterwards, and articles
   that were not posted are still posted.</div>
+
+<h3>When the page stops posting: banners, emails and Pause</h3>
+<p>If this page stops posting you hear about it <strong>the same day</strong>: administrators get <strong>one email per page per kind per day</strong>
+(<em>posting is held</em>, or <em>the last 2 posts failed</em>), and the screen shows a banner above the rows in words:</p>
+<table>
+  <thead><tr><th>Banner</th><th>What it means and what to do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Paused by &hellip; at &hellip;</strong></td><td>An administrator paused this page (see below). Every push is skipped here, with no post, until it is resumed.</td></tr>
+    <tr><td><strong>Last 2 posts failed &mdash; HTTP 422</strong></td><td>The last two posts to this page failed, with no good post after them; the short reason code is shown (never the platform&rsquo;s own text). Look at the failed rows and <strong>Retry</strong> or <strong>Skip</strong> them. If it keeps failing, an administrator can Pause the page. A good post clears the banner.</td></tr>
+  </tbody>
+</table>
+<p><strong>Pause this page</strong> (administrators only, no Railway change): the button on this screen asks you to confirm, with an optional one-line note (up to 200 characters). While a page is paused <strong>every push for it is skipped</strong> &mdash; the row reads <em>Skipped &mdash; page paused</em>, nothing is sent to the platform, and a skipped push is <strong>never posted later</strong> (a late post of an old push is worse than none). A paused page also skips the retries that were waiting, a manual <em>Send now</em> or <em>Push now</em> included. <strong>Resume posting</strong> starts again from the next push; nothing missed is posted. The pause survives a restart, and both the pause and the resume are recorded in <strong>Activity</strong>. Editors see the banner but not the button.</p>
+<div class="box tip"><span class="box-t">A paused page in Compose and on Campaigns</span>
+  On <strong>Compose</strong>, a paused page shows <em>(paused)</em> next to its name, unticked and greyed out under <strong>Post to</strong>; the send works as always for the other pages. On <strong>Campaigns</strong> its mark reads <em>skipped &mdash; page paused</em>.</div>
 </section>
 
 <!-- 14 -->
@@ -1130,6 +1159,20 @@ Telegram refuses the picture, the post goes out once more <strong>as text</stron
   after a restart, until an <strong>administrator</strong> fixes the bot in Telegram (add it back to the channel as an admin who can post) and
   presses <strong>Resume</strong> (recorded in Activity). Pushes made meanwhile are kept: they are posted after Resume. Retry is refused while
   it is stopped. Editors who see this banner should tell an administrator.</div>
+
+<h3>When the page stops posting: banners, emails and Pause</h3>
+<p>If this page stops posting you hear about it <strong>the same day</strong>: administrators get <strong>one email per page per kind per day</strong>
+(<em>the last 2 posts failed</em>), and the screen shows a banner above the rows in words:</p>
+<table>
+  <thead><tr><th>Banner</th><th>What it means and what to do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Paused by &hellip; at &hellip;</strong></td><td>An administrator paused this page (see below). Every push is skipped here, with no post, until it is resumed.</td></tr>
+    <tr><td><strong>Last 2 posts failed &mdash; HTTP 422</strong></td><td>The last two posts to this page failed, with no good post after them; the short reason code is shown (never the platform&rsquo;s own text). Look at the failed rows and <strong>Retry</strong> or <strong>Skip</strong> them. If it keeps failing, an administrator can Pause the page. A good post clears the banner.</td></tr>
+  </tbody>
+</table>
+<p><strong>Pause this page</strong> (administrators only, no Railway change): the button on this screen asks you to confirm, with an optional one-line note (up to 200 characters). While a page is paused <strong>every push for it is skipped</strong> &mdash; the row reads <em>Skipped &mdash; page paused</em>, nothing is sent to the platform, and a skipped push is <strong>never posted later</strong> (a late post of an old push is worse than none). A paused page also skips the retries that were waiting, a manual <em>Send now</em> or <em>Push now</em> included. <strong>Resume posting</strong> starts again from the next push; nothing missed is posted. The pause survives a restart, and both the pause and the resume are recorded in <strong>Activity</strong>. Editors see the banner but not the button.</p>
+<div class="box tip"><span class="box-t">A paused page in Compose and on Campaigns</span>
+  On <strong>Compose</strong>, a paused page shows <em>(paused)</em> next to its name, unticked and greyed out under <strong>Post to</strong>; the send works as always for the other pages. On <strong>Campaigns</strong> its mark reads <em>skipped &mdash; page paused</em>.</div>
 </section>
 
 <!-- 15 -->
@@ -1286,7 +1329,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.35 · Updated 9 November 2026
+  Taxscan Push · Admin User Guide · Version 2.36 · Updated 9 November 2026
 </p>
 </section>
 

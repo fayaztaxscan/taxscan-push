@@ -8,6 +8,9 @@ import { isPublicArticleCampaign } from '../services/social/publicCampaign';
 import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
+import { addPauseRoutes } from './socialPause';
+import { getPageStatus } from '../services/social/pageStatus';
+import { PAGE_PAUSED } from '../services/social/pause';
 import { COMPOSE_SKIP, ORG_DAILY_LIMIT, QUOTA_HEADROOM, loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
 import { isComposeSkipped, linkedinSkipKey } from '../services/social/pages';
 import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
@@ -58,6 +61,8 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
   const allPushesFromOf = o.allPushesFrom ?? (() => undefined);
 
   router.use((_req, res, next) => (enabled() ? next() : void res.status(404).json({ error: 'not_found' })));
+  // Pause / Resume per page (ADMIN), brief 2026-11-09-social-page-alerts-pause: `page-pause` / `page-resume`.
+  addPauseRoutes(router, { channel: 'linkedin', pages: () => pagesOf(normalizePortals(portalsOf())), clock: nowOf });
 
   router.get('/posts', STAFF, async (req, res) => {
     try {
@@ -169,6 +174,8 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
           ...(p?.status === 'SKIPPED' && p.error === QUOTA_HEADROOM ? { skipReason: QUOTA_HEADROOM } : {}),
           // `org_daily_limit` (brief 2026-11-09-small-fixes): LinkedIn refused the page's creates for the day; the system skipped the push.
           ...(p?.status === 'SKIPPED' && p.error === ORG_DAILY_LIMIT ? { skipReason: ORG_DAILY_LIMIT } : {}),
+          // `page_paused`: an ADMIN paused this page; the push was skipped with no call and is never posted later.
+          ...(p?.status === 'SKIPPED' && p.error === PAGE_PAUSED ? { skipReason: PAGE_PAUSED } : {}),
           // `compose_skip`: the sender unticked this page on Compose for this push. Present only on such a row.
           ...(composeSkipped || (p?.status === 'SKIPPED' && p.error === COMPOSE_SKIP) ? { skipReason: COMPOSE_SKIP } : {}),
         };
@@ -182,6 +189,8 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
         counts: { waiting: n('WAITING') + n('RETRYING'), posted: n('POSTED'), failed: n('FAILED'), skipped: n('SKIPPED'), notPosted: n('NOT_POSTED'), all: rows.length },
         // this page's own banner state (a stop is per page)
         login: await loginProblem(page),
+        // brief 2026-11-09-social-page-alerts-pause: ok | paused | stopped | held | failing, with the banner's words (`message`)
+        pageStatus: await getPageStatus('linkedin', page, now),
         // dates and a status only (never a token); absent while renewal is switched off. A page that shares a token reports the
         // owner's: it is the one token.
         ...(await tokenStatus(page, now).then((t) => (t ? { token: t } : {}))),

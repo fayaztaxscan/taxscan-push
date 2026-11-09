@@ -15,6 +15,8 @@ import { fetchStorePage, type StorePageResult } from '../social/storePage';
 import { campaignPicture, socialImageUrl } from '../social/picture';
 import { COMPOSE_SKIP, telegramSkipKey } from '../social/pages';
 import { composeSkippedPushes, skipRows } from '../social/composeSkip';
+import { PAGE_PAUSED, getPause } from '../social/pause';
+import { alertIfNeeded } from '../social/pageAlerts';
 import { callTelegram, messageBody, photoBody, RETRY_AFTER_CAP_SEC, type TelegramFailure, type TelegramRequest, type TelegramResult } from './client';
 import { PORTAL_TO_PAGE, telegramConfig } from './pages';
 import { buildTelegramPost, captionOf, textOf, type TgPostPayload } from './post';
@@ -37,6 +39,12 @@ import { buildTelegramPost, captionOf, textOf, type TgPostPayload } from './post
  *  - Any other 4xx: FAILED, no retry. A picture Telegram refuses (400 on `sendPhoto`) is repeated ONCE as a text post (`image=dropped`).
  * The `TelegramPost` row is created BEFORE the call; its unique (page, pushKey) makes a second tick a no-op. An attempt that dies without a
  * verdict is FAILED "unknown_outcome": the call may have gone out, so it is never re-posted automatically.
+ *
+ * PAUSED CHANNEL (brief 2026-11-09-social-page-alerts-pause). An ADMIN can pause the channel from its screen (`social:pause:telegram:<page>`):
+ * while paused every push gets its row SKIPPED `page_paused` with NO API call (a manual immediate push included), rows waiting for a retry are
+ * skipped too, nothing is ever posted later, and resume posts from the next push. It is checked BEFORE the channel stop, so a stop that
+ * clears later never posts what a pause skipped. After a failed attempt the page-status helper decides about the alert email (`failing`,
+ * once per IST day): see `services/social/pageAlerts.ts`.
  *
  * THE BOT TOKEN is in the Bot API URL path. It is never logged, stored in a column, returned by an API, put in an audit entry or an email:
  * the client returns fixed codes only, and every `console.*` of an error goes through `safeErrorLog`.
@@ -176,8 +184,14 @@ async function pictureFor(campaign: { url: string; socialImageId?: string | null
 
 type Attempted = 'posted' | 'retry' | 'failed' | 'stop';
 
-/** ONE attempt for a row already claimed (PENDING, nextAttemptAt null, attempts counted). Writes the outcome. Never throws. */
+/** ONE attempt for a row already claimed (PENDING, nextAttemptAt null, attempts counted). Writes the outcome, then lets the page-status helper decide about the alert. Never throws. */
 async function attempt(row: TelegramPost, d: WorkerDeps, now: Date): Promise<Attempted> {
+  const r = await attemptOnce(row, d, now);
+  if (r === 'failed') await alertIfNeeded('telegram', row.page, now, d);
+  return r;
+}
+
+async function attemptOnce(row: TelegramPost, d: WorkerDeps, now: Date): Promise<Attempted> {
   const page = row.page;
   const fail = (error: string) => prisma.telegramPost.update({ where: { id: row.id }, data: { status: 'FAILED', error, nextAttemptAt: null } });
   try {
@@ -291,13 +305,19 @@ export async function runTelegramTick(d: WorkerDeps = {}): Promise<TickResult> {
       }
     }
     const skippedIds = new Set(composeSkipped.map((c) => c.id));
-    if (await channelStop(page)) {
+    // PAUSED (brief 2026-11-09-social-page-alerts-pause): read once per page per tick. A paused channel makes no call: rows waiting for a retry
+    // are skipped, every push below gets a SKIPPED `page_paused` row, and the channel stop does not gate that (no push may wait for it).
+    const paused = (await getPause('telegram', page)) !== null;
+    if (paused) {
+      await prisma.telegramPost.updateMany({ where: { page, status: 'PENDING', nextAttemptAt: { not: null } }, data: { status: 'SKIPPED', nextAttemptAt: null, error: PAGE_PAUSED } });
+    }
+    if (!paused && (await channelStop(page))) {
       out.stopped = true;
       continue;
     }
 
     // 2. Retries that are due (never inside quiet hours: they were scheduled out of it, this guards a changed clock).
-    if (!isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
+    if (!paused && !isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
       const due = await prisma.telegramPost.findMany({ where: { page, status: 'PENDING', nextAttemptAt: { lte: now } }, orderBy: { nextAttemptAt: 'asc' }, take: budget });
       for (const r of due) {
         if (budget <= 0 || pageStopped) break;
@@ -306,7 +326,7 @@ export async function runTelegramTick(d: WorkerDeps = {}): Promise<TickResult> {
         note(await attempt({ ...r, nextAttemptAt: null, attempts: r.attempts + 1 }, d, now));
       }
     }
-    if (budget <= 0 || pageStopped) continue;
+    if (!paused && (budget <= 0 || pageStopped)) continue;
 
     // 3. New posts, oldest push first. NO age limit: the oldest SENT push since go-live that has no row yet posts, however long ago it was
     //    pushed. The list only grows (~20 a day) and is read every minute with `select` of just what the shared rule needs.
@@ -317,10 +337,20 @@ export async function runTelegramTick(d: WorkerDeps = {}): Promise<TickResult> {
     });
     const have = new Set((await prisma.telegramPost.findMany({ where: { page }, select: { pushKey: true } })).map((r) => r.pushKey));
     for (const c of campaigns) {
-      if (budget <= 0 || pageStopped) break;
+      if (!paused && (budget <= 0 || pageStopped)) break;
       if (!c.lastSentAt || skippedIds.has(c.id) || !isAllPushesCampaign(c)) continue;
       const key = pushKey({ id: c.id, lastSentAt: c.lastSentAt });
       if (have.has(key)) continue;
+      if (paused) {
+        // Paused: NO call, a SKIPPED row, never posted later (every push, a manual immediate one included).
+        try {
+          await prisma.telegramPost.create({ data: { page, pushKey: key, campaignId: c.id, status: 'SKIPPED', attempts: 0, error: PAGE_PAUSED } });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
+          throw err;
+        }
+        continue;
+      }
       let row: TelegramPost;
       try {
         row = await prisma.telegramPost.create({ data: { page, pushKey: key, campaignId: c.id, status: 'PENDING', attempts: 1 } });

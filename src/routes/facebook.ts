@@ -13,6 +13,9 @@ import { PORTAL_TO_PAGE, PAGE_TAXSCAN, pageConfig, postUrlOf } from '../services
 import { checkConnection } from '../services/facebook/client';
 import { COMPOSE_SKIP, loginProblem, policyProblem, resumePolicy, retryNow, skipPost, type WorkerDeps } from '../services/facebook/worker';
 import { facebookSkipKey, isComposeSkipped } from '../services/social/pages';
+import { addPauseRoutes } from './socialPause';
+import { getPageStatus } from '../services/social/pageStatus';
+import { PAGE_PAUSED } from '../services/social/pause';
 import type { FetchLike } from '../services/linkedin/post';
 
 /**
@@ -58,6 +61,8 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
   const pageOf = (): string => Object.values(portalsOf())[0] ?? PAGE_TAXSCAN;
 
   router.use((_req, res, next) => (enabled() ? next() : void res.status(404).json({ error: 'not_found' })));
+  // Pause / Resume the page (ADMIN), brief 2026-11-09-social-page-alerts-pause: `page-pause` / `page-resume` (the policy `/resume` below is another thing).
+  addPauseRoutes(router, { channel: 'facebook', pages: () => [pageOf()], clock: nowOf });
 
   router.get('/posts', STAFF, async (req, res) => {
     try {
@@ -159,6 +164,8 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
           unknownOutcome: p?.status === 'FAILED' && (p.error ?? '').startsWith('unknown'),
           // `compose_skip`: the sender unticked this page on Compose for this push. Present only on such a row.
           ...(composeSkipped || (p?.status === 'SKIPPED' && p.error === COMPOSE_SKIP) ? { skipReason: COMPOSE_SKIP } : {}),
+          // `page_paused`: an ADMIN paused the page; the push was skipped with no call and is never posted later.
+          ...(!composeSkipped && p?.status === 'SKIPPED' && p.error === PAGE_PAUSED ? { skipReason: PAGE_PAUSED } : {}),
         };
       });
       const n = (s: ScreenStatus) => rows.filter((r) => r.status === s).length;
@@ -171,6 +178,8 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
         login: await loginProblem(pageOf()),
         /** Red banner: Facebook blocked a post; posting is stopped until an ADMIN presses Resume. */
         policy: await policyProblem(pageOf()),
+        /** brief 2026-11-09-social-page-alerts-pause: ok | paused | stopped | held | failing, with the banner's words (`message`). */
+        pageStatus: await getPageStatus('facebook', pageOf(), now),
         /** Present only while the page posts EVERY push (its all-pushes time, as the new rule really starts): the screen says so. Absent otherwise. */
         ...(pushesFrom ? { everyPushFrom: pushesFrom.toISOString() } : {}),
       });

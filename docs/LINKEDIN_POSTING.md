@@ -484,6 +484,47 @@ a week. The refresh token's expiry comes from `refresh_token_expires_in` (after 
 
 The renewal does NOT write back into Railway variables and has no sign-in page of its own: the yearly sign-in stays in LinkedIn's OAuth tools.
 
+## When a page stops: status, alerts and Pause (brief 2026-11-09-social-page-alerts-pause)
+
+One definition, `src/services/social/pageStatus.ts` (`getPageStatus` / `listPageStatuses`), read by the workers, the screens and the alert emails:
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | nothing to say |
+| `paused` | an ADMIN paused the page (below) |
+| `stopped` | the existing LinkedIn login stop (401 / 403: the page's token is rejected) (its own banner, alert and Resume, unchanged) |
+| `held` | LinkedIn's own daily limit for the page (`org_daily_limit`), until its resume time (below). NOT `quota_headroom`: that is the expected daily guard and never alerts |
+| `failing` | the page's last **2** finished posts are FAILED with no POSTED after them (an "already posted" duplicate is neither a failure nor a recovery; SKIPPED and in-flight rows are not finished posts) |
+
+When several are true the one that explains why nothing posts wins: paused, then stopped, then held, then failing. Each status carries a fixed
+reason code, a since-time, a resumes-at time when known and `message`, the banner's sentence in words (also used by the email). A failure is
+reduced to a short reason code (`HTTP 422`, `telegram_400`, `network error`): the provider's own words are never shown or mailed.
+
+**Alert email** (ElasticEmail, the active ADMINs, only when email is configured): when a page enters `held` or `failing`, ONE email per page
+per kind per IST day with the page, the reason in words, since when, when it resumes (if known) and what to do. Remembered in `DigestSetting`
+(`social:alert:<channel>:<page>:<kind>` = `{ day }`); a page that recovers (a POSTED row) stops being `failing`. It is sent right after the attempt
+that failed or set the hold (`alertIfNeeded` in `pageAlerts.ts`), never from a timer. The existing stop alerts are NOT repeated from here, and a
+paused page is not alerted (nobody is posting on purpose). No alert for `quota_headroom`, `compose_skip` or WhatsApp.
+
+**Pause / Resume (ADMIN only, no Railway change).** `POST /api/linkedin/page-pause` `{ page?, note? }` and `POST /api/linkedin/page-resume`
+`{ page? }` (the screen's button; 403 for a PUBLISHER; 409 `already_paused` / `not_paused`; `note` is optional free text up to 200 characters).
+Stored in `DigestSetting` `social:pause:linkedin:<page>` (who, when, note); audited as `SOCIAL_PAGE_PAUSED` / `SOCIAL_PAGE_RESUMED`. While paused
+the worker makes **no API call**: every push for that page gets its row SKIPPED with the reason `page_paused` (a manual immediate push included),
+rows already waiting for a retry are skipped too, and **nothing is ever posted later** (a late post of an old push is worse than none: the same
+rule as `compose_skip` / `quota_headroom`). It is checked before the stops, the pacing and the quota guard, so none of them can hold a push back to
+be posted after the pause. Resume posts from the next push; nothing missed is backfilled. It survives restarts and never touches the env go-live
+times. The screen shows the banner and the button; Compose's "Post to" shows a paused page unticked and disabled with "(paused)" (a send with or
+without its key is accepted and posts nothing there); the Campaigns Channels mark reads "skipped — page paused". `DigestSetting` is in the R2
+backup, so a restore brings a pause back with it.
+
+**LinkedIn's per-page daily limit (`org_daily_limit`, brief 2026-11-09-small-fixes).** LinkedIn answers HTTP 429 `Organization post creation limit
+reached` to a create call for ONE page once it has had its day's posts (found live 9 Nov: Shopscan, after 3 posts). The row that met it is SKIPPED
+`org_daily_limit` after ONE call, and the page is HELD until the next 00:00 UTC (05:30 IST): every further push to it, a waiting retry included, is
+SKIPPED the same way with no call and no upload, and is never posted later. In memory only (`services/linkedin/orgHold.ts`): a restart forgets the
+hold and the next such 429 sets it again. One log line per hold, `[linkedin] page=<page> org_daily_limit held until <ISO>`. Every other 429 keeps
+the ordinary retry path (+1 / +5 / +15 minutes, then FAILED). The screen says "Skipped — LinkedIn's daily limit for this page"; the alert email
+("posting is held") goes out once per page per IST day. A manual immediate push is not exempt (LinkedIn refuses it too).
+
 ## Backups and restores
 `LinkedInPost` and `LinkedInToken` (the encrypted renewed token) are **not** in the R2 export (the small `linkedin:auth:<page>` banner row and `linkedin:token:state:<page>` markers live in `DigestSetting`, which is; a restored stale one is harmless). After a restore the env token is used and the next daily renewal re-creates the `LinkedInToken` row. After a restore keep
 `LINKEDIN_POSTING_ENABLED` **off**, and set `LINKEDIN_POST_FROM` to the restore time before switching it back on (the

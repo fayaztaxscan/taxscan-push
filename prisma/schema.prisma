@@ -94,6 +94,8 @@ enum AuditAction {
   // Facebook page posting: an ADMIN cleared a policy stop (page name only in metadata)
   FACEBOOK_POSTING_RESUMED
   TELEGRAM_POSTING_RESUMED
+  SOCIAL_PAGE_PAUSED
+  SOCIAL_PAGE_RESUMED
 }
 
 model Subscriber {
