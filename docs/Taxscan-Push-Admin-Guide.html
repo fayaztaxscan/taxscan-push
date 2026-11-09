@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.33 &nbsp;·&nbsp; Updated 9 November 2026
+    &nbsp;·&nbsp; Version 2.35 &nbsp;·&nbsp; Updated 9 November 2026
   </div>
 </div>
 
@@ -169,13 +169,17 @@ you want to. This guide shows you how.</p>
   </tbody>
 </table>
 <div class="box tip"><span class="box-t">Tip — finding your way around the top menu</span>
-  The top menu is grouped by channel: <strong>Dashboard</strong>; <strong>PUSH</strong> (Compose, Review, Queue, Campaigns);
-  <strong>SOCIAL</strong> (WhatsApp, LinkedIn, Facebook and Telegram &mdash; each appears only when it is switched on, and the whole group is
-  hidden when none is); <strong>EMAIL</strong> (Digests, Ads, Templates); then <strong>Reports</strong>. Administrators also see an
-  <strong>Admin</strong> menu (Users, Activity) &mdash; click it to open, press <em>Esc</em> to close. The group you are
-  in is highlighted. On a phone the same groups appear as headings inside the ☰ menu.</div>
+  The bar at the top lists the <strong>sections</strong>: <strong>Dashboard</strong>, <strong>Push</strong>, <strong>Social</strong>,
+  <strong>Email</strong> and <strong>Reports</strong>. Click a section and it opens <strong>the screen you used last in it</strong> (the first
+  time: <em>Compose</em>, the first social channel, <em>Digests</em>). A second row of <strong>tabs</strong> just under the bar shows the screens
+  of the section you are in: <strong>Push</strong> (Compose, Review, Queue, Campaigns); <strong>Social</strong> (WhatsApp, LinkedIn, Facebook and
+  Telegram &mdash; each tab appears only when that channel is switched on, and the whole section is hidden when none is);
+  <strong>Email</strong> (Digests, Ads, Templates). Dashboard and Reports have no tabs. On the right, <strong>Account ▾</strong> holds your
+  email and role, <strong>Guide</strong>, <strong>Change password</strong> and <strong>Log out</strong>; administrators also see
+  <strong>Admin ▾</strong> (Users, Activity). Click one to open it, press <em>Esc</em> to close it. The section you are in is highlighted, and
+  so is its tab. On a phone the tabs of your section stay under the top bar, and the ☰ button lists the sections, then Admin and Account.</div>
 <div class="box tip"><span class="box-t">Tip — changing your password</span>
-  You can change your password any time from the <strong>Change password</strong> link in the top menu.</div>
+  You can change your password any time: open <strong>Account ▾</strong> in the top menu and choose <strong>Change password</strong>.</div>
 <div class="box warn"><span class="box-t">Keep your login private</span>
   Every action you take (sending, approving, rejecting) is recorded against your name in the
   <strong>Activity</strong> log (which administrators can read). Don't share your account.</div>
@@ -943,7 +947,7 @@ are waiting</em>. Tap <strong>Notify me on this device</strong> and then <strong
 then says <strong>On for this device</strong>. <strong>Send a test</strong> shows what it looks like and <strong>Turn off</strong>
 stops it. Do this once on each phone or computer you want it on (iPhone and iPad: add Taxscan Push to the Home Screen first, as
 described in section 9). It is separate from the digest notifications: turning one off leaves the other as it was.</p>
-<p>The notification reads <em>&ldquo;WhatsApp: 3 articles waiting&rdquo;</em> with the newest waiting headline underneath;
+<p>The notification reads <em>&ldquo;WhatsApp: 3 posts waiting&rdquo;</em> (it counts every push, whatever its kind) with the newest waiting headline underneath;
 tapping it opens this screen. You get <strong>one notification at most every 10 minutes</strong>, a new one replaces the old one
 rather than stacking, and <strong>nothing between 11 pm and 7 am</strong> &mdash; anything that arrived overnight (a Breaking push) is
 announced once, at 7 am. Once everything is marked Posted or Skipped, no more notifications come.</p>
@@ -995,7 +999,7 @@ that line the page is on the old one. Each page has its own switch and time, so 
     <tr><td><strong>Waiting</strong></td><td>Pushed, not on LinkedIn yet. <em>Waiting &mdash; retry 14:35</em> means LinkedIn was busy and it will try again at that time (up to three tries).</td></tr>
     <tr><td><strong>Posted</strong></td><td>On the page. <em>View on LinkedIn</em> opens the post.</td></tr>
     <tr><td><strong>Failed</strong></td><td>It did not go out; the reason is shown under the status. Use <strong>Retry</strong> or <strong>Skip</strong>.</td></tr>
-    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted; or (Academy and Shopscan only) <em>daily LinkedIn limit kept for Taxscan</em>, see the box above; or the sender unticked this page on Compose (<em>Skipped in Compose</em>: a choice, not a fault). Neither of the last two has Retry or Skip.</td></tr>
+    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted; or (Academy and Shopscan only) <em>daily LinkedIn limit kept for Taxscan</em>, see the box above; or <em>LinkedIn&rsquo;s daily limit for this page</em> (LinkedIn answered <em>&ldquo;Organization post creation limit reached&rdquo;</em>, so the app stops asking for that page until 00:00 UTC, 5:30 am IST; every push in between is skipped and is not posted later; nothing is broken and the other pages keep posting); or the sender unticked this page on Compose (<em>Skipped in Compose</em>: a choice, not a fault). None of the last three has Retry or Skip.</td></tr>
     <tr><td><strong>Not posted</strong></td><td>Pushed before this feature started. It is never posted.</td></tr>
   </tbody>
 </table>
@@ -1197,8 +1201,9 @@ write it and tick <strong>Force send</strong>. Or, for an item already in the Re
 their subscription expired (counted in the delivery rate). This is normal — no system reaches 100%.</p>
 
 <h3>Can I use it on my phone?</h3>
-<p>Yes. On a phone, a tablet or any window narrower than about <strong>1200 pixels</strong>, the menu folds into the
-<strong>☰</strong> button at the top right. On a phone each list shows one item per card, with its numbers and buttons underneath — nothing is hidden
+<p>Yes. On a phone (a window about <strong>720 pixels</strong> wide or narrower) the menu folds into the
+<strong>☰</strong> button at the top right, and the tabs of the section you are in stay visible under the top bar. A laptop or a tablet
+keeps the full menu. On a phone each list shows one item per card, with its numbers and buttons underneath — nothing is hidden
 off the side of the screen. <strong>Campaigns</strong> has a <em>Sort by</em> picker instead of clickable column
 headings, <strong>Activity</strong> keeps its filters behind a <em>Filters</em> button, and the wide report tables
 scroll sideways with the court or category name pinned on the left. <strong>Push now</strong> and Compose's
@@ -1281,7 +1286,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.33 · Updated 9 November 2026
+  Taxscan Push · Admin User Guide · Version 2.35 · Updated 9 November 2026
 </p>
 </section>
 

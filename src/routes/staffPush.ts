@@ -124,7 +124,7 @@ export function createStaffPushRouter(opts: StaffPushRouterOptions = {}): Router
         sending: cfg().enabled && killSwitch,
         digestEnabled: cfg().enabled,
         staffPushEnabled: killSwitch,
-        // Is the WhatsApp "articles waiting" nudge running? When false, the WhatsApp card says nothing about nudges.
+        // Is the WhatsApp "posts waiting" nudge running? When false, the WhatsApp card says nothing about nudges.
         whatsappNudge: env.whatsapp.queueEnabled && env.whatsapp.nudgeEnabled && killSwitch,
         vapidPublicKey: env.vapid.publicKey,
         devices,

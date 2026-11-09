@@ -620,7 +620,7 @@ describe('5. the token never leaves the building', () => {
 
 describe('6. the flag', () => {
   it('off: no cron, every endpoint 404, features.facebookPosting is false', async () => {
-    const schedule = jest.spyOn(cron, 'schedule');
+    const schedule = jest.spyOn(cron, 'schedule').mockImplementation((() => ({ stop: () => undefined })) as never); // mocked: a real cron.schedule leaves a live timer (brief 2026-11-09-small-fixes, item 4)
     const was = env.facebook.enabled;
     env.facebook.enabled = false;
     startFacebookWorker();
@@ -635,7 +635,7 @@ describe('6. the flag', () => {
     schedule.mockRestore();
   });
   it('on without FACEBOOK_POST_FROM, or without a valid page id / token: refuses to start and says why; with both it schedules', () => {
-    const schedule = jest.spyOn(cron, 'schedule');
+    const schedule = jest.spyOn(cron, 'schedule').mockImplementation((() => ({ stop: () => undefined })) as never); // mocked: a real cron.schedule leaves a live timer (brief 2026-11-09-small-fixes, item 4)
     const was = { enabled: env.facebook.enabled, from: env.facebook.postFrom, tax: env.facebook.pages.taxscan };
     env.facebook.enabled = true;
     env.facebook.postFrom = null;

@@ -8,7 +8,7 @@ import { isPublicArticleCampaign } from '../services/social/publicCampaign';
 import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
 import { PAGE_TAXSCAN, normalizePortals, pagesOf, portalPages, portalsOfPage, resolveAllPushesFrom, resolvePostFrom, type PortalMap, type PostFromInput } from '../services/linkedin/pages';
-import { COMPOSE_SKIP, QUOTA_HEADROOM, loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
+import { COMPOSE_SKIP, ORG_DAILY_LIMIT, QUOTA_HEADROOM, loginProblem, retryNow, skipPost, type WorkerDeps } from '../services/linkedin/worker';
 import { isComposeSkipped, linkedinSkipKey } from '../services/social/pages';
 import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
 
@@ -23,6 +23,8 @@ import { tokenPageOf, tokenStatus } from '../services/linkedin/token';
  *                                                else (an unknown page, or `academy` / `shopscan` while it is not active) is 400 invalid_page.
  *                                                A row the daily quota guard held (Academy / Shopscan) is SKIPPED with `skipReason: 'quota_headroom'`
  *                                                (present only then); it has no Retry and no Skip.
+ *                                                A row skipped because LinkedIn refused the page's creates for the day ("Organization post creation limit reached") is
+ *                                                SKIPPED with `skipReason: 'org_daily_limit'` (present only then); it has no Retry and no Skip.
  *   POST /api/linkedin/posts/:id/retry          a FAILED row: post it now
  *   POST /api/linkedin/posts/:id/skip           a FAILED row, or one waiting for a retry
  *
@@ -165,6 +167,8 @@ export function createLinkedInRouter(o: LinkedInRouterOptions = {}): Router {
           // Present (`quota_headroom`) only on a row the daily quota guard held (brief 2026-11-09-linkedin-shopscan-page): the screen
           // says it in words. Absent on every other row, so the answer for them is unchanged.
           ...(p?.status === 'SKIPPED' && p.error === QUOTA_HEADROOM ? { skipReason: QUOTA_HEADROOM } : {}),
+          // `org_daily_limit` (brief 2026-11-09-small-fixes): LinkedIn refused the page's creates for the day; the system skipped the push.
+          ...(p?.status === 'SKIPPED' && p.error === ORG_DAILY_LIMIT ? { skipReason: ORG_DAILY_LIMIT } : {}),
           // `compose_skip`: the sender unticked this page on Compose for this push. Present only on such a row.
           ...(composeSkipped || (p?.status === 'SKIPPED' && p.error === COMPOSE_SKIP) ? { skipReason: COMPOSE_SKIP } : {}),
         };

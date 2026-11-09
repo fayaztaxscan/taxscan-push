@@ -2,140 +2,188 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth';
+import { useNavSections } from '../composables/useNavSections';
+import NavDropdown from './NavDropdown.vue';
+import SectionTabs from './SectionTabs.vue';
 
+/**
+ * The admin menu: a top row of sections (Dashboard · Push · Social · Email · Reports, Admin ▾, who you are, Account ▾) and,
+ * under it, a tab row with the screens of the section you are in. On a phone (720px and below, the same cut-off as the
+ * content rules in app.css) the top row is the brand and a ☰ button; ☰ opens ONE list (every section with its screens
+ * beneath it, then Admin, then Account) and the tab row stays under the bar. The desktop row and the phone list are two
+ * different trees, so only one of them is ever in the page.
+ */
 const router = useRouter();
 const route = useRoute();
 const { user, logout } = useAuth();
+const { sections, activeSection } = useNavSections();
 
-// Mobile menu toggle. On desktop the menu is always visible (CSS
-// `display: contents`), so this only matters at narrow widths.
-const menuOpen = ref(false);
-function closeMenu() {
-  menuOpen.value = false;
-  adminOpen.value = false;
-}
+const isAdmin = computed(() => user.value?.role === 'ADMIN');
 
-// Channel groups. The active route's group label is emphasised.
-const PUSH_PATHS = ['/compose', '/review', '/queue', '/campaigns'];
-const SOCIAL_PATHS = ['/whatsapp', '/linkedin', '/facebook', '/telegram'];
-const EMAIL_PATHS = ['/digests', '/ads', '/templates'];
-const ADMIN_PATHS = ['/users', '/activity'];
 function inGroup(paths: string[]): boolean {
   return paths.some((p) => route.path === p || route.path.startsWith(p + '/'));
 }
-const pushActive = computed(() => inGroup(PUSH_PATHS));
-const socialActive = computed(() => inGroup(SOCIAL_PATHS));
-const emailActive = computed(() => inGroup(EMAIL_PATHS));
-const adminActive = computed(() => inGroup(ADMIN_PATHS));
-const isAdmin = computed(() => user.value?.role === 'ADMIN');
-// WhatsApp channel queue: shown only while the server flag is on (/api/auth/me → features).
-const showWhatsApp = computed(() => user.value?.features?.whatsappQueue === true);
-// LinkedIn page posting: same pattern (ADMIN + PUBLISHER are the only roles, so the flag is the whole test).
-const showLinkedIn = computed(() => user.value?.features?.linkedinPosting === true);
-// The SOCIAL group (label included) exists only while at least one of its channels is switched on.
-// Facebook page posting: same pattern.
-const showFacebook = computed(() => user.value?.features?.facebookPosting === true);
-// Telegram channel posting: same pattern (the server says active only when the flag is on AND all four variables are valid).
-const showTelegram = computed(() => user.value?.features?.telegramPosting === true);
-const showSocial = computed(() => showWhatsApp.value || showLinkedIn.value || showFacebook.value || showTelegram.value);
+const adminActive = computed(() => inGroup(['/users', '/activity']));
+const accountActive = computed(() => inGroup(['/guide', '/change-password']));
 
-// Admin disclosure (desktop). Closes on Escape (focus back to the button),
-// outside click and route change.
-const adminOpen = ref(false);
-const adminRoot = ref<HTMLElement | null>(null);
-const adminButton = ref<HTMLButtonElement | null>(null);
-function onDocClick(e: MouseEvent) {
-  if (adminOpen.value && adminRoot.value && !adminRoot.value.contains(e.target as Node)) {
-    adminOpen.value = false;
-  }
+// ---- Phone or not ---------------------------------------------------------------------------------------------------
+const PHONE_QUERY = '(max-width: 720px)';
+const phoneQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(PHONE_QUERY) : null;
+const isPhone = ref(phoneQuery?.matches === true);
+
+// ---- Open/closed state: the phone list, and at most one dropdown ---------------------------------------------------
+const menuOpen = ref(false);
+type Drop = 'admin' | 'account';
+const openDrop = ref<Drop | null>(null);
+const toggleButton = ref<HTMLButtonElement | null>(null);
+
+function closeAll() {
+  menuOpen.value = false;
+  openDrop.value = null;
 }
+function toggleDrop(which: Drop) {
+  openDrop.value = openDrop.value === which ? null : which;
+}
+// A dropdown asks to close itself (outside click, Escape, focus left). Only if it is still the open one: clicking the OTHER
+// button in the same event must not undo the dropdown that click just opened.
+function closeDrop(which: Drop) {
+  if (openDrop.value === which) openDrop.value = null;
+}
+
+function onPhoneChange(e: MediaQueryListEvent) {
+  isPhone.value = e.matches;
+  closeAll();
+}
+// Escape closes the phone list and gives focus back to ☰ (the dropdowns do the same for themselves).
 function onDocKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && adminOpen.value) {
-    adminOpen.value = false;
-    adminButton.value?.focus();
+  if (e.key === 'Escape' && menuOpen.value) {
+    menuOpen.value = false;
+    toggleButton.value?.focus();
   }
 }
 onMounted(() => {
-  document.addEventListener('click', onDocClick);
+  phoneQuery?.addEventListener('change', onPhoneChange);
   document.addEventListener('keydown', onDocKey);
 });
 onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClick);
+  phoneQuery?.removeEventListener('change', onPhoneChange);
   document.removeEventListener('keydown', onDocKey);
 });
-watch(
-  () => route.fullPath,
-  () => {
-    adminOpen.value = false;
-  },
-);
+
+// ANY route change closes everything, including the browser's Back button (a click handler alone misses it).
+watch(() => route.fullPath, closeAll);
 
 async function onLogout() {
-  closeMenu();
+  closeAll();
   await logout();
   router.push({ name: 'login' });
 }
 </script>
 
 <template>
-  <nav class="nav">
-    <span class="brand">Taxscan Push</span>
-    <button
-      class="nav-toggle"
-      type="button"
-      :aria-expanded="menuOpen"
-      aria-label="Toggle navigation menu"
-      @click="menuOpen = !menuOpen"
-    >
-      <span aria-hidden="true">{{ menuOpen ? '✕' : '☰' }}</span>
-    </button>
-    <div class="nav-menu" :class="{ open: menuOpen }">
-      <router-link to="/dashboard" class="nav-first" @click="closeMenu">Dashboard</router-link>
-      <span class="nav-label" :class="{ active: pushActive }" data-group="push">Push</span>
-      <router-link to="/compose" @click="closeMenu">Compose</router-link>
-      <router-link to="/review" @click="closeMenu">Review</router-link>
-      <router-link to="/queue" @click="closeMenu">Queue</router-link>
-      <router-link to="/campaigns" @click="closeMenu">Campaigns</router-link>
-      <span v-if="showSocial" class="nav-label" :class="{ active: socialActive }" data-group="social">Social</span>
-      <router-link v-if="showWhatsApp" to="/whatsapp" @click="closeMenu">WhatsApp</router-link>
-      <router-link v-if="showLinkedIn" to="/linkedin" @click="closeMenu">LinkedIn</router-link>
-      <router-link v-if="showFacebook" to="/facebook" @click="closeMenu">Facebook</router-link>
-      <router-link v-if="showTelegram" to="/telegram" @click="closeMenu">Telegram</router-link>
-      <span class="nav-label" :class="{ active: emailActive }" data-group="email">Email</span>
-      <router-link to="/digests" @click="closeMenu">Digests</router-link>
-      <router-link to="/ads" @click="closeMenu">Ads</router-link>
-      <router-link to="/templates" @click="closeMenu">Templates</router-link>
-      <router-link to="/reports" class="nav-after-group" @click="closeMenu">Reports</router-link>
-      <div v-if="isAdmin" ref="adminRoot" class="nav-admin">
-        <span class="nav-label nav-admin-heading" :class="{ active: adminActive }" data-group="admin"
-          >Admin</span
+  <header class="nav-shell">
+    <nav class="nav" aria-label="Main">
+      <span class="brand">Taxscan Push</span>
+
+      <!-- Laptops and tablets: sections on the left, who you are + menus on the right. -->
+      <div v-if="!isPhone" class="nav-menu">
+        <router-link to="/dashboard" class="nav-link" @click="closeAll">Dashboard</router-link>
+        <router-link
+          v-for="s in sections"
+          :key="s.key"
+          :to="s.target"
+          class="nav-link nav-section"
+          :class="{ active: s.active }"
+          :data-group="s.key"
+          @click="closeAll"
+          >{{ s.label }}</router-link
         >
-        <button
-          ref="adminButton"
-          type="button"
-          class="nav-admin-btn"
-          :class="{ active: adminActive }"
-          aria-controls="nav-admin-menu"
-          :aria-expanded="adminOpen"
-          @click="adminOpen = !adminOpen"
+        <router-link to="/reports" class="nav-link" @click="closeAll">Reports</router-link>
+        <span class="spacer" />
+        <NavDropdown
+          v-if="isAdmin"
+          id="nav-admin-menu"
+          label="Admin"
+          group="admin"
+          :active="adminActive"
+          :open="openDrop === 'admin'"
+          @toggle="toggleDrop('admin')"
+          @close="closeDrop('admin')"
         >
-          Admin <span aria-hidden="true">▾</span>
-        </button>
-        <div id="nav-admin-menu" class="nav-admin-panel" :class="{ open: adminOpen }">
-          <router-link to="/users" @click="closeMenu">Users</router-link>
-          <router-link to="/activity" @click="closeMenu">Activity</router-link>
-        </div>
+          <router-link to="/users" @click="closeAll">Users</router-link>
+          <router-link to="/activity" @click="closeAll">Activity</router-link>
+        </NavDropdown>
+        <span v-if="user" class="nav-user">
+          <span class="nav-email" :title="user.email">{{ user.email }}</span>
+          <span class="role-badge" :class="user.role.toLowerCase()">{{ user.role }}</span>
+        </span>
+        <NavDropdown
+          id="nav-account-menu"
+          label="Account"
+          group="account"
+          :active="accountActive"
+          :open="openDrop === 'account'"
+          @toggle="toggleDrop('account')"
+          @close="closeDrop('account')"
+        >
+          <!-- Only where the top row has had to drop the email (narrow tablets); app.css hides this line above that. -->
+          <span v-if="user" class="nav-panel-email">{{ user.email }}</span>
+          <router-link to="/guide" @click="closeAll">Guide</router-link>
+          <router-link to="/change-password" @click="closeAll">Change password</router-link>
+          <button type="button" class="logout" @click="onLogout">Log out</button>
+        </NavDropdown>
       </div>
-      <span class="spacer" />
-      <span v-if="user" class="nav-user">
-        <span class="nav-email">{{ user.email }}</span>
-        <span class="role-badge" :class="user.role.toLowerCase()">{{ user.role }}</span>
-      </span>
-      <router-link to="/guide" class="nav-secondary" @click="closeMenu">Guide</router-link>
-      <router-link to="/change-password" class="nav-secondary" @click="closeMenu"
-        >Change password</router-link
-      >
-      <button class="logout" @click="onLogout">Log out</button>
-    </div>
-  </nav>
+
+      <!-- Phones: ☰ and one list. -->
+      <template v-else>
+        <button
+          ref="toggleButton"
+          class="nav-toggle"
+          type="button"
+          :aria-expanded="menuOpen"
+          aria-controls="nav-menu"
+          aria-label="Toggle navigation menu"
+          @click="menuOpen = !menuOpen"
+        >
+          <span aria-hidden="true">{{ menuOpen ? '✕' : '☰' }}</span>
+        </button>
+        <div v-if="menuOpen" id="nav-menu" class="nav-menu nav-menu-phone">
+          <router-link to="/dashboard" class="nav-link" @click="closeAll">Dashboard</router-link>
+          <div v-for="s in sections" :key="s.key" class="nav-group" role="group" :aria-labelledby="`nav-h-${s.key}`">
+            <span :id="`nav-h-${s.key}`" class="nav-label" :class="{ active: s.active }" :data-group="s.key">{{
+              s.label
+            }}</span>
+            <div class="nav-group-links">
+              <router-link v-for="t in s.tabs" :key="t.to" :to="t.to" @click="closeAll">{{ t.label }}</router-link>
+            </div>
+          </div>
+          <router-link to="/reports" class="nav-link" @click="closeAll">Reports</router-link>
+          <div v-if="isAdmin" class="nav-group" role="group" aria-labelledby="nav-h-admin">
+            <span id="nav-h-admin" class="nav-label" :class="{ active: adminActive }" data-group="admin">Admin</span>
+            <div class="nav-group-links">
+              <router-link to="/users" @click="closeAll">Users</router-link>
+              <router-link to="/activity" @click="closeAll">Activity</router-link>
+            </div>
+          </div>
+          <div class="nav-group" role="group" aria-labelledby="nav-h-account">
+            <span id="nav-h-account" class="nav-label" :class="{ active: accountActive }" data-group="account"
+              >Account</span
+            >
+            <span v-if="user" class="nav-user">
+              <span class="nav-email">{{ user.email }}</span>
+              <span class="role-badge" :class="user.role.toLowerCase()">{{ user.role }}</span>
+            </span>
+            <div class="nav-group-links">
+              <router-link to="/guide" @click="closeAll">Guide</router-link>
+              <router-link to="/change-password" @click="closeAll">Change password</router-link>
+              <button type="button" class="logout" @click="onLogout">Log out</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </nav>
+
+    <!-- While ☰ is open the list already holds these screens, so the row steps aside rather than repeat under it. -->
+    <SectionTabs v-if="activeSection && !menuOpen" :label="activeSection.label" :tabs="activeSection.tabs" />
+  </header>
 </template>
