@@ -20,6 +20,10 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  *    accept the current or the previous secret during a rotation.
  *  - L / V (us → CMS, GET): `X-Push-Timestamp`, `X-Push-Signature`, and a SIGNED `nonce` query
  *    parameter (32 lower-case hex, new per request) — a header nonce would not be signed.
+ *  - N (CMS → us, GET /api/integrations/cms/digest-notices; brief 2026-11-09-digest-notice-list): the CMS signs a
+ *    GET with `X-CMS-Timestamp`, `X-CMS-Signature` and a SIGNED `nonce` query parameter, exactly the doors L / V
+ *    rule mirrored. We verify with the CONSTANT path `CMS_NOTICES_PATH` (`verifyCmsNoticesGet`), never the path the
+ *    request claims; nonce REUSE is the route's store (single use for 10 minutes).
  *
  * Skew: |now − ts| ≤ 300 s. Comparison is constant-time over the 32 digest bytes, against every
  * active secret (no early exit). Nothing here logs; a result says WHY only to the caller, which
@@ -27,6 +31,8 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  */
 
 export const CMS_WEBHOOK_PATH = '/api/integrations/cms/events';
+/** Door N (CMS → us, GET): the signed daily list of paid accounts whose digest cannot reach them. */
+export const CMS_NOTICES_PATH = '/api/integrations/cms/digest-notices';
 export const CMS_MAX_SKEW_SECONDS = 300;
 export const CMS_SIGNATURE_PREFIX = 'sha256=';
 
@@ -334,4 +340,28 @@ export function verifyPushGet(input: {
   // Checked after the signature, as the CMS does: a failed check stores and reveals nothing.
   if (!NONCE_RE.test(q.params.nonce ?? '')) return { ok: false, reason: 'bad_query' };
   return { ...res, nonce: q.params.nonce, params: q.params };
+}
+
+// ─── door N: the CMS's signed GET to us ──────────────────────────────────────
+
+/**
+ * Door N, inbound: verify the CMS's signed GET of the digest-notice list from its raw query and headers. The signed path is always
+ * CMS_NOTICES_PATH (a proxy rewrite fails closed). Same rules as the doors L / V verifier: no body, a canonical query with no
+ * duplicate key, a SIGNED `nonce` (32 lower-case hex), ±300 s, the current or the previous secret. Nonce REUSE is the caller's store.
+ */
+export function verifyCmsNoticesGet(input: {
+  secrets: readonly string[];
+  rawQuery: string;
+  bodyLength?: number;
+  timestampHeader: string | undefined | null;
+  signatureHeader: string | undefined | null;
+  now?: Date;
+}): VerifyResult & { nonce?: string; params?: Record<string, string> } {
+  return verifyPushGet({ ...input, path: CMS_NOTICES_PATH });
+}
+
+/** Door N, the CMS side (tests and any fake CMS): sign one GET with a fresh (or the given) nonce, in the CMS's own header names. */
+export function signCmsNoticesGet(input: { secret: string; now?: Date; nonce?: string }): SignedGet {
+  const g = signPushGet({ secret: input.secret, path: CMS_NOTICES_PATH, now: input.now, nonce: input.nonce });
+  return { ...g, headers: { [CMS_HEADERS.timestamp]: g.ts, [CMS_HEADERS.signature]: g.headers[PUSH_HEADERS.signature] } };
 }

@@ -374,6 +374,27 @@ export function parseReadsEnv(src: NodeJS.ProcessEnv) {
 export type ReadsEnv = ReturnType<typeof parseReadsEnv>;
 
 /**
+ * Door N — the signed daily list for the CMS's "your digest isn't reaching you" notice (brief 2026-11-09-digest-notice-list):
+ *  - DIGEST_NOTICES_ENABLED          off (default): the door answers 404, as if it did not exist;
+ *  - CMS_FEED_NOTICES_SECRET         the CMS signs its GET with it (≥ 32 chars, never another door's secret);
+ *  - CMS_FEED_NOTICES_SECRET_PREVIOUS  accepted too during a rotation.
+ * The IP fence is the audience one (`CMS_FEED_ALLOWED_IPS`). Problems name variables, never values; a fault never crashes the app.
+ */
+export function parseNoticesEnv(src: NodeJS.ProcessEnv) {
+  const problems: string[] = [];
+  const secret = secretFrom(src, 'CMS_FEED_NOTICES_SECRET', problems);
+  const secretPrevious = secretFrom(src, 'CMS_FEED_NOTICES_SECRET_PREVIOUS', problems);
+  const others = [src.CMS_FEED_PULL_SECRET, src.CMS_FEED_INBOUND_SECRET, src.CMS_FEED_INBOUND_SECRET_PREVIOUS, src.CMS_FEED_VIEWS_SECRET]
+    .map((v) => (v ?? '').trim())
+    .filter(Boolean);
+  if ((secret && others.includes(secret)) || (secretPrevious && others.includes(secretPrevious))) {
+    problems.push('CMS_FEED_NOTICES_SECRET must differ from the other door secrets (one secret per door)');
+  }
+  return { enabled: src.DIGEST_NOTICES_ENABLED === 'true', secret, secretPrevious, problems };
+}
+export type NoticesEnv = ReturnType<typeof parseNoticesEnv>;
+
+/**
  * The webhook IP fence (design §5.1 step 2). Both sides in canonical form (`canonicalIp`), so
  * `::ffff:1.2.3.4` matches `1.2.3.4` and `2001:DB8::0:1` matches `2001:db8::1`. An EMPTY
  * allow-list, no IP, or an IP that does not parse is a rejection (fail closed).
@@ -394,6 +415,8 @@ export const AUDIENCE_SECRET_NAMES = [
   'CMS_FEED_INBOUND_SECRET_PREVIOUS',
   'CMS_FEED_PULL_SECRET',
   'CMS_FEED_VIEWS_SECRET',
+  'CMS_FEED_NOTICES_SECRET',
+  'CMS_FEED_NOTICES_SECRET_PREVIOUS',
   'MAILERCLOUD_SYNC_API_KEY',
 ] as const;
 
@@ -852,6 +875,8 @@ export const env = {
   digest: parseDigestEnv(process.env),
   // CMS audience sync — see parseAudienceEnv above. Every flag default off.
   audience: parseAudienceEnv(process.env),
+  // Door N (the CMS digest-notice list) — see parseNoticesEnv above. Default off: the door answers 404.
+  notices: parseNoticesEnv(process.env),
   // Digest task 14: staff push notifications for digest approval. A KILL-SWITCH,
   // default ON: nothing is ever sent unless DIGEST_ENABLED is on too (the push rides
   // on the digest's own editor alerts) AND a staff member tapped "Notify me on this

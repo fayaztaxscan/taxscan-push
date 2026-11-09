@@ -40,6 +40,19 @@ export function makePublicLimiter(perMin: number): RateLimitRequestHandler {
   });
 }
 
+/** A per-HOUR limiter (door N: 30 requests an hour per client); same bucket rule as the others (`clientKey`). */
+export function makeHourlyLimiter(perHour: number): RateLimitRequestHandler {
+  return rateLimit({
+    windowMs: 3_600_000,
+    max: perHour,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'rate_limited' },
+    keyGenerator: clientKey,
+    validate: VALIDATE,
+  });
+}
+
 /**
  * Strict limiter for /api/auth/login — caps brute-force attempts per IP.
  * 5/min by default. A determined attacker can still rotate IPs; the goal here
