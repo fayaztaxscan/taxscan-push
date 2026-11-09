@@ -394,14 +394,14 @@ to the CMS, and the list changes nobody's mail: it reads what Mailercloud and th
 
 **The list (one function, the single definition):** `digestNoticeList(portal, now)` in `src/services/audience/notices.ts`. One row per CMS
 **account**, sorted by account id (so the ETag is stable):
-- accounts with `CmsAccount.status = 'active'`, not deleted / erased / out of scope, with an address on file (`emailHash`);
+- accounts that **currently receive the paid digest's role** (`memberRole()` = PREMIUM: `active`, or `cancelled` with time left, i.e. still inside the period they paid for), never ended / free / deleted / erased / out of scope, with an address on file (`emailHash`); the paid test is `memberRole` itself (`PAID_STATUSES` in `rules.ts`), applied to the account, so the list cannot drift from who gets the paid digest;
 - joined by `emailHash` to `AudienceMember` (`desiredRole = PREMIUM`, `noMarketing = false`) and to `EmailSuppression` (by `emailHash`, or by
   `accountId` for an opt-out that follows the account);
 - **`bad_address`**: the member is FATAL in the writer (`lastErrorKind = 'FATAL'`: Mailercloud refuses the address), or a `HARD_BOUNCE`
   suppression; it **wins** over `unsubscribed`;
 - **`unsubscribed`**: an `UNSUBSCRIBE` suppression;
 - **never listed**: a `SPAM`, `MANUAL` or `ACCOUNT_DELETED` suppression, consent = false (`noMarketing`), a non-PREMIUM member, any account that
-  is not live. (Cancelled-but-still-paid accounts are `PREMIUM` for the digest but not `active`: they are not listed, as the brief says.)
+  is not live, and an `ended` account (even beside a paid one on the same address).
 - Two accounts that share one address both appear; one account appears once.
 
 **The door:**

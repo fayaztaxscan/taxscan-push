@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
+import { PAID_STATUSES, memberRole } from './rules';
 
 /**
  * The list behind door N (brief 2026-11-09-digest-notice-list): the paid CMS accounts whose daily digest cannot reach them, each with a
@@ -9,7 +10,9 @@ import { prisma } from '../../lib/prisma';
  * or Mailercloud. Never returns, logs or stores an address: an account id and a reason only.
  *
  * One row per CMS ACCOUNT (two accounts that share an address both appear), from:
- *  - accounts that are `active`, not deleted / erased / out of scope, with an address on file (`emailHash`);
+ *  - accounts that currently receive the paid digest's role: `memberRole()` = PREMIUM, i.e. `active`, or `cancelled` with time left
+ *    (still paid; Follow-up 1), never ended / free / deleted / erased / out of scope, with an address on file (`emailHash`). The paid
+ *    test is `memberRole` itself, applied to the account, so it cannot drift from who gets the paid digest;
  *  - joined by `emailHash` to `AudienceMember` (must be PREMIUM, and consent must not be false) and to `EmailSuppression`, by
  *    `emailHash` OR by `accountId` (an opt-out that follows the account).
  * Reasons:
@@ -37,8 +40,9 @@ function chunks<T>(list: readonly T[]): T[][] {
 
 export async function digestNoticeList(portal: string, _now: Date = new Date()): Promise<NoticeItem[]> {
   const accounts = await prisma.cmsAccount.findMany({
-    where: { portal, status: 'active', deletedAt: null, erasedAt: null, outOfScopeAt: null, emailHash: { not: null } },
-    select: { accountId: true, emailHash: true },
+    // The statuses memberRole grants PREMIUM, as a prefilter only: the test itself is memberRole() just below.
+    where: { portal, status: { in: [...PAID_STATUSES] }, deletedAt: null, erasedAt: null, outOfScopeAt: null, emailHash: { not: null } },
+    select: { accountId: true, emailHash: true, status: true, consentValue: true, deletedAt: true, outOfScopeAt: true },
     orderBy: { accountId: 'asc' },
   });
   if (accounts.length === 0) return [];
@@ -76,6 +80,8 @@ export async function digestNoticeList(portal: string, _now: Date = new Date()):
 
   const out: NoticeItem[] = [];
   for (const a of accounts) {
+    // The single definition of "paid": this account's own role is PREMIUM (consent does not matter for a service email: noMarketing below).
+    if (memberRole([a], { formerToFree: false }).role !== 'PREMIUM') continue;
     const hash = a.emailHash as string;
     const m = members.get(hash);
     if (!m || m.noMarketing) continue; // not PREMIUM, or consent = false

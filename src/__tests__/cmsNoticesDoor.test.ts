@@ -92,11 +92,11 @@ function raw(a: ReturnType<typeof app>, rawQuery: string, over: { secret?: strin
 
 let bad: { accountId: string; email: string };
 let unsub: { accountId: string; email: string };
-async function account(key: string, o: { fatal?: boolean; reason?: string } = {}) {
+async function account(key: string, o: { fatal?: boolean; reason?: string; status?: string } = {}) {
   const email = `${key}.${RUN}@example.org`;
   const h = emailHash(email);
   const accountId = `${P}${key}`;
-  await prisma.cmsAccount.create({ data: { accountId, portal: PORTAL, seq: 1n, status: 'active', plan: 'premium_1y', emailHash: h, lastSource: 'pull_full' } });
+  await prisma.cmsAccount.create({ data: { accountId, portal: PORTAL, seq: 1n, status: o.status ?? 'active', plan: 'premium_1y', emailHash: h, lastSource: 'pull_full' } });
   await prisma.audienceMember.create({ data: { emailHash: h, email, desiredRole: 'PREMIUM', lastErrorKind: o.fatal ? 'FATAL' : null } });
   if (o.reason) await prisma.emailSuppression.create({ data: { email, emailHash: h, reason: o.reason, source: 'mailercloud_webhook' } });
   return { accountId, email };
@@ -234,6 +234,18 @@ describe('3. every authentication failure is the SAME 401', () => {
     // door W (default env: the audience sync is off) still answers its own 401 to an unsigned POST
     const w = await request(a).post('/api/integrations/cms/events').send({});
     expect([w.status, w.body]).toEqual([401, UNAUTH]);
+  });
+});
+
+describe('10. the door serves a cancelled-but-still-paid reader too (Follow-up 1)', () => {
+  it('a cancelled PREMIUM account that is FATAL is in the 200 as bad_address; an ended one is not', async () => {
+    const cancelled = await account('canc', { status: 'cancelled', fatal: true });
+    await account('endd', { status: 'ended', fatal: true });
+    const r = await call(app());
+    expect(r.status).toBe(200);
+    expect(r.body.items).toContainEqual({ account_id: cancelled.accountId, reason: 'bad_address' });
+    expect(r.body.items.map((i: { account_id: string }) => i.account_id)).not.toContain(`${P}endd`);
+    expect(r.body.count).toBe(3); // the two seeded in beforeEach + the cancelled one
   });
 });
 

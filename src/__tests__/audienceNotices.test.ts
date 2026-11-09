@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from '../lib/prisma';
 import { parseAudienceEnv, parseNoticesEnv } from '../lib/env';
 import { emailHash } from '../services/digest/webhook';
+import { PAID_STATUSES, memberRole } from '../services/audience/rules';
 import { audienceCard } from '../services/audience/adminView';
 import {
   NONCE_TTL_MS,
@@ -128,10 +129,9 @@ describe('1. digestNoticeList: who is on the list, and why', () => {
     for (const x of [spam, manual, deletedRow, spamWins, noMkt, former, noMember]) expect(got).not.toHaveProperty(x.accountId);
   });
 
-  it('only an `active` account that is live and has an address: free / ended / cancelled / deleted / erased / out of scope / withheld are absent', async () => {
+  it('only an account that is live, has an address and currently receives the paid role: free / ended / deleted / erased / out of scope / withheld are absent', async () => {
     const live = await seed('live', { fatal: true });
     const absent = [
-      await seed('cancelled', { status: 'cancelled', fatal: true }),
       await seed('free', { status: 'free', fatal: true }),
       await seed('ended', { status: 'ended', fatal: true }),
       await seed('deletedst', { status: 'deleted', fatal: true }),
@@ -160,6 +160,55 @@ describe('1. digestNoticeList: who is on the list, and why', () => {
     const a = await seed('dup', { byHash: 'UNSUBSCRIBE', byAccount: 'HARD_BOUNCE' });
     const got = await list();
     expect(got).toEqual([{ accountId: a.accountId, reason: 'bad_address' }]);
+  });
+});
+
+describe('10. a cancelled reader who is still inside the paid period gets the paid digest, so the notice too (Follow-up 1)', () => {
+  it('a cancelled PREMIUM account that is FATAL → bad_address; an ended one is not listed', async () => {
+    const cancelled = await seed('c-fatal', { status: 'cancelled', fatal: true });
+    const ended = await seed('e-fatal', { status: 'ended', fatal: true, role: 'FORMER' });
+    const endedAsPremium = await seed('e-fatal2', { status: 'ended', fatal: true }); // even with a stale PREMIUM member row: the account itself is not paid
+    const got = asMap(await list());
+    expect(got).toEqual({ [cancelled.accountId]: 'bad_address' });
+    expect(got).not.toHaveProperty(ended.accountId);
+    expect(got).not.toHaveProperty(endedAsPremium.accountId);
+  });
+
+  it('a cancelled account is judged exactly like an active one: HARD_BOUNCE → bad_address, UNSUBSCRIBE → unsubscribed, and never SPAM / MANUAL / ACCOUNT_DELETED, consent = false, deleted, erased or out of scope', async () => {
+    const bounce = await seed('c-bounce', { status: 'cancelled', byHash: 'HARD_BOUNCE' });
+    const unsub = await seed('c-unsub', { status: 'cancelled', byHash: 'UNSUBSCRIBE' });
+    const never = [
+      await seed('c-spam', { status: 'cancelled', byHash: 'SPAM' }),
+      await seed('c-manual', { status: 'cancelled', byHash: 'MANUAL' }),
+      await seed('c-delrow', { status: 'cancelled', fatal: true, byAccount: 'ACCOUNT_DELETED' }),
+      await seed('c-nomkt', { status: 'cancelled', fatal: true, noMarketing: true }),
+      await seed('c-deleted', { status: 'cancelled', fatal: true, deletedAt: NOW }),
+      await seed('c-erased', { status: 'cancelled', fatal: true, erasedAt: NOW }),
+      await seed('c-outscope', { status: 'cancelled', fatal: true, outOfScopeAt: NOW }),
+      await seed('c-fine', { status: 'cancelled' }), // nothing wrong with this reader
+    ];
+    const got = asMap(await list());
+    expect(got).toEqual({ [bounce.accountId]: 'bad_address', [unsub.accountId]: 'unsubscribed' });
+    for (const x of never) expect(got).not.toHaveProperty(x.accountId);
+  });
+
+  it('accounts that share an address: only the one that is itself paid is listed (an ended one beside an active or a cancelled one is not)', async () => {
+    const active = await seed('sh-active', { fatal: true });
+    const endedBeside = await seed('sh-ended', { status: 'ended', shareWith: { email: active.email } });
+    const cancelled = await seed('sh-cancelled', { status: 'cancelled', fatal: true });
+    const endedBesideCancelled = await seed('sh-ended2', { status: 'ended', shareWith: { email: cancelled.email } });
+    const got = asMap(await list());
+    expect(got).toEqual({ [active.accountId]: 'bad_address', [cancelled.accountId]: 'bad_address' });
+    expect(got).not.toHaveProperty(endedBeside.accountId);
+    expect(got).not.toHaveProperty(endedBesideCancelled.accountId);
+  });
+
+  it('the paid test is memberRole() itself: the paid statuses are one list in rules.ts, and the rule agrees with what the list does', () => {
+    expect([...PAID_STATUSES]).toEqual(['active', 'cancelled']);
+    const acct = (status: string) => ({ status, consentValue: null, deletedAt: null, outOfScopeAt: null });
+    for (const [status, role] of [['active', 'PREMIUM'], ['cancelled', 'PREMIUM'], ['ended', 'FORMER'], ['free', 'NONE'], ['deleted', 'NONE']] as const) {
+      expect([status, memberRole([acct(status)], { formerToFree: true }).role]).toEqual([status, role]);
+    }
   });
 });
 
