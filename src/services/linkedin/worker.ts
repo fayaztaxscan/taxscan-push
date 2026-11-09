@@ -39,6 +39,14 @@ import { composeSkippedPushes, skipRows } from '../social/composeSkip';
  *    After it there is NO age limit: an article that has no row yet is posted however long ago it was pushed (brief
  *    2026-11-04-social-no-age-limit).
  *
+ * LINKEDIN'S PER-PAGE DAILY LIMIT (brief 2026-11-09-small-fixes, found live 9 Nov: Shopscan posted 3 times, then every create was refused).
+ * A create call answered with HTTP 429 and `Organization post creation limit reached` means LinkedIn will take no more posts for THAT page
+ * until its day turns. The page is then HELD until the next 00:00 UTC (05:30 IST), in memory only (a restart forgets it and the next such
+ * 429 sets it again): the row that met it is SKIPPED with the reason `org_daily_limit`, and every further push to that page, a retry
+ * waiting for its turn included, is SKIPPED `org_daily_limit` with NO API call, never retried and never posted later (same rule as
+ * `quota_headroom`; a manual immediate push is not exempt, LinkedIn would refuse it too). One log line per hold. Other pages are not
+ * affected, and any OTHER 429 keeps the ordinary retry path above.
+ *
  * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts). A page with its own LINKEDIN_TAXSCAN_ALL_PUSHES_FROM /
  * LINKEDIN_ACADEMY_ALL_PUSHES_FROM posts, from that time on, EVERY push: taxscan.in articles, academy.taxscan.in courses and
  * shop.taxscan.in products, ONE POST PER PUSH, repeats included (a backfill clone, a resend). The row key is `push:<campaign id>:<send
@@ -71,6 +79,8 @@ export const UNKNOWN_ERROR = 'unknown — check the page';
 export const DUPLICATE_ERROR = 'LinkedIn says this was already posted';
 /** The reason on a row a held page SKIPPED (the daily quota guard). The screen turns it into words. */
 export const QUOTA_HEADROOM = 'quota_headroom';
+/** The reason on a row a page held by LinkedIn's own per-page daily limit SKIPPED (brief 2026-11-09-small-fixes). The screen turns it into words. */
+export const ORG_DAILY_LIMIT = 'org_daily_limit';
 /** The reason on a row written for a push whose sender unticked this page on Compose (brief 2026-11-09-compose-skip-pages). */
 export { COMPOSE_SKIP };
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
@@ -112,8 +122,30 @@ const stoppedFor = new Map<string, string>(); // page → token fingerprint it w
 export function resetLinkedInStops(): void {
   stoppedFor.clear();
   holdLoggedDay.clear();
+  orgHeldUntil.clear();
 }
 const holdLoggedDay = new Map<string, string>(); // page → the IST day its quota_headroom line was last logged
+/** page → the instant (ms) its LinkedIn daily-limit hold ends: the next 00:00 UTC. In memory only, by design (a restart forgets it). */
+const orgHeldUntil = new Map<string, number>();
+/** The next 00:00 UTC after `t` (LinkedIn's day turns then = 05:30 IST). */
+export const nextUtcMidnight = (t: Date): Date => new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() + 1));
+/** Is `page` held by LinkedIn's daily limit at `now`? An expired hold is forgotten here. */
+export function isOrgHeld(page: string, now: Date): boolean {
+  const until = orgHeldUntil.get(page);
+  if (until === undefined) return false;
+  if (now.getTime() < until) return true;
+  orgHeldUntil.delete(page);
+  return false;
+}
+/** Hold `page` until the next 00:00 UTC. ONE log line per hold (a repeat of the same hold is silent). */
+function holdOrgPage(page: string, now: Date): Date {
+  const until = nextUtcMidnight(now);
+  const had = orgHeldUntil.get(page);
+  orgHeldUntil.set(page, until.getTime());
+  // eslint-disable-next-line no-console
+  if (had !== until.getTime()) console.log(`[linkedin] page=${page} ${ORG_DAILY_LIMIT} held until ${until.toISOString()}`);
+  return until;
+}
 const fingerprint = (token: string): string => createHash('sha256').update(token).digest('hex').slice(0, 16);
 export const authKey = (page: string): string => `linkedin:auth:${page}`;
 type AuthState = { stoppedAt: string; alertedDay: string | null; status: number | null };
@@ -347,6 +379,12 @@ async function attempt(row: LinkedInPost, d: WorkerDeps, now: Date): Promise<Att
       log(page, row.campaignId, 'failed', `reason=duplicate image=${image}${kind}`);
       return 'failed';
     }
+    if (result.kind === 'org_limit') {
+      // LinkedIn's per-page daily limit: not retried, not posted later. The row is SKIPPED, and the page is held until 00:00 UTC.
+      await prisma.linkedInPost.update({ where: { id: row.id }, data: { status: 'SKIPPED', nextAttemptAt: null, error: ORG_DAILY_LIMIT } });
+      holdOrgPage(page, now);
+      return 'skipped';
+    }
     if (result.kind === 'retry' && row.attempts < MAX_ATTEMPTS) {
       const due = pushOutOfQuietHours(new Date(now.getTime() + RETRY_DELAYS_MIN[row.attempts - 1] * 60_000), quietOf(d));
       await prisma.linkedInPost.update({ where: { id: row.id }, data: { nextAttemptAt: due, error: clip(result.error) } });
@@ -461,8 +499,13 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     // A login error (401 / 403) ends THIS page's turn only: the next page is still attempted in the same tick (a shared token will
     // fail it too, and it then stops itself with its own banner and alert), and a stopped page never holds back a later one.
     let stopped = false;
+    // LinkedIn's daily limit for THIS page (brief 2026-11-09-small-fixes): while the page is held, a retry waiting for its turn is a push
+    // like any other: SKIPPED `org_daily_limit`, no call, never posted later.
+    if (isOrgHeld(page, now)) {
+      await prisma.linkedInPost.updateMany({ where: { page, status: 'PENDING', nextAttemptAt: { not: null } }, data: { status: 'SKIPPED', nextAttemptAt: null, error: ORG_DAILY_LIMIT } });
+    }
     // 2. Retries that are due (never inside quiet hours: they were scheduled out of it, this guards a changed clock).
-    if (!isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
+    if (!isOrgHeld(page, now) && !isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
       const due = await prisma.linkedInPost.findMany({ where: { page, status: 'PENDING', nextAttemptAt: { lte: now } }, orderBy: { nextAttemptAt: 'asc' }, take: budget });
       for (const r of due) {
         if (budget <= 0 || stopped) break;
@@ -549,6 +592,17 @@ export async function runLinkedInTick(d: WorkerDeps = {}): Promise<TickResult> {
     // Oldest first across both rules: the read orders the pushes by send time (then id) and each rule inserts as it goes.
     for (const [key, campaignId] of firstOf) {
       if (have.has(key)) continue;
+      // Held by LinkedIn's own daily limit (set earlier today, or by the attempt just made in this loop): NO call, a SKIPPED row, for
+      // every push, a manual immediate one included (LinkedIn would refuse it too).
+      if (isOrgHeld(page, now)) {
+        try {
+          await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId, status: 'SKIPPED', attempts: 0, error: ORG_DAILY_LIMIT } });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
+          throw err;
+        }
+        continue;
+      }
       if (held && !manualIds.has(campaignId)) {
         try {
           await prisma.linkedInPost.create({ data: { page, articleKey: key, campaignId, status: 'SKIPPED', attempts: 0, error: QUOTA_HEADROOM } });

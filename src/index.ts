@@ -29,6 +29,7 @@ import { startTelegramWorker } from './services/telegram/worker';
 import { startLinkedInTokenRenewal } from './services/linkedin/token';
 import { startWhatsAppNudge } from './services/whatsapp/nudge';
 import { logWhatsAppAllPushes } from './services/whatsapp/queue';
+import { socialAnyLinkBootLine } from './services/social/allPushes';
 import { startAudienceSync } from './services/audience/boot';
 import { noticesBootLine } from './services/audience/notices';
 import { createMockDigestSender } from './services/digest/mockSender';
@@ -93,4 +94,6 @@ app.listen(env.port, () => {
   startLinkedInTokenRenewal();
   startWhatsAppNudge();
   logWhatsAppAllPushes();
+  // eslint-disable-next-line no-console
+  console.log(socialAnyLinkBootLine());
 });

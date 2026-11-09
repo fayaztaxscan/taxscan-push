@@ -19,7 +19,8 @@ type Row = {
   postUrl: string | null;
   unknownOutcome: boolean;
   /**
-   * Present ONLY on a SKIPPED row the system skipped, never a person: 'quota_headroom' (the daily quota guard held it) or
+   * Present ONLY on a SKIPPED row the system skipped, never a person: 'quota_headroom' (the daily quota guard held it),
+   * 'org_daily_limit' (LinkedIn refused this page's posts for the day: "Organization post creation limit reached") or
    * 'compose_skip' (the sender unticked this page on Compose for this push). Never shown as a code.
    */
   skipReason?: string;
@@ -345,11 +346,16 @@ const STATUS_LABEL: Record<Status, string> = {
 // page. A held row has no Retry and no Skip: those two buttons belong to FAILED / RETRYING rows only.
 const QUOTA_HELD = 'quota_headroom';
 const QUOTA_HELD_TEXT = 'Skipped — daily LinkedIn limit kept for Taxscan';
+// LinkedIn refused this page's posts for the rest of the UTC day ("Organization post creation limit reached"): the system skipped the push.
+// Like a held row it counts under Skipped and has no buttons.
+const ORG_DAILY_LIMIT = 'org_daily_limit';
+const ORG_DAILY_LIMIT_TEXT = "Skipped — LinkedIn's daily limit for this page";
 // A push whose sender unticked this page on Compose. Like a held row it is SKIPPED, counts under Skipped, and has no buttons.
 const COMPOSE_SKIP = 'compose_skip';
 const COMPOSE_SKIP_TEXT = 'Skipped in Compose';
 function statusText(r: Row): string {
   if (r.status === 'SKIPPED' && r.skipReason === QUOTA_HELD) return QUOTA_HELD_TEXT;
+  if (r.status === 'SKIPPED' && r.skipReason === ORG_DAILY_LIMIT) return ORG_DAILY_LIMIT_TEXT;
   if (r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP) return COMPOSE_SKIP_TEXT;
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
   return STATUS_LABEL[r.status];

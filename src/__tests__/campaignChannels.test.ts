@@ -75,7 +75,10 @@ afterAll(async () => {
   const mine = Object.values(keys);
   await prisma.whatsAppPost.deleteMany({ where: { articleKey: { in: mine } } });
   await prisma.linkedInPost.deleteMany({ where: { articleKey: { in: mine } } });
-  await prisma.campaign.deleteMany({ where: { url: { contains: RUN } } });
+  // By id as well as by URL: the home-page campaign (`https://www.taxscan.in/`) has no run id in its URL and was left behind by every run
+  // (brief 2026-11-09-small-fixes, item 4).
+  await prisma.campaign.deleteMany({ where: { OR: [{ url: { contains: RUN } }, { id: { in: Object.values(camps) } }] } });
+  expect(await prisma.campaign.count({ where: { id: { in: Object.values(camps) } } })).toBe(0);
   await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SET LOCAL audit_log.allow_purge = 'true'`);
     await tx.$executeRaw`DELETE FROM "AuditLog" WHERE "userId" = ${userId}`;

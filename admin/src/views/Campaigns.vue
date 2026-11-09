@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useApi } from '../composables/useApi';
-import { useAuth } from '../composables/useAuth';
+import { useAuth, type UserSummary } from '../composables/useAuth';
 import { telegramErrorText } from '../composables/telegramErrors';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
 import CampaignDetail from '../components/CampaignDetail.vue';
@@ -189,8 +189,23 @@ const showChannels = computed(() => campaigns.value.some((c) => c.channels !== u
 const colCount = computed(() => (showChannels.value ? 13 : 12));
 
 type Mark = { key: 'whatsapp' | 'linkedin' | 'facebook' | 'telegram'; short: string; label: string; state: string };
-/** True once any row carries a Telegram mark: the channel is active, so the column's help text names it. */
+/** True once any row carries a Telegram mark: the channel is active, so the picture's help text names it. */
 const hasTelegram = computed(() => campaigns.value.some((c) => c.channels?.telegram !== undefined));
+
+/** The channels a push can reach, in the order the heading names them, with the switch (from /api/auth/me) that turns each on. */
+const CHANNEL_SWITCHES = [
+  ['whatsappQueue', 'WhatsApp'],
+  ['linkedinPosting', 'LinkedIn'],
+  ['facebookPosting', 'Facebook'],
+  ['telegramPosting', 'Telegram'],
+] as const;
+/** The Channels heading's help text: names only the channels that are on ("WhatsApp and LinkedIn", "A, B and C", a single one alone). */
+function channelsHelp(features: UserSummary['features']): string {
+  const on: string[] = CHANNEL_SWITCHES.filter(([key]) => features?.[key] === true).map(([, name]) => name);
+  const names = on.length > 1 ? `${on.slice(0, -1).join(', ')} and ${on[on.length - 1]}` : on.length === 1 ? on[0] : 'other channels';
+  return `Whether this push was also posted to ${names}. Click a mark to open that screen.`;
+}
+const channelsHelpText = computed(() => channelsHelp(meUser.value?.features));
 
 function fmtTime(iso: string | undefined): string {
   if (!iso) return '';
@@ -403,7 +418,7 @@ onMounted(load);
             <th class="th-sort" @click="setSort('deliveryRate')">
               Delivery<span class="sort-ind">{{ sortInd('deliveryRate') }}</span>
             </th>
-            <th v-if="showChannels" :title="hasTelegram ? 'Whether the article was also posted to WhatsApp, LinkedIn, Facebook and Telegram. Click a mark to open that screen.' : 'Whether the article was also posted to WhatsApp, LinkedIn and Facebook. Click a mark to open that screen.'">
+            <th v-if="showChannels" :title="channelsHelpText">
               Channels
             </th>
           </tr>

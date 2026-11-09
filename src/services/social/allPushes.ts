@@ -1,4 +1,4 @@
-import { env } from '../../lib/env';
+import { env, parseAllPushesFrom, SOCIAL_ANY_LINK_FROM_VAR } from '../../lib/env';
 import { isAllowedPushUrl } from '../../lib/urlAllowlist';
 import { isTestSegmentOnly } from './publicCampaign';
 import { articleContentOf, UTM_CONTENT_MAX } from '../whatsapp/postText';
@@ -106,6 +106,17 @@ export function isAllPushesCampaign(
   if (articleContentOf({ url }) !== null || storeLinkOf(url) !== null) return true;
   // ANY OTHER LINK: only from SOCIAL_ANY_LINK_FROM, and only for a push SENT at or after it. A missing send time never qualifies.
   return anyLinkFrom !== null && !!c.lastSentAt && c.lastSentAt.getTime() >= anyLinkFrom.getTime() && pageLinkOf(url) !== null;
+}
+
+/**
+ * The ONE start-up line for SOCIAL_ANY_LINK_FROM (brief 2026-11-09-small-fixes), worded like the other every-push variables' lines: on with
+ * its time, or off and why, in fixed words that name the variable and never print a value. Pure (takes the source as a parameter).
+ *   [social] any allowed link posts (from <ISO>)
+ *   [social] any-link rule off: SOCIAL_ANY_LINK_FROM is not set | is not a valid ISO time
+ */
+export function socialAnyLinkBootLine(src: NodeJS.ProcessEnv = process.env): string {
+  const r = parseAllPushesFrom(src, SOCIAL_ANY_LINK_FROM_VAR);
+  return r.at ? `[social] any allowed link posts (from ${r.at.toISOString()})` : `[social] any-link rule off: ${r.off ?? `${SOCIAL_ANY_LINK_FROM_VAR} is not set`}`;
 }
 
 /**
