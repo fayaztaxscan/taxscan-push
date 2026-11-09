@@ -407,7 +407,7 @@ confirm with the user it landed well. See `NEXT_STEP.md`.
   files of the area it touched, with **no full suite** unless it touches a shared foundation (schema/migration, auth,
   send path/pacer, config/env, `useApi`). The **full suite runs once per release** (`Release check`,
   `docs/briefs/BUILD-SESSION.md` §6) on `origin/develop`. Production moves at most **twice a day, ~13:00 and ~18:00
-  IST**, only for a develop hash that passed, on the owner's yes; urgent fixes outside the windows on the owner's say.
+  IST**, only for a develop hash that passed, on the owner's yes; urgent fixes outside the windows on the owner's say. **Deploy ALWAYS after the Release check (owner, 9 Nov)** — a build's own full-suite run never stands in for it.
 - **Two-session workflow (owner, 2026-10-29).** A **planning** session talks with the owner, reads code + prod
   read-only, writes one brief per change (`docs/briefs/<date>-<name>.md`, from `docs/briefs/TEMPLATE.md`),
   reviews each build's `.REPORT.md`, merges `build/<name>` → `develop`, and moves to `main` only on the owner's
