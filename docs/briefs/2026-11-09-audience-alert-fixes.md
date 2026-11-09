@@ -71,3 +71,23 @@ Each one must PASS in the REPORT.
 - The marker's `day` (`istDayKey(now)` in `audience/alerts.ts`) is already IST; only the email date was wrong.
 - The refused count per day is `m.count` on the marker (refreshed when the same kind is raised again that IST day);
   treat a missing count as 1, as today.
+
+## Follow-up 1 (planning, 9 Nov — from the build's REPORT)
+`audience_writer_fatal` is also raised by the tag lookup (`src/services/audience/writer.ts` ~line 298, reason
+`tags_<http>` or `tag_ids`, count always 1). That is a bad sync key or bad tag ids, never a reader's address, so it
+must keep the old advice. Same branch, same REPORT (add a Follow-up 1 section to it).
+
+**In:**
+- In the `audience_writer_fatal` copy, when `m.reason` is `tag_ids` or starts with `tags_`:
+  - `what`: `Mailercloud refused our tag lookup (${reason}), so no contact was written this time.`
+  - `todo`: `Check the sync key (MAILERCLOUD_SYNC_API_KEY) and the tag ids (AUDIENCE_MC_TAG_*) in Mailercloud.`
+  - No "hard-bounced" sentence, no "Nothing to do".
+- Every other reason (today only `contact_write`) keeps the count-aware copy from the main brief.
+
+**Out:** no change to where or when the alert is raised, and no new alert kind.
+
+**Acceptance tests (add to the 8):**
+9. `reason: 'tags_401'`, `count: 1` → text contains `MAILERCLOUD_SYNC_API_KEY` and `AUDIENCE_MC_TAG_`, and does **not**
+   contain "hard-bounced" or "Nothing to do".
+10. `reason: 'tag_ids'`, `count: 1` → same as 9.
+11. `reason: 'contact_write'`, `count: 1` → still the "Nothing to do" variant (regression).
