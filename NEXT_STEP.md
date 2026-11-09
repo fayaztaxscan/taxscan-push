@@ -7,6 +7,16 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**⏳ PENDING (2026-11-09 evening) — current list; full version in memory `project_taxscan_push_state`.**
+a. Ship menu-sections + small-fixes after the Release check on 2b96cc2 (owner pre-approved); verify the new menu live + `[social]` boot line + the Shopscan hold at its next 429.
+b. Build `docs/briefs/2026-11-09-social-page-alerts-pause.md` → Release check → owner yes → live.
+c. 10 Nov after approving Premium: press **Send Free** — only `fayazabdu+freetest1` (segment EEZEa) may receive it. Then the real Free segments (EEZEK newsletter 9,938, EEZES former 4,307, EEZEu free readers) only after Mailercloud credit + owner yes.
+d. Free admissions running since ~16:23 IST 9 Nov (cap 10,000/day): check admitted/refused daily.
+e. Digest-notice door: CMS (cms-platform-29) builds its pull on their owner's yes, generates `CMS_FEED_NOTICES_SECRET` → owner sets it → we set `DIGEST_NOTICES_ENABLED`. Anagha's Mailercloud status export → ADMIN import (Digests → Audience; first upload is a safe trial).
+f. Mailercloud reply on API re-subscribe + hard-bounce re-activation → plan the "turn it back on" route (likely a Mailercloud form). `AUDIENCE_RESUBSCRIBE_WRITES` stays OFF.
+g. Shopscan: owner to answer whether Shopscan's admins post by hand (shares LinkedIn's per-page limit).
+h. 10 Nov: soft-prompt before/after compare. 12 Nov: read LinkedIn case CAS-12316619-W9J3R4.
+
 **⏳ PENDING (2026-11-08) — on top of the 7 Nov list below.**
 PR #107 LIVE ~10:50 IST (main fd4c0ed): FREE role for CMS free readers (`AUDIENCE_FREE_READERS` OFF, cap 0, tag unset) + 2 s CMS page pause (live). Owner ruling 8 Nov: Free = `SwZafy` + every CMS free/ended account (~88k), ~10k/day, sent manually only when there is credit.
 x. Rollout (runbook "Free to CMS free readers"): ✅ 8 Nov 10:33 IST tag SwfaE + flag ON, cap 0. Remaining: owner creates tag `TS Free reader (auto)` → `AUDIENCE_MC_TAG_FREE` + `AUDIENCE_FREE_READERS`=true (cap 0) → next 04:30 load: card ~74k eligible, no breaker → cap 10000 → Anagha builds the SwZafy segment + the Former/Free-reader segment → `DIGEST_FREE_SEGMENT_IDS` (outside 06:15–17:00 IST).
