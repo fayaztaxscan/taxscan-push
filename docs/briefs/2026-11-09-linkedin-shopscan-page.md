@@ -95,3 +95,21 @@ Each one must PASS in the REPORT. All LinkedIn calls mocked.
   some days and is handled (429 on the poll → `image=ok:unverified`, no retry). The guard exists for `posts-CREATE`.
 - Image URNs must be `encodeURIComponent`-encoded in REST paths (keep it).
 - App `taxscan_post_app` only (Development tier; Standard appeal open, CAS-12316619-W9J3R4).
+
+## Follow-up 1 (planning, 9 Nov — owner: "Guard holds Academy, then Shopscan")
+The quota headroom guard now holds **Academy first, then Shopscan**; Taxscan is never held. Replaces the Shopscan-only guard above.
+
+**In:**
+- Two thresholds, both counting today's (IST day) `posts-CREATE` attempts across ALL pages, as in the main brief:
+  - `LINKEDIN_ACADEMY_DAILY_HEADROOM`, default **75**: at or above it, Academy does not post.
+  - `LINKEDIN_SHOPSCAN_DAILY_HEADROOM`, default **85**: at or above it, Shopscan does not post.
+  Invalid values → the default, with a boot note. Neither applies to Taxscan.
+- A held page's row is SKIPPED with reason `quota_headroom` (no API call, never retried or posted later), one log line per page per
+  IST day: `[linkedin] page=<page> quota_headroom skipped=N`. Screen wording as in the main brief, for both pages.
+- This changes Academy's behaviour (it was never limited): say so in `docs/LINKEDIN_POSTING.md` and the admin guide.
+
+**Acceptance tests (replace test 4 with these):**
+4a. 74 creates today → all three pages post. 75 → Academy SKIPPED `quota_headroom` (no call), Taxscan + Shopscan post.
+4b. 85 → Academy and Shopscan SKIPPED, Taxscan posts. A new IST day resets both.
+4c. Both variables override their defaults; invalid → default + boot note.
+4d. With Shopscan inactive, the Academy guard still works (75).
