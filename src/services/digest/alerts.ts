@@ -457,6 +457,17 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         todo: 'Ask the CMS team what the new status means, so the rule can be extended.',
       };
     case 'audience_writer_fatal': {
+      // The writer raises this kind from two places: a refused contact (reason `contact_write`) and a
+      // failed tag lookup (`tag_ids` / `tags_<http>`, count always 1). The second is a bad sync key or bad
+      // tag ids, never a reader's address, so it keeps the key/ids advice and never says "nothing to do".
+      if (m.reason === 'tag_ids' || (typeof m.reason === 'string' && m.reason.startsWith('tags_'))) {
+        return {
+          short: 'Audience sync: Mailercloud refused a contact write',
+          what: `Mailercloud refused our tag lookup (${safeDetail(m.reason, cfg)}), so no contact was written this time.`,
+          did: 'Stopped writing those contacts; everything else carries on.',
+          todo: 'Check the sync key (MAILERCLOUD_SYNC_API_KEY) and the tag ids (AUDIENCE_MC_TAG_*) in Mailercloud.',
+        };
+      }
       const refused = Number(m.count ?? 1);
       return {
         short: 'Audience sync: Mailercloud refused a contact write',

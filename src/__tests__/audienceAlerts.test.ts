@@ -119,6 +119,21 @@ describe('audience_writer_fatal, end to end through the audience alert path', ()
     expect(sent[0].text).toContain('MAILERCLOUD_SYNC_API_KEY');
   });
 
+  // Follow-up 1: writer.ts raises the same kind for a failed tag lookup, always count 1.
+  it.each([
+    ['g1', 'tags_401'],
+    ['g2', 'tag_ids'],
+  ])('a failed tag lookup (%s: %s, count 1) keeps the key / tag-ids advice', async (tag, reason) => {
+    const m = await raiseAndSend(tag, 'audience_writer_fatal', { count: 1, reason }, '2026-11-08T16:32:00Z');
+    for (const part of [m.text, m.html]) {
+      expect(part).toContain(`Mailercloud refused our tag lookup (${reason})`);
+      expect(part).toContain('MAILERCLOUD_SYNC_API_KEY');
+      expect(part).toContain('AUDIENCE_MC_TAG_');
+      expect(part).not.toContain('hard-bounced');
+      expect(part).not.toContain('Nothing to do');
+    }
+  });
+
   it('an address in the stored reason never reaches the email or a log line', async () => {
     const before = logs.length;
     const m = await raiseAndSend(
