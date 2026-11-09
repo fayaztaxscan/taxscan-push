@@ -81,7 +81,7 @@ type Status = {
   sending: boolean;
   digestEnabled: boolean;
   staffPushEnabled: boolean;
-  /** Is the WhatsApp "articles waiting" nudge running on the server (queue + nudge flags + kill switch)? */
+  /** Is the WhatsApp "posts waiting" nudge running on the server (queue + nudge flags + kill switch)? */
   whatsappNudge?: boolean;
   vapidPublicKey: string;
   devices: number;

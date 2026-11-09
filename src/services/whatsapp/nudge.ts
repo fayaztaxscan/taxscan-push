@@ -8,11 +8,11 @@ import { activeStaffDevices, pushToStaffDevice, staffPushTransport, type StaffPu
 import { getQueue, istDay, istDayBounds, type QueueRow } from './queue';
 
 /**
- * The WhatsApp "articles waiting" nudge (brief 2026-11-02-social-menu-channels-nudge).
+ * The WhatsApp "posts waiting" nudge (brief 2026-11-02-social-menu-channels-nudge; worded for every push by brief 2026-11-09-small-fixes).
  *
  * WhatsApp posting is manual, so a 5-minute tick tells opted-in staff devices when new articles are waiting. It reads the
  * queue's own logic (`getQueue`), never Event, and sends ONE staff notification per nudge:
- *   title "WhatsApp: N articles waiting"   body = the newest waiting headline (≤ 100 chars)
+ *   title "WhatsApp: N posts waiting"   body = the newest waiting headline (≤ 100 chars)
  *   url /admin/whatsapp                    tag `whatsapp-queue` (a new nudge replaces the old one on the phone)
  *
  * Rules: a nudge only when a To-do article was pushed AFTER the last nudge (the watermark); at most one every 10 minutes
@@ -67,14 +67,14 @@ const clip = (s: string): string => {
   const t = s.replace(/\s+/g, ' ').trim();
   return t.length > NUDGE_HEADLINE_MAX ? `${t.slice(0, NUDGE_HEADLINE_MAX - 1)}…` : t;
 };
-const plural = (n: number, noun = 'article'): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+const plural = (n: number, noun = 'post'): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 /**
- * "WhatsApp: 3 articles waiting" as ever; once the all-pushes rule lists a course or product among the waiting rows (a row whose `kind`
- * is not article) it says "posts". Pure.
+ * "WhatsApp: 3 posts waiting", whatever the kinds. Every push is a row now (articles, courses, products, other pages), so the title counts
+ * posts, never "articles" (brief 2026-11-09-small-fixes). Pure.
  */
-export function nudgeTitle(waiting: { kind?: string }[]): string {
-  return `WhatsApp: ${plural(waiting.length, waiting.some((r) => r.kind && r.kind !== 'article') ? 'post' : 'article')} waiting`;
+export function nudgeTitle(waiting: readonly unknown[]): string {
+  return `WhatsApp: ${plural(waiting.length)} waiting`;
 }
 
 /** One tick. Never throws past the caller's try/catch; everything it needs is in Postgres. */

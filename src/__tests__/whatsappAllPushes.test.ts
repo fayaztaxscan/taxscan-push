@@ -371,10 +371,12 @@ describe('11. nudge', () => {
     expect(waiting.length).toBe(counts.todo);
     expect(waiting.some((r) => r.kind === 'course')).toBe(true);
     expect(nudgeTitle(waiting)).toBe(`WhatsApp: ${counts.todo} posts waiting`);
-    // only articles waiting: today's wording, unchanged
-    expect(nudgeTitle([{}, {}])).toBe('WhatsApp: 2 articles waiting');
-    expect(nudgeTitle([{ kind: 'article' }])).toBe('WhatsApp: 1 article waiting');
+    // brief 2026-11-09-small-fixes: every push is a row, so the title counts POSTS whatever the kinds (it used to say "articles" while only articles waited)
+    expect(nudgeTitle([{}, {}])).toBe('WhatsApp: 2 posts waiting');
+    expect(nudgeTitle([{ kind: 'article' }])).toBe('WhatsApp: 1 post waiting');
     expect(nudgeTitle([{ kind: 'article' }, { kind: 'product' }])).toBe('WhatsApp: 2 posts waiting');
+    expect(nudgeTitle([{ kind: 'article' }, { kind: 'article' }, { kind: 'article' }])).toBe('WhatsApp: 3 posts waiting');
+    expect(nudgeTitle([{ kind: 'course' }, { kind: 'product' }, { kind: 'page' }])).toBe('WhatsApp: 3 posts waiting');
   });
 });
 

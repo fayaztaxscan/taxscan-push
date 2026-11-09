@@ -8,6 +8,8 @@ import type { FetchLike } from './post';
  *
  *   posted    — the post id (`x-restli-id` header, else body `id`)
  *   retry     — 429 / 5xx / network / timeout: try again later
+ *   org_limit — 429 whose message says "Organization post creation limit reached" (found live 9 Nov, Shopscan): LinkedIn's daily create
+ *               limit for THAT page. Retrying cannot help until the UTC day turns, so the worker holds the page (brief 2026-11-09-small-fixes)
  *   auth      — 401, or 403 (token / permission): stop posting for this page until the token is fixed
  *   duplicate — 422 DUPLICATE_POST: LinkedIn already has this exact post (every push posts, so an identical repeat can happen); never
  *               retried, never repeated without the picture, never a login stop
@@ -15,7 +17,7 @@ import type { FetchLike } from './post';
  */
 export type LinkedInResult =
   | { kind: 'posted'; postId: string }
-  | { kind: 'retry' | 'auth' | 'failed' | 'duplicate'; status: number | null; error: string };
+  | { kind: 'retry' | 'auth' | 'failed' | 'duplicate' | 'org_limit'; status: number | null; error: string };
 
 export const LINKEDIN_POSTS_URL = 'https://api.linkedin.com/rest/posts';
 const TIMEOUT_MS = 15_000;
@@ -73,6 +75,16 @@ export function isDuplicateAnswer(status: number, body: unknown): boolean {
   return typeof b.message === 'string' && /content is a duplicate of/i.test(b.message);
 }
 
+/**
+ * LinkedIn's per-organization daily create limit: HTTP 429 and a message that says so. ONLY a 429 with that message counts, so every
+ * other 429 (a rate limit, the member quota) keeps the ordinary retry path.
+ */
+export function isOrgDailyLimitAnswer(status: number, body: unknown): boolean {
+  if (status !== 429 || !body || typeof body !== 'object') return false;
+  const m = (body as { message?: unknown }).message;
+  return typeof m === 'string' && /organization post creation limit reached/i.test(m);
+}
+
 /** Short, token-free text for the `error` column. */
 export function safeError(text: string, token: string): string {
   let t = text.replace(/\s+/g, ' ').trim();
@@ -112,16 +124,19 @@ export async function postToLinkedIn(r: LinkedInRequest, fetchImpl: FetchLike = 
     }
     let message = '';
     let duplicate = false;
+    let orgLimit = false;
     try {
       const j = (await res.json()) as { message?: unknown };
       if (typeof j.message === 'string') message = j.message;
       duplicate = isDuplicateAnswer(res.status, j);
+      orgLimit = isOrgDailyLimitAnswer(res.status, j);
     } catch {
       // not JSON
     }
     const error = safeError(`HTTP ${res.status}${message ? `: ${message}` : ''}`, r.accessToken);
     if (duplicate) return { kind: 'duplicate', status: res.status, error };
     if (res.status === 401 || res.status === 403) return { kind: 'auth', status: res.status, error };
+    if (orgLimit) return { kind: 'org_limit', status: res.status, error };
     if (res.status === 429 || res.status >= 500) return { kind: 'retry', status: res.status, error };
     return { kind: 'failed', status: res.status, error };
   } catch (err) {

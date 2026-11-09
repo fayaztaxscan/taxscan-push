@@ -836,7 +836,7 @@ describe('7. the token never leaves the building', () => {
 
 describe('8. the flag', () => {
   it('off: the cron is not started and the API answers 404 on every endpoint; the menu flag is false', async () => {
-    const schedule = jest.spyOn(cron, 'schedule');
+    const schedule = jest.spyOn(cron, 'schedule').mockImplementation((() => ({ stop: () => undefined })) as never); // mocked: a real cron.schedule leaves a live timer (brief 2026-11-09-small-fixes, item 4)
     const was = env.linkedin.enabled;
     env.linkedin.enabled = false;
     startLinkedInWorker();
@@ -851,7 +851,7 @@ describe('8. the flag', () => {
     schedule.mockRestore();
   });
   it('on without LINKEDIN_POST_FROM (or without the page config): refuses to start and says why', () => {
-    const schedule = jest.spyOn(cron, 'schedule');
+    const schedule = jest.spyOn(cron, 'schedule').mockImplementation((() => ({ stop: () => undefined })) as never); // mocked: a real cron.schedule leaves a live timer (brief 2026-11-09-small-fixes, item 4)
     const was = { enabled: env.linkedin.enabled, from: env.linkedin.postFrom, tax: env.linkedin.pages.taxscan };
     env.linkedin.enabled = true;
     env.linkedin.postFrom = null;

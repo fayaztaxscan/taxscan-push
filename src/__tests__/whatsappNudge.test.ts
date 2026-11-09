@@ -11,7 +11,7 @@ import { istDay } from '../services/whatsapp/queue';
 import { validKeys } from './helpers';
 
 /**
- * Brief 2026-11-02-social-menu-channels-nudge, acceptance 5–7: the WhatsApp "articles waiting" nudge. A fake clock and a
+ * Brief 2026-11-02-social-menu-channels-nudge, acceptance 5–7: the WhatsApp "posts waiting" nudge (titles say "posts" since brief 2026-11-09-small-fixes). A fake clock and a
  * fake queue drive the timing; devices and users are real rows (removed afterwards); the transport only records.
  */
 const logs: string[] = [];
@@ -90,7 +90,7 @@ describe('5. timing (fake clock)', () => {
     const r = await tick(ist(10, 0));
     expect(r).toMatchObject({ sent: true, waiting: 1, devices: 1, delivered: 1 });
     expect(sent).toHaveLength(1);
-    expect(sent[0].payload).toMatchObject({ title: 'WhatsApp: 1 article waiting', body: 'Supreme Court holds the ITC claim valid', tag: NUDGE_TAG, renotify: true });
+    expect(sent[0].payload).toMatchObject({ title: 'WhatsApp: 1 post waiting', body: 'Supreme Court holds the ITC claim valid', tag: NUDGE_TAG, renotify: true });
     expect(String(sent[0].payload.url)).toMatch(/\/admin\/whatsapp$/);
     expect(NUDGE_TAG).toBe('whatsapp-queue');
     expect(logs.join('\n')).toContain('[whatsapp-nudge] waiting=1 devices=1 delivered=1');
@@ -104,7 +104,7 @@ describe('5. timing (fake clock)', () => {
     const r = await tick(ist(10, 10));
     expect(r).toMatchObject({ sent: true, waiting: 2 });
     expect(sent).toHaveLength(2);
-    expect(sent[1].payload).toMatchObject({ title: 'WhatsApp: 2 articles waiting', body: 'Second story' });
+    expect(sent[1].payload).toMatchObject({ title: 'WhatsApp: 2 posts waiting', body: 'Second story' });
     expect(await tick(ist(10, 25))).toEqual({ sent: false, reason: 'nothing_new' }); // nothing new since
     add(ist(10, 30), 'Third story');
     for (const r2 of rows) r2.status = 'POSTED';
@@ -124,7 +124,7 @@ describe('5. timing (fake clock)', () => {
     expect(sent).toHaveLength(0);
     const r = await tick(ist(7, 0, 4));
     expect(r).toMatchObject({ sent: true, waiting: 1 });
-    expect(sent[0].payload).toMatchObject({ title: 'WhatsApp: 1 article waiting', body: 'Breaking: night ruling' });
+    expect(sent[0].payload).toMatchObject({ title: 'WhatsApp: 1 post waiting', body: 'Breaking: night ruling' });
     expect(await tick(ist(7, 5, 4))).toEqual({ sent: false, reason: 'nothing_new' });
   });
   it('a restart between ticks does not repeat a nudge (the watermark is in Postgres)', async () => {
@@ -185,7 +185,9 @@ describe('7. the flag', () => {
     expect(sent).toHaveLength(0);
   });
   it('WHATSAPP_NUDGE_ENABLED off → no tick is scheduled; on without the queue flag → refuses and says why', () => {
-    const schedule = jest.spyOn(cron, 'schedule');
+    // Mocked, not called through: a real `cron.schedule` here would leave a live timer that keeps the jest worker from exiting
+    // (the "failed to exit gracefully" warning of every full run; brief 2026-11-09-small-fixes, item 4).
+    const schedule = jest.spyOn(cron, 'schedule').mockImplementation((() => ({ stop: () => undefined })) as never);
     const was = { nudge: env.whatsapp.nudgeEnabled, queue: env.whatsapp.queueEnabled };
     env.whatsapp.nudgeEnabled = false;
     startWhatsAppNudge();
