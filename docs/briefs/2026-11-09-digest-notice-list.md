@@ -124,3 +124,17 @@ Each one must PASS in the REPORT.
 - Roles: `memberRole()` in `src/services/audience/rules.ts` is the single definition. Suppression escalation is in the webhook ingest.
 - After merge, planning sends the contract to CMS planning (cms-platform-29), and the owner sets the secret and the IP. Anagha
   exports statuses from Mailercloud's contacts screen for the import.
+
+## Follow-up 1 (planning, 9 Nov — from the build's REPORT point 1)
+A reader who cancelled but is still inside the paid period gets the paid digest (`memberRole()` = PREMIUM), so they must get
+the notice too. **The list's paid test is `memberRole()` = PREMIUM (the single definition), not `CmsAccount.status = 'active'`**:
+active and cancelled-not-yet-ended accounts qualify; ended / free / deleted / erased / out-of-scope never do. Update the
+contract text in `docs/CMS_AUDIENCE_SYNC_DESIGN.md` §5.2a: "only accounts that currently receive the paid digest's role
+(active, or cancelled with time left)". Same branch, same REPORT (Follow-up 1 section).
+
+**Acceptance (add):** 10. A `cancelled` account whose role is PREMIUM and is FATAL → listed `bad_address`; an `ended` one is not.
+
+Accepted as built (no change): FATAL cleared when an import marks the reader bounced/unsubscribed (they stay on the list through
+the suppression row); `notInCms` count; assumed export headers (Anagha dry-runs first: a wrong header is a 400 that writes
+nothing); the `AUDIENCE_STATUSES_IMPORTED` enum migration + Activity filter entry; a CMS opt-in after an imported HARD_BOUNCE
+lifting it (existing owner rule).
