@@ -25,6 +25,7 @@ import { startMetricsWarmer } from './services/metrics';
 import { startDigestScheduler } from './services/digest/scheduler';
 import { startLinkedInWorker } from './services/linkedin/worker';
 import { startFacebookWorker } from './services/facebook/worker';
+import { startTelegramWorker } from './services/telegram/worker';
 import { startLinkedInTokenRenewal } from './services/linkedin/token';
 import { startWhatsAppNudge } from './services/whatsapp/nudge';
 import { logWhatsAppAllPushes } from './services/whatsapp/queue';
@@ -88,6 +89,7 @@ app.listen(env.port, () => {
   console.log(noticesBootLine(env.notices, env.audience.cms.allowedIps));
   startLinkedInWorker();
   startFacebookWorker();
+  startTelegramWorker();
   startLinkedInTokenRenewal();
   startWhatsAppNudge();
   logWhatsAppAllPushes();

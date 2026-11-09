@@ -473,6 +473,37 @@ export function parseAllPushesFrom(src: NodeJS.ProcessEnv, name: string): { at: 
 }
 
 /**
+ * The Telegram channel (brief 2026-11-09-telegram-channel). It is ACTIVE only when ALL FOUR are valid:
+ *   TELEGRAM_POSTING_ENABLED  `true`
+ *   TELEGRAM_BOT_TOKEN        the bot's token (`<digits>:<secret>`); it sits in the Bot API URL path, so it is redacted everywhere
+ *   TELEGRAM_CHANNEL          `@channelname` or a numeric `-100…` id
+ *   TELEGRAM_POST_FROM        a strict ISO time; it is also the every-push time (nothing pushed before it is ever posted)
+ * Anything else (the flag off, any variable missing or invalid) leaves it OFF: no rows, no failures, no refusal to start. Pure (takes the
+ * source as a parameter) so tests can feed it any input. `off` says why in fixed words that NAME the variables and never print a value; it
+ * is what the one boot line shows.
+ */
+export const TELEGRAM_TOKEN_SHAPE = /^\d{5,20}:[A-Za-z0-9_-]{20,}$/;
+export const TELEGRAM_CHANNEL_SHAPE = /^(?:@[A-Za-z][A-Za-z0-9_]{3,31}|-100\d{5,15})$/;
+export type TelegramConfig = { token: string; channel: string; postFrom: Date };
+export function parseTelegramEnv(src: NodeJS.ProcessEnv): { enabled: boolean; config: TelegramConfig | null; off: string | null } {
+  const enabled = (src.TELEGRAM_POSTING_ENABLED ?? '').trim() === 'true';
+  if (!enabled) return { enabled: false, config: null, off: 'TELEGRAM_POSTING_ENABLED is not true' };
+  const token = (src.TELEGRAM_BOT_TOKEN ?? '').trim();
+  const channel = (src.TELEGRAM_CHANNEL ?? '').trim();
+  const rawFrom = (src.TELEGRAM_POST_FROM ?? '').trim();
+  const postFrom = parseIsoTime(rawFrom);
+  const problems: string[] = [];
+  if (!token) problems.push('TELEGRAM_BOT_TOKEN is not set');
+  else if (!TELEGRAM_TOKEN_SHAPE.test(token)) problems.push('TELEGRAM_BOT_TOKEN is not a valid bot token');
+  if (!channel) problems.push('TELEGRAM_CHANNEL is not set');
+  else if (!TELEGRAM_CHANNEL_SHAPE.test(channel)) problems.push('TELEGRAM_CHANNEL is not a valid @name or -100… id');
+  if (!rawFrom) problems.push('TELEGRAM_POST_FROM is not set');
+  else if (!postFrom) problems.push('TELEGRAM_POST_FROM is not a valid ISO time');
+  if (problems.length > 0 || !postFrom) return { enabled: true, config: null, off: problems.join('; ') };
+  return { enabled: true, config: { token, channel, postFrom }, off: null };
+}
+
+/**
  * The Taxscan Academy LinkedIn page (brief 2026-11-04-linkedin-academy-page). It posts the SAME articles as the Taxscan page, with
  * the Taxscan page's token. It is ACTIVE only when BOTH variables are valid:
  *   LINKEDIN_ACADEMY_ORG_URN    `urn:li:organization:<digits>`
@@ -871,6 +902,8 @@ export const env = {
     // "Every push posts" (brief 2026-11-04-academy-store-posts): the page's time for it, null = the page stays on today's rule.
     allPushesFrom: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).at as Date | null,
   },
+  // Telegram channel posting (docs/TELEGRAM_POSTING.md) — see parseTelegramEnv above. Default off; all four variables are needed.
+  telegram: parseTelegramEnv(process.env),
   // Automatic daily email digest — see parseDigestEnv above. Default off.
   digest: parseDigestEnv(process.env),
   // CMS audience sync — see parseAudienceEnv above. Every flag default off.

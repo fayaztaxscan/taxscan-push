@@ -1,6 +1,7 @@
 import { env } from '../../lib/env';
 import { portalPages } from '../linkedin/pages';
 import { PORTAL_TO_PAGE, pageConfig as facebookPageConfig } from '../facebook/pages';
+import { PORTAL_TO_PAGE as TELEGRAM_PORTAL_TO_PAGE, telegramConfig } from '../telegram/pages';
 
 /**
  * The social destinations a Compose send can untick for ONE push (brief 2026-11-09-compose-skip-pages). ONE list, built from what is
@@ -11,6 +12,7 @@ import { PORTAL_TO_PAGE, pageConfig as facebookPageConfig } from '../facebook/pa
  *   linkedin:<page>   every page of `portalPages()` (Taxscan, Academy, Shopscan; the last two only while their variables are valid),
  *                     only while LINKEDIN_POSTING_ENABLED is on;
  *   facebook:<page>   every Facebook page with a valid id and token, only while FACEBOOK_POSTING_ENABLED is on;
+ *   telegram:<page>   the Telegram channel, only while it is switched on AND all four variables are valid (brief 2026-11-09-telegram-channel);
  *   whatsapp          the WhatsApp channel queue, only while WHATSAPP_QUEUE_ENABLED is on.
  *
  * `Campaign.socialSkip` stores the keys the sender unticked. Each worker (LinkedIn, Facebook) and the WhatsApp queue read it and treat a
@@ -23,12 +25,13 @@ export const COMPOSE_SKIP = 'compose_skip';
 export const WHATSAPP_SKIP_KEY = 'whatsapp';
 export const linkedinSkipKey = (page: string): string => `linkedin:${page}`;
 export const facebookSkipKey = (page: string): string => `facebook:${page}`;
+export const telegramSkipKey = (page: string): string => `telegram:${page}`;
 
 export type SocialPage = { key: string; label: string };
 
 const capitalised = (k: string): string => k.charAt(0).toUpperCase() + k.slice(1);
 
-/** The active destinations, in display order: LinkedIn pages (Taxscan first), Facebook pages, WhatsApp. Read at call time. */
+/** The active destinations, in display order: LinkedIn pages (Taxscan first), Facebook pages, Telegram, WhatsApp. Read at call time. */
 export function activeSocialPages(): SocialPage[] {
   const out: SocialPage[] = [];
   if (env.linkedin.enabled) {
@@ -38,6 +41,7 @@ export function activeSocialPages(): SocialPage[] {
   if (env.facebook.enabled) {
     for (const p of new Set(Object.values(PORTAL_TO_PAGE))) if (facebookPageConfig(p)) out.push({ key: facebookSkipKey(p), label: `Facebook · ${capitalised(p)}` });
   }
+  for (const p of new Set(Object.values(TELEGRAM_PORTAL_TO_PAGE))) if (telegramConfig(p)) out.push({ key: telegramSkipKey(p), label: `Telegram · ${capitalised(p)}` });
   if (env.whatsapp.queueEnabled) out.push({ key: WHATSAPP_SKIP_KEY, label: 'WhatsApp channel' });
   return out;
 }

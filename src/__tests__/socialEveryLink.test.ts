@@ -385,7 +385,7 @@ describe('every call site of isAllPushesCampaign (source scan): a new or removed
       return statSync(p).isDirectory() ? files(p) : p.endsWith('.ts') ? [p] : [];
     });
   }
-  it('exactly these 9 calls, in 7 files — each covered by a behaviour test below', () => {
+  it('exactly these 12 calls, in 9 files — each covered by a behaviour test (Telegram: src/__tests__/telegramWorker.test.ts)', () => {
     const root = path.join(__dirname, '..');
     const found: Record<string, number> = {};
     for (const f of files(root)) {
@@ -399,10 +399,12 @@ describe('every call site of isAllPushesCampaign (source scan): a new or removed
     expect(found).toEqual({
       'routes/facebook.ts': 2, // the Facebook screen (+1: an unticked Compose push's row) → "the screens" below; src/__tests__/socialComposeSkip.test.ts
       'routes/linkedin.ts': 2, // the LinkedIn screen (+1: an unticked Compose push's row) → "the screens" below; src/__tests__/socialComposeSkip.test.ts
+      'routes/telegram.ts': 1, // the Telegram screen (every push is a row) → src/__tests__/telegramWorker.test.ts "the screen API"
       'services/facebook/worker.ts': 1, // the Facebook worker   → "Facebook worker" below
       'services/linkedin/worker.ts': 1, // the LinkedIn worker   → "LinkedIn worker" below
-      'services/metrics.ts': 2, // the Channels marks (LinkedIn + Facebook, and WhatsApp) → "Channels marks" below
+      'services/metrics.ts': 3, // the Channels marks (LinkedIn + Facebook, WhatsApp, and +1 Telegram) → "Channels marks" below; src/__tests__/telegramWorker.test.ts
       'services/social/composeSkip.ts': 1, // which unticked Compose pushes would have posted → src/__tests__/socialComposeSkip.test.ts
+      'services/telegram/worker.ts': 1, // the Telegram worker → src/__tests__/telegramWorker.test.ts "2. what posts"
       'services/whatsapp/queue.ts': 3, // getQueue, markArticle and (+1) getQueue's unticked Compose pushes → "WhatsApp" below; src/__tests__/socialComposeSkip.test.ts
     });
   });

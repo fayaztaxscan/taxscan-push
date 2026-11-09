@@ -420,8 +420,8 @@ label {
 .nav-admin-panel.open {
   display: flex;
 }
-/* Fit one row at 1430px (12 links with SOCIAL on): links a touch tighter, long email hidden until 1700. */
-@media (min-width: 1430px) {
+/* Fit one row at 1500px (13 links with SOCIAL on, Telegram the fourth; 1430px was enough for 12): links a touch tighter, long email hidden until 1700. */
+@media (min-width: 1500px) {
   .nav {
     flex-wrap: nowrap;
   }
@@ -443,7 +443,7 @@ label {
     text-overflow: ellipsis;
   }
 }
-@media (min-width: 1430px) and (max-width: 1699px) {
+@media (min-width: 1500px) and (max-width: 1699px) {
   .nav-email {
     display: none;
   }
@@ -454,7 +454,7 @@ label {
   }
 }
 /* The tightest desktop widths: smaller link padding and group spacing so the whole row still fits on one line. */
-@media (min-width: 1430px) and (max-width: 1699px) {
+@media (min-width: 1500px) and (max-width: 1699px) {
   .nav {
     padding-left: 12px;
     padding-right: 12px;
@@ -860,11 +860,11 @@ td .badge {
    ------------------------------------------------------------------------- */
 /* The full desktop nav row (9 links incl. Digests + account + utilities) needs
    ~1180px with a typical email (8 links needed ~1100px; at 1100px the 9-link row
-   wrapped, 2026-10-22). With SOCIAL's two links and label (WhatsApp, LinkedIn) the row needs ~1350px (~1430px with Facebook as a third link, 3 Nov)
-   (2 Nov), so the hamburger now starts below 1350px: the whole tablet band (iPad portrait 768,
+   wrapped, 2026-10-22). With SOCIAL's two links and label (WhatsApp, LinkedIn) the row needs ~1350px (~1430px with Facebook as a third link, 3 Nov; ~1465px with Telegram as a fourth, 9 Nov)
+   (2 Nov), so the hamburger now starts below 1500px (1350, then 1430 before Telegram): the whole tablet band (iPad portrait 768,
    landscape 1024) and small laptops.
    Content-layout tweaks stay at the 720/480 breakpoints below. */
-@media (max-width: 1429px) {
+@media (max-width: 1499px) {
   /* Collapsible nav: brand + hamburger on the top row; the menu drops below as
      a full-width vertical list when toggled open. */
   .nav {
