@@ -113,3 +113,19 @@ The quota headroom guard now holds **Academy first, then Shopscan**; Taxscan is 
 4b. 85 → Academy and Shopscan SKIPPED, Taxscan posts. A new IST day resets both.
 4c. Both variables override their defaults; invalid → default + boot note.
 4d. With Shopscan inactive, the Academy guard still works (75).
+
+## Follow-up 2 (planning, 9 Nov — owner: "Manual immediate push may be considered posting because it could be a viral and important news provided quota is not over.")
+**In:**
+- The headroom guard (Follow-up 1) **does not apply to a manual immediate push**: Compose **Send now**, **Push now** (Queue /
+  Review), and **Breaking** (incl. the night "Send now as Breaking"). Such a push posts on Academy and Shopscan whatever today's
+  count. Identify it from what the send path already records (e.g. `createdByUserId` set AND not a scheduled Compose send); if
+  that is not reliably distinguishable without a schema change, say so in the REPORT and stop — do not add a column.
+- The guard still applies to the pacer, the morning backfill and a **scheduled** Compose send.
+- "Provided quota is not over": no special handling — a real LinkedIn 429 takes the existing retry path (+1/+5/+15 min, then
+  FAILED). A manual post still counts toward the day's count for later automatic pushes.
+
+**Acceptance tests (add):**
+4e. With 90 creates today: a Compose Send-now push, a Push-now push and a Breaking push each post on all three pages; a pacer push
+    the same minute posts on Taxscan only (Academy + Shopscan SKIPPED `quota_headroom`).
+4f. A scheduled Compose send firing at 90 creates is held like a pacer push.
+4g. A manual push that gets a real 429 follows the existing retry path (no new behaviour).
