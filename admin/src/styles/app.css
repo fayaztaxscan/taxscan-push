@@ -305,40 +305,39 @@ label {
   min-height: 100vh;
 }
 
-.nav {
-  display: flex;
-  /* Wrap rather than overflow if the full link row ever exceeds the viewport
-     above the hamburger breakpoint (long email, narrow laptop). The collapse
-     to a hamburger below 1200px is the primary handling — see the media query
-     at the bottom of this file. */
-  flex-wrap: wrap;
-  gap: 2px;
-  align-items: center;
+/* ----------------------------------------------------------------------------
+   Navigation (NavBar.vue, SectionTabs.vue, NavDropdown.vue).
+   Top row: brand · Dashboard Push Social Email Reports · … · Admin ▾ · who you are · Account ▾.
+   Under it, for Push / Social / Email only, a tab row with that section's screens.
+   Phones (720px and below): the top row is the brand and a hamburger; it opens ONE list of every section with its screens
+   beneath, and the tab row stays under the bar. NavBar.vue switches trees with the same (max-width: 720px) query, so the two
+   cut-offs live in one number.
+   ------------------------------------------------------------------------- */
+.nav-shell {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   padding: 10px 24px;
 }
 .nav .brand {
   font-weight: 700;
   margin-right: 16px;
+  white-space: nowrap;
 }
-/* On desktop the menu wrapper is transparent to layout: its children behave as
-   direct flex children of .nav (brand · links · spacer · user · utils), so the
-   bar looks exactly as before. The hamburger is hidden until the mobile
-   breakpoint below flips these. */
+/* Laptops and tablets: the links and menus are the bar's own flex items, with the spacer pushing the right-hand group over. */
 .nav-menu {
-  display: contents;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
 }
-.nav-toggle {
-  display: none;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: 8px;
-  font-size: 18px;
-  line-height: 1;
-  padding: 6px 12px;
-  cursor: pointer;
+.nav .spacer {
+  flex: 1 1 0;
 }
 .nav a {
   text-decoration: none;
@@ -346,47 +345,28 @@ label {
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 13px;
+  white-space: nowrap;
 }
-.nav a.router-link-active {
+.nav a:hover {
+  color: var(--text);
+}
+/* The section you are in (any of its screens) and the page you are on share one look. */
+.nav a.active,
+.nav a[aria-current='page'] {
   color: var(--text);
   background: #eef2f7;
 }
-.nav .spacer {
-  flex: 1;
+.nav a:focus-visible,
+.nav button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
-/* Channel groups (desktop): small uppercase muted labels with a thin divider
-   before each group; the active route's group label is emphasised. */
-.nav-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-left: 8px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
-  margin-right: 2px;
-  white-space: nowrap;
-}
-.nav-label.active {
-  color: var(--primary);
-}
-.nav .nav-after-group {
-  margin-left: 8px;
-  padding-left: 12px;
-  border-left: 1px solid var(--border);
-  border-radius: 0 6px 6px 0;
-}
-.nav-admin {
+
+/* Admin ▾ and Account ▾. */
+.nav-drop {
   position: relative;
-  margin-left: 8px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
 }
-.nav-admin-heading {
-  display: none;
-}
-.nav-admin-btn {
+.nav-drop-btn {
   font: inherit;
   font-size: 13px;
   color: var(--muted);
@@ -395,20 +375,37 @@ label {
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
-.nav-admin-btn:hover,
-.nav-admin-btn.active {
+.nav-drop-btn:hover,
+.nav-drop-btn[aria-expanded='true'] {
   color: var(--text);
 }
-.nav-admin-btn.active {
+.nav-drop-btn.active {
+  color: var(--text);
   background: #eef2f7;
 }
-.nav-admin-panel {
+.nav-drop-caret {
+  display: inline-block;
+  font-size: 12px;
+  transition: transform 0.15s;
+}
+.nav-drop-btn[aria-expanded='true'] .nav-drop-caret {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-drop-caret {
+    transition: none;
+  }
+}
+.nav-drop-panel {
   display: none;
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 140px;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 24px));
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -417,83 +414,63 @@ label {
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
   z-index: 20;
 }
-.nav-admin-panel.open {
+.nav-drop-panel.open {
   display: flex;
 }
-/* Fit one row at 1500px (13 links with SOCIAL on, Telegram the fourth; 1430px was enough for 12): links a touch tighter, long email hidden until 1700. */
-@media (min-width: 1500px) {
-  .nav {
-    flex-wrap: nowrap;
-  }
-  .nav a {
-    padding: 6px 9px;
-  }
-  .nav .brand {
-    margin-right: 8px;
-    white-space: nowrap;
-  }
-  .nav a,
-  .nav .logout,
-  .nav-user {
-    white-space: nowrap;
-  }
-  .nav-email {
-    max-width: 110px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+.nav .nav-drop-panel a,
+.nav .nav-drop-panel .logout {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
 }
-@media (min-width: 1500px) and (max-width: 1699px) {
-  .nav-email {
-    display: none;
-  }
-}
-@media (min-width: 1800px) {
-  .nav-email {
-    max-width: 200px;
-  }
-}
-/* The tightest desktop widths: smaller link padding and group spacing so the whole row still fits on one line. */
-@media (min-width: 1500px) and (max-width: 1699px) {
-  .nav {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-  .nav a {
-    padding: 6px 4px;
-  }
-  .nav-label {
-    margin-left: 2px;
-    padding-left: 6px;
-  }
-  .nav .nav-after-group,
-  .nav-admin {
-    margin-left: 4px;
-    padding-left: 8px;
-  }
-  .nav .logout {
-    padding: 6px 6px;
-  }
+.nav .nav-drop-panel a:hover,
+.nav .nav-drop-panel .logout:hover {
+  background: #f1f5f9;
 }
 .nav .logout {
-  font-size: 12px;
+  font: inherit;
+  font-size: 13px;
   color: var(--muted);
   background: transparent;
   border: 0;
+  border-radius: 6px;
   cursor: pointer;
 }
+.nav .logout:hover {
+  color: var(--text);
+}
+/* Log out is the sign-off action: set apart from the screens above it. */
+.nav .nav-drop-panel .logout {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+}
+/* Narrow tablets drop the email from the bar (below), so it goes at the top of the Account panel instead. */
+.nav-panel-email {
+  display: none;
+}
+
+/* Who is signed in. */
 .nav-user {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-right: 10px;
+  min-width: 0;
+  margin: 0 6px 0 12px;
   font-size: 12px;
   color: var(--muted);
 }
 .nav-email {
   font-weight: 500;
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .role-badge {
+  flex: none;
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -513,9 +490,192 @@ label {
   border-color: #93c5fd;
   color: #1e40af;
 }
-.nav-secondary {
-  font-size: 12px !important;
-  color: var(--muted) !important;
+
+/* Tablets: a little less padding so the whole row fits at 721px; below 900px the email moves into the Account panel. */
+@media (min-width: 721px) and (max-width: 1023px) {
+  .nav {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .nav .brand {
+    margin-right: 8px;
+  }
+  .nav a {
+    padding: 6px 9px;
+  }
+  .nav-tabs {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+@media (min-width: 721px) and (max-width: 899px) {
+  .nav-user .nav-email {
+    display: none;
+  }
+  .nav-panel-email {
+    display: block;
+    padding: 6px 12px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+}
+
+/* The tab row: the screens of the section you are in, in the joined-box look of the Weekly / Monthly switch on Reports
+   (white segments, the current one filled navy). It is its own scroll box (a phone swipes it sideways without widening the
+   page), so focus rings are drawn inside the tab, and a hidden bold copy of each label keeps the tabs from changing width
+   when the current one turns bold. */
+.nav-tabs {
+  position: relative; /* offsetParent for SectionTabs.vue's scroll-into-view */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding: 0 24px 10px;
+}
+.nav-tabs::-webkit-scrollbar {
+  display: none;
+}
+.nav-tabs-track {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.nav-tabs a {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.nav-tabs a::after {
+  content: attr(data-label);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  pointer-events: none;
+}
+.nav-tabs a:first-child {
+  border-radius: 7px 0 0 7px;
+}
+.nav-tabs a:last-child {
+  border-radius: 0 7px 7px 0;
+}
+.nav-tabs a:hover:not([aria-current='page']) {
+  background: #f1f5f9;
+}
+.nav-tabs a[aria-current='page'] {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.nav-tabs a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.nav-tabs a[aria-current='page']:focus-visible {
+  outline-color: #fff;
+  outline-offset: -4px;
+}
+
+/* Phones: brand + hamburger, the open list, the tab row under the bar. */
+.nav-toggle {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.nav-menu-phone {
+  flex: 0 0 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin-top: 8px;
+}
+.nav-group {
+  display: flex;
+  flex-direction: column;
+}
+/* A section's heading (also the Admin and Account headings): the small muted label, darker for the section you are in. */
+.nav-label {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.nav-label.active {
+  color: var(--primary);
+}
+/* The screens under a heading sit side by side and wrap, so the whole list fits one phone screen. */
+.nav-group-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+}
+.nav-menu-phone a,
+.nav-menu-phone .logout {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+/* Dashboard and Reports: single full-width rows. */
+.nav-menu-phone .nav-link {
+  display: flex;
+  padding: 0 8px;
+}
+.nav-menu-phone .nav-group:last-child {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.nav-menu-phone .nav-user {
+  margin: 0;
+  padding: 2px 8px 4px;
+}
+.nav-menu-phone .nav-email {
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .nav {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+  .nav-tabs {
+    padding: 0 12px 10px;
+  }
+  /* Edge to edge like the Weekly / Monthly switch on a phone, and still free to grow past the screen and scroll. */
+  .nav-tabs-track {
+    display: flex;
+    width: 100%;
+    min-width: max-content;
+  }
+  .nav-tabs a {
+    flex: 1 0 auto;
+    min-height: 40px;
+    padding: 0 16px;
+    font-size: 14px;
+  }
 }
 
 .page {
@@ -855,95 +1015,9 @@ td .badge {
 
 /* ----------------------------------------------------------------------------
    Mobile / narrow viewports. Everything above is the desktop layout; these
-   blocks adapt it for phones. The nav collapses to a hamburger, dense rows
-   wrap, and padding tightens so content isn't cramped or clipped.
+   blocks adapt it for phones. Dense rows wrap and padding tightens so content
+   isn't cramped or clipped. (The nav has its own phone rules in its block above.)
    ------------------------------------------------------------------------- */
-/* The full desktop nav row (9 links incl. Digests + account + utilities) needs
-   ~1180px with a typical email (8 links needed ~1100px; at 1100px the 9-link row
-   wrapped, 2026-10-22). With SOCIAL's two links and label (WhatsApp, LinkedIn) the row needs ~1350px (~1430px with Facebook as a third link, 3 Nov; ~1465px with Telegram as a fourth, 9 Nov)
-   (2 Nov), so the hamburger now starts below 1500px (1350, then 1430 before Telegram): the whole tablet band (iPad portrait 768,
-   landscape 1024) and small laptops.
-   Content-layout tweaks stay at the 720/480 breakpoints below. */
-@media (max-width: 1499px) {
-  /* Collapsible nav: brand + hamburger on the top row; the menu drops below as
-     a full-width vertical list when toggled open. */
-  .nav {
-    padding: 10px 14px;
-  }
-  .nav-toggle {
-    display: inline-block;
-    margin-left: auto;
-  }
-  .nav-menu {
-    display: none;
-    flex-direction: column;
-    align-items: stretch;
-    width: 100%;
-    gap: 2px;
-    margin-top: 10px;
-  }
-  .nav-menu.open {
-    display: flex;
-  }
-  .nav-menu .spacer {
-    display: none;
-  }
-  /* Groups become headings; Admin's links are listed under its heading. */
-  .nav-label,
-  .nav-admin-heading {
-    display: block;
-    margin: 10px 0 0;
-    padding: 6px 8px 2px;
-    border-left: 0;
-    font-size: 11px;
-  }
-  .nav-menu .nav-first {
-    order: -2;
-  }
-  .nav-menu .nav-after-group {
-    order: -1;
-  }
-  .nav-menu .nav-after-group,
-  .nav .nav-after-group {
-    margin-left: 0;
-    padding-left: 8px;
-    border-left: 0;
-    border-radius: 6px;
-  }
-  .nav-admin {
-    margin: 0;
-    padding: 0;
-    border-left: 0;
-  }
-  .nav-admin-btn {
-    display: none;
-  }
-  .nav-admin-panel {
-    display: flex;
-    position: static;
-    border: 0;
-    box-shadow: none;
-    padding: 0;
-    min-width: 0;
-  }
-  /* Bigger tap targets + a divider above the account row. */
-  .nav a,
-  .nav .nav-secondary,
-  .nav .logout {
-    padding: 10px 8px;
-    font-size: 14px;
-    text-align: left;
-  }
-  .nav-user {
-    margin: 8px 0 2px;
-    padding-top: 8px;
-    border-top: 1px solid var(--border);
-  }
-  .nav-email {
-    overflow-wrap: anywhere;
-  }
-}
-
 @media (max-width: 720px) {
   /* Tighter outer + card padding so content uses the full width. */
   .page {
@@ -1012,9 +1086,6 @@ td .badge {
     min-height: 36px;
     padding: 6px 12px;
     font-size: 13px;
-  }
-  .nav-toggle {
-    padding: 9px 14px;
   }
 
   /* table.stack — each row becomes a block: the .cell-lead (title / email)

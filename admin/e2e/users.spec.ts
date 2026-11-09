@@ -87,10 +87,11 @@ test('admin can manage users end-to-end: create, reset, change role, deactivate,
   const admin = await seedAdmin();
   await loginViaUi(page, admin.email, ADMIN_PASSWORD);
 
-  // Nav shows Users for ADMIN.
+  // Nav shows Users for ADMIN: it lives in the Admin menu.
+  await page.getByRole('button', { name: /^Admin/ }).click();
   await page.click('a[href="/users"]');
   await page.waitForURL(/\/users$/);
-  await expect(page.locator('.section-title')).toHaveText('Users');
+  await expect(page.locator('h1.section-title')).toHaveText('Users');
 
   // === Create user ===
   await page.click('button:has-text("Create user")');
@@ -185,6 +186,7 @@ test('last-active-admin guard: API returns 409 and the modal surfaces it cleanly
 
   try {
     await loginViaUi(page, onlyAdmin.email, ADMIN_PASSWORD);
+    await page.getByRole('button', { name: /^Admin/ }).click();
     await page.click('a[href="/users"]');
     await page.waitForURL(/\/users$/);
 
