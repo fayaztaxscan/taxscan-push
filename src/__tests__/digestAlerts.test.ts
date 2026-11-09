@@ -9,6 +9,7 @@ import {
   digestAlertRecipients,
   resetAlertWarningsForTests,
   sendDigestAlerts,
+  WRITER_FATAL_MANY,
   type AlertDeps,
 } from '../services/digest/alerts';
 import { digestAttention, type AttentionInput } from '../services/digest/status';
@@ -439,6 +440,122 @@ describe('never throws, never leaks', () => {
     await step(run.id, 'cron', ist(17, 0), sender, box, c);
     expect((await alertsOf(run.id)).skipped.emailSkipped).toBe('preview_only');
     expect(box.sent).toHaveLength(0);
+  });
+});
+
+describe('audience_writer_fatal copy (brief 2026-11-09-audience-alert-fixes)', () => {
+  const RUN_DATE = new Date(Date.UTC(2026, 10, 8));
+  const fatal = (count?: number, reason: string | undefined = 'contact_write') =>
+    buildAlertEmail('audience_writer_fatal', { raisedAt: ist(6, 30).toISOString(), reason, ...(count === undefined ? {} : { count }) }, RUN_DATE, cfg());
+
+  it('WRITER_FATAL_MANY is 10', () => {
+    expect(WRITER_FATAL_MANY).toBe(10);
+  });
+
+  it('one refused contact: the usual cause, "Nothing to do", and no key to check', () => {
+    const e = fatal(1);
+    for (const part of [e.text, e.html]) {
+      expect(part).toContain('hard-bounced in the past');
+      expect(part).toContain('Invalid email');
+      expect(part).toContain('Nothing to do');
+      expect(part).toContain('Admin → Digests (Audience card)');
+      expect(part).not.toContain('MAILERCLOUD_SYNC_API_KEY');
+    }
+    expect(e.text).toContain('refused 1 contact write(s) with an error that retrying will not fix (contact_write)');
+  });
+
+  it('eleven refused contacts: the key, the ids, the quota and Retry refused', () => {
+    const e = fatal(11);
+    expect(e.text).toContain('refused 11 contact write(s)');
+    expect(e.text).toContain('MAILERCLOUD_SYNC_API_KEY');
+    expect(e.text).toContain('Retry refused');
+    expect(e.text).toContain('hard-bounced in the past'); // the cause line stays for every count
+    expect(e.text).not.toContain('Nothing to do');
+  });
+
+  it('exactly ten is still the "Nothing to do" variant (boundary)', () => {
+    const e = fatal(10);
+    expect(e.text).toContain('Nothing to do');
+    expect(e.text).not.toContain('MAILERCLOUD_SYNC_API_KEY');
+    expect(e.text).not.toContain('Retry refused');
+  });
+
+  it('a missing count is one refusal, as before', () => {
+    const e = fatal(undefined);
+    expect(e.text).toContain('refused 1 contact write(s)');
+    expect(e.text).toContain('Nothing to do');
+  });
+
+  // Follow-up 1: the tag lookup raises the same kind (count always 1) for a bad key / bad tag ids.
+  it.each(['tags_401', 'tag_ids'])('tag-lookup fatal (%s, count 1): key + tag-ids advice, no hard-bounce sentence, no "Nothing to do"', (reason) => {
+    const e = fatal(1, reason);
+    for (const part of [e.text, e.html]) {
+      expect(part).toContain(`Mailercloud refused our tag lookup (${reason}), so no contact was written this time.`);
+      expect(part).toContain('MAILERCLOUD_SYNC_API_KEY');
+      expect(part).toContain('AUDIENCE_MC_TAG_');
+      expect(part).not.toContain('hard-bounced');
+      expect(part).not.toContain('Nothing to do');
+    }
+    expect(e.subject).toBe('[Taxscan digest] Audience sync: Mailercloud refused a contact write — 2026-11-08');
+  });
+
+  it('regression: reason contact_write, count 1 → still the "Nothing to do" variant', () => {
+    const e = fatal(1, 'contact_write');
+    expect(e.text).toContain('Nothing to do');
+    expect(e.text).toContain('hard-bounced in the past');
+    expect(e.text).not.toContain('MAILERCLOUD_SYNC_API_KEY');
+    expect(e.text).not.toContain('tag lookup');
+  });
+
+  it('only tag_ids and tags_* count as the tag lookup; a look-alike reason or a missing reason stays a contact refusal', () => {
+    for (const reason of ['tagging', 'tag_id', 'xtags_401', undefined]) {
+      const e = fatal(1, reason);
+      expect(e.text).toContain('Nothing to do');
+      expect(e.text).not.toContain('tag lookup');
+    }
+  });
+
+  it('a tag-lookup reason with an address or the API key in it is redacted', () => {
+    const e = fatal(1, `tags_400 ${READER} key ${FAKE_KEY}`);
+    for (const part of [e.subject, e.text, e.html]) {
+      expect(part).not.toContain(READER);
+      expect(part).not.toContain(FAKE_KEY);
+    }
+    expect(e.text).toContain('tag lookup');
+  });
+
+  it('keeps its subject and the "what the system did" line', () => {
+    const e = fatal(1);
+    expect(e.subject).toBe('[Taxscan digest] Audience sync: Mailercloud refused a contact write — 2026-11-08');
+    expect(e.text).toContain('What the system did: Stopped writing those contacts; everything else carries on.');
+  });
+
+  it('a stored reason with an address or the API key is redacted in every count variant', () => {
+    for (const count of [1, 11]) {
+      const e = fatal(count, `HTTP 400: Invalid email ${READER} key ${FAKE_KEY}`);
+      for (const part of [e.subject, e.text, e.html]) {
+        expect(part).not.toContain(READER);
+        expect(part).not.toContain(FAKE_KEY);
+      }
+    }
+  });
+});
+
+describe('digest alerts keep dating by the run (regression, brief 2026-11-09-audience-alert-fixes)', () => {
+  it('buildAlertEmail dates a run with runDate 2026-11-09 as 2026-11-09', () => {
+    const e = buildAlertEmail('fatal', { raisedAt: ist(6, 30).toISOString(), audience: 'FREE' }, new Date(Date.UTC(2026, 10, 9)), cfg());
+    expect(e.subject).toMatch(/ — 2026-11-09$/);
+    expect(e.text.split('\n')[0]).toBe('Daily email digest, 2026-11-09');
+  });
+
+  it('a real alert pass on a run created 06:30 IST on 9 Nov (01:00 UTC) goes out dated 2026-11-09', async () => {
+    const at = new Date('2026-11-09T01:00:00Z');
+    const run = await newRun(cfg(), at);
+    const sender = new FakeSender().fail('createDraft', 'FATAL', 2, { http: 401 });
+    const box = mailbox();
+    await step(run.id, 'cron', at, sender, box);
+    expect(box.sent).toHaveLength(1);
+    expect(box.sent[0].subject).toBe('[Taxscan digest] Mailercloud rejected the digest — 2026-11-09');
   });
 });
 

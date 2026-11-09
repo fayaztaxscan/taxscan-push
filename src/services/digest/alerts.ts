@@ -189,6 +189,13 @@ function variantWords(m: AlertMarker): string {
   return "Today's digest";
 }
 
+/**
+ * `audience_writer_fatal`: up to this many refused contacts in a day is the usual cause (an address
+ * Mailercloud blocks for an old hard bounce), so the alert says "nothing to do"; more than this points
+ * at the sync key, the ids or the quota, so it sends the reader to check those.
+ */
+export const WRITER_FATAL_MANY = 10;
+
 /** The copy for one alert kind. Unknown (future) kinds get a generic text, never nothing. */
 export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.digest, guardOn: boolean = env.audience.digestFromCms): AlertCopy {
   const cutoff = `${cfg.cutoff} IST`;
@@ -449,13 +456,32 @@ export function alertCopy(kind: string, m: AlertMarker, cfg: DigestEnv = env.dig
         did: 'Kept their previous role (an unknown status never grants Premium).',
         todo: 'Ask the CMS team what the new status means, so the rule can be extended.',
       };
-    case 'audience_writer_fatal':
+    case 'audience_writer_fatal': {
+      // The writer raises this kind from two places: a refused contact (reason `contact_write`) and a
+      // failed tag lookup (`tag_ids` / `tags_<http>`, count always 1). The second is a bad sync key or bad
+      // tag ids, never a reader's address, so it keeps the key/ids advice and never says "nothing to do".
+      if (m.reason === 'tag_ids' || (typeof m.reason === 'string' && m.reason.startsWith('tags_'))) {
+        return {
+          short: 'Audience sync: Mailercloud refused a contact write',
+          what: `Mailercloud refused our tag lookup (${safeDetail(m.reason, cfg)}), so no contact was written this time.`,
+          did: 'Stopped writing those contacts; everything else carries on.',
+          todo: 'Check the sync key (MAILERCLOUD_SYNC_API_KEY) and the tag ids (AUDIENCE_MC_TAG_*) in Mailercloud.',
+        };
+      }
+      const refused = Number(m.count ?? 1);
       return {
         short: 'Audience sync: Mailercloud refused a contact write',
-        what: `Mailercloud refused ${Number(m.count ?? 1)} contact write(s) with an error that retrying will not fix (${safeDetail(m.reason, cfg) || 'see Admin'}).`,
+        what:
+          `Mailercloud refused ${refused} contact write(s) with an error that retrying will not fix (${safeDetail(m.reason, cfg) || 'see Admin'}). ` +
+          'Usually this is an address Mailercloud blocks because it hard-bounced in the past (its API calls it "Invalid email").',
         did: 'Stopped writing those contacts; everything else carries on.',
-        todo: 'Check the sync key (MAILERCLOUD_SYNC_API_KEY), the tag/list ids and the contact quota in Mailercloud.',
+        // A handful is that one blocked address; many at once points at the key, the ids or the quota.
+        todo:
+          refused > WRITER_FATAL_MANY
+            ? 'Many refusals at once: check the sync key (MAILERCLOUD_SYNC_API_KEY), the tag/list ids and the contact quota in Mailercloud, then press Retry refused on Admin → Digests (Audience card).'
+            : 'Nothing to do: that reader cannot be emailed until they give a working address. ADMIN can see the refused counts on Admin → Digests (Audience card).',
       };
+    }
     case 'audience_writer_failing':
       return {
         short: 'Audience sync: Mailercloud writes failing for 6 hours',

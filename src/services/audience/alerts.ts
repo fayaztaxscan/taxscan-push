@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { env, type DigestEnv } from '../../lib/env';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { buildAlertEmail, digestAlertRecipients, safeDetail, type AlertMarker } from '../digest/alerts';
+import { istDateOf } from '../digest/retryPolicy';
 import { istDayKey } from './breaker';
 
 /**
@@ -97,7 +98,9 @@ export async function sendAudienceAlerts(portal: string, deps: AudienceAlertDeps
         !cur || cur.emailedAt || (cur.emailAttempts ?? 0) >= MAX_ATTEMPTS ? null : { ...cur, emailAttempts: (cur.emailAttempts ?? 0) + 1, emailRetryAfter: new Date(now.getTime() + RETRY_AFTER_MS).toISOString() },
       );
       if (!claimed) continue;
-      const msg = buildAlertEmail(kind, m, now, cfg);
+      // buildAlertEmail dates by runDate (00:00 UTC of the IST day), not by the instant: handing it `now`
+      // dated every alert raised 00:00–05:29 IST with the previous day.
+      const msg = buildAlertEmail(kind, m, istDateOf(now), cfg);
       let ok = 0;
       for (const to of recipients) {
         try {
