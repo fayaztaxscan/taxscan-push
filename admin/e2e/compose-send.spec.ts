@@ -105,6 +105,8 @@ test('compose, send via UI, then dashboard shows the new campaign with a CTR', a
       { timeout: 30_000 },
     );
     await page.click('button:has-text("Send now")');
+    // "Send now" asks "Send to … now?" first (since 21 Oct); confirm it.
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Send now' }).click();
     const resp = await sendResponse;
     expect(resp.status()).toBe(200);
     const body = await resp.json();
@@ -128,13 +130,16 @@ test('compose, send via UI, then dashboard shows the new campaign with a CTR', a
     await expect(row).toBeVisible();
     await expect(row.locator('td').last()).toHaveText(/100\.0%|^\d+\.\d+%$/);
 
-    // 6) Campaigns page shows the same row.
-    await page.click('a[href="/campaigns"]');
+    // 6) Campaigns page shows the same row. Campaigns is a Push screen: Push (opens the screen last used, Compose), then its tab.
+    await page.locator('a[data-group="push"]').click();
+    await page.getByRole('navigation', { name: 'Push screens' }).getByRole('link', { name: 'Campaigns', exact: true }).click();
+    await page.waitForURL(/\/campaigns$/);
     await page.click('button:has-text("Refresh")');
     const listRow = page.locator('table tbody tr', { hasText: uniqueTitle }).first();
     await expect(listRow).toBeVisible();
-    await expect(listRow.locator('td').nth(3)).toHaveText(/^\d+$/); // sent
-    await expect(listRow.locator('td').nth(4)).toHaveText(/^[1-9]\d*$/); // clicked >= 1
+    // By column name, not position: the table has gained columns (Source, Reads, ...) since this was written.
+    await expect(listRow.locator('td[data-label="Sent"]')).toHaveText(/^\d+$/);
+    await expect(listRow.locator('td[data-label="Clicked"]')).toHaveText(/^[1-9]\d*$/); // clicked >= 1
 
     // 7) Verify Phase 4 attribution: the campaign was attributed to the
     //    logged-in admin via the cookie session.
@@ -144,7 +149,8 @@ test('compose, send via UI, then dashboard shows the new campaign with a CTR', a
     });
     expect(reloaded?.createdByUserId).toBe(seededUserId);
 
-    // 8) Log out — should redirect to /login and prevent further API calls.
+    // 8) Log out (it lives in the Account menu) — should redirect to /login and prevent further API calls.
+    await page.getByRole('button', { name: /^Account/ }).click();
     await page.click('button.logout');
     await page.waitForURL(/\/login$/);
   } finally {

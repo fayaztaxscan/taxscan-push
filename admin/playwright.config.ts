@@ -33,6 +33,8 @@ export default defineConfig({
         RSS_ENABLED: 'false',
         SWEEPER_ENABLED: 'false',
         AUDIT_LOG_SWEEPER_ENABLED: 'false',
+        // /api/metrics is cached for 20s; the specs read the dashboard seconds after sending, so they need it uncached.
+        METRICS_CACHE_TTL_MS: '0',
         NODE_ENV: 'development',
       },
     },
