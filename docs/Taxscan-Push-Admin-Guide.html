@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.29 &nbsp;·&nbsp; Updated 8 November 2026
+    &nbsp;·&nbsp; Version 2.30 &nbsp;·&nbsp; Updated 9 November 2026
   </div>
 </div>
 
@@ -393,7 +393,7 @@ announcement, or anything you want out on your own terms.</p>
 </ul>
 
 <h3>Picture for LinkedIn and Facebook (optional)</h3>
-<p>You can attach one picture to a push. LinkedIn (both the Taxscan and the Academy page) and Facebook then show
+<p>You can attach one picture to a push. LinkedIn (every LinkedIn page in use: Taxscan, Academy and Shopscan) and Facebook then show
 that picture large, with the post text and the link under it. Without a picture, the posts look exactly as before.
 The picture is used only on those posts, never in the notification itself.</p>
 <ul>
@@ -927,20 +927,34 @@ again is posted again. Each one is its <strong>own row</strong> on the screen, w
 <strong>Skip</strong>. Pushes made before that time keep the old rule (one post per article). <strong>The line under the title on the
 screen says which rule applies:</strong> <em>From 4 Nov 2026, 15:56 IST every push is posted&hellip;</em> means the new rule; without
 that line the page is on the old one. Each page has its own switch and time, so check the page you are looking at.</p>
-<div class="box tip"><span class="box-t">Two pages: Taxscan and Academy</span>
-  When an administrator has also switched on the <strong>Taxscan Academy</strong> page, the same articles are posted there too
-  &mdash; same text, hashtags and picture. The screen then shows a <strong>Taxscan | Academy</strong> switch under the title
-  (no switch means only the Taxscan page is in use). Press a name to look at that page: the list, the
+<div class="box tip"><span class="box-t">Up to three pages: Taxscan, Academy and Shopscan</span>
+  When an administrator has also switched on the <strong>Taxscan Academy</strong> page and/or the <strong>Shopscan</strong> page, the
+  same pushes are posted there too &mdash; same text, hashtags and picture. The screen then shows a
+  <strong>Taxscan | Academy | Shopscan</strong> switch under the title (only the pages in use are listed; no switch means only the
+  Taxscan page is in use). Press a name to look at that page: the list, the
   <em>All &middot; Waiting &middot; Posted &middot; Failed &middot; Skipped</em> counts and any amber banner belong to the page
-  you chose, and <strong>Retry</strong> and <strong>Skip</strong> act on that page only. The pages are independent, so an
-  article can be <em>Posted</em> on one and <em>Failed</em> on the other.</div>
+  you chose, and <strong>Retry</strong> and <strong>Skip</strong> act on that page only. The pages are independent, so a
+  push can be <em>Posted</em> on one and <em>Failed</em> on another. The <strong>Shopscan</strong> page posts <strong>every push</strong>
+  from the moment it was switched on (courses, products, other pages of ours and repeats included), with no separate switch.</div>
+<div class="box warn"><span class="box-t">&ldquo;Skipped &mdash; daily LinkedIn limit kept for Taxscan&rdquo;</span>
+  LinkedIn lets us make only about <strong>100 posts a day</strong> in total, for all the pages together. To make sure the
+  <strong>Taxscan page always gets its posts</strong>, the system holds the other two pages back when the day's count gets high:
+  <strong>Academy</strong> stops posting after about <strong>75</strong> posts that day and <strong>Shopscan</strong> after about
+  <strong>85</strong> (an administrator can change these numbers). Each push held back is shown as <em>Skipped &mdash; daily
+  LinkedIn limit kept for Taxscan</em>. <strong>Nothing is broken.</strong> It has no Retry or Skip button, because it is
+  <strong>never posted later</strong> (an old push posted hours late is worse than none), and the next IST day starts fresh. A busy
+  day with many pushes is the usual cause. <strong>This is new for Academy</strong>, which was not limited before.<br>
+  <strong>A push you send yourself, right now, is never held back:</strong> Compose <em>Send now</em>, <em>Breaking</em> (including
+  <em>Send now as Breaking</em> at night) and <em>Push now</em> on the Send queue or Review queue still post to every page, because
+  they may be important news. A <em>scheduled</em> send, the morning catch-up and the automatic pushes are held like any other.
+  If LinkedIn itself is out of posts that day, the push waits and tries again as for any other busy answer.</div>
 <table>
   <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
   <tbody>
     <tr><td><strong>Waiting</strong></td><td>Pushed, not on LinkedIn yet. <em>Waiting &mdash; retry 14:35</em> means LinkedIn was busy and it will try again at that time (up to three tries).</td></tr>
     <tr><td><strong>Posted</strong></td><td>On the page. <em>View on LinkedIn</em> opens the post.</td></tr>
     <tr><td><strong>Failed</strong></td><td>It did not go out; the reason is shown under the status. Use <strong>Retry</strong> or <strong>Skip</strong>.</td></tr>
-    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted.</td></tr>
+    <tr><td><strong>Skipped</strong></td><td>Someone decided it should not be posted, or (Academy and Shopscan only) <em>daily LinkedIn limit kept for Taxscan</em>: see the box above.</td></tr>
     <tr><td><strong>Not posted</strong></td><td>Pushed before this feature started. It is never posted.</td></tr>
   </tbody>
 </table>
@@ -964,15 +978,15 @@ itself about two weeks before that, so you do not need to do anything. The secon
 requires: an email warns the admins 30 days ahead, and only the owner can do it. The line turns <strong>amber</strong> when the
 token has under 14 days left or the yearly sign-in is under 30 days away, and <strong>red</strong> (with the words <em>last renewal
 failed</em>) when an automatic renewal did not work &mdash; tell the owner. If the line is not shown, automatic renewal is not
-switched on. With both pages in use the line is the same on each and ends with <em>one token, shared by the Taxscan and Academy
-pages</em>: they post with a single token.</p>
+switched on. With more than one page in use the line is the same on each and ends with, for example, <em>one token, shared by the Taxscan, Academy
+and Shopscan pages</em>: they post with a single token.</p>
 <div class="box warn"><span class="box-t">Amber banner: LinkedIn rejected the access token</span>
   The page's access token has expired or been withdrawn, so <strong>posting to that page is stopped</strong> (admins also get one email a day
   about it). Editors cannot fix this from the app: tell the owner, who sets a new token in Railway. Posting resumes by itself
   afterwards, and articles that were not posted are still posted.
-  With two pages the banner can appear on <strong>one page only</strong> &mdash; the other page keeps posting. Seen on
-  <strong>Academy</strong> alone, it usually means the LinkedIn account behind the shared token is not an administrator of the
-  Academy page. Either way, tell the owner.</div>
+  With several pages the banner can appear on <strong>one page only</strong> &mdash; the other pages keep posting. Seen on
+  <strong>Academy</strong> or <strong>Shopscan</strong> alone, it usually means the LinkedIn account behind the shared token is not an
+  administrator of that page. Either way, tell the owner.</div>
 </section>
 
 <!-- 13 -->
@@ -1181,7 +1195,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.29 · Updated 8 November 2026
+  Taxscan Push · Admin User Guide · Version 2.30 · Updated 9 November 2026
 </p>
 </section>
 

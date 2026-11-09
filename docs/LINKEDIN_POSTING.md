@@ -9,6 +9,15 @@ article). Brief: `docs/briefs/2026-11-02-linkedin-page-posting.md` (incl. follow
 and picture, once the owner sets the two `LINKEDIN_ACADEMY_*` variables (see "Pages"). Unset, nothing about it exists: no rows, no
 log noise, no change to the Taxscan page. Brief: `docs/briefs/2026-11-04-linkedin-academy-page.md`.
 
+**Optionally the same pushes also go to the Shopscan page** (`urn:li:organization:80241094`), built exactly like Academy: its own two
+variables (`LINKEDIN_SHOPSCAN_ORG_URN`, `LINKEDIN_SHOPSCAN_POST_FROM`), the Taxscan page's token, its own go-live. **Shopscan posts EVERY
+push from its go-live** (it has no separate "all pushes" variable). Unset, nothing about it exists. Brief:
+`docs/briefs/2026-11-09-linkedin-shopscan-page.md`.
+
+**A daily quota guard now holds Academy first, then Shopscan** (see "The daily quota guard"): all pages post with one member token on the
+Development tier (100 `posts` CREATE calls a day), so when the day's count is high, Academy stops at 75 and Shopscan at 85 and the Taxscan
+page keeps the room. **This changes Academy: before the guard it was never limited.** A manual immediate push is never held.
+
 **Optionally, from a time set per page, a page posts EVERY push** (articles, academy courses, shop products), one post per push,
 repeats included, like the push notification itself (see "Every push posts"). Unset, each page behaves exactly as described below.
 Brief: `docs/briefs/2026-11-04-academy-store-posts.md`.
@@ -27,8 +36,8 @@ The predicate is shared with the WhatsApp queue: `isPublicArticleCampaign()` in 
 
 One post per **article per page** (`articleKey()`; the unique key is `(page, articleKey)`): a re-push or the morning-backfill clone
 never posts again, nor does a re-push or clone of an article first pushed before that page's go-live (looked for up to 14 days
-before the page's own go-live time). The two pages are independent: separate rows, statuses, Retry and Skip, and an article pushed
-between the two go-live times is posted to the Taxscan page only (a later repeat of it adds no Academy row).
+before the page's own go-live time). The pages are independent: separate rows, statuses, Retry and Skip, and an article pushed
+between two go-live times is posted to the earlier page(s) only (a later repeat of it adds no row on the later one).
 
 ## Every push posts (brief 2026-11-04-academy-store-posts)
 Off by default. Everything above is **today's rule**: one post per taxscan.in article. From a time the owner sets **per page**, a page
@@ -72,7 +81,44 @@ pushes on for LINKEDIN_TAXSCAN_ALL_PUSHES_FROM (from <ISO time>)`. Each page's l
   page); both are exactly as before while the variable is unset.
 - **Quota note.** The app is on the Development tier (100 calls per member per endpoint per day). About 3 course and product pushes a day
   plus repeats per page make roughly 60 `posts-CREATE` a day; `images-GET` (the status poll, 2 per post) could approach 100, which is why
-  a 429 on that poll still publishes the post, with the picture attached unverified (`image=ok:unverified`) and no retry loop.
+  a 429 on that poll still publishes the post, with the picture attached unverified (`image=ok:unverified`) and no retry loop. With three
+  pages the same pushes make roughly 66 `posts-CREATE` a day, which is what "The daily quota guard" below protects.
+
+## The daily quota guard (brief 2026-11-09-linkedin-shopscan-page, Follow-ups 1 and 2)
+All pages post with ONE member token on the Development tier: **100 `posts` CREATE calls per member per 24 h**. Taxscan, Academy and
+Shopscan together make about 66 a day, and a busy day or a run of retries could pass 100, after which LinkedIn answers 429 to every page.
+So the lower-priority pages hold THEMSELVES when the day's count is high, and the Taxscan page (never held) keeps the room:
+
+| Page | Held at (default) | Variable |
+|---|---|---|
+| Taxscan | never | — |
+| Academy | **75** | `LINKEDIN_ACADEMY_DAILY_HEADROOM` |
+| Shopscan | **85** | `LINKEDIN_SHOPSCAN_DAILY_HEADROOM` |
+
+- **The count** is today's (IST day) create attempts across ALL pages: `postsCreatedToday()` sums `LinkedInPost.attempts` over the rows
+  touched that day (`updatedAt`); nothing new is stamped and there is no schema change. It counts attempts, not calls (a picture post
+  repeated as a link post is one attempt and two calls), and a row retried across midnight counts all its attempts: the 15 to 25 below
+  the 100 absorb both. It is read **once per tick, before anything in the tick posts**, so one push posts to every page the same way;
+  a tick makes at most 3 posts, so a page can pass its number by at most 2.
+- **At or above its number, a page does not post.** Each push it would have posted gets a row **SKIPPED with the reason
+  `quota_headroom`** (error column), no API call, no budget spent. That row is **never retried and never posted later** (a late post of
+  an old push is worse than none), so ALL the page's waiting pushes are skipped in that tick, none is left to post when the count resets
+  at midnight IST. Retry and Skip answer 409 on it. The screen says "Skipped — daily LinkedIn limit kept for Taxscan".
+- **One log line per held page per IST day:** `[linkedin] page=<page> quota_headroom skipped=N` (N = how many that first tick skipped).
+- **A manual immediate push is never held (Follow-up 2):** Compose **Send now**, **Breaking** (also the night "Send now as Breaking"),
+  and Queue / Review **Push now** post on Academy and Shopscan whatever the count, because a push a person chose to send right now may
+  be important news. It still counts toward the day's total for the automatic pushes after it. The worker tells it from what the send
+  path already records, with no new column: **`Campaign.createdByUserId` set AND `scheduledAt` empty** (`isManualImmediatePush`). The
+  pacer, an RSS capture, a bearer / curl send and the morning-backfill clone (`cloneForResend` copies neither field) have no
+  `createdByUserId`; a **scheduled** Compose send, and a Compose send the night rule deferred to 07:00, keep their `scheduledAt` after the
+  sweeper sends them: all of those stay guarded. A real LinkedIn 429 on a manual push takes the ordinary retry path (+1, +5, +15 minutes,
+  then FAILED); there is no special handling.
+- **Not guarded:** the retries of a row that already exists (at most three more calls per row), and the screen's manual **Retry**.
+- **Invalid values** (not a whole number from 1 to 100) use the default and say so in one boot line,
+  `[linkedin] quota guard: <VARIABLE> is not a whole number from 1 to 100 (using N)`. The boot also prints
+  `[linkedin] daily quota guard: Academy held at 75, Shopscan held at 85 posts a day, counted across all pages (Taxscan never held)` for
+  the active pages.
+- The parser is the pure `parseLinkedInHeadroom()` in `src/lib/env.ts` (`env.linkedin.dailyHeadroom`, read at call time).
 
 ### Course and product posts
 A course or product has no CMS article, so the post is built from the push and the page (`buildStorePost()` in `post.ts`):
@@ -109,12 +155,12 @@ asks LinkedIn again.
 ## How it runs
 `src/services/linkedin/worker.ts`: a 1-minute `node-cron` tick, started only when `LINKEDIN_POSTING_ENABLED=true` **and**
 `LINKEDIN_POST_FROM` + the Taxscan page's two variables are valid (otherwise it logs `[linkedin] refusing to start: …` and does not
-run). The Academy page never blocks the start: it is active only when its own two variables are valid, and borrows the Taxscan
-token, so once the Taxscan page is sound Academy cannot be the reason. It reads `Campaign` rows only; the push send path is
+run). The Academy and Shopscan pages never block the start: each is active only when its own two variables are valid, and borrows the
+Taxscan token, so once the Taxscan page is sound neither can be the reason. It reads `Campaign` rows only; the push send path is
 untouched, and the request path never calls LinkedIn (only the worker, and the screen's Retry, which makes one post and answers).
 
-- At most **3 posts per tick, shared by both pages**, oldest push first. The Taxscan page is handled first in a tick, so a busy
-  Taxscan page only delays the Academy page to a later tick (an article normally posts to both in the same tick).
+- At most **3 posts per tick, shared by all pages**, oldest push first. A tick handles **Taxscan, then Academy, then Shopscan**, so a busy
+  Taxscan page only delays the others to a later tick (a push normally posts to every page in the same tick when there are three).
 - Each tick reads, per page, every SENT push since that page's go-live time (only `id`, `url` and `target`; plus `lastSentAt` while the
   page's all-pushes time is set, since that is what splits the pushes at that time) and the page's existing keys. That list grows by about 20 a day per page and nothing else does; it is the one thing to revisit if the pages run for years.
 - The `LinkedInPost` row (PENDING, in flight) is created **before** the API call; unique (`page`, `articleKey`) means a
@@ -129,10 +175,10 @@ untouched, and the request path never calls LinkedIn (only the worker, and the s
   Railway (or is renewed) or the app restarts. One alert email per page per IST day to the active ADMIN users (ElasticEmail), and
   an amber banner on the LinkedIn screen (each page keeps its own banner state, `linkedin:auth:<page>`). Pushed articles are kept and
   post once posting resumes, however long that takes. **A stop is per page**: a 401 / 403 on one page never gates the other, in the
-  same tick or a later one. A 401 on the Taxscan page does not prevent the Academy page's attempt in that tick (it shares the token,
-  so it fails too, stops itself and sends its own alert). A 403 on Academy alone, while Taxscan keeps posting, normally means the
-  LinkedIn member who made the token has no admin role on the Academy page: Taxscan carries on, Academy stops with its own banner and
-  e-mail, and after the role is fixed in LinkedIn the app must be restarted (or the token changed or renewed) for Academy to resume.
+  same tick or a later one. A 401 on the Taxscan page does not prevent the Academy or Shopscan attempt in that tick (they share the token,
+  so they fail too, stop themselves and send their own alerts). A 403 on Academy (or Shopscan) alone, while Taxscan keeps posting,
+  normally means the LinkedIn member who made the token has no admin role on that page: Taxscan carries on, that page stops with its own
+  banner and e-mail, and after the role is fixed in LinkedIn the app must be restarted (or the token changed or renewed) for it to resume.
 
 ## The post
 `POST https://api.linkedin.com/rest/posts`, headers `LinkedIn-Version: $LINKEDIN_API_VERSION` (default `202603`),
@@ -193,7 +239,7 @@ Log line: `[linkedin] page=taxscan campaign=… outcome=posted hashtags=cms|fall
 ## The Compose picture (brief 2026-11-08-social-picture)
 
 Behind `SOCIAL_PICTURE_ENABLED` (default off). A push sent from Compose with a picture attached (`Campaign.socialImageId`, a
-`SocialImage` row) posts on BOTH pages as an **image post**: our own bytes uploaded through the same Images API (no host allowlist: they
+`SocialImage` row) posts on EVERY active page (Taxscan, Academy, Shopscan), each under its own org URN, as an **image post**: our own bytes uploaded through the same Images API (no host allowlist: they
 are already ours), `content.media = { id: <urn:li:image>, altText: <push title> }`, and today's commentary (text + hashtags) with the
 tagged link (same UTMs as today) on its own line just before the hashtags, escaped as little text. Order inside one attempt: upload →
 wait until AVAILABLE (an unverified status counts as ready, as for the thumbnail) → image post. **Fail-open to today's link post**:
@@ -236,15 +282,35 @@ byte-for-byte today's. A backfill clone or a re-send of the campaign uses the sa
   - **Switching it off** only stops it: its rows are kept and nothing is marked FAILED. **Switching it back on**: set
     `LINKEDIN_ACADEMY_POST_FROM` to that moment, or everything pushed since the old time posts at once, three a tick.
   - **Campaigns → Channels** keeps meaning the Taxscan page (its rows only), with Academy on or off.
-- Adding Shopscan later is the same recipe: its variables and a place in `portalPages()`.
+- **`shopscan`**, the Shopscan page (`urn:li:organization:80241094`), is built **exactly like Academy** by the same parser
+  (`parseSharedLinkedInPage(src, 'SHOPSCAN')`; `parseLinkedInAcademyEnv` calls it with `'ACADEMY'`, its wording unchanged) and sits third in
+  `portalPages()` (Taxscan, Academy, Shopscan). Active only when BOTH are valid:
+  - `LINKEDIN_SHOPSCAN_ORG_URN` = `urn:li:organization:<digits>`;
+  - `LINKEDIN_SHOPSCAN_POST_FROM` = a strict ISO date or time (its own go-live).
+  Off otherwise, with ONE boot line `[linkedin] shopscan page off: <what is missing or invalid>`; on, `[linkedin] shopscan page on (post from
+  <ISO time>; every push from then)`. It uses the Taxscan token, has no token variables, no `LinkedInToken` row and no renewal of its own
+  (`env.linkedin.sharedPages`), and its rows, stops, banner (`linkedin:auth:shopscan`) and alert e-mail are its own. The cover or Compose
+  picture is uploaded under its own org URN. Text, hashtags and headline are identical to the other pages; only the link differs
+  (`utm_campaign=linkedin-shopscan`).
+  - **Every push from its go-live.** `pageAllPushesFrom('shopscan')` is its `LINKEDIN_SHOPSCAN_POST_FROM` while it is on (null otherwise):
+    there is no `LINKEDIN_SHOPSCAN_ALL_PUSHES_FROM`. Same eligibility as the other every-push pages (`isAllPushesCampaign`, plus
+    `SOCIAL_ANY_LINK_FROM` for any other allowed page), one post per push, repeats included; nothing pushed before its go-live is ever posted
+    there.
+  - **Held by the daily quota guard at 85** (above), unless the push is a manual immediate one.
+  - **Switching it off** only stops it (rows kept, nothing marked FAILED). **Switching it back on**: set `LINKEDIN_SHOPSCAN_POST_FROM` to
+    that moment, or everything pushed since the old time posts.
+  - **Campaigns → Channels** still means the Taxscan page only.
+- Another page later is the same recipe: its variables, a place in `SHARED_PAGES` / `portalPages()`, and (if it should be held) a number in
+  `LINKEDIN_HEADROOM_VARS`.
 
 ## The screen's API
 `GET /api/linkedin/posts?date=YYYY-MM-DD&page=<key>` (ADMIN or PUBLISHER; `date` = an IST day, default today, up to 14 days back).
-`page` must be one of the **active** pages (default `taxscan`); an unknown page, or `academy` while it is off, is
+`page` must be one of the **active** pages (default `taxscan`); an unknown page, or `academy` / `shopscan` while it is off, is
 `400 {"error":"invalid_page"}`. The answer: `date`, `page`, `pages` (the active page keys, Taxscan first: the screen shows a page
 switch only when there is more than one), `rows`, `counts`, `login` (that page's own banner state, or null) and, while renewal is on,
-`token` (dates and a status, never a token). `tokenShared: true` appears only while two pages post with one token (then `token`
-is that one token's status on both pages). Rows, counts and the banner follow `page`. Retry and Skip are by row id
+`token` (dates and a status, never a token). `tokenShared: true` appears only while two or more pages post with one token (then `token`
+is that one token's status on every page). A row the daily quota guard held has status `SKIPPED` and `skipReason: "quota_headroom"`
+(present only then). Rows, counts and the banner follow `page`. Retry and Skip are by row id
 (`POST /api/linkedin/posts/:id/retry|skip`); each touches only its own row.
 
 ## Flags / env
@@ -257,13 +323,17 @@ is that one token's status on both pages). Rows, counts and the banner follow `p
 | `LINKEDIN_TAXSCAN_ACCESS_TOKEN` | — | a token with `w_organization_social`; never logged, never in a response or the `error` column. **Also the Academy page's token.** |
 | `LINKEDIN_ACADEMY_ORG_URN` | — | the Academy page, `urn:li:organization:<digits>`. **The page is on only when this AND `LINKEDIN_ACADEMY_POST_FROM` are valid**; anything else = off (one boot line) |
 | `LINKEDIN_ACADEMY_POST_FROM` | — | the Academy page's own go-live (ISO date or time); nothing pushed before it is ever posted to Academy. Set it to the moment you switch on |
+| `LINKEDIN_SHOPSCAN_ORG_URN` | — | the Shopscan page, `urn:li:organization:<digits>` (`urn:li:organization:80241094`). **On only when this AND `LINKEDIN_SHOPSCAN_POST_FROM` are valid**; anything else = off (one boot line) |
+| `LINKEDIN_SHOPSCAN_POST_FROM` | — | the Shopscan page's own go-live (strict ISO); it posts EVERY push from then, nothing before it. Set it to the moment you switch on, never earlier |
+| `LINKEDIN_ACADEMY_DAILY_HEADROOM` | `75` | the quota guard: at or above this many create attempts today (all pages) Academy does not post (SKIPPED `quota_headroom`). Whole number 1 to 100; anything else = 75 with a boot note |
+| `LINKEDIN_SHOPSCAN_DAILY_HEADROOM` | `85` | the same for Shopscan; whole number 1 to 100; anything else = 85 with a boot note |
 | `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` | — | **every push posts** on the Taxscan page from this time (strict ISO); a push before it keeps today's rule for good. Unset or invalid = today's rule (one boot line). Never earlier than `LINKEDIN_POST_FROM`. Set it to the moment you switch on |
 | `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` | — | the same for the Academy page; counts only while the Academy page is on; never earlier than `LINKEDIN_ACADEMY_POST_FROM` |
-| `SOCIAL_PICTURE_ENABLED` | off | a picture uploaded on Compose goes on the LinkedIn (both pages) and Facebook posts; see "The Compose picture" |
+| `SOCIAL_PICTURE_ENABLED` | off | a picture uploaded on Compose goes on the LinkedIn (every active page) and Facebook posts; see "The Compose picture" |
 | `SOCIAL_ANY_LINK_FROM` | — | **one time for all four channels**: from it on, a push to any OTHER allowed page (shop collection, pricing page, home page) is posted too, on every page whose all-pushes rule is on (strict ISO; a push before it never is; unset or invalid = off). See "Other pages" |
 
-There are no Academy token variables: the two Academy variables are the whole switch, and `LINKEDIN_POSTING_ENABLED` still governs
-everything (off = no worker for either page).
+There are no Academy or Shopscan token variables: each page's two variables are its whole switch, and `LINKEDIN_POSTING_ENABLED` still
+governs everything (off = no worker for any page). The Taxscan page is never held by the quota guard and has no headroom variable.
 
 ## Switch-over (owner, after deploy)
 1. Set `LINKEDIN_TAXSCAN_ORG_URN` + `LINKEDIN_TAXSCAN_ACCESS_TOKEN` in Railway (the same values as the automation repo's
@@ -280,6 +350,15 @@ everything (off = no worker for either page).
 3. Look for `[linkedin] academy page on (post from …)` in the boot log, then for `[linkedin] page=academy campaign=… outcome=posted`
    after the next push. A 403 (an amber banner and an e-mail for the Academy page only) means the token's member has no role on that
    page: the Taxscan page keeps posting. Give the member the role in LinkedIn and restart the app.
+
+### Switching the Shopscan page on (after the Taxscan page works)
+1. The token's member (the owner) must administer the Shopscan page too (they do: its admin dashboard opens for them); no new sign-in is expected.
+2. In Railway set `LINKEDIN_SHOPSCAN_ORG_URN=urn:li:organization:80241094` and `LINKEDIN_SHOPSCAN_POST_FROM` = the current time (UTC ISO),
+   then redeploy. Nothing else changes for the Taxscan or Academy pages **except that Academy is now held by the quota guard at 75**
+   (set `LINKEDIN_ACADEMY_DAILY_HEADROOM` / `LINKEDIN_SHOPSCAN_DAILY_HEADROOM` only to change the defaults).
+3. Look for `[linkedin] shopscan page on (post from …; every push from then)` and the `daily quota guard` line in the boot log, then for
+   `[linkedin] page=shopscan campaign=… outcome=posted` after the next push. A 403 (an amber banner and an e-mail for Shopscan only) means the
+   token's member has no role on that page; the other pages keep posting. Give the member the role in LinkedIn and restart the app.
 
 ### Switching "every push posts" on (per page, any time after that page works)
 1. In Railway set `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` (and `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` if the Academy page is on) to **the current
@@ -340,10 +419,10 @@ manual job left is the **yearly sign-in**, announced by email 30 days ahead.
    LinkedIn screen's amber banner, without a restart.
 4. One log line per page per run: `[linkedin-token] page=taxscan access_left_days=N refresh_left_days=M action=none|renewed|failed`.
 
-**The Academy page shares this token.** Renewal runs once, for the page that owns the token (`taxscan`): one `LinkedInToken` row,
-one daily check, one renewal. The Academy page posts with that same token (the renewed one once there is one) and has no variable,
-row or renewal of its own. A successful renewal (or a token pasted into Railway) ends the login stop and clears the banner of BOTH
-pages, and both post with the new token on the next tick; the screen shows the one token's status on either page.
+**The Academy and Shopscan pages share this token.** Renewal runs once, for the page that owns the token (`taxscan`): one `LinkedInToken` row,
+one daily check, one renewal. The other pages post with that same token (the renewed one once there is one) and have no variable,
+row or renewal of their own. A successful renewal (or a token pasted into Railway) ends the login stop and clears the banner of EVERY
+page, and all post with the new token on the next tick; the screen shows the one token's status on any page.
 
 **Which token is used** (`activeAccessToken`): the stored one while its `envFingerprint` equals the SHA-256 of the current
 `LINKEDIN_<PAGE>_ACCESS_TOKEN` env value; otherwise the env token (and a stored row that no longer matches is dropped). So **pasting a new
@@ -388,14 +467,18 @@ The renewal does NOT write back into Railway variables and has no sign-in page o
 `LinkedInPost` and `LinkedInToken` (the encrypted renewed token) are **not** in the R2 export (the small `linkedin:auth:<page>` banner row and `linkedin:token:state:<page>` markers live in `DigestSetting`, which is; a restored stale one is harmless). After a restore the env token is used and the next daily renewal re-creates the `LinkedInToken` row. After a restore keep
 `LINKEDIN_POSTING_ENABLED` **off**, and set `LINKEDIN_POST_FROM` to the restore time before switching it back on (the
 `LinkedInPost` rows are gone, so without that, recent articles would post twice; with the Academy page on, also set
-`LINKEDIN_ACADEMY_POST_FROM` to the restore time, for the same reason). **Set `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` and
+`LINKEDIN_ACADEMY_POST_FROM` (and `LINKEDIN_SHOPSCAN_POST_FROM`, which is also Shopscan's every-push time) to the restore time, for the same
+reason; the quota guard also reads rows, so after a restore it counts only what the day's remaining rows say). **Set `LINKEDIN_TAXSCAN_ALL_PUSHES_FROM` and
 `LINKEDIN_ACADEMY_ALL_PUSHES_FROM` to the restore time too** (or unset them): the `push:` rows are gone with the rest, and an old value
 would post every push since then, repeats included. See `docs/BACKUPS.md`.
 
 ## Logs
-One line per attempt: `[linkedin] page=taxscan campaign=<id> outcome=posted|retry|failed|auth_stop` (`page=academy` for the Academy
-page). One boot line about the Academy page, from `startLinkedInWorker` only (`[linkedin] academy page on (post from …)` or
-`[linkedin] academy page off: …`), and one per page about "every push posts" (`[linkedin] all pushes on for … (from …)` /
+One line per attempt: `[linkedin] page=taxscan campaign=<id> outcome=posted|retry|failed|auth_stop` (`page=academy` / `page=shopscan` for
+those pages). One boot line about the Academy page and one about the Shopscan page, from `startLinkedInWorker` only
+(`[linkedin] academy page on (post from …)` / `[linkedin] academy page off: …`, `[linkedin] shopscan page on (post from …; every push from
+then)` / `[linkedin] shopscan page off: …`), the quota guard's (`[linkedin] daily quota guard: …`, and `[linkedin] quota guard: <VARIABLE>
+is not a whole number from 1 to 100 (using N)` for an invalid number), one `[linkedin] page=<page> quota_headroom skipped=N` per held
+page per IST day, and one per page about "every push posts" (`[linkedin] all pushes on for … (from …)` /
 `[linkedin] all pushes off: <variable> is not set | is not a valid ISO time | is ignored while the Academy page is off (today's rule: one
 post per article)`). A course or product post adds `kind=course|product` to its line, and a refused identical repeat is
 `outcome=failed reason=duplicate`. Every error goes through `safeErrorLog`; the token appears nowhere.
