@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useApi } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
+import { telegramErrorText } from '../composables/telegramErrors';
 import { THRESHOLDS, bandTooltip, classify, pct } from '../composables/thresholds';
 import CampaignDetail from '../components/CampaignDetail.vue';
 
@@ -36,16 +37,19 @@ type Campaign = {
     linkedin: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
     /** Absent while Facebook posting is switched off. */
     facebook?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
+    /** Absent while the Telegram channel is not active. Same meaning as `facebook`. */
+    telegram?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
   };
   channelDetails?: {
     /** `skipReason: 'compose_skip'` = the sender unticked this channel on Compose for this push (its mark is SKIPPED). */
     whatsapp?: { by: string | null; at: string; skipReason?: string };
     linkedin?: { error: string | null; at: string; postUrl: string | null; skipReason?: string };
     facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: string };
+    telegram?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: string };
   };
   /** IST day (YYYY-MM-DD) of the push: which day to open on the channel screen. */
   channelDay?: string | null;
-  /** The Compose picture for LinkedIn + Facebook; present only when the campaign has one and the setting is on. */
+  /** The Compose picture for LinkedIn + Facebook (+ Telegram); present only when the campaign has one and the setting is on. */
   pictureUrl?: string;
 };
 
@@ -179,12 +183,14 @@ async function load(): Promise<void> {
   }
 }
 
-// ---- Channels column (WhatsApp / LinkedIn / Facebook marks) ----
+// ---- Channels column (WhatsApp / LinkedIn / Facebook / Telegram marks) ----
 // Shown only when the server sent `channels` on at least one row, i.e. a switch is on.
 const showChannels = computed(() => campaigns.value.some((c) => c.channels !== undefined));
 const colCount = computed(() => (showChannels.value ? 13 : 12));
 
-type Mark = { key: 'whatsapp' | 'linkedin' | 'facebook'; short: string; label: string; state: string };
+type Mark = { key: 'whatsapp' | 'linkedin' | 'facebook' | 'telegram'; short: string; label: string; state: string };
+/** True once any row carries a Telegram mark: the channel is active, so the column's help text names it. */
+const hasTelegram = computed(() => campaigns.value.some((c) => c.channels?.telegram !== undefined));
 
 function fmtTime(iso: string | undefined): string {
   if (!iso) return '';
@@ -257,6 +263,26 @@ function marksFor(c: Campaign): Mark[] {
                 ? 'Facebook: skipped in Compose'
                 : 'Facebook: skipped'
               : 'Facebook: waiting',
+    });
+  }
+  if (ch.telegram) {
+    const s = ch.telegram;
+    const at = fmtTime(d?.telegram?.at ?? undefined);
+    const err = d?.telegram?.error;
+    out.push({
+      key: 'telegram',
+      state: s,
+      short: s === 'POSTED' ? 'tg ✓' : s === 'FAILED' ? 'tg ✕' : s === 'SKIPPED' ? 'tg –' : 'tg …',
+      label:
+        s === 'POSTED'
+          ? `Telegram: posted${at ? ' at ' + at : ''}`
+          : s === 'FAILED'
+            ? `Telegram: failed${err ? '. ' + telegramErrorText(err) : ''}`
+            : s === 'SKIPPED'
+              ? composeSkipped(d?.telegram)
+                ? 'Telegram: skipped in Compose'
+                : 'Telegram: skipped'
+              : 'Telegram: waiting',
     });
   }
   return out;
@@ -377,7 +403,7 @@ onMounted(load);
             <th class="th-sort" @click="setSort('deliveryRate')">
               Delivery<span class="sort-ind">{{ sortInd('deliveryRate') }}</span>
             </th>
-            <th v-if="showChannels" title="Whether the article was also posted to WhatsApp, LinkedIn and Facebook. Click a mark to open that screen.">
+            <th v-if="showChannels" :title="hasTelegram ? 'Whether the article was also posted to WhatsApp, LinkedIn, Facebook and Telegram. Click a mark to open that screen.' : 'Whether the article was also posted to WhatsApp, LinkedIn and Facebook. Click a mark to open that screen.'">
               Channels
             </th>
           </tr>
@@ -400,7 +426,7 @@ onMounted(load);
                 class="pic-link"
                 :href="pictureHref(c.pictureUrl)"
                 download
-                title="The picture used on the LinkedIn and Facebook posts"
+                :title="hasTelegram ? 'The picture used on the LinkedIn, Facebook and Telegram posts' : 'The picture used on the LinkedIn and Facebook posts'"
                 @click.stop
               >Download picture</a>
             </td>

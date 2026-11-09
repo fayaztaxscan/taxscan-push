@@ -148,6 +148,12 @@ limit, everything pushed since go-live would otherwise post a second time, and r
 `FACEBOOK_ALL_PUSHES_FROM` to the restore time too (or unset it)**: with the `push:` rows gone, an old value would post every push since then
 again. See `docs/FACEBOOK_POSTING.md`.
 
+**`TelegramPost` (the Telegram channel posting log) is deliberately NOT in the export, and the same rule applies.** (Added 2026-11-09, brief
+2026-11-09-telegram-channel.) After a restore keep `TELEGRAM_POSTING_ENABLED` off and **set `TELEGRAM_POST_FROM` to the restore time**
+before switching it back on. The channel posts every push since that time and there is no age limit, so with the rows gone everything
+pushed since go-live would otherwise be posted to the public channel a second time. `TELEGRAM_BOT_TOKEN` is a Railway variable, not data:
+a restore needs it set again like the other secrets. See `docs/TELEGRAM_POSTING.md`.
+
 **`WhatsAppPost` (the WhatsApp channel queue's Posted / Skipped marks) is deliberately NOT in the export.** It holds only
 "who marked which article, when" for a short-lived working list; losing it means a day's list shows To do again, and
 every article is still in `Campaign`. (Added 2026-11-02; the export format is unchanged.)

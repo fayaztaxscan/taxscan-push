@@ -17,7 +17,7 @@ function closeMenu() {
 
 // Channel groups. The active route's group label is emphasised.
 const PUSH_PATHS = ['/compose', '/review', '/queue', '/campaigns'];
-const SOCIAL_PATHS = ['/whatsapp', '/linkedin', '/facebook'];
+const SOCIAL_PATHS = ['/whatsapp', '/linkedin', '/facebook', '/telegram'];
 const EMAIL_PATHS = ['/digests', '/ads', '/templates'];
 const ADMIN_PATHS = ['/users', '/activity'];
 function inGroup(paths: string[]): boolean {
@@ -35,7 +35,9 @@ const showLinkedIn = computed(() => user.value?.features?.linkedinPosting === tr
 // The SOCIAL group (label included) exists only while at least one of its channels is switched on.
 // Facebook page posting: same pattern.
 const showFacebook = computed(() => user.value?.features?.facebookPosting === true);
-const showSocial = computed(() => showWhatsApp.value || showLinkedIn.value || showFacebook.value);
+// Telegram channel posting: same pattern (the server says active only when the flag is on AND all four variables are valid).
+const showTelegram = computed(() => user.value?.features?.telegramPosting === true);
+const showSocial = computed(() => showWhatsApp.value || showLinkedIn.value || showFacebook.value || showTelegram.value);
 
 // Admin disclosure (desktop). Closes on Escape (focus back to the button),
 // outside click and route change.
@@ -98,6 +100,7 @@ async function onLogout() {
       <router-link v-if="showWhatsApp" to="/whatsapp" @click="closeMenu">WhatsApp</router-link>
       <router-link v-if="showLinkedIn" to="/linkedin" @click="closeMenu">LinkedIn</router-link>
       <router-link v-if="showFacebook" to="/facebook" @click="closeMenu">Facebook</router-link>
+      <router-link v-if="showTelegram" to="/telegram" @click="closeMenu">Telegram</router-link>
       <span class="nav-label" :class="{ active: emailActive }" data-group="email">Email</span>
       <router-link to="/digests" @click="closeMenu">Digests</router-link>
       <router-link to="/ads" @click="closeMenu">Ads</router-link>

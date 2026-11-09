@@ -93,6 +93,7 @@ enum AuditAction {
   CMS_VIEWS_BACKFILL_STARTED
   // Facebook page posting: an ADMIN cleared a policy stop (page name only in metadata)
   FACEBOOK_POSTING_RESUMED
+  TELEGRAM_POSTING_RESUMED
 }
 
 model Subscriber {
@@ -1011,6 +1012,36 @@ model FacebookPost {
 
   @@unique([page, articleKey])
   @@index([status, nextAttemptAt])
+}
+
+enum TelegramPostStatus {
+  PENDING
+  POSTED
+  FAILED
+  SKIPPED
+}
+
+/// One post to a Telegram channel (brief 2026-11-09-telegram-channel), modelled on FacebookPost. Telegram posts EVERY push, so the key is
+/// always the push's own (`push:<campaign id>:<send time ms>`); a repeat is another row. `error` is a SHORT fixed code (`telegram_403`,
+/// `telegram_400_chat_not_found`, `timeout`...), never a token or a provider message. NOT in the R2 backup: after a restore set
+/// TELEGRAM_POST_FROM to the restore time (docs/BACKUPS.md), or every push since go-live would be posted again.
+model TelegramPost {
+  id            String             @id @default(cuid())
+  page          String
+  pushKey       String
+  campaignId    String
+  status        TelegramPostStatus @default(PENDING)
+  messageId     Int?
+  error         String?
+  attempts      Int                @default(0)
+  nextAttemptAt DateTime?
+  postedAt      DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@unique([page, pushKey])
+  @@index([status, nextAttemptAt])
+  @@index([campaignId])
 }
 
 /// The renewed LinkedIn access token (and a rotated refresh token) for a page, ENCRYPTED with AES-256-GCM

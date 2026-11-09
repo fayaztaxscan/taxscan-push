@@ -18,6 +18,7 @@ import Activity from './views/Activity.vue';
 import WhatsApp from './views/WhatsApp.vue';
 import LinkedIn from './views/LinkedIn.vue';
 import Facebook from './views/Facebook.vue';
+import Telegram from './views/Telegram.vue';
 
 // Vite injects BASE_URL to match vite.config.ts → `/` in dev, `/admin/`
 // in prod build. Vue Router's base then matches the public path so links
@@ -47,6 +48,7 @@ export const router = createRouter({
     { path: '/whatsapp', name: 'whatsapp', component: WhatsApp, meta: { feature: 'whatsappQueue' } },
     { path: '/linkedin', name: 'linkedin', component: LinkedIn, meta: { feature: 'linkedinPosting' } },
     { path: '/facebook', name: 'facebook', component: Facebook, meta: { feature: 'facebookPosting' } },
+    { path: '/telegram', name: 'telegram', component: Telegram, meta: { feature: 'telegramPosting' } },
     { path: '/reports', name: 'reports', component: Reports },
     { path: '/digests', name: 'digests', component: Digests },
     // Digest house ads (task 9) and templates (task 10): every signed-in user, like the API behind them (owner, 29 Oct).
@@ -110,7 +112,7 @@ router.beforeEach(async (to: RouteLocationNormalized) => {
   }
 
   // Feature gate: a route behind a server flag sends everyone home while the flag is off.
-  const feature = to.meta.feature as 'whatsappQueue' | 'linkedinPosting' | 'facebookPosting' | undefined;
+  const feature = to.meta.feature as 'whatsappQueue' | 'linkedinPosting' | 'facebookPosting' | 'telegramPosting' | undefined;
   if (feature && user.value?.features?.[feature] !== true) {
     return { name: 'dashboard' };
   }
