@@ -18,6 +18,8 @@ type Row = {
   postedAt: string | null;
   postUrl: string | null;
   unknownOutcome: boolean;
+  /** Present ONLY on a row the daily quota guard held (status SKIPPED): the single value 'quota_headroom'. Never shown as a code. */
+  skipReason?: string;
 };
 type Counts = { waiting: number; posted: number; failed: number; skipped: number; notPosted: number; all: number };
 type ListResponse = {
@@ -29,7 +31,7 @@ type ListResponse = {
   counts: Counts;
   login: { since: string; status: number | null } | null;
   token?: TokenInfo;
-  /** Present (true) only while two pages post with one token; missing = false. */
+  /** Present (true) only while two or more pages post with one token; missing = false. */
   tokenShared?: boolean;
   /**
    * Present (an ISO time) ONLY while this page posts EVERY push (articles, courses, shop products; a repeat is its own row), from
@@ -68,7 +70,7 @@ const counts = ref<Counts>({ ...EMPTY_COUNTS });
 const login = ref<ListResponse['login']>(null);
 const token = ref<TokenInfo | null>(null);
 // Which LinkedIn page is on screen. null = not chosen yet: the first request leaves `page` out and adopts the server's
-// answer (its first page, Taxscan). `pages` = the ACTIVE pages, Taxscan first; the switch shows only when there are two or more.
+// answer (its first page, Taxscan). `pages` = the ACTIVE pages (Taxscan, then Academy, then Shopscan); the switch shows only when there are two or more.
 const page = ref<string | null>(null);
 const pages = ref<string[]>([]);
 const tokenShared = ref(false);
@@ -84,7 +86,7 @@ const isToday = computed(() => date.value === maxDate);
 const isYesterday = computed(() => date.value === istDay(-1));
 
 // A page's name as the editors say it. Any other key is shown capitalised (a page added later needs no change here).
-const PAGE_LABEL: Record<string, string> = { taxscan: 'Taxscan', academy: 'Academy' };
+const PAGE_LABEL: Record<string, string> = { taxscan: 'Taxscan', academy: 'Academy', shopscan: 'Shopscan' };
 const labelOf = (key: string): string => PAGE_LABEL[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 const multi = computed(() => pages.value.length > 1);
 // The page being shown ("Taxscan" until the first answer, which is also what a one-page server always shows).
@@ -92,6 +94,11 @@ const pageLabel = computed(() => labelOf(page.value ?? pages.value[0] ?? 'taxsca
 function joinNames(names: string[]): string {
   return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
+// The pages that post with one shared token, as a sentence opener: "Both pages" for two (the wording since the Academy page),
+// the listed pages by name for three ("The Taxscan, Academy and Shopscan pages").
+const sharedPagesPhrase = computed(() =>
+  pages.value.length === 2 ? 'Both pages' : `The ${joinNames(pages.value.map(labelOf))} pages`,
+);
 
 const CHIPS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -130,7 +137,7 @@ const emptyText = computed(() => {
   return `Nothing ${word[filter.value as Exclude<Filter, 'all'>]} ${dayWord.value}.`;
 });
 
-// The page that posts with ANOTHER page's token (Academy): it has no token variable of its own, so its banner never sends
+// A page that posts with ANOTHER page's token (Academy, Shopscan): it has no token variable of its own, so its banner never sends
 // anyone to Railway for it.
 const borrowsToken = computed(() => tokenShared.value && !!page.value && page.value !== pages.value[0]);
 const loginText = computed(() => {
@@ -146,10 +153,10 @@ const loginText = computed(() => {
   const lead = `LinkedIn rejected the access token${st} since ${when}.`;
   // One page in use: the original wording, word for word.
   if (!multi.value) return `${lead} Posting is stopped until a new token is set in Railway or the app restarts.`;
-  // Two pages: a stop belongs to one page, so the banner names it.
+  // Two or three pages: a stop belongs to one page, so the banner names it.
   const name = pageLabel.value;
   if (borrowsToken.value) {
-    const stopped = `Posting to the ${name} page is stopped. Both pages post with one shared token`;
+    const stopped = `Posting to the ${name} page is stopped. ${sharedPagesPhrase.value} post with one shared token`;
     // A 403 on this page alone, while the other keeps posting, is almost always a missing admin role on THIS page.
     return l.status === 403
       ? `${lead} ${stopped}, so this usually means the LinkedIn member who made that token has no admin role on the ${name} page. Tell the owner.`
@@ -177,14 +184,17 @@ const sinceText = computed(() => {
   });
   return `${when} IST`;
 });
-// Two pages posting with one token (the Academy page borrows the Taxscan page's): say so plainly, on both pages. The server
-// reports `tokenShared` for the pages in `pages`, so the names come from there.
+// Two or three pages posting with one token (Academy and Shopscan borrow the Taxscan page's): say so plainly, on every page. The
+// server reports `tokenShared` for the pages in `pages`, so the names come from there.
 const sharedNote = computed(() => (tokenShared.value && multi.value ? `one token, shared by the ${joinNames(pages.value.map(labelOf))} pages` : ''));
 const tokenText = computed(() => {
   const t = token.value;
   if (!t) {
-    // Renewal is off (no token dates), but two pages still share one token: a short line, never invented dates.
-    return sharedNote.value ? `Both pages post with the ${labelOf(pages.value[0] as string)} page's token.` : '';
+    // Renewal is off (no token dates), but the pages still share one token: a short line, never invented dates.
+    if (!sharedNote.value) return '';
+    const owner = labelOf(pages.value[0] as string);
+    if (pages.value.length === 2) return `Both pages post with the ${owner} page's token.`;
+    return `The ${joinNames(pages.value.slice(1).map(labelOf))} pages post with the ${owner} page's token.`;
   }
   const parts = [t.validUntil ? `Token valid until ${t.validUntilSource === 'estimate' ? 'about ' : ''}${longDate(t.validUntil)}` : 'Token expiry not read yet'];
   parts.push(t.autoRenew ? 'renews automatically' : 'renewal is not fully set up');
@@ -328,7 +338,12 @@ const STATUS_LABEL: Record<Status, string> = {
   SKIPPED: 'Skipped',
   NOT_POSTED: 'Not posted',
 };
+// The one reason code the server sends on a SKIPPED row, said in words (the code itself is never shown). The same words on every
+// page. A held row has no Retry and no Skip: those two buttons belong to FAILED / RETRYING rows only.
+const QUOTA_HELD = 'quota_headroom';
+const QUOTA_HELD_TEXT = 'Skipped — daily LinkedIn limit kept for Taxscan';
 function statusText(r: Row): string {
+  if (r.status === 'SKIPPED' && r.skipReason === QUOTA_HELD) return QUOTA_HELD_TEXT;
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
   return STATUS_LABEL[r.status];
 }
@@ -342,7 +357,7 @@ onMounted(() => load());
       <h1 class="section-title" style="margin: 0">LinkedIn page</h1>
       <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
     </div>
-    <!-- Which page's list this is. Only while the Academy page is on; it sits above everything it changes. -->
+    <!-- Which page's list this is. Only while a second page (Academy, Shopscan) is on; it sits above everything it changes. -->
     <div v-if="multi" class="li-switch" role="group" aria-label="LinkedIn page" data-testid="li-switch">
       <button
         v-for="p in pages"
