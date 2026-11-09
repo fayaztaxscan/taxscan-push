@@ -1,10 +1,10 @@
 # REPORT: 2026-11-09-audience-alert-fixes
 
 - **Branch:** `build/audience-alert-fixes` (base `origin/develop` 6a79531)
-- **Code commit:** `33635b9` — `fix(audience-alerts): IST date on audience alert emails + honest "refused" advice`
-- **Built exactly to the brief. All 8 acceptance tests PASS.** One thing the brief did not foresee needs a planning decision before merge (next section).
+- **Code commits:** `33635b9` — `fix(audience-alerts): IST date on audience alert emails + honest "refused" advice`; `bb556bf` — Follow-up 1 (tag-lookup fatal keeps the key/ids advice)
+- **Built exactly to the brief. All 8 acceptance tests PASS.** The one thing the brief did not foresee (next section) was raised to planning and **resolved by Follow-up 1 — see the last section; acceptance tests 9–11 also PASS.**
 
-## ⚠️ Needs a planning decision (not built — outside the brief)
+## ⚠️ Needs a planning decision (not built — outside the brief) — RESOLVED in Follow-up 1 below
 
 `audience_writer_fatal` is raised from **two** places in `src/services/audience/writer.ts`, not one:
 
@@ -65,6 +65,39 @@ None in code. One test addition beyond the listed ones: a same-IST-day refresh t
 - `buildAlertEmail(kind, m, runDate, cfg)` takes a **runDate**, not an instant. Its only two non-test callers are `digest/alerts.ts:785` (`run.runDate`, correct) and `audience/alerts.ts:103` (now `istDateOf(now)`).
 - The admin guide does not quote the alert text (`grep` for "refused a contact write" in `docs/` and `admin/src` found only the brief and the source), so no docs change.
 - The date bug hit every audience alert raised 00:00–05:29 IST (e.g. the nightly 04:30 full-load alert), not just the 8 Nov one.
+
+## Follow-up 1 — tag-lookup fatal keeps the key / tag-ids advice
+
+Planning agreed to the finding above (message from taxscan-push-22, brief on `origin/develop` 3ee807d, section "Follow-up 1"). Same branch, one more code commit.
+
+- **Code commit:** `bb556bf` on `build/audience-alert-fixes`.
+- **`src/services/digest/alerts.ts`** — in `case 'audience_writer_fatal'`, when `m.reason === 'tag_ids'` or it is a string starting with `tags_`:
+  `what` = `Mailercloud refused our tag lookup (<reason via safeDetail>), so no contact was written this time.`; `todo` = `Check the sync key (MAILERCLOUD_SYNC_API_KEY) and the tag ids (AUDIENCE_MC_TAG_*) in Mailercloud.`
+  No hard-bounce sentence, no "Nothing to do". `short` and `did` are unchanged (the brief asks for `what`/`todo` only). Every other reason, including a missing one, keeps the count-aware copy from the main brief.
+  The `AUDIENCE_MC_TAG_*` family exists in `src/lib/env.ts` (e.g. `AUDIENCE_MC_TAG_PREMIUM`).
+- **`src/__tests__/digestAlerts.test.ts`** (+5 tests) and **`src/__tests__/audienceAlerts.test.ts`** (+2 tests, through the real raise → send path).
+- Not changed: where/when the alert is raised, no new alert kind, no flag, no migration.
+
+### Acceptance tests (Follow-up)
+9. `reason: 'tags_401'`, `count: 1` → contains `MAILERCLOUD_SYNC_API_KEY` and `AUDIENCE_MC_TAG_`, not "hard-bounced" or "Nothing to do" — **PASS** (unit, and end to end in `audienceAlerts.test.ts`; text and HTML)
+10. `reason: 'tag_ids'`, `count: 1` → same — **PASS** (unit and end to end)
+11. `reason: 'contact_write'`, `count: 1` → still the "Nothing to do" variant — **PASS** (regression)
+
+Extra tests (inside the brief's intent): look-alike or missing reasons (`tagging`, `tag_id`, `xtags_401`, none) are **not** treated as the tag lookup; a tag-lookup reason carrying an address and the API key is redacted in subject, text and HTML.
+
+### Test results (verbatim, after Follow-up 1)
+- `npx tsc -p tsconfig.json --noEmit` — no output (clean)
+- `npm run lint` — `eslint "src/**/*.ts"`, no output (clean)
+- `audienceAlerts` + `digestAlerts` (one jest process): `Test Suites: 2 passed, 2 total` / `Tests: 73 passed, 73 total` (was 66; +7)
+- `audiencePull` + `audienceWriter` + `audienceGuard`: `Test Suites: 3 passed, 3 total` / `Tests: 100 passed, 100 total`
+- Full suite: not run (no shared foundation touched; `Full suite: no`).
+- The new tests bite: with the pre-follow-up `digest/alerts.ts` restored temporarily, `Tests: 5 failed, 68 passed, 73 total` (the two `tags_401`/`tag_ids` unit cases, the redaction case, and the two end-to-end cases); the fix was put back before committing.
+- Agents run: none.
+
+### Worth remembering
+- The tag-lookup branch at `writer.ts:298` returns before `sendAudienceAlerts` is called (line 322 is only reached on the contact path), so its email goes out at the next alert pass, not immediately. Unchanged; not a problem, just not instant.
+- The same-IST-day marker is refreshed with `{ ...cur, ...detail }`, so the **last** raise of the day decides both the count and the reason shown. If a tag-lookup failure and contact refusals happen on one IST day, the email (sent once per kind per day) shows whichever raised last at send time. Not changed.
+- The subject still reads "Mailercloud refused a contact write" for the tag-lookup case (the brief keeps `short`); a one-word change if planning wants "…refused a request" later.
 
 ## Clean-up (planning runs this after merging)
 ```sh
