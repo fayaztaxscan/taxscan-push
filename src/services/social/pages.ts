@@ -2,6 +2,7 @@ import { env } from '../../lib/env';
 import { portalPages } from '../linkedin/pages';
 import { PORTAL_TO_PAGE, pageConfig as facebookPageConfig } from '../facebook/pages';
 import { PORTAL_TO_PAGE as TELEGRAM_PORTAL_TO_PAGE, telegramConfig } from '../telegram/pages';
+import { getPause, type SocialChannel } from './pause';
 
 /**
  * The social destinations a Compose send can untick for ONE push (brief 2026-11-09-compose-skip-pages). ONE list, built from what is
@@ -28,6 +29,8 @@ export const facebookSkipKey = (page: string): string => `facebook:${page}`;
 export const telegramSkipKey = (page: string): string => `telegram:${page}`;
 
 export type SocialPage = { key: string; label: string };
+/** A Post-to entry with its pause state (brief 2026-11-09-social-page-alerts-pause): `paused` is present (true) only on a paused page. */
+export type SocialPageState = SocialPage & { paused?: true };
 
 const capitalised = (k: string): string => k.charAt(0).toUpperCase() + k.slice(1);
 
@@ -54,3 +57,20 @@ export function unknownSocialKeys(keys: readonly string[], pages: readonly Socia
 
 /** True when the campaign's sender unticked `key` on Compose. A campaign that never had the choice (an RSS capture, a clone) is never skipped. */
 export const isComposeSkipped = (c: { socialSkip?: readonly string[] | null }, key: string): boolean => !!c.socialSkip && c.socialSkip.includes(key);
+
+/**
+ * The same list with each PAUSED page marked (brief 2026-11-09-social-page-alerts-pause). An ADMIN's Pause is read from `DigestSetting`
+ * (`social:pause:<channel>:<page>`), so this is async and only the Compose list endpoint uses it. A paused page stays a KNOWN page: a send
+ * that names its key in `socialSkip` is accepted (`unknownSocialKeys` is unchanged), and the result is the same either way: nothing is
+ * posted there. WhatsApp is posted by hand and cannot be paused.
+ */
+export async function activeSocialPagesWithPause(): Promise<SocialPageState[]> {
+  const pages = activeSocialPages();
+  const out: SocialPageState[] = [];
+  for (const p of pages) {
+    const m = /^(linkedin|facebook|telegram):(.+)$/.exec(p.key);
+    const paused = m ? (await getPause(m[1] as SocialChannel, m[2])) !== null : false;
+    out.push(paused ? { ...p, paused: true } : p);
+  }
+  return out;
+}

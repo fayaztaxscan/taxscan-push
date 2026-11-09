@@ -9,6 +9,7 @@ import { PAGE_TAXSCAN, pageAllPushesFrom, portalPages } from './linkedin/pages';
 import { PAGE_TAXSCAN as FB_PAGE_TAXSCAN, PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, postUrlOf as fbPostUrlOf } from './facebook/pages';
 import { istDay } from './whatsapp/queue';
 import { socialImageUrl } from './social/picture';
+import { PAGE_PAUSED } from './social/pause';
 import { COMPOSE_SKIP, WHATSAPP_SKIP_KEY, facebookSkipKey, isComposeSkipped, linkedinSkipKey, telegramSkipKey } from './social/pages';
 import { PAGE_TAXSCAN as TG_PAGE_TAXSCAN, PORTAL_TO_PAGE as TG_PORTAL_TO_PAGE, messageUrlOf as tgMessageUrlOf, telegramConfig } from './telegram/pages';
 
@@ -52,10 +53,10 @@ export type CampaignChannels = {
 /** The words behind a mark's tooltip; only present where there is something to say. */
 export type CampaignChannelDetails = {
   /** `skipReason: 'compose_skip'` (brief 2026-11-09-compose-skip-pages): the sender unticked this channel on Compose; the mark is SKIPPED. */
-  whatsapp?: { by: string | null; at: string; skipReason?: typeof COMPOSE_SKIP };
-  linkedin?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
-  facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
-  telegram?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP };
+  whatsapp?: { by: string | null; at: string; skipReason?: typeof COMPOSE_SKIP | typeof PAGE_PAUSED };
+  linkedin?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP | typeof PAGE_PAUSED };
+  facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP | typeof PAGE_PAUSED };
+  telegram?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: typeof COMPOSE_SKIP | typeof PAGE_PAUSED };
 };
 
 export type CampaignStat = {
@@ -723,7 +724,7 @@ async function channelsFor(
     if (liOn && liKey && liPortals[c.portal]?.includes(PAGE_TAXSCAN) && c.lastSentAt && from && liSince && c.lastSentAt >= liSince) {
       const p = liBy.get(liKey) ?? (liNew ? undefined : viaPushRow(liBy, c, key)); // today's rule, no article-key row: a `push:` row the new rule left
       channels.linkedin = p ? p.status : 'PENDING';
-      if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null };
+      if (p) details.linkedin = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.linkedinPostId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(p.linkedinPostId)}/` : null, ...(p.status === 'SKIPPED' && p.error === PAGE_PAUSED ? { skipReason: PAGE_PAUSED } : {}) };
     }
     if (fbOn) {
       channels.facebook = null;
@@ -733,7 +734,7 @@ async function channelsFor(
       if (fbKey && FB_PORTAL_TO_PAGE[c.portal] === FB_PAGE_TAXSCAN && c.lastSentAt && fbFrom && fbSince && c.lastSentAt >= fbSince) {
         const p = fbBy.get(fbKey) ?? (fbNew ? undefined : viaPushRow(fbBy, c, key));
         channels.facebook = p ? p.status : 'PENDING';
-        if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null };
+        if (p) details.facebook = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.facebookPostId ? fbPostUrlOf(p.facebookPostId) : null, ...(p.status === 'SKIPPED' && p.error === PAGE_PAUSED ? { skipReason: PAGE_PAUSED } : {}) };
       }
     }
     if (tg) {
@@ -742,7 +743,7 @@ async function channelsFor(
       if (tgKey) {
         const p = tgBy.get(tgKey);
         channels.telegram = p ? p.status : 'PENDING';
-        if (p) details.telegram = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.messageId !== null ? tgMessageUrlOf(tg.channel, p.messageId) : null };
+        if (p) details.telegram = { error: p.error ?? null, at: (p.postedAt ?? p.updatedAt).toISOString(), postUrl: p.status === 'POSTED' && p.messageId !== null ? tgMessageUrlOf(tg.channel, p.messageId) : null, ...(p.status === 'SKIPPED' && p.error === PAGE_PAUSED ? { skipReason: PAGE_PAUSED } : {}) };
       }
     }
     // COMPOSE SKIPS (brief 2026-11-09-compose-skip-pages): a channel the sender unticked for THIS push reads SKIPPED, whatever rows exist (the

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
+import PagePauseControl from '../components/PagePauseControl.vue';
+import PageStatusBanner from '../components/PageStatusBanner.vue';
 import { useRoute } from 'vue-router';
 import { useAuth } from '../composables/useAuth';
 import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
 import { looksLikeCode, telegramErrorText } from '../composables/telegramErrors';
+import { PAGE_PAUSED, PAGE_PAUSED_TEXT, type PageStatus } from '../composables/socialPages';
 
 type Status = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
 type Row = {
@@ -22,7 +25,7 @@ type Row = {
   postUrl: string | null;
   /** The call may have gone out before the worker lost the answer: check the channel before retrying. */
   unknownOutcome: boolean;
-  /** Present ONLY on a SKIPPED row whose sender unticked this channel on Compose: the single value 'compose_skip'. Never shown as a code. */
+  /** Present ONLY on a SKIPPED row the system or a sender skipped: 'compose_skip' (unticked on Compose) or 'page_paused' (an administrator paused the channel). Never shown as a code. */
   skipReason?: string;
 };
 type Counts = { waiting: number; posted: number; failed: number; skipped: number; notPosted: number; all: number };
@@ -39,6 +42,8 @@ type ListResponse = {
   /** The moment the channel started posting EVERY push (an ISO time). Nothing pushed before it is ever posted. */
   everyPushFrom: string | null;
   maxDaysBack?: number;
+  /** ok | paused | stopped | held | failing, with the banner's sentence in `message`. A server without it shows no banner. */
+  pageStatus?: PageStatus;
 };
 type CheckResult =
   | { ok: true; name: string; message: string }
@@ -66,6 +71,7 @@ const rows = ref<Row[]>([]);
 const counts = ref<Counts>({ waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 });
 const channel = ref<string | null>(null);
 const stop = ref<Stop | null>(null);
+const pageStatus = ref<PageStatus | null>(null);
 const everyPushFrom = ref<string | null>(null);
 const check = ref<CheckResult | null>(null);
 const checking = ref(false);
@@ -147,6 +153,7 @@ async function load(keepError = false): Promise<void> {
     counts.value = data.counts;
     channel.value = data.channel ?? null;
     stop.value = data.stop ?? null;
+    pageStatus.value = data.pageStatus ?? null;
     everyPushFrom.value = data.everyPushFrom ?? null;
     if (typeof data.maxDaysBack === 'number' && data.maxDaysBack > 0) maxBack.value = data.maxDaysBack;
   } catch (e) {
@@ -279,6 +286,8 @@ const COMPOSE_SKIP = 'compose_skip';
 const COMPOSE_SKIP_TEXT = 'Skipped in Compose';
 function statusText(r: Row): string {
   if (r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP) return COMPOSE_SKIP_TEXT;
+  // An administrator paused the channel: skipped with no post, never posted later. Counts under Skipped, no buttons.
+  if (r.status === 'SKIPPED' && r.skipReason === PAGE_PAUSED) return PAGE_PAUSED_TEXT;
   // While the channel is stopped a waiting row is NOT on a retry timer: it posts once an administrator resumes.
   if (r.status === 'RETRYING' && stop.value) return 'Waiting — posts after Resume';
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
@@ -290,6 +299,13 @@ function reasonOf(r: Row): string {
   if (r.status === 'FAILED') return telegramErrorText(r.error);
   if (r.status === 'RETRYING' && !stop.value) return telegramErrorText(r.error);
   return '';
+}
+
+// After Pause / Resume (or a 409: a colleague pressed first) the list is read again, so the banner and every row show the truth.
+async function onPauseDone(outcome: 'paused' | 'resumed' | 'refreshed'): Promise<void> {
+  error.value = null;
+  note.value = outcome === 'resumed' ? 'Posting resumed. Posts start again from the next push; nothing that was skipped is posted.' : null;
+  await load(true);
 }
 
 onMounted(() => load());
@@ -304,6 +320,8 @@ onMounted(() => load());
           {{ checking ? 'Checking…' : 'Check connection' }}
         </button>
         <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+        <!-- Last: a rarely used action, so on a phone the two familiar buttons keep their row and this one wraps under them. -->
+        <PagePauseControl v-if="isAdmin" channel="telegram" :status="pageStatus" @done="onPauseDone" />
       </div>
     </div>
 
@@ -318,6 +336,9 @@ onMounted(() => load());
       <span v-if="sinceText" class="tg-dot" aria-hidden="true">·</span>
       <span v-if="sinceText" class="tg-from" data-testid="tg-since">every push from {{ sinceText }}</span>
     </p>
+
+    <!-- Paused / held / failing: first thing under the title and the "where" line, so a phone sees it before the explanation. -->
+    <PageStatusBanner :status="pageStatus" :is-admin="isAdmin" />
 
     <!-- The one standing alarm: posting is stopped for the whole channel until an ADMIN presses Resume. -->
     <div v-if="stop" class="banner err tg-stop" role="alert" data-testid="tg-stop">

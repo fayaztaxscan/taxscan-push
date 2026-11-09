@@ -1825,7 +1825,7 @@ describe('13. the LinkedIn screen: one row per push under the new rule, per page
     for (const f of [() => ({ [PAGE]: null, [PAGE_AC]: null }), () => null, () => undefined, () => ({})]) {
       const body = (await get(app({ allPushesFrom: f }), PAGE)).body;
       expect('everyPushFrom' in body).toBe(false);
-      expect(Object.keys(body).sort()).toEqual(['counts', 'date', 'login', 'page', 'pages', 'rows', 'tokenShared']); // the answer is exactly what it was (the two pages share a token)
+      expect(Object.keys(body).sort()).toEqual(['counts', 'date', 'login', 'page', 'pageStatus', 'pages', 'rows', 'tokenShared']); // the answer is what it was (the two pages share a token) + `pageStatus` (brief 2026-11-09-social-page-alerts-pause)
     }
   });
   it('a page with no all-pushes time lists exactly what it did before: one row per article, no courses or products', async () => {
@@ -1909,7 +1909,7 @@ describe('13. the Facebook screen: one row per push under the new rule', () => {
     expect((await get(app({ allPushesFrom: () => ist(2, 0) }))).body.everyPushFrom).toBe(FROM.toISOString()); // never before the go-live
     const body = (await get(app({ allPushesFrom: () => null }))).body;
     expect('everyPushFrom' in body).toBe(false);
-    expect(Object.keys(body).sort()).toEqual(['counts', 'date', 'login', 'page', 'policy', 'rows']);
+    expect(Object.keys(body).sort()).toEqual(['counts', 'date', 'login', 'page', 'pageStatus', 'policy', 'rows']); // + `pageStatus` (brief 2026-11-09-social-page-alerts-pause)
   });
   it('without FACEBOOK_ALL_PUSHES_FROM the list is what it was: one row per article', async () => {
     const first = await article('a1', ist(7, 30));

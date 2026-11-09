@@ -10,6 +10,9 @@ import { PAGE_TAXSCAN, PORTAL_TO_PAGE, messageUrlOf, telegramActive, telegramCon
 import { checkTelegram } from '../services/telegram/client';
 import { COMPOSE_SKIP, UNKNOWN_ERROR, channelStop, resumeChannel, retryNow, skipPost, type WorkerDeps } from '../services/telegram/worker';
 import { isComposeSkipped, telegramSkipKey } from '../services/social/pages';
+import { addPauseRoutes } from './socialPause';
+import { getPageStatus } from '../services/social/pageStatus';
+import { PAGE_PAUSED } from '../services/social/pause';
 import type { FetchLike } from '../services/linkedin/post';
 
 /**
@@ -49,6 +52,8 @@ export function createTelegramRouter(o: TelegramRouterOptions = {}): Router {
   const configOf = () => (o.worker?.config === undefined ? telegramConfig(pageOf()) : o.worker.config);
 
   router.use((_req, res, next) => (enabled() ? next() : void res.status(404).json({ error: 'not_found' })));
+  // Pause / Resume the channel (ADMIN), brief 2026-11-09-social-page-alerts-pause: `page-pause` / `page-resume` (the stop `/resume` below is another thing).
+  addPauseRoutes(router, { channel: 'telegram', pages: () => [pageOf()], clock: nowOf });
 
   router.get('/posts', STAFF, async (req, res) => {
     try {
@@ -96,6 +101,8 @@ export function createTelegramRouter(o: TelegramRouterOptions = {}): Router {
           unknownOutcome: p?.status === 'FAILED' && p.error === UNKNOWN_ERROR,
           // `compose_skip`: the sender unticked this channel on Compose for this push. Present only on such a row.
           ...(composeSkipped || (p?.status === 'SKIPPED' && p.error === COMPOSE_SKIP) ? { skipReason: COMPOSE_SKIP } : {}),
+          // `page_paused`: an ADMIN paused the channel; the push was skipped with no call and is never posted later.
+          ...(!composeSkipped && p?.status === 'SKIPPED' && p.error === PAGE_PAUSED ? { skipReason: PAGE_PAUSED } : {}),
         };
       });
       const n = (s: ScreenStatus) => rows.filter((r) => r.status === s).length;
@@ -107,6 +114,8 @@ export function createTelegramRouter(o: TelegramRouterOptions = {}): Router {
         counts: { waiting: n('WAITING') + n('RETRYING'), posted: n('POSTED'), failed: n('FAILED'), skipped: n('SKIPPED'), notPosted: n('NOT_POSTED'), all: rows.length },
         /** Red banner: Telegram refused the channel (bot removed / not an admin / token revoked); posting is stopped until an ADMIN presses Resume. */
         stop: await channelStop(pageOf()),
+        /** brief 2026-11-09-social-page-alerts-pause: ok | paused | stopped | held | failing, with the banner's words (`message`). */
+        pageStatus: await getPageStatus('telegram', pageOf(), now),
         /** The channel posts EVERY push from this time (its go-live). */
         everyPushFrom: cfg?.postFrom.toISOString() ?? null,
         maxDaysBack: MAX_DAYS_BACK,

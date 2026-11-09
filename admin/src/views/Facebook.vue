@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
+import PagePauseControl from '../components/PagePauseControl.vue';
+import PageStatusBanner from '../components/PageStatusBanner.vue';
 import { useRoute } from 'vue-router';
 import { useAuth } from '../composables/useAuth';
 import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
+import { PAGE_PAUSED, PAGE_PAUSED_TEXT, type PageStatus } from '../composables/socialPages';
 
 type Status = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
 type Row = {
@@ -19,7 +22,7 @@ type Row = {
   postedAt: string | null;
   postUrl: string | null;
   unknownOutcome: boolean;
-  /** Present ONLY on a SKIPPED row whose sender unticked this page on Compose: the single value 'compose_skip'. Never shown as a code. */
+  /** Present ONLY on a SKIPPED row the system or a sender skipped: 'compose_skip' (unticked on Compose) or 'page_paused' (an administrator paused the page). Never shown as a code. */
   skipReason?: string;
 };
 type Counts = { waiting: number; posted: number; failed: number; skipped: number; notPosted: number; all: number };
@@ -35,6 +38,8 @@ type ListResponse = {
    * that time. Missing = the old rule: one post per article. Pushes before the time keep the old rule.
    */
   everyPushFrom?: string;
+  /** ok | paused | stopped | held | failing, with the banner's sentence in `message`. A server without it shows no banner. */
+  pageStatus?: PageStatus;
 };
 type CheckResult = { ok: true; name: string; message: string } | { ok: false; kind: string; status?: number | null; code?: number | null; message: string };
 type Filter = 'all' | 'waiting' | 'posted' | 'failed' | 'skipped';
@@ -61,6 +66,7 @@ const login = ref<ListResponse['login']>(null);
 const policy = ref<ListResponse['policy']>(null);
 // When the page started posting EVERY push (the server's `everyPushFrom`); null = it still posts one per article.
 const everyPushFrom = ref<string | null>(null);
+const pageStatus = ref<PageStatus | null>(null);
 const check = ref<CheckResult | null>(null);
 const checking = ref(false);
 const resuming = ref(false);
@@ -159,6 +165,7 @@ async function load(keepError = false): Promise<void> {
     login.value = data.login;
     policy.value = data.policy ?? null;
     everyPushFrom.value = data.everyPushFrom ?? null;
+    pageStatus.value = data.pageStatus ?? null;
   } catch (e) {
     error.value = apiErrorMessage(e);
   } finally {
@@ -293,8 +300,17 @@ const COMPOSE_SKIP = 'compose_skip';
 const COMPOSE_SKIP_TEXT = 'Skipped in Compose';
 function statusText(r: Row): string {
   if (r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP) return COMPOSE_SKIP_TEXT;
+  // An administrator paused the page: skipped with no post, never posted later. Counts under Skipped, no buttons.
+  if (r.status === 'SKIPPED' && r.skipReason === PAGE_PAUSED) return PAGE_PAUSED_TEXT;
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
   return STATUS_LABEL[r.status];
+}
+
+// After Pause / Resume (or a 409: a colleague pressed first) the list is read again, so the banner and every row show the truth.
+async function onPauseDone(outcome: 'paused' | 'resumed' | 'refreshed'): Promise<void> {
+  error.value = null;
+  note.value = outcome === 'resumed' ? 'Posting resumed. Posts start again from the next push; nothing that was skipped is posted.' : null;
+  await load(true);
 }
 
 onMounted(() => load());
@@ -309,8 +325,12 @@ onMounted(() => load());
           {{ checking ? 'Checking…' : 'Check connection' }}
         </button>
         <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+        <!-- Last: a rarely used action, so on a phone the two familiar buttons keep their row and this one wraps under them. -->
+        <PagePauseControl v-if="isAdmin" channel="facebook" :status="pageStatus" @done="onPauseDone" />
       </div>
     </div>
+    <!-- Paused / held / failing: first thing under the title, so a phone sees it before the explanation. -->
+    <PageStatusBanner :status="pageStatus" :is-admin="isAdmin" />
     <p class="muted" :class="{ 'fb-every': everyPushFrom }" style="font-size: 13px; margin: 4px 0 8px" data-testid="fb-intro">
       <!-- The page posts EVERY push from a set time (the server sent `everyPushFrom`): say so, and from when. -->
       <template v-if="everyPushFrom">
