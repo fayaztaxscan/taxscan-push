@@ -76,7 +76,7 @@ browsers after endpoint rotation, so it barely grows the base.
   (Push-now), **Dashboard**, **Campaigns** (sortable; captured vs pushed time; Source =
   Manual/Automatic — Push-now sets `createdByUserId`), **Reports**,
   **Activity** (audit), **Users** (RBAC + email invites), in-app **Guide** (one HTML copy; "Print / Save as PDF" makes a PDF on the spot — the stored PDF and `build:guide` were removed 2026-10-29).
-  Responsive phone→tablet→desktop (nav collapses to a hamburger below **1500 px** since the Telegram build, was 1430; interim until brief `2026-11-09-menu-sections` makes it phones-only). **Phones (≤720px,
+  Responsive phone→tablet→desktop (menu = sections on top + a tab row per section since 9 Nov, brief `2026-11-09-menu-sections`; hamburger on phones only, ≤720 px; a section reopens its last-used screen via localStorage `tsp.nav.last.*`). **Phones (≤720px,
   2026-10-07):** data tables carry `class="stack"` and render one card per row — `data-label` on each
   `<td>` names it, `cell-lead/-wide/-full/-late/-actions` place it (app.css); fields are 16px (no iOS
   zoom); Reports heat-table row labels are sticky; **Share image** (Web Share, touch devices only).
@@ -251,7 +251,7 @@ desktop first-page scroll trigger had logged ~79k ghost shows in 11 days). Detai
 article incl. manual sends, never test-segment-only; hashtags from the CMS public article API keywords/courts; UTMs
 `taxscan-linkedin / social / linkedin-taxscan`); old poster in taxscan-automation PAUSED. **SOCIAL menu** (WhatsApp,
 LinkedIn), **Channels marks on Campaigns**, opt-in **WhatsApp nudge** (`WHATSAPP_NUDGE_ENABLED` **ON since 2 Nov ~16:00 IST**; staff devices have
-`kinds`, existing = digest). Nav hamburger below 1430 px (was recorded as 1350; corrected 9 Nov). One shared rule `isPublicArticleCampaign()` (`src/services/social/`).
+`kinds`, existing = digest). Nav: sections + tab row; hamburger ≤720 px only (9 Nov). One shared rule `isPublicArticleCampaign()` (`src/services/social/`).
 **2 Nov, PR #94 LIVE (~14:10 IST):** the WhatsApp list was empty — **current taxscan.in article URLs no longer end in
 a numeric id** (`/<section>/<slug>`), so anything requiring `-<id>` drops them. `articleKey()` falls back to the URL
 (reports/digest fine); the WhatsApp queue now accepts both shapes (`utm_content` = id, else slug).
