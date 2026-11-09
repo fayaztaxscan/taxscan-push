@@ -104,7 +104,9 @@ function removePicture() {
 // The social pages this push can leave out (GET /api/social/pages). The server's list is drawn as it comes: no page name lives here, so a
 // page switched on later just appears. `socialOff` holds the UNTICKED keys (empty = every page ticked = no `socialSkip` sent), so a page that
 // joins the list starts ticked. It is not remembered: it starts empty on every visit and goes back to empty after each accepted send.
-type SocialPage = { key: string; label: string };
+// `paused: true` comes ONLY on a page an administrator paused (brief 2026-11-09-social-page-alerts-pause): it is drawn unticked and disabled,
+// and is never sent in `socialSkip` (the server skips it anyway), so it neither counts as "something unticked" nor blocks Send.
+type SocialPage = { key: string; label: string; paused?: boolean };
 const socialPages = ref<SocialPage[]>([]);
 const socialOff = ref<string[]>([]);
 
@@ -117,7 +119,9 @@ async function loadSocialPages(keepOnError = false) {
   try {
     const data = await api.get<{ pages?: SocialPage[] }>('/api/social/pages');
     const list = Array.isArray(data?.pages)
-      ? data.pages.filter((p) => p && typeof p.key === 'string' && typeof p.label === 'string')
+      ? data.pages
+          .filter((p) => p && typeof p.key === 'string' && typeof p.label === 'string')
+          .map((p) => ({ key: p.key, label: p.label, ...(p.paused === true ? { paused: true } : {}) }))
       : [];
     const known = new Set(list.map((p) => p.key));
     socialPages.value = list;
@@ -135,8 +139,9 @@ function setSocialTicked(key: string, ticked: boolean) {
   socialOff.value = ticked ? rest : [...rest, key];
 }
 
-/** The unticked pages, in the server's order: what goes in `socialSkip` and in the confirm's "Not posted to" line. Only pages on screen count. */
-const skippedPages = computed(() => socialPages.value.filter((p) => socialOff.value.includes(p.key)));
+/** The unticked pages, in the server's order: what goes in `socialSkip` and in the confirm's "Not posted to" line. Only pages on screen count; a paused page is not the sender's choice, so it is left out. */
+const skippedPages = computed(() => socialPages.value.filter((p) => !p.paused && socialOff.value.includes(p.key)));
+const anyPaused = computed(() => socialPages.value.some((p) => p.paused));
 const socialNote = computed(() =>
   skippedPages.value.length ? `Not posted to: ${skippedPages.value.map((p) => p.label).join(', ')}` : '',
 );
@@ -379,17 +384,20 @@ onMounted(() => {
       <div v-if="socialPages.length" class="form-row" role="group" aria-labelledby="social-post-to" data-testid="post-to">
         <label id="social-post-to">Post to</label>
         <div class="checkbox-row post-to">
-          <label v-for="p in socialPages" :key="p.key" :class="{ off: socialOff.includes(p.key) }">
+          <label v-for="p in socialPages" :key="p.key" :class="{ off: p.paused || socialOff.includes(p.key), paused: p.paused }">
             <input
               type="checkbox"
-              :checked="!socialOff.includes(p.key)"
+              :checked="!p.paused && !socialOff.includes(p.key)"
+              :disabled="p.paused"
               :data-key="p.key"
               @change="setSocialTicked(p.key, ($event.target as HTMLInputElement).checked)"
             />
-            {{ p.label }}
+            {{ p.label }}<span v-if="p.paused" class="post-to-paused" data-testid="post-to-paused"> (paused)</span>
           </label>
         </div>
-        <p class="muted pic-note post-to-note">Untick a page to leave it out for this push only.</p>
+        <p class="muted pic-note post-to-note">
+          Untick a page to leave it out for this push only.<template v-if="anyPaused"> A paused page is skipped until an administrator resumes it.</template>
+        </p>
       </div>
 
       <div class="form-row">
@@ -580,6 +588,15 @@ onMounted(() => {
   background: transparent;
   border-style: dashed;
   color: var(--muted);
+}
+.post-to label.paused {
+  cursor: not-allowed;
+}
+.post-to label.paused input {
+  cursor: not-allowed;
+}
+.post-to-paused {
+  font-weight: 400;
 }
 .post-to label:focus-within {
   outline: 2px solid var(--primary);

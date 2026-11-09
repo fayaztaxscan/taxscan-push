@@ -998,7 +998,7 @@ describe('9. GET /api/linkedin/posts?page=', () => {
     await camp('solo', at(NOW, -30));
     const solo = appWith({ portals: () => ({ [PORTAL]: PAGE }), postFrom: () => FROM });
     const r = await get(solo);
-    expect(Object.keys(r.body).sort()).toEqual(['counts', 'date', 'login', 'page', 'pages', 'rows']);
+    expect(Object.keys(r.body).sort()).toEqual(['counts', 'date', 'login', 'page', 'pageStatus', 'pages', 'rows']); // + `pageStatus` (brief 2026-11-09-social-page-alerts-pause): the banner's state, always present
     expect(r.body).toMatchObject({ page: PAGE, pages: [PAGE], login: null });
     expect(r.body.rows[0].status).toBe('WAITING');
   });
@@ -1040,6 +1040,9 @@ describe('9. GET /api/linkedin/posts?page=', () => {
     ] as never);
     const rows = jest.spyOn(prisma.linkedInPost, 'findMany').mockResolvedValue([]);
     const setting = jest.spyOn(prisma.digestSetting, 'findUnique').mockResolvedValue(null);
+    // The list's own reads of the page's rows. The page-status helper (brief 2026-11-09-social-page-alerts-pause) adds ONE more
+    // `linkedInPost.findMany` per answer (its last finished posts, `where.status` set): those are not the list's reads.
+    const listReads = () => rows.mock.calls.filter((c) => !('status' in (c[0] as { where: object }).where));
     try {
       const app = createApp({ rateLimit: { publicPerMin: 10000, loginPerMin: 10000 }, linkedin: { enabled: () => true, clock: () => NOW } });
       // Academy ACTIVE (in memory)
@@ -1049,11 +1052,11 @@ describe('9. GET /api/linkedin/posts?page=', () => {
       expect(ac.body).toMatchObject({ page: 'academy', pages: ['taxscan', 'academy'] });
       expect(ac.body.rows.map((r: { status: string }) => r.status)).toEqual(['WAITING']); // pushed after the (mocked) Academy go-live
       expect((campaigns.mock.calls[0][0] as { where: { portal: { in: string[] } } }).where.portal.in).toEqual(['taxscan']);
-      expect((rows.mock.calls[0][0] as { where: { page: string } }).where.page).toBe('academy');
+      expect((listReads()[0][0] as { where: { page: string } }).where.page).toBe('academy');
       expect((setting.mock.calls[0][0] as { where: { key: string } }).where.key).toBe('linkedin:auth:academy');
       const def = await get(app);
       expect(def.body).toMatchObject({ page: 'taxscan', pages: ['taxscan', 'academy'] });
-      expect((rows.mock.calls[1][0] as { where: { page: string } }).where.page).toBe('taxscan');
+      expect((listReads()[1][0] as { where: { page: string } }).where.page).toBe('taxscan');
       // Academy INACTIVE: the same request is refused before any read
       env.linkedin.sharedPages = {};
       campaigns.mockClear();

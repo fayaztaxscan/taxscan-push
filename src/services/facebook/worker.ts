@@ -19,6 +19,8 @@ import { buildFacebookPagePost, buildFacebookPost, buildFacebookStorePost, capti
 import { campaignPicture, socialImageUrl } from '../social/picture';
 import { COMPOSE_SKIP, facebookSkipKey } from '../social/pages';
 import { composeSkippedPushes, skipRows } from '../social/composeSkip';
+import { PAGE_PAUSED, getPause } from '../social/pause';
+import { alertIfNeeded } from '../social/pageAlerts';
 
 /**
  * The Facebook posting worker (brief 2026-11-03-facebook-page-posting, docs/FACEBOOK_POSTING.md). It mirrors the LinkedIn worker
@@ -31,6 +33,12 @@ import { composeSkippedPushes, skipRows } from '../social/composeSkip';
  *  - a bad token (190 / permission / 401 / 403) stops the page until the token changes or the app restarts;
  *  - rate limits retry slowly (+15, +60 min), transient errors quickly (+1, +5, +15); retries never fall in quiet hours.
  * The `FacebookPost` row is created BEFORE the call; its unique (page, articleKey) makes a re-push a no-op.
+ *
+ * PAUSED PAGE (brief 2026-11-09-social-page-alerts-pause). An ADMIN can pause the page from its screen (`social:pause:facebook:<page>`): while
+ * paused every push gets its row SKIPPED `page_paused` with NO API call (a manual immediate push included), rows waiting for a retry are
+ * skipped too, nothing is ever posted later, and resume posts from the next push. It is checked BEFORE the stops and the pacing, which
+ * therefore never hold a push back for later. After a failed attempt the page-status helper decides about the alert email (`failing`, once
+ * per IST day): see `services/social/pageAlerts.ts`.
  *
  * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts). Once FACEBOOK_ALL_PUSHES_FROM is set, the page posts, from that time on,
  * EVERY push: taxscan.in articles, academy.taxscan.in courses and shop.taxscan.in products, ONE POST PER PUSH, repeats included
@@ -190,8 +198,14 @@ async function handlePolicyStop(page: string, r: FacebookFailure, d: WorkerDeps,
 
 type Attempted = 'posted' | 'retry' | 'failed' | 'auth_stop' | 'policy_stop';
 
-/** ONE attempt for a row already claimed (PENDING, nextAttemptAt null, attempts counted). Writes the outcome. Never throws. */
+/** ONE attempt for a row already claimed (PENDING, nextAttemptAt null, attempts counted). Writes the outcome, then lets the page-status helper decide about the alert. Never throws. */
 async function attempt(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Attempted> {
+  const r = await attemptOnce(row, d, now);
+  if (r === 'failed') await alertIfNeeded('facebook', row.page, now, d);
+  return r;
+}
+
+async function attemptOnce(row: FacebookPost, d: WorkerDeps, now: Date): Promise<Attempted> {
   const page = row.page;
   const fail = (error: string) => prisma.facebookPost.update({ where: { id: row.id }, data: { status: 'FAILED', error, nextAttemptAt: null } });
   try {
@@ -367,29 +381,35 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
       }
     }
     const skippedIds = new Set(composeSkipped.map((c) => c.id));
-    if (await policyProblem(page)) {
+    // PAUSED (brief 2026-11-09-social-page-alerts-pause): read once per page per tick. A paused page makes no call: rows waiting for a retry are
+    // skipped, every push below gets a SKIPPED `page_paused` row, and neither a stop nor the pacing holds one back to be posted later.
+    const paused = (await getPause('facebook', page)) !== null;
+    if (paused) {
+      await prisma.facebookPost.updateMany({ where: { page, status: 'PENDING', nextAttemptAt: { not: null } }, data: { status: 'SKIPPED', nextAttemptAt: null, error: PAGE_PAUSED } });
+    }
+    if (!paused && (await policyProblem(page))) {
       out.policyStopped = true;
       continue;
     }
-    if (isAuthStopped(page)) {
+    if (!paused && isAuthStopped(page)) {
       out.authStopped = true;
       continue;
     }
     // Pacing: the gap since the last post, and the IST day's cap.
     const last = await prisma.facebookPost.findFirst({ where: { page, status: 'POSTED', postedAt: { not: null } }, orderBy: { postedAt: 'desc' }, select: { postedAt: true } });
-    if (last?.postedAt && now.getTime() - last.postedAt.getTime() < gapMs) {
+    if (!paused && last?.postedAt && now.getTime() - last.postedAt.getTime() < gapMs) {
       out.waited = 'gap';
       continue;
     }
     const day = istDayBounds(istDay(now));
     const today = await prisma.facebookPost.count({ where: { page, status: 'POSTED', postedAt: { gte: day.start, lt: day.end } } });
-    if (today >= cap) {
+    if (!paused && today >= cap) {
       out.waited = 'daily_cap';
       continue;
     }
 
     // 2. A retry that is due (never inside quiet hours: they were scheduled out of it, this guards a changed clock).
-    if (!isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
+    if (!paused && !isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
       const due = await prisma.facebookPost.findMany({ where: { page, status: 'PENDING', nextAttemptAt: { lte: now } }, orderBy: { nextAttemptAt: 'asc' }, take: 3 });
       for (const r of due) {
         const claimed = await prisma.facebookPost.updateMany({ where: { id: r.id, status: 'PENDING', nextAttemptAt: { lte: now } }, data: { nextAttemptAt: null, attempts: { increment: 1 } } });
@@ -458,6 +478,16 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
     // Oldest first across both rules: the read orders the pushes by send time (then id) and each rule inserts as it goes.
     for (const [key, campaignId] of firstOf) {
       if (have.has(key)) continue;
+      if (paused) {
+        // Paused: NO call, a SKIPPED row, never posted later (every push, a manual immediate one included).
+        try {
+          await prisma.facebookPost.create({ data: { page, articleKey: key, campaignId, status: 'SKIPPED', attempts: 0, error: PAGE_PAUSED } });
+        } catch (err) {
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue; // an overlapping tick created it first
+          throw err;
+        }
+        continue;
+      }
       let row: FacebookPost;
       try {
         row = await prisma.facebookPost.create({ data: { page, articleKey: key, campaignId, status: 'PENDING', attempts: 1 } });

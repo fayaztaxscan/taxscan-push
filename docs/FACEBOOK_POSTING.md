@@ -142,6 +142,39 @@ Set `FACEBOOK_ALL_PUSHES_FROM` to **the current time** (UTC ISO) in Railway and 
 nothing in the past is posted. Look for `[facebook] all pushes on for FACEBOOK_ALL_PUSHES_FROM (from …)` in the boot log, then for
 `outcome=posted hashtags=fixed kind=course|product` after the next course or product push.
 
+## When a page stops: status, alerts and Pause (brief 2026-11-09-social-page-alerts-pause)
+
+One definition, `src/services/social/pageStatus.ts` (`getPageStatus` / `listPageStatuses`), read by the workers, the screens and the alert emails:
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | nothing to say |
+| `paused` | an ADMIN paused the page (below) |
+| `stopped` | the existing Facebook token stop (code 190 / permission / 401 / 403) and the policy stop (code 368 or a spam / blocked answer: only an ADMIN's Resume restarts it) (its own banner, alert and Resume, unchanged) |
+| `held` | not used on Facebook (it is LinkedIn's daily limit only) |
+| `failing` | the page's last **2** finished posts are FAILED with no POSTED after them (an "already posted" duplicate is neither a failure nor a recovery; SKIPPED and in-flight rows are not finished posts) |
+
+When several are true the one that explains why nothing posts wins: paused, then stopped, then held, then failing. Each status carries a fixed
+reason code, a since-time, a resumes-at time when known and `message`, the banner's sentence in words (also used by the email). A failure is
+reduced to a short reason code (`HTTP 422`, `telegram_400`, `network error`): the provider's own words are never shown or mailed.
+
+**Alert email** (ElasticEmail, the active ADMINs, only when email is configured): when a page enters `held` or `failing`, ONE email per page
+per kind per IST day with the page, the reason in words, since when, when it resumes (if known) and what to do. Remembered in `DigestSetting`
+(`social:alert:<channel>:<page>:<kind>` = `{ day }`); a page that recovers (a POSTED row) stops being `failing`. It is sent right after the attempt
+that failed or set the hold (`alertIfNeeded` in `pageAlerts.ts`), never from a timer. The existing stop alerts are NOT repeated from here, and a
+paused page is not alerted (nobody is posting on purpose). No alert for `quota_headroom`, `compose_skip` or WhatsApp.
+
+**Pause / Resume (ADMIN only, no Railway change).** `POST /api/facebook/page-pause` `{ page?, note? }` and `POST /api/facebook/page-resume`
+`{ page? }` (the screen's button; 403 for a PUBLISHER; 409 `already_paused` / `not_paused`; `note` is optional free text up to 200 characters).
+Stored in `DigestSetting` `social:pause:facebook:<page>` (who, when, note); audited as `SOCIAL_PAGE_PAUSED` / `SOCIAL_PAGE_RESUMED`. While paused
+the worker makes **no API call**: every push for that page gets its row SKIPPED with the reason `page_paused` (a manual immediate push included),
+rows already waiting for a retry are skipped too, and **nothing is ever posted later** (a late post of an old push is worse than none: the same
+rule as `compose_skip` / `quota_headroom`). It is checked before the stops, the pacing and the quota guard, so none of them can hold a push back to
+be posted after the pause. Resume posts from the next push; nothing missed is backfilled. It survives restarts and never touches the env go-live
+times. The screen shows the banner and the button; Compose's "Post to" shows a paused page unticked and disabled with "(paused)" (a send with or
+without its key is accepted and posts nothing there); the Campaigns Channels mark reads "skipped — page paused". `DigestSetting` is in the R2
+backup, so a restore brings a pause back with it.
+
 ## Backups and restores
 `FacebookPost` is **not** in the R2 export. After a restore keep `FACEBOOK_POSTING_ENABLED` **off** and set `FACEBOOK_POST_FROM` to the restore time
 before switching it back on: with the rows gone and no age limit, everything pushed since go-live would otherwise post a second time. **Set

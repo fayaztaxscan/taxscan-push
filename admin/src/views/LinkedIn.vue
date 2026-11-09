@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
+import PagePauseControl from '../components/PagePauseControl.vue';
+import PageStatusBanner from '../components/PageStatusBanner.vue';
 import { useRoute } from 'vue-router';
+import { useAuth } from '../composables/useAuth';
 import { apiErrorMessage, PUSH_REQUEST, useApi, type ApiError } from '../composables/useApi';
+import { PAGE_PAUSED, PAGE_PAUSED_TEXT, type PageStatus } from '../composables/socialPages';
 
 type Status = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
 type Row = {
@@ -20,8 +24,9 @@ type Row = {
   unknownOutcome: boolean;
   /**
    * Present ONLY on a SKIPPED row the system skipped, never a person: 'quota_headroom' (the daily quota guard held it),
-   * 'org_daily_limit' (LinkedIn refused this page's posts for the day: "Organization post creation limit reached") or
-   * 'compose_skip' (the sender unticked this page on Compose for this push). Never shown as a code.
+   * 'org_daily_limit' (LinkedIn refused this page's posts for the day: "Organization post creation limit reached"),
+   * 'compose_skip' (the sender unticked this page on Compose for this push) or 'page_paused' (an administrator paused this page).
+   * Never shown as a code.
    */
   skipReason?: string;
 };
@@ -42,6 +47,8 @@ type ListResponse = {
    * that time. Missing = the old rule: one post per article. Pushes before the time keep the old rule.
    */
   everyPushFrom?: string;
+  /** ok | paused | stopped | held | failing for the page shown, with the banner's sentence in `message`. A server without it shows no banner. */
+  pageStatus?: PageStatus;
 };
 type TokenInfo = {
   validUntil: string | null;
@@ -55,6 +62,8 @@ type TokenInfo = {
 type Filter = 'all' | 'waiting' | 'posted' | 'failed' | 'skipped';
 
 const api = useApi();
+const { user: meUser } = useAuth();
+const isAdmin = computed(() => meUser.value?.role === 'ADMIN');
 
 // Dates are IST days (the server's day boundary). Today in IST = UTC + 5:30.
 const IST_MS = 5.5 * 3600 * 1000;
@@ -73,6 +82,8 @@ const rows = ref<Row[]>([]);
 const counts = ref<Counts>({ ...EMPTY_COUNTS });
 const login = ref<ListResponse['login']>(null);
 const token = ref<TokenInfo | null>(null);
+// The shown page's status (paused / held / failing draw a banner; the Pause button flips on it). Belongs to ONE page, like the rows.
+const pageStatus = ref<PageStatus | null>(null);
 // Which LinkedIn page is on screen. null = not chosen yet: the first request leaves `page` out and adopts the server's
 // answer (its first page, Taxscan). `pages` = the ACTIVE pages (Taxscan, then Academy, then Shopscan); the switch shows only when there are two or more.
 const page = ref<string | null>(null);
@@ -240,6 +251,7 @@ async function load(keepError = false): Promise<void> {
     page.value = data.page ?? data.pages?.[0] ?? null;
     tokenShared.value = data.tokenShared === true;
     everyPushFrom.value = data.everyPushFrom ?? null;
+    pageStatus.value = data.pageStatus ?? null;
   } catch (e) {
     if (mine === loadSeq) error.value = apiErrorMessage(e);
   } finally {
@@ -256,6 +268,7 @@ function selectPage(p: string): void {
   rows.value = [];
   counts.value = { ...EMPTY_COUNTS };
   login.value = null;
+  pageStatus.value = null;
   everyPushFrom.value = null;
   error.value = null;
   note.value = null;
@@ -354,11 +367,20 @@ const ORG_DAILY_LIMIT_TEXT = "Skipped — LinkedIn's daily limit for this page";
 const COMPOSE_SKIP = 'compose_skip';
 const COMPOSE_SKIP_TEXT = 'Skipped in Compose';
 function statusText(r: Row): string {
+  // An administrator paused this page: the push was skipped with no post, and is never posted later. Counts under Skipped, no buttons.
+  if (r.status === 'SKIPPED' && r.skipReason === PAGE_PAUSED) return PAGE_PAUSED_TEXT;
   if (r.status === 'SKIPPED' && r.skipReason === QUOTA_HELD) return QUOTA_HELD_TEXT;
   if (r.status === 'SKIPPED' && r.skipReason === ORG_DAILY_LIMIT) return ORG_DAILY_LIMIT_TEXT;
   if (r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP) return COMPOSE_SKIP_TEXT;
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
   return STATUS_LABEL[r.status];
+}
+
+// After Pause / Resume (or a 409: a colleague pressed first) the list is read again, so the banner and every row show the truth.
+async function onPauseDone(outcome: 'paused' | 'resumed' | 'refreshed'): Promise<void> {
+  error.value = null;
+  note.value = outcome === 'resumed' ? 'Posting resumed. Posts start again from the next push; nothing that was skipped is posted.' : null;
+  await load(true);
 }
 
 onMounted(() => load());
@@ -368,21 +390,31 @@ onMounted(() => load());
   <main class="page page-wide">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">LinkedIn page</h1>
-      <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+      <div class="li-tools">
+        <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+        <!-- One page: Pause sits with Refresh. With a page switch it moves onto the switch's row, so it reads as belonging to the page chosen. -->
+        <PagePauseControl v-if="isAdmin && !multi" channel="linkedin" :page="page" :status="pageStatus" @done="onPauseDone" />
+      </div>
     </div>
     <!-- Which page's list this is. Only while a second page (Academy, Shopscan) is on; it sits above everything it changes. -->
-    <div v-if="multi" class="li-switch" role="group" aria-label="LinkedIn page" data-testid="li-switch">
-      <button
-        v-for="p in pages"
-        :key="p"
-        type="button"
-        :class="{ on: p === page }"
-        :aria-pressed="p === page"
-        @click="selectPage(p)"
-      >
-        {{ labelOf(p) }}
-      </button>
+    <div v-if="multi" class="li-scope">
+      <div class="li-switch" role="group" aria-label="LinkedIn page" data-testid="li-switch">
+        <button
+          v-for="p in pages"
+          :key="p"
+          type="button"
+          :class="{ on: p === page }"
+          :aria-pressed="p === page"
+          @click="selectPage(p)"
+        >
+          {{ labelOf(p) }}
+        </button>
+      </div>
+      <PagePauseControl v-if="isAdmin" channel="linkedin" :page="page" :status="pageStatus" @done="onPauseDone" />
     </div>
+
+    <!-- Paused / held / failing, for the page shown: first thing under the page switch, so a phone sees it before the explanation. -->
+    <PageStatusBanner :status="pageStatus" :is-admin="isAdmin" />
 
     <p class="muted" :class="{ 'li-every': everyPushFrom }" style="font-size: 13px; margin: 4px 0 12px" data-testid="li-intro">
       <!-- This page posts EVERY push from a set time (the server sent `everyPushFrom`): say so, and from when. -->
@@ -502,12 +534,25 @@ onMounted(() => load());
 /* The page switch: a scope control (which page's list is this), so it is ONE joined box, unlike the loose day buttons and the
    status pills below it. Same tokens as the joined .seg control on Reports and Digests. No overflow:hidden (it would clip the
    keyboard focus ring), so the outer corners are rounded on the buttons themselves. */
+.li-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* The page switch and the Pause button for the page it shows: one row, the switch left, the action right. */
+.li-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0 0 8px;
+}
 .li-switch {
   display: inline-flex;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-  margin: 0 0 8px;
 }
 .li-switch button {
   min-width: 104px;
@@ -658,6 +703,16 @@ tr.li-quiet td {
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
     width: 100%;
+  }
+  /* The Pause button sits under the switch, at the right, button-sized: a rare action, not a full-width bar a thumb lands on. */
+  .li-scope {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  /* (the button belongs to PagePauseControl, so it is reached with :deep) */
+  .li-scope :deep(.btn) {
+    align-self: flex-end;
   }
   .li-switch button {
     min-width: 0;

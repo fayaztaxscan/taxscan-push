@@ -4,6 +4,7 @@ import { useApi } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import type { ApiError } from '../composables/useApi';
 import CampaignDetail from '../components/CampaignDetail.vue';
+import { socialPageName, type SocialChannel } from '../composables/socialPages';
 
 type AuditUser = { id: string; email: string; role: 'ADMIN' | 'PUBLISHER' };
 
@@ -68,6 +69,8 @@ const ACTIONS = [
   'CMS_VIEWS_BACKFILL_STARTED',
   'FACEBOOK_POSTING_RESUMED',
   'TELEGRAM_POSTING_RESUMED',
+  'SOCIAL_PAGE_PAUSED',
+  'SOCIAL_PAGE_RESUMED',
 ] as const;
 
 const api = useApi();
@@ -182,6 +185,16 @@ function summarize(item: AuditItem): string {
       return `${item.user ? item.user.email : 'An administrator'} resumed Facebook posting after a policy stop`;
     case 'TELEGRAM_POSTING_RESUMED':
       return `${item.user ? item.user.email : 'An administrator'} resumed Telegram posting after the channel was refused`;
+    case 'SOCIAL_PAGE_PAUSED':
+    case 'SOCIAL_PAGE_RESUMED': {
+      // metadata: { channel, page, note? }. Read defensively: an entry from a later build may carry less.
+      // The Who column already names the person, so the sentence starts with the action.
+      const channel = ['linkedin', 'facebook', 'telegram'].includes(String(m.channel)) ? (m.channel as SocialChannel) : null;
+      const where = channel && typeof m.page === 'string' && m.page ? socialPageName(channel, m.page) : 'a social page';
+      if (item.action === 'SOCIAL_PAGE_RESUMED') return `Resumed posting to ${where}`;
+      const why = typeof m.note === 'string' && m.note ? ` — “${m.note}”` : '';
+      return `Paused posting to ${where}${why}`;
+    }
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;
     case 'DIGEST_TEMPLATE_SAVED': {
@@ -411,6 +424,10 @@ onMounted(async () => {
                 >
                   campaign · {{ it.resourceId.slice(0, 10) }}…
                 </button>
+              </template>
+              <template v-else-if="it.resourceType === 'social_page' && it.resourceId">
+                <!-- "linkedin:shopscan": short, and cut at 10 characters it would read "linkedin:s…". -->
+                {{ it.resourceType }} · {{ it.resourceId }}
               </template>
               <template v-else-if="it.resourceType && it.resourceId">
                 {{ it.resourceType }} · {{ it.resourceId.slice(0, 10) }}…
