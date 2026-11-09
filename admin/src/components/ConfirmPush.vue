@@ -8,7 +8,8 @@ import { nextTick, onMounted, ref } from 'vue';
  * Cancel holds focus, so Enter or a reflexive second tap doesn't send.
  *
  * Compose reuses it for "Send now" with its own wording (audience, no queue);
- * the defaults are the Queue / Review "Push now" text.
+ * the defaults are the Queue / Review "Push now" text. `note` is an optional
+ * extra line under the detail (Compose: "Not posted to: …"); empty = nothing shown.
  */
 withDefaults(
   defineProps<{
@@ -16,12 +17,14 @@ withDefaults(
     busy?: boolean;
     heading?: string;
     detail?: string;
+    note?: string;
     confirmLabel?: string;
     cancelLabel?: string;
     busyLabel?: string;
   }>(),
   {
     busy: false,
+    note: '',
     heading: 'Send to everyone now?',
     detail:
       "It goes to all subscribers straight away, skipping the queue. A sent notification can't be recalled.",
@@ -42,10 +45,11 @@ onMounted(async () => {
 <template>
   <Teleport to="body">
     <div class="modal-overlay" @click.self="emit('cancel')" @keydown.esc="emit('cancel')">
-      <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-push-title" aria-describedby="confirm-push-desc">
+      <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-push-title" :aria-describedby="note ? 'confirm-push-desc confirm-push-note' : 'confirm-push-desc'">
         <h2 id="confirm-push-title">{{ heading }}</h2>
         <p class="confirm-push-article">{{ title }}</p>
         <p id="confirm-push-desc" class="muted">{{ detail }}</p>
+        <p v-if="note" id="confirm-push-note" class="confirm-push-note">{{ note }}</p>
         <div class="modal-actions">
           <button ref="cancelBtn" type="button" class="btn" @click="emit('cancel')">{{ cancelLabel }}</button>
           <button type="button" class="btn btn-primary" :disabled="busy" @click="emit('confirm')">
@@ -62,5 +66,14 @@ onMounted(async () => {
   margin: 0 0 8px;
   font-weight: 600;
   line-height: 1.4;
+}
+/* Full-strength, semibold text under the muted 12px detail: it changes what this send does, so it must not read as small print,
+   but it stays smaller than the article headline above it. */
+.confirm-push-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 </style>

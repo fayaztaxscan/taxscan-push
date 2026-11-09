@@ -5,6 +5,7 @@ import { buildPostText } from './postText';
 import { buildPushPostText, pushKindOf } from './pushText';
 import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { isAllPushesCampaign, PUSH_KEY_PREFIX, pushKey } from '../social/allPushes';
+import { COMPOSE_SKIP, WHATSAPP_SKIP_KEY, isComposeSkipped } from '../social/pages';
 
 /**
  * EVERY PUSH GETS A ROW (brief 2026-11-05-whatsapp-every-push). Once WHATSAPP_ALL_PUSHES_FROM is set, a push at or after that time is
@@ -54,6 +55,12 @@ export type QueueRow = {
   kind?: 'article' | 'course' | 'product' | 'page';
   /** Only on a row of the all-pushes rule: this row is ONE push (its `articleKey` is `push:<id>:<ms>`), never grouped with a repeat. */
   rule?: 'push';
+  /**
+   * Only on a push whose sender unticked WhatsApp on Compose (brief 2026-11-09-compose-skip-pages): `compose_skip`. Such a row is SKIPPED,
+   * never To do, has no actor, and cannot be marked Posted / Skipped / undone: the sender chose it. WhatsApp has no worker and no reason
+   * column, so the status is read from the campaign itself.
+   */
+  skipReason?: typeof COMPOSE_SKIP;
 };
 
 export type QueueResult = {
@@ -98,14 +105,21 @@ export async function getQueue(portal: string, day: string, opts: QueueOpts = {}
   const since = new Date(start.getTime() - MAX_DAYS_BACK * DAY_MS);
   const sent = await prisma.campaign.findMany({
     where: { portal, status: 'SENT', lastSentAt: { gte: since }, url: { startsWith: 'http' } },
-    select: { id: true, title: true, body: true, url: true, target: true, authority: true, categories: true, lastSentAt: true },
+    select: { id: true, title: true, body: true, url: true, target: true, authority: true, categories: true, lastSentAt: true, socialSkip: true },
     orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
   });
   type C = (typeof sent)[number];
   const byKey = new Map<string, { first: C; later: C | null; ids: string[] }>();
   const pushes: C[] = []; // the all-pushes rule: this day's pushes at or after the time, one row each
+  // Pushes whose sender unticked WhatsApp on Compose: each is its OWN skipped row on the day of that push, never grouped with an article
+  // (a later push of the same URL from another door lists normally) and never To do.
+  const composeSkipped: C[] = [];
   for (const c of sent) {
     if (!c.lastSentAt) continue;
+    if (isComposeSkipped(c, WHATSAPP_SKIP_KEY)) {
+      if (c.lastSentAt >= start && c.lastSentAt < end && (from && c.lastSentAt >= from ? isAllPushesCampaign(c) : isPublicArticleCampaign(c))) composeSkipped.push(c);
+      continue;
+    }
     if (from && c.lastSentAt >= from) {
       // THE NEW RULE. Who sent it never matters; a repeat is its own push. Only this day's pushes list here.
       if (c.lastSentAt >= start && c.lastSentAt < end && isAllPushesCampaign(c)) pushes.push(c);
@@ -185,8 +199,31 @@ export async function getQueue(portal: string, day: string, opts: QueueOpts = {}
       rule: 'push',
     });
   }
+  for (const c of composeSkipped) {
+    const kind = pushKindOf(c.url);
+    const text = buildPushPostText(c); // an article's own post, or a course / product / page push's
+    if (!text) continue; // an off-allowlist link never gets a row
+    rows.push({
+      campaignId: c.id,
+      articleKey: pushKey({ id: c.id, lastSentAt: c.lastSentAt! }),
+      pushedAt: c.lastSentAt!.toISOString(),
+      pushedTime: istTime(c.lastSentAt!),
+      pushedAgainAt: null,
+      pushedAgainTime: null,
+      headline: c.title,
+      authority: c.authority ?? null,
+      category: c.categories[0] ?? null,
+      status: 'SKIPPED',
+      actedBy: null,
+      actedAt: null,
+      text,
+      ...(kind ? { kind } : {}),
+      rule: 'push',
+      skipReason: COMPOSE_SKIP,
+    });
+  }
   // One list, in the order things were pushed. Only sorted when there are new-rule rows: with the switch off the order is exactly today's.
-  if (pushes.length > 0) rows.sort((a, b) => (a.pushedAt === b.pushedAt ? (a.campaignId < b.campaignId ? -1 : 1) : a.pushedAt < b.pushedAt ? -1 : 1));
+  if (pushes.length > 0 || composeSkipped.length > 0) rows.sort((a, b) => (a.pushedAt === b.pushedAt ? (a.campaignId < b.campaignId ? -1 : 1) : a.pushedAt < b.pushedAt ? -1 : 1));
   const n = (s: QueueStatus) => rows.filter((r) => r.status === s).length;
   return { date: day, rows, counts: { todo: n('TODO'), posted: n('POSTED'), skipped: n('SKIPPED'), all: rows.length } };
 }
@@ -196,7 +233,7 @@ function latestMark<T extends { actedAt: Date }>(list: T[]): T | undefined {
   return list.reduce<T | undefined>((best, m) => (!best || m.actedAt > best.actedAt ? m : best), undefined);
 }
 
-export type MarkResult = { ok: true; status: QueueStatus } | { ok: false; reason: 'not_found' };
+export type MarkResult = { ok: true; status: QueueStatus } | { ok: false; reason: 'not_found' | 'compose_skip' };
 
 /**
  * Marks ONE row Posted / Skipped, or undoes it (TODO deletes the mark).
@@ -216,9 +253,11 @@ export async function markArticle(
   const from = fromOf(o);
   const c = await prisma.campaign.findFirst({
     where: { id: campaignId, portal, status: 'SENT' },
-    select: { id: true, url: true, title: true, body: true, target: true, lastSentAt: true },
+    select: { id: true, url: true, title: true, body: true, target: true, lastSentAt: true, socialSkip: true },
   });
   if (!c) return { ok: false, reason: 'not_found' };
+  // The sender unticked WhatsApp on Compose for this push (brief 2026-11-09-compose-skip-pages): it is not the queue's to mark or undo.
+  if (isComposeSkipped(c, WHATSAPP_SKIP_KEY)) return { ok: false, reason: 'compose_skip' };
   let key: string;
   if (from && c.lastSentAt && c.lastSentAt >= from) {
     if (!isAllPushesCampaign(c)) return { ok: false, reason: 'not_found' };

@@ -304,7 +304,12 @@ describe('1b. no age limit: an article that has no row posts however long ago it
     try {
       await runFacebookTick(deps());
       expect(calls).toHaveLength(1); // it still posted
-      const args = spy.mock.calls.map((c) => c[0] as { select?: Record<string, boolean> } | undefined);
+      const all = spy.mock.calls.map((c) => c[0] as { select?: Record<string, boolean>; where?: { socialSkip?: unknown } } | undefined);
+      // the Compose-skip read (brief 2026-11-09-compose-skip-pages, a `socialSkip` filter) is its own, tiny read: id, url, target and the push time
+      const skipReads = all.filter((a) => a?.where?.socialSkip);
+      expect(skipReads).toHaveLength(1);
+      expect(Object.keys(skipReads[0]!.select!).sort()).toEqual(['id', 'lastSentAt', 'target', 'url']);
+      const args = all.filter((a) => !a?.where?.socialSkip);
       expect(args.length).toBeGreaterThanOrEqual(2); // the list since go-live, and the look-back before it
       for (const a of args) expect(a?.select).toBeDefined();
       expect(Object.keys(args[0]!.select!).sort()).toEqual(['id', 'target', 'url']);

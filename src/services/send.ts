@@ -117,6 +117,12 @@ export type CampaignInput = {
   clientRequestId?: string | null;
   /** The Compose picture for the LinkedIn + Facebook posts (SocialImage.id; brief 2026-11-08-social-picture). */
   socialImageId?: string | null;
+  /**
+   * The social pages the sender unticked on Compose for this push (`activeSocialPages()` keys; brief 2026-11-09-compose-skip-pages).
+   * Stored as sent; the social workers and the WhatsApp queue honour it. Only /api/send sets it: the poller, the pacer, Push now,
+   * Breaking and the morning backfill never do, so they post everywhere.
+   */
+  socialSkip?: string[];
 };
 
 export type Sender = (sub: Subscriber, payload: PushPayload) => Promise<SendOutcome>;
@@ -375,6 +381,7 @@ export async function dispatchCampaign(
       categories: input.categories ?? [],
       clientRequestId: input.clientRequestId ?? null,
       socialImageId: input.socialImageId ?? null,
+      socialSkip: input.socialSkip ?? [],
     },
   });
 
@@ -415,6 +422,8 @@ export async function dispatchCampaign(
         portal: campaign.portal,
         target: input.target,
         force: input.force ?? false,
+        // the pages the sender unticked (keys only), present only when something was unticked
+        ...(input.socialSkip?.length ? { socialSkip: input.socialSkip } : {}),
         sent: result.sent,
         capped: result.capped,
         cooled: result.cooled,

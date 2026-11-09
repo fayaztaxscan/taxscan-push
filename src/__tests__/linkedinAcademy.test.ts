@@ -220,7 +220,10 @@ describe('1. the Academy page is off unless BOTH variables are valid, and then n
       expect(t).toEqual({ posted: 0, retried: 0, failed: 0, staleClosed: 0, authStopped: false, refused: null });
       expect((stale.mock.calls[0][0] as { where: { page: { in: string[] } } }).where.page.in).toEqual(['taxscan']);
       expect(rows.mock.calls.map((c) => (c[0] as { where: { page: string } }).where.page)).toEqual(['taxscan']); // the due-retries read
-      expect(camps.mock.calls.map((c) => (c[0] as { where: { portal: { in: string[] }; lastSentAt: { gte: Date } } }).where)).toEqual([{ portal: { in: ['taxscan'] }, status: 'SENT', lastSentAt: { gte: FROM } }]);
+      // the list since go-live is the one read of today; the Compose-skip read (brief 2026-11-09-compose-skip-pages, a `socialSkip` filter) is the other
+      const wheres = camps.mock.calls.map((c) => (c[0] as { where: { portal: { in: string[] }; lastSentAt: { gte: Date }; socialSkip?: unknown } }).where);
+      expect(wheres.filter((w) => !w.socialSkip)).toEqual([{ portal: { in: ['taxscan'] }, status: 'SENT', lastSentAt: { gte: FROM } }]);
+      expect(wheres.filter((w) => w.socialSkip)).toEqual([{ portal: { in: ['taxscan'] }, status: 'SENT', lastSentAt: { gte: FROM }, socialSkip: { has: 'linkedin:taxscan' } }]);
       expect(JSON.stringify([stale.mock.calls, rows.mock.calls, camps.mock.calls, logs])).not.toContain('academy');
     } finally {
       stale.mockRestore();
@@ -239,7 +242,10 @@ describe('1. the Academy page is off unless BOTH variables are valid, and then n
       await runLinkedInTick({ now: () => NOW, post, fetchCms: async () => null, quiet: { start: '23:00', end: '07:00' } });
       expect((stale.mock.calls[0][0] as { where: { page: { in: string[] } } }).where.page.in).toEqual(['taxscan', 'academy']);
       expect(rows.mock.calls.map((c) => (c[0] as { where: { page: string } }).where.page)).toEqual(['taxscan', 'academy']);
-      expect(camps.mock.calls.map((c) => (c[0] as { where: { lastSentAt: { gte: Date } } }).where.lastSentAt.gte)).toEqual([FROM, FROM_AC]);
+      const wheres = camps.mock.calls.map((c) => (c[0] as { where: { lastSentAt: { gte: Date }; socialSkip?: { has: string } } }).where);
+      expect(wheres.filter((w) => !w.socialSkip).map((w) => w.lastSentAt.gte)).toEqual([FROM, FROM_AC]);
+      // the Compose-skip read (brief 2026-11-09-compose-skip-pages) asks each page about ITS OWN key, with its own go-live
+      expect(wheres.filter((w) => w.socialSkip).map((w) => [w.socialSkip!.has, w.lastSentAt.gte])).toEqual([['linkedin:taxscan', FROM], ['linkedin:academy', FROM_AC]]);
     } finally {
       stale.mockRestore();
       rows.mockRestore();

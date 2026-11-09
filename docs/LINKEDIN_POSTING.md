@@ -251,6 +251,26 @@ retried attempt uploads the picture again. A posted image post logs `image=pictu
 byte-for-byte today's. A backfill clone or a re-send of the campaign uses the same picture. After a restore the picture may be gone
 (`SocialImage` is not in the backup): the post is then today's link post.
 
+## Compose: untick a page for one push (brief 2026-11-09-compose-skip-pages)
+Compose shows a **Post to** list, built from `GET /api/social/pages` (the pages that are ACTIVE now: every LinkedIn page, the Facebook page(s),
+the WhatsApp channel; nothing is hard-coded in the SPA). Every page starts ticked. **Unticking a page means that page gets nothing for THIS one
+push**; every other door (the pacer, Push now on the Queue or Review, the morning backfill) keeps posting everywhere exactly as before, which is
+the standing rule "every page posts every push" narrowed only by the sender's own untick.
+- **Storage.** `Campaign.socialSkip String[] @default([])` holds the unticked keys (`linkedin:academy`, `linkedin:shopscan`, `facebook:taxscan`,
+  `whatsapp`, ...), stored as sent and never edited. `POST /api/send` (immediate AND scheduled) accepts `socialSkip`; a key that is not an
+  active page at send time is `400 unknown_social_page` and nothing is created or sent. An empty or missing list is today's behaviour.
+  **No flag**: an untouched Compose behaves as before. The pacer, Push now, the backfill clone (`cloneForResend`) and a bearer send leave it empty.
+- **The worker honours it** (`src/services/social/composeSkip.ts`). A push that names this page's key gets ONE `LinkedInPost` row, status
+  SKIPPED, error **`compose_skip`**, attempts 0, no API call, no budget spent, not gated by a login stop or by the daily quota guard (the compose
+  skip comes first). **The row's key is always the push's own, `push:<campaign id>:<send time ms>`**, and the push is taken out of the page's
+  candidates altogether. Under today's rule (one post per article) this matters: if the skip row took the article's key, or the skipped push stayed
+  the article's "oldest push", a later push of the same URL from another door would find the article handled and never post. This way it
+  posts normally. Only a push that would have posted there gets a row (under the all-pushes rule any qualifying push; before it, a public
+  article), so a link that is not allowed or a site page without `SOCIAL_ANY_LINK_FROM` gets none.
+- **The screen** shows it as SKIPPED with `skipReason: "compose_skip"` ("Skipped in Compose") whether or not the worker has written its row yet,
+  with no Retry or Skip; the Campaigns **Channels** mark reads SKIPPED the same way. The send's audit entry (`CAMPAIGN_DISPATCHED`) records the
+  skipped keys (keys only). A scheduled send writes no audit entry today; its stored `socialSkip` is the record.
+
 ## Pages
 `LinkedInPost.page` is a plain string: a page is its env variables plus a place in the portal → pages map (`portalPages()` in
 `src/services/linkedin/pages.ts`). No schema change, no migration. One portal can post to several pages.
@@ -310,7 +330,8 @@ byte-for-byte today's. A backfill clone or a re-send of the campaign uses the sa
 switch only when there is more than one), `rows`, `counts`, `login` (that page's own banner state, or null) and, while renewal is on,
 `token` (dates and a status, never a token). `tokenShared: true` appears only while two or more pages post with one token (then `token`
 is that one token's status on every page). A row the daily quota guard held has status `SKIPPED` and `skipReason: "quota_headroom"`
-(present only then). Rows, counts and the banner follow `page`. Retry and Skip are by row id
+(present only then); a push the sender unticked on Compose has status `SKIPPED` and `skipReason: "compose_skip"` (see "Compose: untick a
+page for one push"). Rows, counts and the banner follow `page`. Retry and Skip are by row id
 (`POST /api/linkedin/posts/:id/retry|skip`); each touches only its own row.
 
 ## Flags / env

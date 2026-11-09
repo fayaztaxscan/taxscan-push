@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { apiErrorMessage, DISPATCH_TIMEOUT_MS, PUSH_REQUEST, useApi } from '../composables/useApi';
-import type { RequestOptions } from '../composables/useApi';
+import type { ApiError, RequestOptions } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import { useTestDevice } from '../composables/useTestDevice';
 import ConfirmPush from '../components/ConfirmPush.vue';
@@ -98,6 +98,46 @@ function removePicture() {
   picture.value = null;
   pictureError.value = null;
 }
+
+// The social pages this push can leave out (GET /api/social/pages). The server's list is drawn as it comes: no page name lives here, so a
+// page switched on later just appears. `socialOff` holds the UNTICKED keys (empty = every page ticked = no `socialSkip` sent), so a page that
+// joins the list starts ticked. It is not remembered: it starts empty on every visit and goes back to empty after each accepted send.
+type SocialPage = { key: string; label: string };
+const socialPages = ref<SocialPage[]>([]);
+const socialOff = ref<string[]>([]);
+
+/**
+ * Reads the active pages. On the first read a failure leaves the group hidden, quietly (the send is then exactly today's send). On a
+ * re-read after a refused send (`keepOnError`) a failure leaves the list as it was, so the sender's unticked pages are never lost
+ * unseen: the same refusal simply comes back and nothing is sent.
+ */
+async function loadSocialPages(keepOnError = false) {
+  try {
+    const data = await api.get<{ pages?: SocialPage[] }>('/api/social/pages');
+    const list = Array.isArray(data?.pages)
+      ? data.pages.filter((p) => p && typeof p.key === 'string' && typeof p.label === 'string')
+      : [];
+    const known = new Set(list.map((p) => p.key));
+    socialPages.value = list;
+    socialOff.value = socialOff.value.filter((k) => known.has(k));
+  } catch {
+    if (!keepOnError) {
+      socialPages.value = [];
+      socialOff.value = [];
+    }
+  }
+}
+
+function setSocialTicked(key: string, ticked: boolean) {
+  const rest = socialOff.value.filter((k) => k !== key);
+  socialOff.value = ticked ? rest : [...rest, key];
+}
+
+/** The unticked pages, in the server's order: what goes in `socialSkip` and in the confirm's "Not posted to" line. Only pages on screen count. */
+const skippedPages = computed(() => socialPages.value.filter((p) => socialOff.value.includes(p.key)));
+const socialNote = computed(() =>
+  skippedPages.value.length ? `Not posted to: ${skippedPages.value.map((p) => p.label).join(', ')}` : '',
+);
 
 const submitting = ref(false);
 const confirming = ref(false);
@@ -199,6 +239,9 @@ function buildPayload(overrides: Partial<{ target: unknown; breaking: boolean; s
   if (force.value) payload.force = true;
   if (requestId.value) payload.clientRequestId = requestId.value;
   if (pictureOn.value && picture.value) payload.socialImageId = picture.value.id;
+  // Only when something is unticked: all ticked sends no field at all (today's request, byte for byte). Not part of the one-time id's
+  // watch above on purpose: the id names the push to subscribers, which unticking a page does not change.
+  if (skippedPages.value.length) payload.socialSkip = skippedPages.value.map((p) => p.key);
   // force is immediate-only — never attach a schedule when it's on.
   if (!force.value) {
     if (overrides.scheduledAt) payload.scheduledAt = overrides.scheduledAt;
@@ -222,8 +265,17 @@ async function send() {
       keepRequestIdOnce = true;
       removePicture();
     }
+    // Same for the unticked pages: they were for that push only, so the next one starts with every page ticked. Not watched, so the
+    // one-time id is untouched and pressing Send again on the unchanged text still meets the server's duplicate_send refusal.
+    socialOff.value = [];
   } catch (e) {
     errorBanner.value = apiErrorMessage(e);
+    // An unticked page that is no longer in use: the server refused and sent nothing. Its message is shown as it came; re-read the list
+    // so the group matches what is really on. Nothing is reset, so the send stays "not done" and the same one-time id is kept.
+    const err = e as ApiError;
+    if (err.status === 400 && (err.body as { error?: string } | undefined)?.error === 'unknown_social_page') {
+      await loadSocialPages(true);
+    }
   } finally {
     submitting.value = false;
   }
@@ -251,6 +303,7 @@ async function sendToMyDevice() {
 
 onMounted(() => {
   void testDevice.refresh();
+  void loadSocialPages();
 });
 </script>
 
@@ -318,6 +371,23 @@ onMounted(() => {
             <p v-if="pictureError" class="pic-err" role="alert">{{ pictureError }}</p>
           </div>
         </div>
+      </div>
+
+      <!-- One tick per active social page, drawn from the server's list. Unticked = that page gets nothing for THIS push. Hidden when the list is empty or unreadable. -->
+      <div v-if="socialPages.length" class="form-row" role="group" aria-labelledby="social-post-to" data-testid="post-to">
+        <label id="social-post-to">Post to</label>
+        <div class="checkbox-row post-to">
+          <label v-for="p in socialPages" :key="p.key" :class="{ off: socialOff.includes(p.key) }">
+            <input
+              type="checkbox"
+              :checked="!socialOff.includes(p.key)"
+              :data-key="p.key"
+              @change="setSocialTicked(p.key, ($event.target as HTMLInputElement).checked)"
+            />
+            {{ p.label }}
+          </label>
+        </div>
+        <p class="muted pic-note post-to-note">Untick a page to leave it out for this push only.</p>
       </div>
 
       <div class="form-row">
@@ -433,6 +503,7 @@ onMounted(() => {
       :busy="submitting"
       :heading="confirmHeading"
       :detail="confirmDetail"
+      :note="socialNote"
       confirm-label="Send now"
       @confirm="confirmSend"
       @cancel="confirming = false"
@@ -499,6 +570,19 @@ onMounted(() => {
   color: var(--danger);
   font-weight: 600;
 }
+/* "Post to": the topic pills' look, plus one signal for the new meaning: an unticked page is dashed and quiet, like the empty picture box. */
+.post-to-note {
+  margin: 6px 0 0;
+}
+.post-to label.off {
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+}
+.post-to label:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 @media (max-width: 720px) {
   .pic-row {
     flex-direction: column;
@@ -512,6 +596,26 @@ onMounted(() => {
   /* An empty box is just a placeholder; on a phone it would push the rules a screen down. */
   .pic-box:not(.has) {
     display: none;
+  }
+  /* One page per line, text at 16px (no iOS zoom), a tick box and a row you can hit with a thumb. */
+  .post-to {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .post-to label {
+    font-size: 16px;
+    min-height: 44px;
+    gap: 12px;
+    padding: 8px 14px;
+    border-radius: 10px;
+  }
+  .post-to input {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    padding: 0;
   }
   .pic-actions .btn {
     min-height: 44px;

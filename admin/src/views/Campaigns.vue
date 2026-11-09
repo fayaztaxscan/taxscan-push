@@ -38,9 +38,10 @@ type Campaign = {
     facebook?: 'PENDING' | 'POSTED' | 'FAILED' | 'SKIPPED' | null;
   };
   channelDetails?: {
-    whatsapp?: { by: string | null; at: string };
-    linkedin?: { error: string | null; at: string; postUrl: string | null };
-    facebook?: { error: string | null; at: string | null; postUrl: string | null };
+    /** `skipReason: 'compose_skip'` = the sender unticked this channel on Compose for this push (its mark is SKIPPED). */
+    whatsapp?: { by: string | null; at: string; skipReason?: string };
+    linkedin?: { error: string | null; at: string; postUrl: string | null; skipReason?: string };
+    facebook?: { error: string | null; at: string | null; postUrl: string | null; skipReason?: string };
   };
   /** IST day (YYYY-MM-DD) of the push: which day to open on the channel screen. */
   channelDay?: string | null;
@@ -193,6 +194,8 @@ function fmtTime(iso: string | undefined): string {
 function namePart(email: string | null | undefined): string {
   return email ? email.split('@')[0] : '';
 }
+/** True when the sender unticked this channel on Compose for the push: the mark stays the usual SKIPPED one, only its tooltip says why. */
+const composeSkipped = (d: { skipReason?: string } | undefined): boolean => d?.skipReason === 'compose_skip';
 function marksFor(c: Campaign): Mark[] {
   const out: Mark[] = [];
   const ch = c.channels;
@@ -210,7 +213,9 @@ function marksFor(c: Campaign): Mark[] {
         s === 'POSTED'
           ? `WhatsApp: posted${who ? ' by ' + who : ''}${at ? ' at ' + at : ''}`
           : s === 'SKIPPED'
-            ? 'WhatsApp: skipped'
+            ? composeSkipped(d?.whatsapp)
+              ? 'WhatsApp: skipped in Compose'
+              : 'WhatsApp: skipped'
             : 'WhatsApp: waiting to be posted',
     });
   }
@@ -228,7 +233,9 @@ function marksFor(c: Campaign): Mark[] {
           : s === 'FAILED'
             ? `LinkedIn: failed${err ? ' — ' + err : ''}`
             : s === 'SKIPPED'
-              ? 'LinkedIn: skipped'
+              ? composeSkipped(d?.linkedin)
+                ? 'LinkedIn: skipped in Compose'
+                : 'LinkedIn: skipped'
               : 'LinkedIn: waiting',
     });
   }
@@ -246,7 +253,9 @@ function marksFor(c: Campaign): Mark[] {
           : s === 'FAILED'
             ? `Facebook: failed${err ? ' — ' + err : ''}`
             : s === 'SKIPPED'
-              ? 'Facebook: skipped'
+              ? composeSkipped(d?.facebook)
+                ? 'Facebook: skipped in Compose'
+                : 'Facebook: skipped'
               : 'Facebook: waiting',
     });
   }

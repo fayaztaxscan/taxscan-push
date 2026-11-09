@@ -18,6 +18,7 @@ import { createIntegrationsRouter, type CmsEventsRouterOptions } from './routes/
 import { createStaffPushRouter, type StaffPushRouterOptions } from './routes/staffPush';
 import { emailAssetsHandler } from './routes/digestAds';
 import { createSocialPictureRouter, socialImagesHandler, type SocialPictureRouterOptions } from './routes/socialPicture';
+import { createSocialPagesRouter, type SocialPagesRouterOptions } from './routes/socialPages';
 import { env } from './lib/env';
 import { appErrorHandler } from './lib/httpErrors';
 import { requireBearerOrUser } from './lib/auth';
@@ -51,6 +52,8 @@ export type CreateAppOptions = {
   // Staff push devices (digest task 14) — tests inject config, kill-switch, transport.
   staffPush?: StaffPushRouterOptions;
   socialPicture?: SocialPictureRouterOptions;
+  // The social pages Compose can untick for one push (brief 2026-11-09-compose-skip-pages) — tests inject the list.
+  socialPages?: SocialPagesRouterOptions;
   // CMS account events (audience sync task 4) — tests inject config, clock, rate limit.
   cmsEvents?: CmsEventsRouterOptions;
 };
@@ -115,6 +118,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use('/api/facebook', createFacebookRouter(opts.facebook));
   app.use('/api/staff-push', createStaffPushRouter(opts.staffPush));
   app.use('/api/social-picture', createSocialPictureRouter(opts.socialPicture));
+  app.use('/api/social', createSocialPagesRouter(opts.socialPages));
   app.use(
     '/api',
     createApiRouter({

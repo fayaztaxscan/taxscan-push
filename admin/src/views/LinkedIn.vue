@@ -18,7 +18,10 @@ type Row = {
   postedAt: string | null;
   postUrl: string | null;
   unknownOutcome: boolean;
-  /** Present ONLY on a row the daily quota guard held (status SKIPPED): the single value 'quota_headroom'. Never shown as a code. */
+  /**
+   * Present ONLY on a SKIPPED row the system skipped, never a person: 'quota_headroom' (the daily quota guard held it) or
+   * 'compose_skip' (the sender unticked this page on Compose for this push). Never shown as a code.
+   */
   skipReason?: string;
 };
 type Counts = { waiting: number; posted: number; failed: number; skipped: number; notPosted: number; all: number };
@@ -342,8 +345,12 @@ const STATUS_LABEL: Record<Status, string> = {
 // page. A held row has no Retry and no Skip: those two buttons belong to FAILED / RETRYING rows only.
 const QUOTA_HELD = 'quota_headroom';
 const QUOTA_HELD_TEXT = 'Skipped — daily LinkedIn limit kept for Taxscan';
+// A push whose sender unticked this page on Compose. Like a held row it is SKIPPED, counts under Skipped, and has no buttons.
+const COMPOSE_SKIP = 'compose_skip';
+const COMPOSE_SKIP_TEXT = 'Skipped in Compose';
 function statusText(r: Row): string {
   if (r.status === 'SKIPPED' && r.skipReason === QUOTA_HELD) return QUOTA_HELD_TEXT;
+  if (r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP) return COMPOSE_SKIP_TEXT;
   if (r.status === 'RETRYING') return r.nextAttemptTime ? `Waiting — retry ${r.nextAttemptTime}` : 'Waiting — retry';
   return STATUS_LABEL[r.status];
 }

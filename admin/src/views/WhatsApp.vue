@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { apiErrorMessage, useApi } from '../composables/useApi';
+import { apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import WhatsAppNudgeCard from '../components/WhatsAppNudgeCard.vue';
 
 type Status = 'TODO' | 'POSTED' | 'SKIPPED';
@@ -23,6 +23,8 @@ type Row = {
   /** Only on rows of the every-push rule: one row per push, and what was pushed. Absent on older article rows. */
   rule?: 'push';
   kind?: 'article' | 'course' | 'product' | 'page';
+  /** Present ONLY on a SKIPPED row whose sender unticked WhatsApp on Compose (no person acted): the single value 'compose_skip'. Never shown as a code. */
+  skipReason?: string;
 };
 type QueueResponse = {
   date: string;
@@ -59,6 +61,9 @@ const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 
 
 const isToday = computed(() => date.value === maxDate);
 const isYesterday = computed(() => date.value === istDay(-1));
+
+// A push whose sender unticked WhatsApp on Compose: SKIPPED by the system, so no person is named and no button is offered.
+const COMPOSE_SKIP = 'compose_skip';
 
 const CHIPS: { key: Filter; label: string }[] = [
   { key: 'todo', label: 'To do' },
@@ -126,7 +131,14 @@ async function mark(r: Row, status: Status): Promise<void> {
     // The server owns who/when and the counts; reload rather than guess.
     await load();
   } catch (e) {
-    const gone = (e as { status?: number })?.status === 404;
+    const err = e as ApiError;
+    // The server refuses to change a push the sender unticked on Compose (409); say it in words, never show the code.
+    if (err.status === 409 && (err.body as { error?: string } | undefined)?.error === COMPOSE_SKIP) {
+      await load();
+      error.value = 'That push was skipped in Compose, so it cannot be changed here. The list has been reloaded.';
+      return;
+    }
+    const gone = err?.status === 404;
     error.value = gone ? 'That push is no longer on the list (its time may have changed). The list has been reloaded.' : apiErrorMessage(e);
     if (gone) await load();
   } finally {
@@ -189,7 +201,9 @@ async function share(r: Row): Promise<void> {
   }
 }
 
+const composeSkipped = (r: Row): boolean => r.status === 'SKIPPED' && r.skipReason === COMPOSE_SKIP;
 function actedLine(r: Row): string {
+  if (composeSkipped(r)) return 'Skipped in Compose';
   if (r.status === 'TODO') return 'To do';
   const word = r.status === 'POSTED' ? 'Posted' : 'Skipped';
   const who = r.actedBy?.email ?? 'someone';
@@ -286,26 +300,29 @@ onBeforeUnmount(() => {
               <span class="wa-status" :class="'s-' + r.status">{{ actedLine(r) }}</span>
             </td>
             <td class="cell-actions wa-actions">
-              <button type="button" class="btn" :class="{ 'wa-copied': copiedId === r.articleKey }" @click="copy(r)">
-                {{ copiedId === r.articleKey ? 'Copied' : 'Copy' }}
-              </button>
-              <button v-if="canShare" type="button" class="btn" @click="share(r)">Share</button>
-              <template v-if="r.status === 'TODO'">
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  :disabled="busyId === r.articleKey"
-                  @click="mark(r, 'POSTED')"
-                >
-                  Posted
+              <!-- A push skipped in Compose is not posted by anyone: the row offers no button at all. -->
+              <template v-if="!composeSkipped(r)">
+                <button type="button" class="btn" :class="{ 'wa-copied': copiedId === r.articleKey }" @click="copy(r)">
+                  {{ copiedId === r.articleKey ? 'Copied' : 'Copy' }}
                 </button>
-                <button type="button" class="btn" :disabled="busyId === r.articleKey" @click="mark(r, 'SKIPPED')">
-                  Skip
+                <button v-if="canShare" type="button" class="btn" @click="share(r)">Share</button>
+                <template v-if="r.status === 'TODO'">
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    :disabled="busyId === r.articleKey"
+                    @click="mark(r, 'POSTED')"
+                  >
+                    Posted
+                  </button>
+                  <button type="button" class="btn" :disabled="busyId === r.articleKey" @click="mark(r, 'SKIPPED')">
+                    Skip
+                  </button>
+                </template>
+                <button v-else type="button" class="btn" :disabled="busyId === r.articleKey" @click="mark(r, 'TODO')">
+                  Back to To do
                 </button>
               </template>
-              <button v-else type="button" class="btn" :disabled="busyId === r.articleKey" @click="mark(r, 'TODO')">
-                Back to To do
-              </button>
             </td>
           </tr>
           <tr v-if="shown.length === 0 && !loading && !error">
