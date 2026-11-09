@@ -66,6 +66,8 @@ onMounted(async () => {
   margin: 0 0 8px;
   font-weight: 600;
   line-height: 1.4;
+  /* A file name (Import Mailercloud statuses) has no spaces to break at. */
+  overflow-wrap: anywhere;
 }
 /* Full-strength, semibold text under the muted 12px detail: it changes what this send does, so it must not read as small print,
    but it stays smaller than the article headline above it. */

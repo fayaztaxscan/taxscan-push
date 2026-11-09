@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.31 &nbsp;·&nbsp; Updated 9 November 2026
+    &nbsp;·&nbsp; Version 2.32 &nbsp;·&nbsp; Updated 9 November 2026
   </div>
 </div>
 
@@ -704,6 +704,21 @@ preview and draft are ready as usual; it goes out <strong>only when someone pres
 <h3>Audience card — readers Mailercloud refused</h3>
 <p>Administrators see a line on the <strong>Audience</strong> card when Mailercloud has refused some readers (for example "54 Premium readers were refused by Mailercloud and have no tag"). The line is hidden when there are none. <strong>Retry refused</strong> asks <em>"Try these N readers again?"</em> first and then makes them due again; it is recorded in Activity. If Mailercloud refuses them again, they show here again.</p>
 <p><strong>Free readers line</strong> (administrators, shown only when free readers are switched on): <em>eligible</em> is how many CMS free readers may get the Free digest; <em>admitted</em> is how many have been added to Mailercloud so far, with today's count against the daily limit; <em>tagged</em> carry the Free reader tag in Mailercloud; <em>waiting to be added</em> are not in yet. New free readers are added to Mailercloud in daily batches, up to a set number a day, so <em>waiting</em> shrinks a little each day. "adding is paused: daily limit 0" means the limit is set to 0; "The Free tag isn't set" means nothing is written for free readers until it is.</p>
+<h3>Audience card — the list for the CMS notice, and the one-time Mailercloud import</h3>
+<p>Administrators see one more line on the <strong>Audience</strong> card: <em>Digest notices: N bad address &middot; M unsubscribed (list as of &hellip;)</em>.
+It counts the <strong>paid readers whose daily digest cannot reach them</strong> (including readers who have cancelled but are still inside the period they paid for): <em>bad address</em> means Mailercloud refuses their address
+(it bounced in the past), <em>unsubscribed</em> means they turned the digest off in Mailercloud. Each day the taxscan.in site fetches this list
+from us and shows each of those readers a notice when they sign in (we do not email them, and nothing here changes who gets the digest).
+Under the line you may see <em>The CMS cannot fetch this list yet: the door is switched off</em> (an administrator has not switched it on yet) or
+<em>The CMS gets a &ldquo;not ready&rdquo; answer</em> (the last full load from the CMS is more than 48 hours old, or the audience sync is paused:
+the site then keeps showing yesterday's list). A reader who turns the digest back on from their account leaves the list by themselves.</p>
+<p><strong>Import Mailercloud statuses</strong> is a <strong>one-time</strong> job for an administrator. Mailercloud does not tell us which of our paid
+readers it already refuses, so someone (Anagha) exports the contacts with their status from Mailercloud's contacts screen as a CSV file and uploads it
+here once. You pick the file, confirm, and the card then says in words how many rows were read and how many readers were added to our list
+(<em>unsubscribed</em>, <em>bounced</em>, <em>spam complaints</em>), and how many were not our readers at all. Nothing is emailed and nobody's digest
+changes. The file must have an <strong>Email</strong> column and a <strong>Status</strong> column and be under 5 MB: export only the paid readers if
+Mailercloud's file is bigger. Uploading the same file again does nothing (<em>0 new</em>). After this, Mailercloud's own notices keep the list up to date;
+there is nothing to repeat.</p>
 <div class="box tip"><span class="box-t">Failures retry by themselves</span>
   If Mailercloud doesn't answer, or the build fails, the system tries again <strong>1, 5 and 15 minutes</strong> later,
   then <strong>every hour</strong> until 17:00; <em>Retry now</em> just skips the wait. Errors a retry can't fix (a
@@ -1219,7 +1234,7 @@ waiting for its ads: it is built when you press <em>Retry now</em>, with the ads
   strategy — reach out to your administrator.</div>
 
 <p class="muted" style="margin-top:26px; text-align:center; border-top:1px solid #e2e8f0; padding-top:12px">
-  Taxscan Push · Admin User Guide · Version 2.31 · Updated 9 November 2026
+  Taxscan Push · Admin User Guide · Version 2.32 · Updated 9 November 2026
 </p>
 </section>
 

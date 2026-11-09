@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { apiErrorMessage, useApi } from '../composables/useApi';
+import { apiErrorMessage, DISPATCH_TIMEOUT_MS, useApi, type RequestOptions } from '../composables/useApi';
 import { useAuth } from '../composables/useAuth';
 import ConfirmPush from './ConfirmPush.vue';
 
@@ -10,6 +10,10 @@ import ConfirmPush from './ConfirmPush.vue';
  * Mailercloud. An ADMIN sees the counts and, when the breaker has paused Mailercloud writes, can review them and
  * press Resume (confirm first, Cancel focused). A PUBLISHER sees the one-line status. Hidden when the sync is off.
  * The server writes every sentence; this card only lays them out.
+ *
+ * Digest notices (brief 2026-11-09-digest-notice-list), ADMIN only: one line of counts for the daily list the CMS pulls (paid readers whose
+ * digest cannot reach them), a sentence when the CMS would not get it, and the one-time "Import Mailercloud statuses" (a CSV exported from
+ * Mailercloud, posted raw; the reply is counts only, and no address is ever shown or kept here).
  */
 
 type Counts = {
@@ -20,6 +24,17 @@ type Counts = {
   former: number;
   noMarketing: number;
   pendingWrites: number;
+};
+/** The reply of POST /api/digest/audience/import-statuses: counts only. */
+type ImportCounts = {
+  read: number;
+  invalid: number;
+  ignored: number;
+  notInCms: number;
+  matched: { UNSUBSCRIBE: number; HARD_BOUNCE: number; SPAM: number };
+  created: number;
+  upgraded: number;
+  unchanged: number;
 };
 type Card =
   | { enabled: false }
@@ -32,6 +47,8 @@ type Card =
       guardActive: boolean;
       counts: Counts;
       refused?: { premium: number; former: number };
+      /** The CMS digest-notice list: absent for a server without it. `asOf` is when the counts were built. */
+      notices?: { enabled: boolean; ready: boolean; badAddress: number; unsubscribed: number; asOf: string };
       /** Present only when AUDIENCE_FREE_READERS is on (brief 2026-11-08-free-cms-readers). Counts only. */
       free?: { eligible: number; admitted: number; tagged: number; refused: number; waiting: number; admittedToday: number; cap: number; tagConfigured: boolean };
       last: { webhookAt: string | null; incrementalAt: string | null; fullAt: string | null };
@@ -49,6 +66,13 @@ const confirming = ref(false);
 const retrying = ref(false);
 const retryBusy = ref(false);
 const busy = ref(false);
+// Import Mailercloud statuses: the chosen file waits for the confirm; the result / error sit under the button (not in the top banner,
+// which can be a screen away on a phone).
+const fileInput = ref<HTMLInputElement | null>(null);
+const pendingFile = ref<File | null>(null);
+const importBusy = ref(false);
+const importError = ref<string | null>(null);
+const importResult = ref<string | null>(null);
 
 const full = computed(() => (card.value && card.value.enabled && 'counts' in card.value ? card.value : null));
 const isAdmin = computed(() => user.value?.role === 'ADMIN');
@@ -96,6 +120,21 @@ function when(iso: string | null): string {
   if (!iso) return 'never';
   return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' IST';
 }
+
+/** The one notices line, and the one sentence for a list the CMS would not get (switched off wins over not ready). */
+const noticesLine = computed(() => {
+  const x = full.value?.notices;
+  if (!x) return null;
+  return `Digest notices: ${num(x.badAddress)} bad address · ${num(x.unsubscribed)} unsubscribed (list as of ${when(x.asOf)})`;
+});
+const noticesNote = computed(() => {
+  const x = full.value?.notices;
+  if (!x) return null;
+  if (!x.enabled) return 'The CMS cannot fetch this list yet: the door is switched off.';
+  if (!x.ready) return 'The CMS gets a "not ready" answer: no complete full load in the last 48 hours, or the audience sync is paused.';
+  return null;
+});
+
 const errorTotal = computed(() => {
   const e = full.value?.errors24h;
   return e ? e.writerRetryable + e.writerFatal + e.seqConflict + e.unknownStatus : 0;
@@ -155,6 +194,72 @@ async function retryRefused() {
   }
 }
 
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+const IMPORT_TOO_BIG = 'That file is over 5 MB. Export only the paid readers, or split it.';
+// A POST is never retried; with no reply the import may still have run (it is safe to repeat: nothing changes the second time).
+const IMPORT_NO_REPLY = 'No reply from the server in time. Check the card in a moment before importing again.';
+const IMPORT_REQUEST: RequestOptions = { timeoutMs: DISPATCH_TIMEOUT_MS, unknownMessage: IMPORT_NO_REPLY };
+
+function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return bytes < 10 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** The result as one paragraph of plain words, built from the counts only. */
+function importSentence(c: ImportCounts): string {
+  const n = (v: number | undefined): string => (v ?? 0).toLocaleString('en-IN');
+  const m = c.matched ?? { UNSUBSCRIBE: 0, HARD_BOUNCE: 0, SPAM: 0 };
+  const inCms = (m.UNSUBSCRIBE ?? 0) + (m.HARD_BOUNCE ?? 0) + (m.SPAM ?? 0);
+  return [
+    `Read ${n(c.read)} ${c.read === 1 ? 'row' : 'rows'}.`,
+    `${n(inCms)} ${inCms === 1 ? 'reader is' : 'readers are'} in the CMS: ${n(m.UNSUBSCRIBE)} unsubscribed, ${n(m.HARD_BOUNCE)} bounced, ${n(m.SPAM)} spam ${m.SPAM === 1 ? 'complaint' : 'complaints'}.`,
+    `Added ${n(c.created)} new, updated ${n(c.upgraded)}, ${n(c.unchanged)} ${c.unchanged === 1 ? 'was' : 'were'} already on the list.`,
+    `Not in the CMS: ${n(c.notInCms)}.`,
+    `Other statuses ignored: ${n(c.ignored)}.`,
+    `Unreadable addresses: ${n(c.invalid)}.`,
+  ].join(' ');
+}
+
+/** A file was chosen: over 5 MB is refused here (no request); anything else waits for the confirm. */
+function onPickFile(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ''; // so the same file can be chosen again
+  if (!file) return;
+  importError.value = null;
+  if (file.size > MAX_IMPORT_BYTES) {
+    importError.value = IMPORT_TOO_BIG;
+    return;
+  }
+  pendingFile.value = file;
+}
+
+function cancelImport() {
+  if (!importBusy.value) pendingFile.value = null;
+}
+
+async function runImport() {
+  const file = pendingFile.value;
+  if (!file) return;
+  importBusy.value = true;
+  importError.value = null;
+  importResult.value = null;
+  try {
+    // The browser labels a CSV by what else is installed (Excel makes it application/vnd.ms-excel): the server is told what it is.
+    const csv = new File([file], file.name, { type: 'text/csv' });
+    const r = await api.upload<{ ok: boolean; counts: ImportCounts }>('/api/digest/audience/import-statuses', csv, IMPORT_REQUEST);
+    importResult.value = importSentence(r.counts);
+    pendingFile.value = null;
+    await load(); // the notice counts above now include what was just added
+  } catch (e) {
+    pendingFile.value = null;
+    importError.value = apiErrorMessage(e);
+  } finally {
+    importBusy.value = false;
+  }
+}
+
 onMounted(load);
 defineExpose({ load });
 </script>
@@ -195,6 +300,19 @@ defineExpose({ load });
         {{ freeLine.counts }}
         <span v-if="freeLine.warn" class="aud-free-warn">{{ freeLine.warn }}</span>
       </p>
+
+      <div v-if="noticesLine" class="aud-notices">
+        <p class="aud-notices-line">{{ noticesLine }}</p>
+        <p v-if="noticesNote" class="muted aud-notices-note">{{ noticesNote }}</p>
+        <div class="aud-import">
+          <input ref="fileInput" type="file" accept=".csv,text/csv" hidden @change="onPickFile" />
+          <button type="button" class="btn" :disabled="importBusy" @click="fileInput?.click()">
+            {{ importBusy ? 'Importing…' : 'Import Mailercloud statuses' }}
+          </button>
+          <div v-if="importError" class="banner err" role="alert">{{ importError }}</div>
+          <p v-if="importResult" class="aud-import-result" role="status">{{ importResult }}</p>
+        </div>
+      </div>
 
       <table class="stack aud-table">
         <thead>
@@ -269,6 +387,18 @@ defineExpose({ load });
     @confirm="retryRefused"
     @cancel="retrying = false"
   />
+
+  <ConfirmPush
+    v-if="pendingFile"
+    heading="Import Mailercloud statuses?"
+    :title="`${pendingFile.name} (${fileSize(pendingFile.size)})`"
+    detail="This adds Mailercloud's unsubscribed and bounced readers to our list so the CMS can tell them. It never emails anyone."
+    confirm-label="Import"
+    busy-label="Importing…"
+    :busy="importBusy"
+    @confirm="runImport"
+    @cancel="cancelImport"
+  />
 </template>
 
 <style scoped>
@@ -325,6 +455,36 @@ defineExpose({ load });
   margin-top: 4px;
   color: var(--warn);
   font-weight: 600;
+}
+.aud-notices {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.aud-notices-line {
+  margin: 0;
+}
+.aud-notices-note {
+  margin: 4px 0 0;
+}
+.aud-import {
+  margin: 10px 0 0;
+}
+.aud-import .banner {
+  margin: 10px 0 0;
+}
+.aud-import-result {
+  margin: 10px 0 0;
+  line-height: 1.5;
+  /* A paragraph, not a table row: kept to a readable line length on a wide screen. */
+  max-width: 72ch;
+}
+@media (max-width: 720px) {
+  /* 16px text, full width: a thumb target, and the same size the fields use so iOS never zooms. */
+  .aud-import .btn {
+    width: 100%;
+    font-size: 16px;
+  }
 }
 .aud-table {
   margin-top: 4px;
