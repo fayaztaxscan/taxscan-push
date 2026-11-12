@@ -105,7 +105,7 @@
   </div>
   <div class="cover-meta">
     Admin URL: <strong>https://push.taxscan.in/admin/</strong> &nbsp;·&nbsp; Audience: editors &amp; administrators
-    &nbsp;·&nbsp; Version 2.36 &nbsp;·&nbsp; Updated 9 November 2026
+    &nbsp;·&nbsp; Version 2.37 &nbsp;·&nbsp; Updated 12 November 2026
   </div>
 </div>
 
@@ -420,7 +420,7 @@ The picture is used only on those posts, never in the notification itself.</p>
 <h3>Post to: leave a social page out of one push</h3>
 <p>Under the picture field, <strong>Post to</strong> lists every social page that is switched on &mdash; for example
 <em>LinkedIn &middot; Taxscan</em>, <em>LinkedIn &middot; Academy</em>, <em>LinkedIn &middot; Shopscan</em>, <em>Facebook &middot; Taxscan</em>,
-<em>Telegram &middot; Taxscan</em> and <em>WhatsApp channel</em>. They are all ticked, which means &ldquo;post everywhere&rdquo;, exactly as before. <strong>Untick a page
+<em>Facebook &middot; Shopscan</em>, <em>Telegram &middot; Taxscan</em> and <em>WhatsApp channel</em>. They are all ticked, which means &ldquo;post everywhere&rdquo;, exactly as before. <strong>Untick a page
 and that page gets nothing for this one push</strong> &mdash; no post, and nothing waiting to do. The list shows only what is in use, so
 a page appears here the day an administrator switches it on; if nothing is switched on, the group is not shown at all. A page an administrator has <strong>paused</strong> (sections 12&ndash;14) shows <em>(paused)</em> next to its name, unticked and greyed out: nothing is posted there either way, and the send is not refused.</p>
 <ul>
@@ -465,7 +465,7 @@ notification will look before sending it to anyone.</p>
     <tr><td><strong>Campaigns</strong></td><td>The full history of notifications sent, each with its reach, clicks, click-rate and <strong>how much the article was actually read</strong>. Sort by any column (e.g. <strong>Pushed</strong> to see the most recent sends). The <strong>Source</strong> column shows <strong>Manual</strong> (someone sent it by hand — Compose or <em>Push&nbsp;now</em> — with their name) or <strong>Automatic</strong> (the system sent it on the normal schedule), so a hand-pushed item is never mistaken for an automatic one. See the column guide below.</td></tr>
     <tr><td><strong>WhatsApp</strong></td><td>Every pushed article as a ready-to-post WhatsApp message, with Copy, Share, Posted and Skip. See section 11.</td></tr>
     <tr><td><strong>LinkedIn</strong></td><td>Whether each pushed article reached the Taxscan LinkedIn page, with Retry and Skip for a failed post. See section 12.</td></tr>
-    <tr><td><strong>Facebook</strong></td><td>Whether each pushed article reached the Taxscan Facebook page, with Retry and Skip for a failed post, and (administrators) Check connection and Resume. See section 13.</td></tr>
+    <tr><td><strong>Facebook</strong></td><td>Whether each pushed article reached the Taxscan Facebook page (and the Shopscan page, when it is in use), with Retry and Skip for a failed post, and (administrators) Check connection and Resume. See section 13.</td></tr>
     <tr><td><strong>Telegram</strong></td><td>Whether each push reached the Taxscan Telegram channel, with Retry and Skip for a failed post, and (administrators) Check connection and Resume. See section 14.</td></tr>
     <tr><td><strong>Reports</strong></td><td>The <strong>coverage report</strong> (what we published, by category and by court), the <strong>Reads report</strong> (what readers actually opened) and the <strong>Surfaces report</strong> (what Google Discover picked up). See below.</td></tr>
     <tr><td><strong>Digests</strong></td><td>The daily email digest: preview, approve, hold or send it, and its last 14 days. See section 9. <span class="muted">Ads and Templates (open to everyone signed in) are in section 10.</span></td></tr>
@@ -1067,6 +1067,15 @@ on the old one. The pacing below is the same either way.</p>
   To keep the page safe from Facebook's spam checks, posts go out <strong>one at a time</strong>, at least <strong>10 minutes
   apart</strong>, and <strong>no more than 30 a day</strong>. On a busy day the later posts wait their turn.
   Retries never happen between 11 pm and 7 am.</div>
+<div class="box tip"><span class="box-t">Two pages: Taxscan and Shopscan</span>
+  When an administrator has also switched on the <strong>Shopscan</strong> Facebook page (facebook.com/shopscan.in), every push that goes to the Taxscan
+  page is posted there too &mdash; same text, hashtags and picture. The screen then shows a <strong>Taxscan | Shopscan</strong> switch under the title
+  (no switch means only the Taxscan page is in use). Press a name to look at that page: the list, the counts and any banner belong to the page you
+  chose, and <strong>Retry</strong>, <strong>Skip</strong>, <strong>Check connection</strong>, <strong>Resume posting</strong> and <strong>Pause</strong> act on that page only.
+  The <strong>Shopscan</strong> page posts <strong>every push</strong> from the moment it was switched on (courses, products, other pages of ours and repeats
+  included) and <strong>nothing before that moment</strong>. Each page keeps its <strong>own pace</strong> (10 minutes apart, 30 a day <em>each</em>) and its
+  <strong>own stops</strong>: a blocked post or a rejected token on one page never stops the other, so the same push can be <em>Posted</em> on one and
+  <em>Failed</em> on the other. In Compose, <em>Facebook &middot; Shopscan</em> is its own tick in <strong>Post to</strong>.</div>
 <table>
   <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
   <tbody>

@@ -544,6 +544,42 @@ export function parseSharedLinkedInPage(src: NodeJS.ProcessEnv, prefix: string):
   return { page: { orgUrn: urn, postFrom: new Date(t), tokenFrom: 'taxscan' }, off: null };
 }
 
+/** A Facebook page id (it goes into a URL path, so digits only) and a Page access token (printable, no whitespace; real ones are 100+ characters). */
+export const FACEBOOK_PAGE_ID_SHAPE = /^\d{5,25}$/;
+export const FACEBOOK_TOKEN_SHAPE = /^[\x21-\x7e]{20,}$/;
+
+/** A Facebook page that posts EVERY push of the Taxscan portal besides the Taxscan page itself (today only Shopscan): its own id, token and go-live. */
+export type SharedFacebookPage = { pageId: string; accessToken: string; postFrom: Date };
+
+/**
+ * The Shopscan Facebook page (brief 2026-11-12-facebook-shopscan-page, facebook.com/shopscan.in). It posts every push the Taxscan page
+ * posts, with the same text, hashtags and Compose picture, but with ITS OWN page id and Page access token. It is ACTIVE only when ALL
+ * THREE variables are valid:
+ *   FACEBOOK_SHOPSCAN_PAGE_ID     digits (the same rule as the Taxscan page's)
+ *   FACEBOOK_SHOPSCAN_PAGE_TOKEN  a Page access token (the same rule; Railway only, never in a file)
+ *   FACEBOOK_SHOPSCAN_POST_FROM   an ISO date or time: its own go-live. From it on the page posts EVERY push; nothing pushed before it is
+ *                                 ever posted there, whatever FACEBOOK_POST_FROM says (there is no ..._ALL_PUSHES_FROM of its own)
+ * Anything else (none set, only some set, any one invalid) leaves it OFF: no rows, no failures, and NO refusal to start (the Taxscan
+ * page's own rule is untouched). FACEBOOK_POSTING_ENABLED still governs everything; the worker adds that. Pure (takes the source as a
+ * parameter). `off` says why in fixed words naming the variables, never their values; it is the one boot line the worker prints.
+ */
+export function parseFacebookShopscanEnv(src: NodeJS.ProcessEnv): { page: SharedFacebookPage | null; off: string | null } {
+  const idVar = 'FACEBOOK_SHOPSCAN_PAGE_ID';
+  const tokenVar = 'FACEBOOK_SHOPSCAN_PAGE_TOKEN';
+  const fromVar = 'FACEBOOK_SHOPSCAN_POST_FROM';
+  const pageId = (src[idVar] ?? '').trim();
+  const accessToken = (src[tokenVar] ?? '').trim();
+  const from = (src[fromVar] ?? '').trim();
+  if (!pageId && !accessToken && !from) return { page: null, off: `not configured (it needs ${idVar}, ${tokenVar} and ${fromVar})` };
+  const t = ISO_DATE_START.test(from) ? Date.parse(from) : Number.NaN;
+  const bad: string[] = [];
+  if (!FACEBOOK_PAGE_ID_SHAPE.test(pageId)) bad.push(`${idVar} is missing or not digits`);
+  if (!FACEBOOK_TOKEN_SHAPE.test(accessToken)) bad.push(`${tokenVar} is missing or not a valid page token`);
+  if (Number.isNaN(t)) bad.push(`${fromVar} is missing or not a valid ISO time`);
+  if (bad.length) return { page: null, off: bad.join('; ') };
+  return { page: { pageId, accessToken, postFrom: new Date(t) }, off: null };
+}
+
 /**
  * The daily LinkedIn quota guard (briefs 2026-11-09-linkedin-shopscan-page + Follow-up 1). All pages post with ONE member token on
  * the Development tier: 100 `posts` CREATE calls per member per 24 h. Counting today's (IST day) create attempts across ALL pages, a
@@ -872,8 +908,9 @@ export const env = {
       })(),
     },
   },
-  // Facebook page posting (docs/FACEBOOK_POSTING.md). Default off. `postFrom` is REQUIRED when enabled. One entry per page; only
-  // `taxscan` for now. The page token goes in the POST body / Authorization header only, never a URL, log, column or email.
+  // Facebook page posting (docs/FACEBOOK_POSTING.md). Default off. `postFrom` is REQUIRED when enabled. `pages` = the Taxscan page
+  // (one entry per page); the optional Shopscan page is in `sharedPages` below. The page token goes in the POST body / Authorization
+  // header only, never a URL, log, column or email.
   facebook: {
     enabled: process.env.FACEBOOK_POSTING_ENABLED === 'true',
     postFrom: (() => {
@@ -899,6 +936,16 @@ export const env = {
         accessToken: (process.env.FACEBOOK_TAXSCAN_PAGE_TOKEN ?? '').trim(),
       },
     } as Record<string, { pageId: string; accessToken: string }>,
+    // Pages that post EVERY push of the Taxscan portal besides the Taxscan page, with a page id, token and go-live of their own (brief
+    // 2026-11-12-facebook-shopscan-page): today only `shopscan`, and only while ALL THREE of its FACEBOOK_SHOPSCAN_* variables are valid
+    // (see parseFacebookShopscanEnv). Kept OUT of `pages` on purpose: `pages` is the set the worker must be able to post to before it
+    // starts, and a shared page must never stop it from starting. Read at call time everywhere, so a test can add a private page here.
+    sharedPages: (() => {
+      const out: Record<string, SharedFacebookPage> = {};
+      const shopscan = parseFacebookShopscanEnv(process.env).page;
+      if (shopscan) out.shopscan = shopscan;
+      return out;
+    })() as Record<string, SharedFacebookPage>,
     // "Every push posts" (brief 2026-11-04-academy-store-posts): the page's time for it, null = the page stays on today's rule.
     allPushesFrom: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).at as Date | null,
   },

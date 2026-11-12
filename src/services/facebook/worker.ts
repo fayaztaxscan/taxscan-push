@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { createHash } from 'node:crypto';
 import { Prisma, type FacebookPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
+import { env, parseAllPushesFrom, parseFacebookShopscanEnv, ALL_PUSHES_FROM_VARS } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
@@ -11,10 +11,11 @@ import { isPublicArticleCampaign } from '../social/publicCampaign';
 import { isAllPushesCampaign, pageLinkOf, pushedCampaignIds, pushKey, storeLinkOf } from '../social/allPushes';
 import { istDay, istDayBounds } from '../whatsapp/queue';
 import { pushOutOfQuietHours } from '../linkedin/worker';
+import { normalizePortals, pagesOf, portalsOfPage, type PortalMap } from '../linkedin/pages';
 import type { CmsArticle } from '../linkedin/post';
 import { fetchCmsArticle } from '../linkedin/post';
 import { postToFacebook, type FacebookFailure } from './client';
-import { PORTAL_TO_PAGE, pageConfig } from './pages';
+import { PAGE_TAXSCAN, isSharedPage, pageConfig, portalPages, resolveAllPushesFrom, resolvePostFrom, shopscanActive, type TimeInput } from './pages';
 import { buildFacebookPagePost, buildFacebookPost, buildFacebookStorePost, captionWithLink } from './post';
 import { campaignPicture, socialImageUrl } from '../social/picture';
 import { COMPOSE_SKIP, facebookSkipKey } from '../social/pages';
@@ -47,6 +48,13 @@ import { alertIfNeeded } from '../social/pageAlerts';
  * candidate share EVERYTHING above: the one-per-tick rule, the gap, the daily cap (every kind counts), the retries, both stops, and
  * the order (merged by send time, oldest first). A course / product post is the push's own title and body; an article post is built
  * exactly as before. Facebook's duplicate answer (code 506) is a plain FAILED: no retry, no stop, no alert.
+ *
+ * TWO PAGES (brief 2026-11-12-facebook-shopscan-page). The Taxscan portal's pushes go to the Taxscan page and, while its three
+ * FACEBOOK_SHOPSCAN_* variables are valid, to the Shopscan page too (`portalPages()`, Taxscan first). Everything above is PER PAGE: its own
+ * go-live (Shopscan's go-live is also its all-pushes time: it posts every push from then on, nothing before it, one post per push, repeats
+ * included), its own gap and daily cap (counted on its own rows), its own token / policy stops and alerts, its own pause, its own rows. A
+ * stop, a pause or a busy gap on one page never holds the other. Shopscan never stops the worker from starting (only the Taxscan page's own
+ * config does); while it is not active it makes no row and no call.
  */
 
 export const STALE_MS = 10 * 60_000;
@@ -70,11 +78,12 @@ export type WorkerDeps = {
   isEmailConfigured?: () => boolean;
   /** Active ADMIN emails; default reads the User table. */
   recipients?: () => Promise<string[]>;
-  /** Campaign.portal → page. Default PORTAL_TO_PAGE. */
-  portals?: Readonly<Record<string, string>>;
-  postFrom?: Date | null;
-  /** The time from which the page posts EVERY push (brief 2026-11-04-academy-store-posts); null = today's rule. Default FACEBOOK_ALL_PUSHES_FROM. */
-  allPushesFrom?: Date | null;
+  /** Campaign.portal → page(s): one page name or a list per portal, Taxscan first. Default `portalPages()` (Taxscan, then Shopscan while it is active). */
+  portals?: PortalMap;
+  /** Go-live: one time for every page (the old shape) or one per page. Default: each page's own configured time. */
+  postFrom?: TimeInput;
+  /** The time from which a page posts EVERY push (brief 2026-11-04-academy-store-posts); null = today's rule. One time for every page or one per page. Default: each page's own (Shopscan's is its go-live). */
+  allPushesFrom?: TimeInput;
   quiet?: { start: string; end: string };
   minGapMinutes?: number;
   dailyCap?: number;
@@ -325,11 +334,18 @@ export type TickResult = {
   refused: string | null;
 };
 
-/** Why the worker must not run, or null. */
+/**
+ * Why the worker must not run, or null. The TAXSCAN rule is unchanged: FACEBOOK_POST_FROM and the Taxscan page's id + token must be
+ * valid. A SHARED page (Shopscan, brief 2026-11-12-facebook-shopscan-page) never refuses the start: while its variables are not all
+ * valid it is simply off (it is not even in `portalPages()`), and a tick skips it.
+ */
 export function startupProblem(d: Pick<WorkerDeps, 'postFrom' | 'portals'> = {}): string | null {
-  const from = d.postFrom === undefined ? env.facebook.postFrom : d.postFrom;
-  if (!from) return 'FACEBOOK_POST_FROM is missing or not a valid ISO time (nothing would be safe to post)';
-  for (const page of new Set(Object.values(d.portals ?? PORTAL_TO_PAGE))) if (!pageConfig(page)) return `FACEBOOK_${page.toUpperCase()}_PAGE_ID / _PAGE_TOKEN are not both set and valid`;
+  // The pages the worker cannot do without: every page that is not a shared one (in production, the Taxscan page alone).
+  const own = pagesOf(normalizePortals(d.portals ?? portalPages())).filter((page) => !isSharedPage(page));
+  for (const page of own.length > 0 ? own : [PAGE_TAXSCAN]) {
+    if (!resolvePostFrom(d.postFrom, page)) return 'FACEBOOK_POST_FROM is missing or not a valid ISO time (nothing would be safe to post)';
+  }
+  for (const page of own) if (!pageConfig(page)) return `FACEBOOK_${page.toUpperCase()}_PAGE_ID / _PAGE_TOKEN are not both set and valid`;
   return null;
 }
 
@@ -338,11 +354,11 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
   const out: TickResult = { posted: 0, retried: 0, failed: 0, staleClosed: 0, authStopped: false, policyStopped: false, waited: null, refused: null };
   const problem = startupProblem(d);
   if (problem) return { ...out, refused: problem };
-  const postFrom = (d.postFrom === undefined ? env.facebook.postFrom : d.postFrom) as Date;
-  const portals = d.portals ?? PORTAL_TO_PAGE;
+  const portals = normalizePortals(d.portals ?? portalPages());
   const gapMs = (d.minGapMinutes ?? env.facebook.minGapMinutes) * 60_000;
   const cap = d.dailyCap ?? env.facebook.dailyCap;
-  const pages = [...new Set(Object.values(portals))];
+  // Taxscan first, then a shared page: a busy tick only ever delays the later page. Pacing (gap, daily cap) and the stops are per page below.
+  const pages = pagesOf(portals);
 
   // 1. In-flight rows with no result after 10 minutes: unknown, never re-posted.
   const stale = await prisma.facebookPost.updateMany({
@@ -360,12 +376,17 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
   };
 
   for (const page of pages) {
+    // A SHARED page (Shopscan) without a valid config, or without a go-live, is simply off: no rows, no failure, nothing to refuse.
+    if (isSharedPage(page) && !pageConfig(page)) continue;
+    // THIS page's own go-live: nothing pushed before it is ever posted here, whatever the other page's time says.
+    const postFrom = resolvePostFrom(d.postFrom, page);
+    if (!postFrom) continue;
     // COMPOSE SKIPS (brief 2026-11-09-compose-skip-pages): a push whose sender unticked THIS page gets a SKIPPED row (reason `compose_skip`)
     // under its OWN push key and is taken out of this page's candidates below. DB only: no call, no pacing (the gap and the daily cap
     // count posts), and not gated by a stop; so the row exists at once whatever the page is waiting for.
-    // null = today's rule only (see step 3).
-    const pushesFrom = d.allPushesFrom === undefined ? env.facebook.allPushesFrom : d.allPushesFrom;
-    const pagePortals = Object.keys(portals).filter((p) => portals[p] === page);
+    // null = today's rule only (see step 3). A shared page's time is its go-live (it posts every push from the first minute).
+    const pushesFrom = resolveAllPushesFrom(d.allPushesFrom, page);
+    const pagePortals = portalsOfPage(portals, page);
     const composeSkipped = await composeSkippedPushes(pagePortals, facebookSkipKey(page), postFrom);
     if (composeSkipped.length > 0) {
       const wanted = skipRows(composeSkipped, pushesFrom);
@@ -411,13 +432,17 @@ export async function runFacebookTick(d: WorkerDeps = {}): Promise<TickResult> {
     // 2. A retry that is due (never inside quiet hours: they were scheduled out of it, this guards a changed clock).
     if (!paused && !isQuietHours(now, quietOf(d).start, quietOf(d).end)) {
       const due = await prisma.facebookPost.findMany({ where: { page, status: 'PENDING', nextAttemptAt: { lte: now } }, orderBy: { nextAttemptAt: 'asc' }, take: 3 });
+      // THIS page's own attempt for the tick (brief 2026-11-12-facebook-shopscan-page): a flag per page, never the tick's running totals in
+      // `out`, which another page has already moved. With the totals, Taxscan's post (or its stop) made this page skip its new post.
+      let attempted = false;
       for (const r of due) {
         const claimed = await prisma.facebookPost.updateMany({ where: { id: r.id, status: 'PENDING', nextAttemptAt: { lte: now } }, data: { nextAttemptAt: null, attempts: { increment: 1 } } });
         if (claimed.count !== 1) continue; // another tick got it
         note(await attempt({ ...r, nextAttemptAt: null, attempts: r.attempts + 1 }, d, now));
+        attempted = true;
         break; // at most one attempt per tick
       }
-      if (out.posted + out.retried + out.failed > 0 || out.authStopped || out.policyStopped) continue;
+      if (attempted) continue;
     }
 
     // 3. A new post, oldest push first. NO age limit: the oldest SENT push since go-live (FACEBOOK_POST_FROM) whose article has
@@ -568,5 +593,14 @@ export function startFacebookWorker(): void {
     pushesFrom
       ? `[facebook] all pushes on for ${ALL_PUSHES_FROM_VARS.facebook} (from ${pushesFrom.toISOString()})`
       : `[facebook] all pushes off: ${parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).off ?? `${ALL_PUSHES_FROM_VARS.facebook} is not set`} (today's rule: one post per article)`,
+  );
+  // The Shopscan page (brief 2026-11-12-facebook-shopscan-page): ONE line, on with its go-live, or off and why in fixed words naming the
+  // variables, never their values. Off is normal: the worker above already started and Taxscan posts exactly as before.
+  const shopscan = env.facebook.sharedPages.shopscan;
+  // eslint-disable-next-line no-console
+  console.log(
+    shopscanActive() && shopscan
+      ? `[facebook] shopscan page on (every push from ${shopscan.postFrom.toISOString()})`
+      : `[facebook] shopscan page off: ${parseFacebookShopscanEnv(process.env).off ?? 'not configured'}`,
   );
 }
