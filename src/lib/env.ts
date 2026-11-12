@@ -285,7 +285,7 @@ export function parseAudienceEnv(src: NodeJS.ProcessEnv) {
     writeMailercloud: src.AUDIENCE_SYNC_WRITE_MAILERCLOUD === 'true',
     // Derived digest targets + the send guard.
     digestFromCms,
-    // The §6.3 contact_type=active lift path.
+    // The §6.3 lift path: re-subscribe through Mailercloud's POST /v1/contacts/resubscribe (comment only; behaviour unchanged).
     resubscribeWrites: src.AUDIENCE_RESUBSCRIBE_WRITES === 'true',
     // AUDIENCE_ERASE_IN_MAILERCLOUD was REMOVED (owner, 24 Oct; contract v1.3): the CMS deletes the
     // Mailercloud contact itself on an erasure and we never call a Mailercloud delete. The variable
