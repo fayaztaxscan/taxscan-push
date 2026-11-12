@@ -11,10 +11,12 @@ import { env, type AudienceEnv } from '../../lib/env';
  *   remove tags              POST /v1/contact/tag/remove  body {id, tag_ids}
  *   read the tag catalogue   POST /v1/tags/search
  *   read a segment's count   POST /v1/segment/search
- *   re-subscribe (lift path) PUT  /v1/contacts/{email}    body {contact_type: "active"} — refused
+ *   re-subscribe (lift path) POST /v1/contacts/resubscribe body {email, consent_source, consent_at} — refused
  *                            unless the client was built with `resubscribeWrites: true`
  * There is NO delete: the CMS deletes a contact on erasure itself (contract v1.3) and we never do.
- * `contact_type` is sent by `resubscribe()` and nowhere else. A source-scan test pins all of this.
+ * Nothing here ever sends a contact STATUS (Mailercloud ignores one on a PUT and answers `status_not_changed`: the only way back to
+ * subscribed is the dedicated re-subscribe endpoint, which records the reader's consent). `/contacts/resubscribe` is requested by
+ * `resubscribe()` and nowhere else. A source-scan test pins all of this.
  *
  * Auth is `Authorization: <key>` — the plain key, no "Bearer". Zero dependencies (global fetch).
  * Nothing here logs; every error message is built here, names the operation and the HTTP status, and
@@ -25,6 +27,8 @@ import { env, type AudienceEnv } from '../../lib/env';
  *   GET 404                              → `null` (absent)
  *   create answered "already exists"     → ALREADY_EXISTS (M-1: a race with the CMS sign-up box)
  *   tag/remove on a missing contact      → ABSENT
+ *   re-subscribe answered 404, 409 or 422 → NOT_RESUBSCRIBABLE (final, never retried: not found, bounced / spam / suppressed, or a
+ *                                          consent Mailercloud refuses — the writer counts it and the lift is handled)
  *   429, 408, 5xx, network, timeout      → RETRYABLE
  *   any other 4xx (401, 403, 400, quota) → FATAL
  *
@@ -37,7 +41,28 @@ import { env, type AudienceEnv } from '../../lib/env';
 export const MC_CONTACTS_BASE_V1 = 'https://cloudapi.mailercloud.com/v1';
 export const MC_CONTACT_TIMEOUT_MS = 30_000;
 
-export type ContactErrorKind = 'RETRYABLE' | 'FATAL' | 'ALREADY_EXISTS' | 'ABSENT';
+export type ContactErrorKind = 'RETRYABLE' | 'FATAL' | 'ALREADY_EXISTS' | 'ABSENT' | 'NOT_RESUBSCRIBABLE';
+
+/** What the re-subscribe endpoint did: 200 changed (`subscribed`), 200 already subscribed (`already`), 202 double opt-in e-mail sent (`pending_confirmation`). */
+export type ResubscribeOutcome = 'subscribed' | 'already' | 'pending_confirmation';
+
+/** The consent source we send: a fixed, safe description of where the reader's opt-in was given (the CMS account settings). */
+export const RESUBSCRIBE_CONSENT_SOURCE = 'taxscan account settings';
+export const CONSENT_SOURCE_MAX = 100;
+/** Mailercloud answers 422 to a `consent_source` with anything but letters, digits, spaces and . , : - _ / @ + (1–100 characters). */
+const CONSENT_SOURCE_DISALLOWED = /[^A-Za-z0-9 .,:\-_/@+]/g;
+
+/**
+ * The ONE place a `consent_source` is made safe: everything outside Mailercloud's allowed set is REMOVED (brackets, quotes, control
+ * characters, accents…), the rest is cut to 100 characters and trimmed; nothing left → the fixed source above. Never throws.
+ */
+export function safeConsentSource(raw: unknown): string {
+  const cleaned = String(raw ?? '').replace(CONSENT_SOURCE_DISALLOWED, '').slice(0, CONSENT_SOURCE_MAX).trim();
+  return cleaned || RESUBSCRIBE_CONSENT_SOURCE;
+}
+
+/** The proof of the opt-in Mailercloud wants: where it was given and when (RFC 3339, not in the future, within 90 days, after the unsubscribe). */
+export type ResubscribeConsent = { source: string; at: Date };
 
 export class ContactError extends Error {
   constructor(
@@ -95,7 +120,7 @@ export class McContactClient {
   }
 
   /**
-   * Create ONE contact in our list with these tags. Single create, never upsert; NO `contact_type`
+   * Create ONE contact in our list with these tags. Single create, never upsert; no status is sent
    * (Mailercloud's default applies to a NEW contact only). Call only after `getContact` said 404.
    * "Already exists" → ContactError ALREADY_EXISTS (the writer switches to the existing-contact path).
    */
@@ -116,12 +141,23 @@ export class McContactClient {
   }
 
   /**
-   * The ONLY call that sends `contact_type` (design §6.3): a CMS opt-in dated after the opt-out,
-   * lifted by ingest, with AUDIENCE_RESUBSCRIBE_WRITES on. Refused before any request otherwise.
+   * The ONLY re-subscribe (design §6.3): a CMS opt-in dated after the opt-out, lifted by ingest, with AUDIENCE_RESUBSCRIBE_WRITES on.
+   * `POST /v1/contacts/resubscribe` with `{ email, consent_source, consent_at }` and nothing else (no list, ip, text or contact id).
+   * Refused before any request otherwise. 200 → `subscribed` (changed) or `already`; 202 → `pending_confirmation` (Mailercloud sent
+   * its double opt-in e-mail; a repeat within 24 h sends no second one). A 404, 409 (bounced / spam / suppressed: never possible) or 422
+   * (consent refused) → ContactError NOT_RESUBSCRIBABLE; 429 / 5xx / network → RETRYABLE; 401 / 403 (quota) → FATAL.
    */
-  async resubscribe(email: string): Promise<void> {
+  async resubscribe(email: string, consent: ResubscribeConsent): Promise<ResubscribeOutcome> {
     if (!this.resubscribeWrites) throw this.err('FATAL', 'resubscribe', 'refused: AUDIENCE_RESUBSCRIBE_WRITES is off');
-    await this.call('resubscribe', 'PUT', `/contacts/${encodeURIComponent(email)}`, { contact_type: 'active' });
+    if (!(consent?.at instanceof Date) || Number.isNaN(consent.at.getTime())) throw this.err('FATAL', 'resubscribe', 'refused: no valid consent time');
+    const r = await this.call('resubscribe', 'POST', '/contacts/resubscribe', {
+      email,
+      consent_source: safeConsentSource(consent.source),
+      consent_at: consent.at.toISOString().replace(/\.\d{3}Z$/, 'Z'), // RFC 3339 to the whole second (floored: never later than the real time)
+    });
+    const b = obj(r.body);
+    if (r.status === 202 || b?.status === 'pending_confirmation') return 'pending_confirmation';
+    return b?.changed === false ? 'already' : 'subscribed';
   }
 
   /** Every tag (id + name), all pages. */
@@ -208,6 +244,11 @@ export class McContactClient {
     const parsed = parseJson(text);
     if (status >= 200 && status < 300) return { status, body: parsed };
     if (status === 404 && op === 'getContact') return { status, body: parsed };
+    // Re-subscribe: not found, not re-subscribable (bounced / spam / abuse / suppressed) or a consent Mailercloud refuses. Final: the
+    // message carries the HTTP status and Mailercloud's fixed code words only, never its free text (it could echo an address).
+    if (op === 'resubscribe' && (status === 404 || status === 409 || status === 422)) {
+      throw this.err('NOT_RESUBSCRIBABLE', op, `HTTP ${status}${refusalCodes(parsed)}`, status);
+    }
     const msg = providerText(parsed);
     if (op === 'createContact' && status >= 400 && status < 500 && ALREADY_EXISTS_TEXT.test(msg)) {
       throw this.err('ALREADY_EXISTS', op, 'contact already exists', status);
@@ -263,6 +304,22 @@ export function tagTokens(v: unknown): string[] {
     for (const t of v.split(',')) push(t);
   }
   return [...new Set(out)];
+}
+
+/**
+ * Mailercloud's machine-readable words on a refusal (`contact_not_resubscribable`, `invalid`, and for a 409 the contact's
+ * `current_status`), as " code (current_status)" — ONLY lower-case snake_case tokens of a sane length are kept, so nothing free-form
+ * (an address, a name) can ride along. "" when there is none.
+ */
+function refusalCodes(body: unknown): string {
+  const r = obj(body);
+  if (!r) return '';
+  const token = (v: unknown, max: number): string | null => (typeof v === 'string' && new RegExp(`^[a-z][a-z_]{2,${max}}$`).test(v) ? v : null);
+  const err = obj(r.error);
+  const first = Array.isArray(r.errors) ? obj(r.errors[0]) : null;
+  const code = token(r.code, 40) ?? token(r.error, 40) ?? token(err?.code, 40) ?? token(first?.code, 40);
+  const current = token(r.current_status, 30) ?? token(err?.current_status, 30);
+  return `${code ? ` ${code}` : ''}${current ? ` (${current})` : ''}`;
 }
 
 /** "message; message" from `{errors:[…]}`, `{error:{…}|string}` or `{message}` — redacted by the caller. */

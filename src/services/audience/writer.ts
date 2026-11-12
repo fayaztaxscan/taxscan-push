@@ -6,7 +6,7 @@ import { redactText } from '../../lib/redact';
 import { breakerState, checkRemovalBreaker } from './breaker';
 import { isPullRunning } from './pull';
 import { raiseAudienceAlert, sendAudienceAlerts, type AudienceAlertDeps } from './alerts';
-import { ContactError, createContactClient, type McContact, type McContactClient } from './mcContacts';
+import { ContactError, RESUBSCRIBE_CONSENT_SOURCE, createContactClient, type McContact, type McContactClient } from './mcContacts';
 
 /**
  * The ONE writer of Mailercloud contacts (docs/CMS_AUDIENCE_SYNC_DESIGN.md §3.2, §6, §11 task 6).
@@ -15,11 +15,13 @@ import { ContactError, createContactClient, type McContact, type McContactClient
  * `flushPending()` takes the due members (`nextAttemptAt` ≤ now, ≤ 200 a tick), computes the diff and
  * writes it; repeating it is harmless, and a reader who flaps collapses into one write.
  *
- * Never re-subscribe anyone (§6.2):
- *  - `contact_type` is never sent, except by the §6.3 lift path (`resubscribe`), only with
+ * Never re-subscribe anyone (§6.2), except through the §6.3 lift path:
+ *  - the ONLY re-subscribe is `client.resubscribe()` (POST /v1/contacts/resubscribe), only with
  *    AUDIENCE_RESUBSCRIBE_WRITES, only for a member whose suppression ingest lifted on the account's
  *    CURRENT address (QA M2: `resubscribePending` is set on that hash only, and a live account
- *    holding it must still say consent=true), never while suppressed;
+ *    holding it must still say consent=true), never while suppressed. It carries the reader's consent
+ *    as the latest `consentAt` of those live accounts, which must not be in the future or older than
+ *    90 days (Mailercloud's rule): otherwise NO call, counted `resubscribeConsentTooOld`, the lift handled;
  *  - a contact is created only after our own GET answered 404, by single create into our own list
  *    (AUDIENCE_MC_LIST_ID, which the Free digest does not target) — never upsert, never batch; an
  *    "already exists" answer (M-1 race) switches to the existing-contact path;
@@ -52,6 +54,8 @@ import { ContactError, createContactClient, type McContact, type McContactClient
  */
 
 export const WRITER_BATCH = 200;
+/** Mailercloud takes a re-subscribe consent only if it is within the last 90 days (and not in the future). */
+export const RESUBSCRIBE_CONSENT_MAX_AGE_MS = 90 * 24 * 3_600_000;
 export const SEND_WINDOW_BEFORE_MIN = 20;
 export const SEND_WINDOW_AFTER_MIN = 30;
 /** Retry delays after the 1st, 2nd, 3rd failure; hourly after that (design §6.4). */
@@ -171,8 +175,14 @@ export type FlushReport = {
   created: number;
   tagged: number;
   removed: number;
+  /** Lifts (§6.3): re-subscribed (200 changed) / already subscribed (200) / awaiting the reader's double opt-in e-mail (202) / refused for good (404, 409, 422). */
   resubscribed: number;
+  resubscribeAlready: number;
+  resubscribePending: number;
+  resubscribeRefused: number;
+  /** Lifts handled WITHOUT a call (flag off, suppressed, no live consent, no such contact, or the consent is too old: `resubscribeConsentTooOld` is that last part). */
   resubscribeSkipped: number;
+  resubscribeConsentTooOld: number;
   /** FREE: waiting members looked up in Mailercloud (GET only) / admitted under today's cap. */
   looked: number;
   admitted: number;
@@ -184,7 +194,7 @@ export type FlushReport = {
 };
 
 function emptyFlush(dryRun: boolean): FlushReport {
-  return { dryRun, members: 0, wouldAdd: 0, wouldRemove: 0, created: 0, tagged: 0, removed: 0, resubscribed: 0, resubscribeSkipped: 0, looked: 0, admitted: 0, done: 0, deleted: 0, retry: 0, fatal: 0, requests: 0 };
+  return { dryRun, members: 0, wouldAdd: 0, wouldRemove: 0, created: 0, tagged: 0, removed: 0, resubscribed: 0, resubscribeAlready: 0, resubscribePending: 0, resubscribeRefused: 0, resubscribeSkipped: 0, resubscribeConsentTooOld: 0, looked: 0, admitted: 0, done: 0, deleted: 0, retry: 0, fatal: 0, requests: 0 };
 }
 
 /** What a write needs configured (names only). */
@@ -324,7 +334,7 @@ async function flushOnce(deps: WriterDeps, cfg: AudienceEnv, dry: boolean): Prom
   // eslint-disable-next-line no-console
   console.log(
     `[audience] writer members=${report.members} created=${report.created} tagged=${report.tagged} removed=${report.removed}` +
-      ` resubscribed=${report.resubscribed} looked=${report.looked} admitted=${report.admitted} done=${report.done} deleted=${report.deleted} retry=${report.retry} fatal=${report.fatal} requests=${report.requests}`,
+      ` resubscribed=${report.resubscribed} already=${report.resubscribeAlready} pending=${report.resubscribePending} resubRefused=${report.resubscribeRefused} resubSkipped=${report.resubscribeSkipped} consentTooOld=${report.resubscribeConsentTooOld} looked=${report.looked} admitted=${report.admitted} done=${report.done} deleted=${report.deleted} retry=${report.retry} fatal=${report.fatal} requests=${report.requests}`,
   );
   return report;
 }
@@ -473,6 +483,13 @@ async function admitFree(ctx: WriteCtx, budget: number, only?: readonly string[]
   return result;
 }
 
+/** The member's CURRENT, live, consent-true CMS accounts (the rows a lift needs): how many, and the latest `consentAt` among them (null when none has one). */
+async function liveConsent(emailHash: string): Promise<{ accounts: number; latest: Date | null }> {
+  const rows = await prisma.cmsAccount.findMany({ where: { emailHash, deletedAt: null, outOfScopeAt: null, consentValue: true }, select: { consentAt: true } });
+  const times = rows.map((r) => r.consentAt).filter((d): d is Date => d !== null);
+  return { accounts: rows.length, latest: times.length > 0 ? new Date(Math.max(...times.map((d) => d.getTime()))) : null };
+}
+
 async function writeOne(m: AudienceMember, ctx: WriteCtx): Promise<'done' | 'retry' | 'fatal'> {
   const email = m.email!;
   const { client, report } = ctx;
@@ -528,12 +545,26 @@ async function writeOne(m: AudienceMember, ctx: WriteCtx): Promise<'done' | 'ret
     }
 
     if (resubDue) {
-      const current = await prisma.cmsAccount.count({
-        where: { emailHash: m.emailHash, deletedAt: null, outOfScopeAt: null, consentValue: true },
-      });
-      if (ctx.cfg.resubscribeWrites && !m.suppressed && current > 0 && contact) {
-        await call(ctx, () => client.resubscribe(email));
-        report.resubscribed += 1;
+      const consent = await liveConsent(m.emailHash);
+      if (ctx.cfg.resubscribeWrites && !m.suppressed && consent.accounts > 0 && contact) {
+        const age = consent.latest ? ctx.now.getTime() - consent.latest.getTime() : null;
+        if (consent.latest === null || age === null || age < 0 || age > RESUBSCRIBE_CONSENT_MAX_AGE_MS) {
+          // No usable consent time (missing, in the future, or older than 90 days): Mailercloud would refuse it, so nothing is sent.
+          report.resubscribeSkipped += 1;
+          report.resubscribeConsentTooOld += 1;
+        } else {
+          const at = consent.latest;
+          try {
+            const outcome = await call(ctx, () => client.resubscribe(email, { source: RESUBSCRIBE_CONSENT_SOURCE, at }));
+            if (outcome === 'subscribed') report.resubscribed += 1;
+            else if (outcome === 'already') report.resubscribeAlready += 1;
+            else report.resubscribePending += 1;
+          } catch (err) {
+            // Not found / bounced / spam / suppressed / consent refused: final. The lift is handled and counted, never retried, no alert.
+            if (!(err instanceof ContactError) || err.kind !== 'NOT_RESUBSCRIBABLE') throw err;
+            report.resubscribeRefused += 1;
+          }
+        }
       } else {
         report.resubscribeSkipped += 1;
       }
