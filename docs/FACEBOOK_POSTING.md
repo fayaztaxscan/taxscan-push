@@ -2,7 +2,8 @@
 
 Built 3 Nov 2026 (brief `docs/briefs/2026-11-03-facebook-page-posting.md`). It mirrors the LinkedIn posting
 (`docs/LINKEDIN_POSTING.md`) and does not change it. Code: `src/services/facebook/{client,pages,post,worker}.ts`,
-`src/routes/facebook.ts`. Table `FacebookPost` (not in the R2 backup).
+`src/routes/facebook.ts`. Table `FacebookPost` (not in the R2 backup). Since 12 Nov 2026 a second page, **Shopscan**
+(facebook.com/shopscan.in), can post every push too: see "The Shopscan page" below (off unless its three variables are set).
 
 ## What posts
 (This is **today's rule**, the one the page follows until `FACEBOOK_ALL_PUSHES_FROM` is set; see "Every push posts" below.)
@@ -81,7 +82,8 @@ the worker, the screen and the Campaigns Channels mark all call.
 
 ## Compose: untick the page for one push (brief 2026-11-09-compose-skip-pages)
 Compose's **Post to** list (`GET /api/social/pages`) offers `facebook:<page>` for every Facebook page with a valid id and token while
-`FACEBOOK_POSTING_ENABLED` is on; a later Facebook page (Academy, Shopscan) joins the list by its own name with no change to Compose.
+`FACEBOOK_POSTING_ENABLED` is on, from the ONE list `portalPages()` (Taxscan, then Shopscan while it is active: "Facebook · Shopscan"); a later
+Facebook page (Academy) joins the list by its own name with no change to Compose.
 Unticking it means the page gets nothing for THIS one push; the pacer, Push now and the backfill post as ever. The worker reads
 `Campaign.socialSkip` and writes ONE `FacebookPost` row, status SKIPPED, error `compose_skip`, attempts 0, **no Graph call**; the row is written at
 once whatever the page is waiting for (the gap between posts, the daily cap, a stop), because it is a database write that makes no post, and it
@@ -89,9 +91,35 @@ costs the tick's one attempt nothing. Its key is always the push's own (`push:<i
 under today's rule a later push of the same URL still posts (see `docs/LINKEDIN_POSTING.md`, "Compose: untick a page for one push", for why).
 The screen shows it as SKIPPED with `skipReason: "compose_skip"` ("Skipped in Compose") and no Retry or Skip.
 
+## The Shopscan page (brief 2026-11-12-facebook-shopscan-page)
+Every push that posts to the Taxscan Facebook page also posts to the **Shopscan** page (facebook.com/shopscan.in), with the same text, hashtags and
+Compose picture. It is a **shared page**: not a portal's own page but a second page that receives the `taxscan` portal's pushes, with a page id, token
+and go-live of its own. Code: `portalPages()` and `isSharedPage()` in `src/services/facebook/pages.ts` (LinkedIn's `portalPages()` is the model);
+the worker, the screen's API, Compose "Post to" and the page status all read that ONE function, so Shopscan appears in every one of them at once and in
+none while it is off.
+
+- **Active only when all three are valid** (and `FACEBOOK_POSTING_ENABLED` is on): `FACEBOOK_SHOPSCAN_PAGE_ID` (digits), `FACEBOOK_SHOPSCAN_PAGE_TOKEN` (the
+  **Page** access token from `me/accounts`, not a user or system-user token; Railway only) and `FACEBOOK_SHOPSCAN_POST_FROM` (a strict ISO time). Anything else
+  (none, some, any one invalid) = off: no rows, no failures, and **it never stops the worker from starting** (only the Taxscan page's own config does).
+  ONE boot line says which: `[facebook] shopscan page on (every push from <ISO>)` or
+  `[facebook] shopscan page off: not configured (it needs FACEBOOK_SHOPSCAN_PAGE_ID, FACEBOOK_SHOPSCAN_PAGE_TOKEN and FACEBOOK_SHOPSCAN_POST_FROM)` /
+  `… <VARIABLE> is missing or not digits | not a valid page token | not a valid ISO time` (names only, never a value).
+- **Every push from its own go-live.** `FACEBOOK_SHOPSCAN_POST_FROM` is both its go-live and its every-push time (there is no `…_ALL_PUSHES_FROM` of its own): it posts
+  every push the Taxscan page would post under "Every push posts" (articles, courses, products, and, with `SOCIAL_ANY_LINK_FROM`, other allowed pages), one post
+  per push, repeats included, and **nothing pushed before its go-live is ever posted there**, whatever `FACEBOOK_POST_FROM` says. The Taxscan page's own rules,
+  go-live and times are untouched.
+- **Everything else is per page:** a tick handles Taxscan first, then Shopscan (a busy tick only delays Shopscan), each with at most one attempt; the gap
+  (`FACEBOOK_MIN_GAP_MINUTES`) and the daily cap (`FACEBOOK_DAILY_CAP`) are counted on each page's own rows; a token stop or a policy stop (code 368) on Shopscan
+  stops Shopscan only (its own alert email, banner and ADMIN Resume of `shopscan`; Taxscan keeps posting), and the other way round; Pause / Resume and the held /
+  failing alerts work for `facebook:shopscan`; rows are `FacebookPost.page = 'shopscan'`.
+- **Picture, UTM, Compose:** a Compose picture is a photo post on both pages, with the same one fallback to a link post, on the page that was refused only. The link is
+  tagged `utm_source=taxscan-facebook&utm_medium=social&utm_campaign=facebook-shopscan`. Compose "Post to" lists "Facebook · Shopscan" while it is active; unticking it
+  writes SKIPPED `compose_skip` for Shopscan only.
+- **The Channels mark on Campaigns** still means the Taxscan page only.
+
 ## Pacing (account safety)
-- At most **one post attempt per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts.
-- At most `FACEBOOK_DAILY_CAP` (30) posts per IST day; the rest wait for the next day, however old they are by then.
+- At most **one post attempt per page per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts on a page.
+- At most `FACEBOOK_DAILY_CAP` (30) posts per IST day **per page**; the rest wait for the next day, however old they are by then.
 - The row is created before the call; an in-flight row older than 10 min becomes FAILED "unknown - check the page" and is never
   re-posted automatically.
 
@@ -110,9 +138,12 @@ adds `kind=course|product`).
 The token never appears in a URL, log, `error` column, API response or e-mail.
 
 ## API (ADMIN or PUBLISHER unless noted; flag off = 404)
-`GET /api/facebook/posts?date=YYYY-MM-DD` (IST day, 14 days back) -> `{date, page, rows[], counts, login, policy}`;
-`POST /api/facebook/posts/:id/retry`; `POST /api/facebook/posts/:id/skip`; `POST /api/facebook/check` (ADMIN: one
-`GET /<version>/<page-id>?fields=name`, token in the Authorization header, posts nothing); `POST /api/facebook/resume` (ADMIN).
+`GET /api/facebook/posts?date=YYYY-MM-DD&page=<key>` (IST day, 14 days back) -> `{date, page, rows[], counts, login, policy, pageStatus}`; `page` is one of the
+ACTIVE pages (`taxscan`, or `shopscan` while it is active), default the first; anything else is 400 `invalid_page`; `pages` (the active list, Taxscan first) is in the
+answer only while there are two or more, so with Shopscan off the answer is exactly what it always was;
+`POST /api/facebook/posts/:id/retry`; `POST /api/facebook/posts/:id/skip` (by row id: a Shopscan row never touches a Taxscan one); `POST /api/facebook/check`
+`{ page? }` (ADMIN: one `GET /<version>/<page-id>?fields=name` with that page's own token in the Authorization header, posts nothing); `POST /api/facebook/resume`
+`{ page? }` (ADMIN: clears that page's policy stop only; 400 `invalid_page`).
 `/api/auth/me` -> `features.facebookPosting`. Campaigns list: `channels.facebook` + `channelDetails.facebook` (only while the flag is on).
 
 ## Flags
@@ -125,10 +156,14 @@ The token never appears in a URL, log, `error` column, API response or e-mail.
 | `SOCIAL_ANY_LINK_FROM` | - | **One time for all four channels** (strict ISO): from it on, a push to any OTHER allowed page (shop collection, pricing page, home page) also posts here, if `FACEBOOK_ALL_PUSHES_FROM` is on for that push. A push before it never does. Unset or invalid = off. See "Other pages" |
 | `FACEBOOK_TAXSCAN_PAGE_ID` | - | Numeric page id. |
 | `FACEBOOK_TAXSCAN_PAGE_TOKEN` | - | Page access token (Railway only). A page token made from a long-lived user token does not expire on a timer; no renewal machinery. |
+| `FACEBOOK_SHOPSCAN_PAGE_ID` | - | The Shopscan page's numeric id. With the next two, ALL THREE valid = the Shopscan page is on. |
+| `FACEBOOK_SHOPSCAN_PAGE_TOKEN` | - | Its **Page** access token (from `me/accounts`; Railway only). |
+| `FACEBOOK_SHOPSCAN_POST_FROM` | - | Its own go-live, a strict ISO time = also its every-push time. Set it to the moment of switch-on, never earlier. |
 | `FACEBOOK_GRAPH_VERSION` | `v25.0` | |
 | `FACEBOOK_MIN_GAP_MINUTES` | 10 | |
 | `FACEBOOK_DAILY_CAP` | 30 | per IST day |
-The worker refuses to start (`[facebook] refusing to start: ...`) without a valid `FACEBOOK_POST_FROM`, page id and token.
+The worker refuses to start (`[facebook] refusing to start: ...`) without a valid `FACEBOOK_POST_FROM`, page id and token **for the Taxscan page**; the Shopscan page
+is optional and never causes that refusal.
 
 ## Switch-on (owner, after deploy)
 1. Create the Meta app from the long-standing page-admin account (planning sends the steps).
@@ -141,6 +176,14 @@ The worker refuses to start (`[facebook] refusing to start: ...`) without a vali
 Set `FACEBOOK_ALL_PUSHES_FROM` to **the current time** (UTC ISO) in Railway and redeploy. Pushes sent before that time keep today's rule;
 nothing in the past is posted. Look for `[facebook] all pushes on for FACEBOOK_ALL_PUSHES_FROM (from …)` in the boot log, then for
 `outcome=posted hashtags=fixed kind=course|product` after the next course or product push.
+
+### Switching the Shopscan page on (owner, on the owner's yes, after deploy)
+1. Railway: `FACEBOOK_SHOPSCAN_PAGE_ID` and `FACEBOOK_SHOPSCAN_PAGE_TOKEN` (`railway variable set NAME="$(pbpaste)"`; the **Page** token from `me/accounts`, NOT the
+   system-user token). Then `FACEBOOK_SHOPSCAN_POST_FROM` = **the moment of switch-on** (UTC ISO), never earlier. Redeploy.
+2. Boot log: `[facebook] shopscan page on (every push from …)` (or `… off: …` naming what is missing).
+3. ADMIN: SOCIAL -> Facebook -> the **Shopscan** tab -> **Check connection** ("Connected to page: …").
+4. Watch the next push: two `outcome=posted` lines, `page=taxscan` then `page=shopscan`, and the post on facebook.com/shopscan.in in a logged-out browser.
+To switch it off again, remove any one of the three variables (and redeploy; a deleted variable needs a redeploy): nothing is reposted or deleted.
 
 ## When a page stops: status, alerts and Pause (brief 2026-11-09-social-page-alerts-pause)
 
@@ -179,4 +222,5 @@ backup, so a restore brings a pause back with it.
 `FacebookPost` is **not** in the R2 export. After a restore keep `FACEBOOK_POSTING_ENABLED` **off** and set `FACEBOOK_POST_FROM` to the restore time
 before switching it back on: with the rows gone and no age limit, everything pushed since go-live would otherwise post a second time. **Set
 `FACEBOOK_ALL_PUSHES_FROM` to the restore time too** (or unset it): the `push:` rows are gone with the rest, and an old value would post every
-push since then, repeats included. See `docs/BACKUPS.md`.
+push since then, repeats included. **Set `FACEBOOK_SHOPSCAN_POST_FROM` to the restore time as well** (it is that page's go-live AND its every-push time; an old value would
+post every push since then on Shopscan). See `docs/BACKUPS.md`.

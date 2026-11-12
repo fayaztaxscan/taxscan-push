@@ -5,7 +5,7 @@ import PagePauseControl from '../components/PagePauseControl.vue';
 import PageStatusBanner from '../components/PageStatusBanner.vue';
 import { useRoute } from 'vue-router';
 import { useAuth } from '../composables/useAuth';
-import { apiErrorMessage, PUSH_REQUEST, useApi } from '../composables/useApi';
+import { apiErrorMessage, PUSH_REQUEST, useApi, type ApiError } from '../composables/useApi';
 import { PAGE_PAUSED, PAGE_PAUSED_TEXT, type PageStatus } from '../composables/socialPages';
 
 type Status = 'WAITING' | 'RETRYING' | 'POSTED' | 'FAILED' | 'SKIPPED' | 'NOT_POSTED';
@@ -30,7 +30,9 @@ type ListResponse = {
   date: string;
   rows: Row[];
   counts: Counts;
+  /** The page these rows belong to, and the ACTIVE pages (Taxscan first). `pages` comes ONLY with two or more: a server without it gets no switch. */
   page?: string;
+  pages?: string[];
   login: { since: string; status: number | null } | null;
   policy: { since: string; code: number | null; subcode: number | null; message: string | null } | null;
   /**
@@ -60,10 +62,15 @@ const minDate = istDay(-14);
 const qDate = String(useRoute().query.date ?? '');
 const date = ref<string>(/^\d{4}-\d{2}-\d{2}$/.test(qDate) && qDate >= minDate && qDate <= maxDate ? qDate : maxDate);
 const filter = ref<Filter>('all');
+const EMPTY_COUNTS: Counts = { waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 };
 const rows = ref<Row[]>([]);
-const counts = ref<Counts>({ waiting: 0, posted: 0, failed: 0, skipped: 0, notPosted: 0, all: 0 });
+const counts = ref<Counts>({ ...EMPTY_COUNTS });
 const login = ref<ListResponse['login']>(null);
 const policy = ref<ListResponse['policy']>(null);
+// Which Facebook page is on screen. null = not chosen yet: the first request leaves `page` out and adopts the server's answer (its
+// first page, Taxscan). `pages` = the ACTIVE pages (Taxscan, then Shopscan); the switch shows only when there are two or more.
+const page = ref<string | null>(null);
+const pages = ref<string[]>([]);
 // When the page started posting EVERY push (the server's `everyPushFrom`); null = it still posts one per article.
 const everyPushFrom = ref<string | null>(null);
 const pageStatus = ref<PageStatus | null>(null);
@@ -78,6 +85,16 @@ const retrying = ref<Row | null>(null);
 
 const isToday = computed(() => date.value === maxDate);
 const isYesterday = computed(() => date.value === istDay(-1));
+
+// A page's name as the editors say it. Any other key is shown capitalised (a page added later needs no change here).
+const PAGE_LABEL: Record<string, string> = { taxscan: 'Taxscan', shopscan: 'Shopscan' };
+const labelOf = (key: string): string => PAGE_LABEL[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+const multi = computed(() => pages.value.length > 1);
+// The page being shown ("Taxscan" until the first answer, which is also what a one-page server always shows).
+const pageLabel = computed(() => labelOf(page.value ?? pages.value[0] ?? 'taxscan'));
+// A page after the first (Shopscan): it starts posting at its own go-live, so nothing before then is ever posted to it.
+const laterPage = computed(() => multi.value && !!page.value && page.value !== pages.value[0]);
+const bothPages = computed(() => (pages.value.length === 2 ? 'Both pages' : 'All pages'));
 
 const CHIPS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -125,7 +142,11 @@ const loginText = computed(() => {
     minute: '2-digit',
   });
   const st = login.value.status ? ` (${login.value.status})` : '';
-  return `Facebook rejected the access token${st} since ${when}. Posting is stopped until a new token is set in Railway or the app restarts.`;
+  const lead = `Facebook rejected the access token${st} since ${when}.`;
+  // One page in use: the original wording, word for word.
+  if (!multi.value) return `${lead} Posting is stopped until a new token is set in Railway or the app restarts.`;
+  // Two pages: a stop belongs to one page, so the banner names it.
+  return `${lead} Posting to the ${pageLabel.value} page is stopped until a new token is set in Railway or the app restarts. Tell the owner.`;
 });
 
 function whenText(iso: string): string {
@@ -152,25 +173,67 @@ const policyText = computed(() => {
   if (!p) return '';
   const code = p.code ? ` (code ${p.code}${p.subcode ? '/' + p.subcode : ''})` : '';
   const said = p.message ? ` Facebook said: “${p.message.replace(/[.\s]+$/, '')}”.` : '';
-  return `Since ${whenText(p.since)}${code}.${said} Nothing is posted until an administrator presses Resume.`;
+  return `Since ${whenText(p.since)}${code}.${said} Nothing is posted${multi.value ? ' to this page' : ''} until an administrator presses Resume.`;
 });
 
+// Each answer is for one page and one day. If a newer request has started (another page or day tapped meanwhile), an older
+// answer is dropped, so one page's rows can never appear under the other page's name.
+let loadSeq = 0;
+function fetchList(withPage = true): Promise<ListResponse> {
+  const pageQ = withPage && page.value ? `&page=${encodeURIComponent(page.value)}` : '';
+  return api.get<ListResponse>(`/api/facebook/posts?date=${encodeURIComponent(date.value)}${pageQ}`);
+}
 async function load(keepError = false): Promise<void> {
+  const mine = ++loadSeq;
   loading.value = true;
   if (!keepError) error.value = null;
   try {
-    const data = await api.get<ListResponse>(`/api/facebook/posts?date=${encodeURIComponent(date.value)}`);
+    let data: ListResponse;
+    try {
+      data = await fetchList();
+    } catch (e) {
+      const err = e as ApiError;
+      const invalidPage = err.status === 400 && (err.body as { error?: string } | undefined)?.error === 'invalid_page';
+      if (!page.value || !invalidPage) throw e;
+      // The remembered page is no longer active (the Shopscan page was switched off meanwhile): quietly ask for the first
+      // page instead. Nothing on screen changes until that answer arrives, so if it fails too the screen stays consistent.
+      data = await fetchList(false);
+    }
+    if (mine !== loadSeq) return;
     rows.value = data.rows;
     counts.value = data.counts;
     login.value = data.login;
     policy.value = data.policy ?? null;
+    pages.value = data.pages ?? [];
+    page.value = data.page ?? data.pages?.[0] ?? null;
     everyPushFrom.value = data.everyPushFrom ?? null;
     pageStatus.value = data.pageStatus ?? null;
   } catch (e) {
-    error.value = apiErrorMessage(e);
+    if (mine === loadSeq) error.value = apiErrorMessage(e);
   } finally {
-    loading.value = false;
+    if (mine === loadSeq) loading.value = false;
   }
+}
+
+function selectPage(p: string): void {
+  if (p === page.value) return;
+  page.value = p;
+  // Rows, counts and every banner belong to the page just left: clear them so none of its Retry / Skip / Resume buttons stay on
+  // screen under the new name while the answer is on its way. The same goes for "every push is posted from …" (each page has its
+  // own time) and for a Check connection answer, which was about the other page's token (one still on its way is dropped).
+  rows.value = [];
+  counts.value = { ...EMPTY_COUNTS };
+  login.value = null;
+  policy.value = null;
+  pageStatus.value = null;
+  everyPushFrom.value = null;
+  check.value = null;
+  checkSeq++;
+  checking.value = false;
+  error.value = null;
+  note.value = null;
+  retrying.value = null;
+  void load();
 }
 
 function setDate(d: string): void {
@@ -189,8 +252,10 @@ function onPick(e: Event): void {
 
 const retryDetail = computed(() =>
   retrying.value?.unknownOutcome
-    ? 'Check the Facebook page first — it may already be posted.'
-    : 'It goes to the Taxscan Facebook page straight away. Check the page first if you are unsure.',
+    ? multi.value
+      ? `Check the ${pageLabel.value} Facebook page first — it may already be posted.`
+      : 'Check the Facebook page first — it may already be posted.'
+    : `It goes to the ${pageLabel.value} Facebook page straight away. Check the page first if you are unsure.`,
 );
 
 async function confirmRetry(): Promise<void> {
@@ -219,9 +284,9 @@ async function confirmRetry(): Promise<void> {
     if (status === 409) {
       error.value =
         reason === 'policy_stop'
-          ? 'Posting is stopped because Facebook blocked a post. An administrator has to resume it first.'
+          ? `Posting${multi.value ? ` to the ${pageLabel.value} page` : ''} is stopped because Facebook blocked a post. An administrator has to resume it first.`
           : reason === 'not_configured'
-            ? 'The Facebook page is not set up yet (page id / token in Railway).'
+            ? `The ${multi.value ? `${pageLabel.value} ` : ''}Facebook page is not set up yet (page id / token in Railway).`
             : 'This post changed in the meantime — the list has been refreshed.';
       await load(true);
     } else {
@@ -258,15 +323,23 @@ const KIND_TEXT: Record<string, string> = {
   error: 'Connection failed',
 };
 
+// A Check connection answer is for the page it was asked about: if another page is picked meanwhile (`checkSeq` moved), it is dropped.
+let checkSeq = 0;
 async function checkConnection(): Promise<void> {
+  const mine = ++checkSeq;
   checking.value = true;
   check.value = null;
   try {
-    check.value = await api.post<CheckResult>('/api/facebook/check', {}, { ...PUSH_REQUEST, unknownMessage: 'No reply from the server — try Check connection again.' });
+    const result = await api.post<CheckResult>(
+      '/api/facebook/check',
+      page.value ? { page: page.value } : {},
+      { ...PUSH_REQUEST, unknownMessage: 'No reply from the server — try Check connection again.' },
+    );
+    if (mine === checkSeq) check.value = result;
   } catch (e) {
-    check.value = { ok: false, kind: 'error', message: apiErrorMessage(e) };
+    if (mine === checkSeq) check.value = { ok: false, kind: 'error', message: apiErrorMessage(e) };
   } finally {
-    checking.value = false;
+    if (mine === checkSeq) checking.value = false;
   }
 }
 
@@ -275,11 +348,11 @@ async function resume(): Promise<void> {
   error.value = null;
   note.value = null;
   try {
-    await api.post('/api/facebook/resume', {});
-    note.value = 'Posting resumed. The next waiting article goes out within a few minutes.';
+    await api.post('/api/facebook/resume', page.value ? { page: page.value } : {});
+    note.value = `Posting${multi.value ? ` to the ${pageLabel.value} page` : ''} resumed. The next waiting article goes out within a few minutes.`;
   } catch (e) {
     const status = (e as { status?: number })?.status;
-    if (status === 409) note.value = 'Posting was already resumed.';
+    if (status === 409) note.value = `Posting${multi.value ? ` to the ${pageLabel.value} page` : ''} was already resumed.`;
     else error.value = apiErrorMessage(e);
   } finally {
     resuming.value = false;
@@ -321,49 +394,83 @@ onMounted(() => load());
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">Facebook page</h1>
       <div class="fb-tools">
-        <button v-if="isAdmin" class="btn" :disabled="checking" data-testid="fb-check" @click="checkConnection">
+        <!-- One page: Check connection and Pause sit with Refresh. With a page switch both are about the page chosen, so they move onto the switch's row. -->
+        <button v-if="isAdmin && !multi" class="btn" :disabled="checking" data-testid="fb-check" @click="checkConnection">
           {{ checking ? 'Checking…' : 'Check connection' }}
         </button>
         <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
         <!-- Last: a rarely used action, so on a phone the two familiar buttons keep their row and this one wraps under them. -->
-        <PagePauseControl v-if="isAdmin" channel="facebook" :status="pageStatus" @done="onPauseDone" />
+        <PagePauseControl v-if="isAdmin && !multi" channel="facebook" :page="page" :status="pageStatus" @done="onPauseDone" />
       </div>
     </div>
-    <!-- Paused / held / failing: first thing under the title, so a phone sees it before the explanation. -->
+    <!-- Which page's list this is. Only while a second page (Shopscan) is on; it sits above everything it changes. -->
+    <div v-if="multi" class="fb-scope">
+      <div class="fb-switch" role="group" aria-label="Facebook page" data-testid="fb-switch">
+        <button
+          v-for="p in pages"
+          :key="p"
+          type="button"
+          :class="{ on: p === page }"
+          :aria-pressed="p === page"
+          @click="selectPage(p)"
+        >
+          {{ labelOf(p) }}
+        </button>
+      </div>
+      <div v-if="isAdmin" class="fb-scope-tools">
+        <button class="btn" :disabled="checking" data-testid="fb-check" @click="checkConnection">
+          {{ checking ? 'Checking…' : 'Check connection' }}
+        </button>
+        <PagePauseControl channel="facebook" :page="page" :status="pageStatus" @done="onPauseDone" />
+      </div>
+    </div>
+    <!-- Paused / held / failing, for the page shown: first thing under the title (and the page switch), so a phone sees it before the explanation. -->
     <PageStatusBanner :status="pageStatus" :is-admin="isAdmin" />
     <p class="muted" :class="{ 'fb-every': everyPushFrom }" style="font-size: 13px; margin: 4px 0 8px" data-testid="fb-intro">
       <!-- The page posts EVERY push from a set time (the server sent `everyPushFrom`): say so, and from when. -->
       <template v-if="everyPushFrom">
-        Every push we send is posted to the Taxscan Facebook page automatically, a few minutes later: articles, courses and shop
+        Every push we send is posted to the {{ pageLabel }} Facebook page automatically, a few minutes later: articles, courses and shop
         products. A push that is sent again is posted again and gets its own row. Nothing to do unless a post fails.
-        <span v-if="sinceText" class="fb-since" data-testid="fb-since"
+        <template v-if="multi">{{ bothPages }} get every push, each with its own pace and its own stops.</template>
+        <span v-if="sinceText && !laterPage" class="fb-since" data-testid="fb-since"
           >From {{ sinceText }} every push is posted. Earlier pushes keep the old rule: one post per article.</span
+        >
+        <!-- A page after the first starts at its own go-live: pushes before it are never posted there. -->
+        <span v-else-if="sinceText" class="fb-since" data-testid="fb-since"
+          >From {{ sinceText }} every push is posted. Pushes before then are not posted to this page.</span
         >
       </template>
       <template v-else>
-        Every article we push is posted to the Taxscan Facebook page automatically, a few minutes later. Nothing to do
+        Every article we push is posted to the {{ pageLabel }} Facebook page automatically, a few minutes later. Nothing to do
         unless a post fails.
+        <template v-if="multi">Each page has its own pace and its own stops.</template>
       </template>
     </p>
     <ul class="fb-rules muted" data-testid="fb-rules">
       <li>One post at a time, at least 10 minutes apart, and no more than 30 a day. Busy days spill over, so a post can be late.</li>
-      <li>If Facebook blocks a post, posting stops completely until an administrator presses Resume.</li>
+      <li v-if="multi" data-testid="fb-rule-stop">
+        If Facebook blocks a post to the {{ pageLabel }} page, posting to it stops completely until an administrator presses Resume. The
+        other page keeps posting.
+      </li>
+      <li v-else>If Facebook blocks a post, posting stops completely until an administrator presses Resume.</li>
       <li v-if="everyPushFrom" data-testid="fb-rule-repeat">
         If Facebook refuses an identical repeat, the row says “Facebook says this was already posted”. Nothing to fix: press Skip.
       </li>
     </ul>
 
     <div v-if="check" class="banner" :class="check.ok ? 'ok' : 'err'" role="status" data-testid="fb-check-result">
-      <template v-if="check.ok">Connected to page: <strong>{{ check.name }}</strong></template>
+      <!-- The answer belongs to the page shown: with a switch it names that page, and Facebook's own name for it (a wrong token shows here). -->
+      <template v-if="check.ok && multi">{{ pageLabel }} page: connected to <strong>{{ check.name }}</strong></template>
+      <template v-else-if="check.ok">Connected to page: <strong>{{ check.name }}</strong></template>
       <template v-else>
-        <strong>{{ KIND_TEXT[check.kind] ?? 'Connection failed' }}.</strong>
+        <strong>{{ multi ? pageLabel + ' page: ' : '' }}{{ KIND_TEXT[check.kind] ?? 'Connection failed' }}.</strong>
         {{ check.message }}{{ check.status ? ' (HTTP ' + check.status + (check.code ? ', code ' + check.code : '') + ')' : '' }}
       </template>
     </div>
 
     <div v-if="policy" class="banner err fb-policy" role="alert" data-testid="fb-policy">
       <div>
-        <strong>Facebook blocked a post — check the page before resuming.</strong>
+        <strong>Facebook blocked a post{{ multi ? ' to the ' + pageLabel + ' page' : '' }} — check the page before resuming.</strong>
         <div>{{ policyText }}</div>
         <div v-if="!isAdmin" style="margin-top: 4px">Ask an administrator to resume posting once the page is fine.</div>
       </div>
@@ -469,10 +576,61 @@ onMounted(() => load());
 </template>
 
 <style scoped>
+/* The page switch: a scope control (which page's list is this), so it is ONE joined box, unlike the loose day buttons and the
+   status pills below it. The same box as the LinkedIn screen's, and the joined .seg control on Reports and Digests. No
+   overflow:hidden (it would clip the keyboard focus ring), so the outer corners are rounded on the buttons themselves. */
 .fb-tools {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+/* The page switch and the actions for the page it shows (Check connection, Pause): one row, the switch left, the actions right. */
+.fb-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0 0 8px;
+}
+.fb-scope-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fb-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.fb-switch button {
+  min-width: 104px;
+  min-height: 38px;
+  padding: 8px 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+.fb-switch button:first-child {
+  border-radius: 7px 0 0 7px;
+}
+.fb-switch button:last-child {
+  border-radius: 0 7px 7px 0;
+}
+.fb-switch button:hover:not(.on) {
+  background: #f1f5f9;
+}
+.fb-switch button.on {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.fb-switch button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 .fb-rules {
   font-size: 13px;
@@ -591,7 +749,28 @@ tr.fb-quiet td {
   .fb-policy .btn {
     width: 100%;
   }
+  /* The switch spans the phone's width, one equal 44px-tall tap target per page. */
+  .fb-switch {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    width: 100%;
+  }
+  /* The page's actions sit under the switch, at the right, button-sized: rare actions, not full-width bars a thumb lands on. */
+  .fb-scope {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .fb-scope-tools {
+    justify-content: flex-end;
+  }
+  .fb-switch button {
+    min-width: 0;
+    min-height: 44px;
+  }
   .toolbar .btn,
+  .fb-scope .btn,
   .fb-days .btn,
   .fb-chip,
   .fb-date input,

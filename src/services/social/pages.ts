@@ -1,6 +1,6 @@
 import { env } from '../../lib/env';
 import { portalPages } from '../linkedin/pages';
-import { PORTAL_TO_PAGE, pageConfig as facebookPageConfig } from '../facebook/pages';
+import { portalPages as facebookPortalPages, pageConfig as facebookPageConfig } from '../facebook/pages';
 import { PORTAL_TO_PAGE as TELEGRAM_PORTAL_TO_PAGE, telegramConfig } from '../telegram/pages';
 import { getPause, type SocialChannel } from './pause';
 
@@ -12,7 +12,8 @@ import { getPause, type SocialChannel } from './pause';
  *
  *   linkedin:<page>   every page of `portalPages()` (Taxscan, Academy, Shopscan; the last two only while their variables are valid),
  *                     only while LINKEDIN_POSTING_ENABLED is on;
- *   facebook:<page>   every Facebook page with a valid id and token, only while FACEBOOK_POSTING_ENABLED is on;
+ *   facebook:<page>   every page of Facebook's `portalPages()` (Taxscan, Shopscan; the last only while its variables are valid) with a valid id and
+ *                     token, only while FACEBOOK_POSTING_ENABLED is on;
  *   telegram:<page>   the Telegram channel, only while it is switched on AND all four variables are valid (brief 2026-11-09-telegram-channel);
  *   whatsapp          the WhatsApp channel queue, only while WHATSAPP_QUEUE_ENABLED is on.
  *
@@ -42,7 +43,7 @@ export function activeSocialPages(): SocialPage[] {
     for (const p of pages) out.push({ key: linkedinSkipKey(p), label: `LinkedIn · ${capitalised(p)}` });
   }
   if (env.facebook.enabled) {
-    for (const p of new Set(Object.values(PORTAL_TO_PAGE))) if (facebookPageConfig(p)) out.push({ key: facebookSkipKey(p), label: `Facebook · ${capitalised(p)}` });
+    for (const p of new Set(Object.values(facebookPortalPages()).flat())) if (facebookPageConfig(p)) out.push({ key: facebookSkipKey(p), label: `Facebook · ${capitalised(p)}` });
   }
   for (const p of new Set(Object.values(TELEGRAM_PORTAL_TO_PAGE))) if (telegramConfig(p)) out.push({ key: telegramSkipKey(p), label: `Telegram · ${capitalised(p)}` });
   if (env.whatsapp.queueEnabled) out.push({ key: WHATSAPP_SKIP_KEY, label: 'WhatsApp channel' });
