@@ -9,7 +9,8 @@ import { articleKey } from '../services/reports';
 import { isPublicArticleCampaign } from '../services/social/publicCampaign';
 import { isAllPushesCampaign, isPushKey, newRuleFrom, PUSH_KEY_PREFIX, pushKey } from '../services/social/allPushes';
 import { dayProblem, istDay, istDayBounds, istTime, MAX_DAYS_BACK } from '../services/whatsapp/queue';
-import { PORTAL_TO_PAGE, PAGE_TAXSCAN, pageConfig, postUrlOf } from '../services/facebook/pages';
+import { PAGE_TAXSCAN, pageConfig, portalPages, postUrlOf, resolveAllPushesFrom, resolvePostFrom, type TimeInput } from '../services/facebook/pages';
+import { normalizePortals, pagesOf, portalsOfPage, type PortalMap } from '../services/linkedin/pages';
 import { checkConnection } from '../services/facebook/client';
 import { COMPOSE_SKIP, loginProblem, policyProblem, resumePolicy, retryNow, skipPost, type WorkerDeps } from '../services/facebook/worker';
 import { facebookSkipKey, isComposeSkipped } from '../services/social/pages';
@@ -23,11 +24,18 @@ import type { FetchLike } from '../services/linkedin/post';
  * connection and Resume are ADMIN only. Behind FACEBOOK_POSTING_ENABLED: off = 404 on every endpoint, before auth. The request
  * path reads Postgres only, except Retry (ONE Graph post) and Check connection (ONE Graph GET).
  *
- *   GET  /api/facebook/posts?date=YYYY-MM-DD    IST day, default today, up to 14 days back
+ *   GET  /api/facebook/posts?date=YYYY-MM-DD&page=<key>
+ *                                               IST day, default today, up to 14 days back. `page` = one of the ACTIVE pages (listed as `pages` in
+ *                                               the answer while there are two or more, Taxscan first), default the first (taxscan); anything
+ *                                               else (an unknown page, or `shopscan` while it is not active) is 400 invalid_page.
  *   POST /api/facebook/posts/:id/retry          a FAILED row: post it now (409 policy_stop while stopped)
  *   POST /api/facebook/posts/:id/skip           a FAILED row, or one waiting for a retry
- *   POST /api/facebook/check                    ADMIN: "Connected to page: <name>" or the error class; posts nothing
- *   POST /api/facebook/resume                   ADMIN: clears a policy stop (audited)
+ *   POST /api/facebook/check      { page? }     ADMIN: "Connected to page: <name>" or the error class; posts nothing (that page's own id + token)
+ *   POST /api/facebook/resume     { page? }     ADMIN: clears THAT page's policy stop (audited); the other page's stop is untouched
+ *
+ * TWO PAGES (brief 2026-11-12-facebook-shopscan-page): the Shopscan page joins `pages` while its three FACEBOOK_SHOPSCAN_* variables are valid
+ * (`portalPages()`), with its own go-live, banners, stops, status and Pause (`page-pause` / `page-resume` take `page` too). A request that
+ * names no page is about the first one, so a Taxscan-only deployment answers exactly as before.
  *
  * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): once FACEBOOK_ALL_PUSHES_FROM is set, a push at or after it is its own row
  * (articles, courses and products alike; a repeat is another row, with its own Retry and Skip) and is WAITING until posted. A push
@@ -37,10 +45,12 @@ import type { FetchLike } from '../services/linkedin/post';
 export type FacebookRouterOptions = {
   enabled?: () => boolean;
   clock?: () => Date;
-  portals?: () => Readonly<Record<string, string>>;
-  postFrom?: () => Date | null;
-  /** The time from which the page posts EVERY push (brief 2026-11-04-academy-store-posts); null = today's rule. Default FACEBOOK_ALL_PUSHES_FROM. */
-  allPushesFrom?: () => Date | null;
+  /** Campaign.portal → page(s) (tests inject their own portal): one page name or a list per portal, Taxscan first. Default `portalPages()`. */
+  portals?: () => PortalMap;
+  /** Go-live: one time for every page (the old shape) or one per page. Default: each page's own configured time. */
+  postFrom?: () => TimeInput;
+  /** The time from which a page posts EVERY push (brief 2026-11-04-academy-store-posts); null = today's rule. One time or one per page. Default: each page's own. */
+  allPushesFrom?: () => TimeInput;
   worker?: WorkerDeps;
   /** The Graph fetch used by Check connection (tests inject a fake). */
   fetch?: FetchLike;
@@ -55,14 +65,21 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
   const router = Router();
   const enabled = o.enabled ?? (() => env.facebook.enabled);
   const nowOf = o.clock ?? (() => new Date());
-  const portalsOf = o.portals ?? (() => PORTAL_TO_PAGE);
-  const postFromOf = o.postFrom ?? (() => env.facebook.postFrom);
-  const allPushesFromOf = o.allPushesFrom ?? (() => env.facebook.allPushesFrom);
-  const pageOf = (): string => Object.values(portalsOf())[0] ?? PAGE_TAXSCAN;
+  const portalsOf = o.portals ?? portalPages;
+  const postFromOf = o.postFrom ?? ((): TimeInput => undefined);
+  const allPushesFromOf = o.allPushesFrom ?? ((): TimeInput => undefined);
+  /** The ACTIVE pages, Taxscan first (the SPA shows a page switch only when there is more than one). */
+  const pagesNow = (): string[] => pagesOf(normalizePortals(portalsOf()));
+  /** The page a request is about: absent = the first; named = it must be one of the ACTIVE pages, else null (400 invalid_page). */
+  const pageFrom = (wanted: unknown): string | null => {
+    const pages = pagesNow();
+    if (wanted === undefined || wanted === '') return pages[0] ?? PAGE_TAXSCAN;
+    return typeof wanted === 'string' && pages.includes(wanted) ? wanted : null;
+  };
 
   router.use((_req, res, next) => (enabled() ? next() : void res.status(404).json({ error: 'not_found' })));
-  // Pause / Resume the page (ADMIN), brief 2026-11-09-social-page-alerts-pause: `page-pause` / `page-resume` (the policy `/resume` below is another thing).
-  addPauseRoutes(router, { channel: 'facebook', pages: () => [pageOf()], clock: nowOf });
+  // Pause / Resume per page (ADMIN), brief 2026-11-09-social-page-alerts-pause: `page-pause` / `page-resume` (the policy `/resume` below is another thing).
+  addPauseRoutes(router, { channel: 'facebook', pages: pagesNow, clock: nowOf });
 
   router.get('/posts', STAFF, async (req, res) => {
     try {
@@ -70,16 +87,23 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const day = typeof req.query.date === 'string' && req.query.date !== '' ? req.query.date : istDay(now);
       const problem = dayProblem(day, now);
       if (problem) return res.status(400).json({ error: 'invalid_date', message: problem });
-      const portals = portalsOf();
+      // The ACTIVE pages, Taxscan first. `?page=` must be one of them: an unknown page, or `shopscan` while it is not active, is refused
+      // before anything is read.
+      const portals = normalizePortals(portalsOf());
+      const pages = pagesOf(portals);
+      const wanted = req.query.page;
+      if (wanted !== undefined && wanted !== '' && (typeof wanted !== 'string' || !pages.includes(wanted))) return res.status(400).json({ error: 'invalid_page' });
+      const page = typeof wanted === 'string' && wanted !== '' ? wanted : pages[0] ?? PAGE_TAXSCAN;
       const { start, end } = istDayBounds(day);
       const since = new Date(start.getTime() - MAX_DAYS_BACK * 24 * 60 * 60_000);
       const sent = await prisma.campaign.findMany({
-        where: { portal: { in: Object.keys(portals) }, status: 'SENT', lastSentAt: { gte: since } },
+        where: { portal: { in: portalsOfPage(portals, page) }, status: 'SENT', lastSentAt: { gte: since } },
         select: { id: true, title: true, url: true, target: true, lastSentAt: true, socialSkip: true },
         orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
       });
-      const postFrom = postFromOf();
-      const pushesFrom = newRuleFrom(allPushesFromOf(), postFrom); // null = the page stays on today's rule; never earlier than the page's own go-live
+      // This page's OWN go-live (Shopscan has its own), and its all-pushes time (null = it stays on today's rule).
+      const postFrom = resolvePostFrom(postFromOf(), page);
+      const pushesFrom = newRuleFrom(resolveAllPushesFrom(allPushesFromOf(), page), postFrom); // null = the page stays on today's rule; never earlier than the page's own go-live
       // One row per article (its oldest push) for a push before the all-pushes time, one row per PUSH at or after it. Pushes come
       // in time order, so the rows do too.
       const first = new Map<string, (typeof sent)[number]>();
@@ -88,7 +112,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       // Pushes whose sender unticked THIS page on Compose (brief 2026-11-09-compose-skip-pages): each is its own row under its own push key, shown
       // as skipped, and takes no part in the article grouping (the same split the worker makes), so it never hides a later push of the same URL.
       const composeKeys = new Set<string>();
-      const skipKey = facebookSkipKey(pageOf());
+      const skipKey = facebookSkipKey(page);
       for (const c of sent) {
         if (!c.lastSentAt) continue;
         if (postFrom && c.lastSentAt >= postFrom && isComposeSkipped(c, skipKey)) {
@@ -117,7 +141,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const todaysIds = inDay.filter(([k]) => !isPushKey(k)).flatMap(([k]) => idsOfArticle.get(k) ?? []);
       const posts = inDay.length
         ? await prisma.facebookPost.findMany({
-            where: { page: pageOf(), OR: [{ articleKey: { in: inDay.map(([k]) => k) } }, ...(todaysIds.length ? [{ campaignId: { in: todaysIds }, articleKey: { startsWith: PUSH_KEY_PREFIX } }] : [])] },
+            where: { page: page, OR: [{ articleKey: { in: inDay.map(([k]) => k) } }, ...(todaysIds.length ? [{ campaignId: { in: todaysIds }, articleKey: { startsWith: PUSH_KEY_PREFIX } }] : [])] },
           })
         : [];
       const byKey = new Map(posts.map((p) => [p.articleKey, p]));
@@ -171,15 +195,18 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const n = (s: ScreenStatus) => rows.filter((r) => r.status === s).length;
       return res.json({
         date: day,
-        page: pageOf(),
+        page,
+        // The ACTIVE pages (Taxscan first), present ONLY while there are two or more: that is when the screen shows its page switch, and
+        // while Shopscan is off the answer is exactly what it was before it existed.
+        ...(pages.length > 1 ? { pages } : {}),
         rows,
         counts: { waiting: n('WAITING') + n('RETRYING'), posted: n('POSTED'), failed: n('FAILED'), skipped: n('SKIPPED'), notPosted: n('NOT_POSTED'), all: rows.length },
         /** Amber banner: the token was rejected (clears by itself once a post works / the token changes). */
-        login: await loginProblem(pageOf()),
+        login: await loginProblem(page),
         /** Red banner: Facebook blocked a post; posting is stopped until an ADMIN presses Resume. */
-        policy: await policyProblem(pageOf()),
+        policy: await policyProblem(page),
         /** brief 2026-11-09-social-page-alerts-pause: ok | paused | stopped | held | failing, with the banner's words (`message`). */
-        pageStatus: await getPageStatus('facebook', pageOf(), now),
+        pageStatus: await getPageStatus('facebook', page, now),
         /** Present only while the page posts EVERY push (its all-pushes time, as the new rule really starts): the screen says so. Absent otherwise. */
         ...(pushesFrom ? { everyPushFrom: pushesFrom.toISOString() } : {}),
       });
@@ -209,9 +236,11 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
     }
   });
 
-  router.post('/check', ADMIN, async (_req, res) => {
+  router.post('/check', ADMIN, async (req, res) => {
     try {
-      const cfg = pageConfig(pageOf());
+      const page = pageFrom((req.body as { page?: unknown } | undefined)?.page);
+      if (!page) return res.status(400).json({ error: 'invalid_page' });
+      const cfg = pageConfig(page);
       if (!cfg) return res.json({ ok: false, kind: 'not_configured', message: 'FACEBOOK page id / token are not set (or not valid) in Railway.' });
       const r = await checkConnection(cfg, o.fetch);
       if (r.kind === 'ok') return res.json({ ok: true, name: r.name, message: `Connected to page: ${r.name}` });
@@ -224,7 +253,8 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
 
   router.post('/resume', ADMIN, async (req, res) => {
     try {
-      const page = pageOf();
+      const page = pageFrom((req.body as { page?: unknown } | undefined)?.page);
+      if (!page) return res.status(400).json({ error: 'invalid_page' });
       const cleared = await resumePolicy(page);
       if (!cleared) return res.status(409).json({ error: 'not_stopped' });
       await recordAudit({ userId: req.user?.id ?? null, action: 'FACEBOOK_POSTING_RESUMED', resourceType: 'facebook_page', resourceId: page, metadata: { page }, ipAddress: requestClientIp(req) });

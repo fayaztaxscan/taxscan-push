@@ -9,7 +9,7 @@ status changes so a fresh Claude session can pick up cleanly.
 
 **⏳ PENDING (2026-11-09 evening) — current list; full version in memory `project_taxscan_push_state`.**
 a. ✅ PR #113 LIVE 17:51 IST (menu + small fixes; menu verified live). Watch the Shopscan `org_daily_limit` hold on its next 429 (10 Nov, after ~3 posts). NEW small item: audience tests `audienceFreeReaders` #8 + `audiencePullAcceptance` 5% limit flake when run in parallel (pull.ts:205 counts mailable members globally) — brief to serialise them / scope the count.
-b. Build `docs/briefs/2026-11-09-social-page-alerts-pause.md` (STARTED 9 Nov ~17:50 in build session taxscan-push-41; review its REPORT next session) → Release check → owner yes → live.
+b. ✅ PR #114 LIVE 18:34 IST: social page alerts + per-page Pause/Resume. NEXT build: `docs/briefs/2026-11-09-audience-test-flake.md` (run 1 of both 9 Nov Release checks failed on it).
 c. 10 Nov after approving Premium: press **Send Free** — only `fayazabdu+freetest1` (segment EEZEa) may receive it. Then the real Free segments (EEZEK newsletter 9,938, EEZES former 4,307, EEZEu free readers) only after Mailercloud credit + owner yes.
 d. Free admissions running since ~16:23 IST 9 Nov (cap 10,000/day): check admitted/refused daily.
 e. Digest-notice door: CMS (cms-platform-29) builds its pull on their owner's yes, generates `CMS_FEED_NOTICES_SECRET` → owner sets it → we set `DIGEST_NOTICES_ENABLED`. Anagha's Mailercloud status export → ADMIN import (Digests → Audience; first upload is a safe trial).

@@ -10,12 +10,19 @@
  *  - tagsOut: 'names-csv' (GET returns "a,b") | 'ids-array' (GET returns ["id1","id2"])
  * Tags are stored by NAME; requests may name tags by name (PUT/create) or by id (tag/remove).
  * Auth: `Authorization` must equal the key exactly (no "Bearer"). Records every request.
+ *
+ * RE-SUBSCRIBE (since Mailercloud ticket #46846, 12 Nov 2026): a contact's status cannot be changed by a PUT any more — the field is ignored
+ * and the answer carries `warnings:[{code:"status_not_changed"}]`. The only way back is `POST /v1/contacts/resubscribe`
+ * `{email, consent_source, consent_at}`, modelled as documented: 200 `{contact_id, status:"subscribed", resubscribed_at, consent_recorded,
+ * changed}` (changed:false = already subscribed), 202 `{status:"pending_confirmation"}` while `doubleOptIn` is on, 404 not found, 409 for
+ * a bounced / spam contact (+ `current_status`), 422 for a bad `consent_source` or a `consent_at` that is in the future, older than 90 days
+ * or not after the contact's `unsubscribedAt`. `clock` is the time it judges "future" and "90 days" by (tests pin it to their own `now`).
  */
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-export type FakeContact = { id: string; email: string; status: 'active' | 'unsubscribed'; tags: Set<string>; lists: Set<string> };
+export type FakeContact = { id: string; email: string; status: 'active' | 'unsubscribed' | 'bounced' | 'spam'; tags: Set<string>; lists: Set<string>; unsubscribedAt?: Date };
 export type FakeRequest = { method: string; path: string; body: unknown };
 
 export class FakeMailercloud {
@@ -35,6 +42,12 @@ export class FakeMailercloud {
   failCreate: ((email: string) => { status: number; body: unknown } | null) | null = null;
   /** Called before a create is answered (to simulate the M-1 race). */
   beforeCreate: ((email: string) => void) | null = null;
+  /** POST /contacts/resubscribe answers this instead, per address (null = the documented behaviour). */
+  resubscribeAnswer: ((email: string, body: Record<string, unknown>) => { status: number; body: unknown } | null) | null = null;
+  /** Double opt-in for the API is on: a re-subscribe answers 202 and the contact stays unsubscribed until it confirms. */
+  doubleOptIn = false;
+  /** The time the re-subscribe validation judges by. */
+  clock: () => Date = () => new Date();
   private server: Server | null = null;
   private seq = 0;
 
@@ -44,8 +57,8 @@ export class FakeMailercloud {
     return this.tags.find((t) => t.id === idOrName)?.tag_name ?? idOrName;
   }
 
-  addContact(email: string, opts: { status?: 'active' | 'unsubscribed'; tags?: string[]; list?: string } = {}): FakeContact {
-    const c: FakeContact = { id: `c${++this.seq}`, email, status: opts.status ?? 'active', tags: new Set(opts.tags ?? []), lists: new Set(opts.list ? [opts.list] : ['hand-list']) };
+  addContact(email: string, opts: { status?: FakeContact['status']; tags?: string[]; list?: string; unsubscribedAt?: Date } = {}): FakeContact {
+    const c: FakeContact = { id: `c${++this.seq}`, email, status: opts.status ?? 'active', tags: new Set(opts.tags ?? []), lists: new Set(opts.list ? [opts.list] : ['hand-list']), unsubscribedAt: opts.unsubscribedAt };
     this.contacts.set(email, c);
     return c;
   }
@@ -121,8 +134,50 @@ export class FakeMailercloud {
         else for (const n of names) c.tags.add(n);
         if (this.m2 === 'resubscribe') c.status = 'active';
       }
-      if (b.contact_type === 'active') c.status = 'active';
-      res.json({ message: 'Contact updated' });
+      // A status in a PUT is ignored (never applied) and answered with a warning, as Mailercloud does since 12 Nov 2026.
+      res.json({ message: 'Contact updated', ...(b.contact_type !== undefined ? { warnings: [{ code: 'status_not_changed', message: 'status cannot be changed here' }] } : {}) });
+    });
+    app.post('/v1/contacts/resubscribe', (req, res) => {
+      const b = req.body as Record<string, unknown>;
+      const email = String(b.email ?? '');
+      const forced = this.resubscribeAnswer?.(email, b);
+      if (forced) {
+        res.status(forced.status).json(forced.body);
+        return;
+      }
+      const c = this.contacts.get(email);
+      if (!c) {
+        res.status(404).json({ code: 'contact_not_found' });
+        return;
+      }
+      if (c.status === 'bounced' || c.status === 'spam') {
+        res.status(409).json({ code: 'contact_not_resubscribable', current_status: c.status });
+        return;
+      }
+      const source = typeof b.consent_source === 'string' ? b.consent_source : '';
+      const at = typeof b.consent_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(b.consent_at) ? Date.parse(b.consent_at) : Number.NaN;
+      const now = this.clock().getTime();
+      const bad =
+        !/^[A-Za-z0-9 .,:\-_/@+]{1,100}$/.test(source) ||
+        Number.isNaN(at) ||
+        at > now ||
+        now - at > 90 * 24 * 3_600_000 ||
+        (c.unsubscribedAt !== undefined && at <= c.unsubscribedAt.getTime()) ||
+        'contact_id' in b;
+      if (bad) {
+        res.status(422).json({ code: 'invalid', message: `invalid consent for ${email}` });
+        return;
+      }
+      if (c.status === 'active') {
+        res.json({ contact_id: c.id, status: 'subscribed', resubscribed_at: new Date(now).toISOString(), consent_recorded: true, changed: false });
+        return;
+      }
+      if (this.doubleOptIn) {
+        res.status(202).json({ contact_id: c.id, status: 'pending_confirmation' });
+        return;
+      }
+      c.status = 'active';
+      res.json({ contact_id: c.id, status: 'subscribed', resubscribed_at: new Date(now).toISOString(), consent_recorded: true, changed: true });
     });
     app.post('/v1/contact/tag/remove', (req, res) => {
       const b = req.body as Record<string, unknown>;

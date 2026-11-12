@@ -3,7 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { istDay, istTime } from '../whatsapp/queue';
 import { portalPages } from '../linkedin/pages';
 import { orgHoldOf, ORG_DAILY_LIMIT } from '../linkedin/orgHold';
-import { PORTAL_TO_PAGE as FB_PORTAL_TO_PAGE, pageConfig as fbPageConfig } from '../facebook/pages';
+import { portalPages as fbPortalPages, pageConfig as fbPageConfig } from '../facebook/pages';
 import { telegramConfig, PORTAL_TO_PAGE as TG_PORTAL_TO_PAGE } from '../telegram/pages';
 import { getPause, PAGE_PAUSED, type SocialChannel } from './pause';
 
@@ -190,7 +190,7 @@ export async function getPageStatus(channel: SocialChannel, page: string, now: D
 export function activePages(): { channel: SocialChannel; page: string }[] {
   const out: { channel: SocialChannel; page: string }[] = [];
   if (env.linkedin.enabled) for (const p of new Set(Object.values(portalPages()).flat())) out.push({ channel: 'linkedin', page: p });
-  if (env.facebook.enabled) for (const p of new Set(Object.values(FB_PORTAL_TO_PAGE))) if (fbPageConfig(p)) out.push({ channel: 'facebook', page: p });
+  if (env.facebook.enabled) for (const p of new Set(Object.values(fbPortalPages()).flat())) if (fbPageConfig(p)) out.push({ channel: 'facebook', page: p });
   for (const p of new Set(Object.values(TG_PORTAL_TO_PAGE))) if (telegramConfig(p)) out.push({ channel: 'telegram', page: p });
   return out;
 }

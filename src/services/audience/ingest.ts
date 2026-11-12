@@ -268,7 +268,7 @@ export async function applyAccountSnapshot(tx: Tx, snap: AccountSnapshot, source
  * `RESUBSCRIBE` EmailEvent by hash. MANUAL is never lifted; ACCOUNT_DELETED only by a revival. At
  * most MAX_LIFTS_PER_DAY a day; a deferred lift is retried by the next snapshot (the nightly list
  * re-applies every row at its seq). Mailercloud's own unsubscribe is NOT touched here: only the
- * writer, with AUDIENCE_RESUBSCRIBE_WRITES, ever sends `contact_type` (task 6).
+ * writer, with AUDIENCE_RESUBSCRIBE_WRITES, ever re-subscribes a contact in Mailercloud (task 6: POST /v1/contacts/resubscribe).
  *
  * Only suppressions on the account's CURRENT address are lifted (QA M2, owner-delegated 24 Oct):
  * the opt-in is about the address the reader uses now. A row matched only by the account id — an

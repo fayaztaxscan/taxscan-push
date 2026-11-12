@@ -162,7 +162,7 @@ for the old address and the new one. Nothing else writes to `CmsAccount`.
 | Hourly incremental pull | `audience/pull.ts → pullIncremental()` | Pages from `updated_since = lastAsOf − 10 min`. Each row goes through `applyAccountSnapshot(…, 'pull')` |
 | Nightly full pull (04:30 IST) | `audience/pull.ts → pullFull()` | Same per-row path. Adds the **absence rule** (§5.3) once the load is proven complete |
 | Mailercloud webhook (exists) | `digest/webhook.ts` | Writes `EmailSuppression`. This changes what may be **added** for an address (§6.2), never its role |
-| Consent lift | inside `applyAccountSnapshot` | The digest design §3 re-subscribe rule. Also the only path that may set `contact_type` (§6.3) |
+| Consent lift | inside `applyAccountSnapshot` | The digest design §3 re-subscribe rule. Also the only path that may re-subscribe a Mailercloud contact (§6.3: `POST /v1/contacts/resubscribe`) |
 | Admin | none | **Deliberately, nobody can edit a reader's role by hand.** The only admin action is "Resume sync" after the circuit breaker trips (§8.2, Blast radius) |
 | Restore | `scripts/restore-backup.ts` | Restores `CmsAccount` and `AudienceMember` **without addresses** (§9). The next full pull refills them |
 
@@ -536,7 +536,9 @@ an address that does match a CMS account:
 The API documents `contact_type` on batch create with **`default: active`**. It does not document what an upsert
 does to an existing unsubscribed contact (open question 4 in digest design §12). So:
 
-1. **We never send `contact_type`.** The one exception is the lift path in §6.3, which has its own flag.
+1. **We never send a contact status (`contact_type`).** Since 12 Nov 2026 Mailercloud ignores it on a PUT anyway (the answer carries
+   `warnings:[{code:"status_not_changed"}]`; our live test of 9 Nov showed the contact reverting to Unsubscribed). The one way back to
+   subscribed is Mailercloud's dedicated `POST /v1/contacts/resubscribe`, used only by the lift path in §6.3 under its own flag.
 2. **We create only after our own `GET /contacts/{email}` returns 404.** That path uses single-contact create
    `POST /contacts`, never upsert. **[M-1]** If the create reports that the contact already exists (a race with the
    CMS newsletter box), we switch to the existing-contact path. We never retry it as an upsert.
@@ -564,8 +566,40 @@ does to an existing unsubscribed contact (open question 4 in digest design §12)
 | consent false → true/null | remove the No-marketing tag |
 | `account.email_changed` | old address: recompute, which usually removes our tags. New address: recompute, and the account-keyed suppression carries over |
 | Absent from a complete full load | role NONE: remove our tags |
-| **Re-subscribe** (`consent.value = true`, `at` > suppression `lastSeenAt`, `at` ≤ now + 5 min) | Our `EmailSuppression` row is deleted, and a `RESUBSCRIBE` `EmailEvent` is recorded by hash (digest design §3). **Only with `AUDIENCE_RESUBSCRIBE_WRITES=true`** does the writer also `PUT contact_type=active`. This is the only place that field is ever sent. Capped at 20 a day; MANUAL is never lifted |
+| **Re-subscribe** (`consent.value = true`, `at` > suppression `lastSeenAt`, `at` ≤ now + 5 min) | Our `EmailSuppression` row is deleted, and a `RESUBSCRIBE` `EmailEvent` is recorded by hash (digest design §3). **Only with `AUDIENCE_RESUBSCRIBE_WRITES=true`** does the writer also re-subscribe the contact through `POST /v1/contacts/resubscribe` (below). That is the only re-subscribe call there is. Capped at 20 a day; MANUAL is never lifted |
 | `account.deleted` (erasure) | Remove our tags. Null the address in `AudienceMember` and in `EmailSuppression`, keeping `emailHash` + `accountId` so the opt-out still matches. **With `AUDIENCE_ERASE_IN_MAILERCLOUD=true`** (Q4) the writer also `DELETE`s the contact. With it off, the address gets the No-marketing tag, so a hand-list copy stops receiving Free. Capped by `AUDIENCE_MAX_ERASURES_PER_DAY` (20); above the cap the breaker trips |
+
+**Re-subscribing in Mailercloud (brief 2026-11-12-resubscribe-endpoint; Mailercloud ticket #46846).** `McContactClient.resubscribe(email, { source, at })`
+is the only caller of `POST https://cloudapi.mailercloud.com/v1/contacts/resubscribe` (`Authorization: <sync key>`, no Bearer). The body is exactly
+`{ email, consent_source, consent_at }`: no `contact_id`, `list_id`, `consent_ip` or `consent_text`, and never a contact status. The client refuses before
+any request unless built with `AUDIENCE_RESUBSCRIBE_WRITES`.
+
+- **`consent_at`** is the latest `consentAt` of the member's current, live (not deleted, not out of scope), `consentValue: true` CMS accounts, sent as RFC 3339
+  to the whole second. Mailercloud takes it only when it is **not in the future, within the last 90 days, and after the contact unsubscribed** (the last
+  is Mailercloud's to judge: it answers 422). If our own time is missing, in the future or older than 90 days there is **no call**: the lift is handled and
+  counted `resubscribeSkipped` + `resubscribeConsentTooOld` (a reader whose opt-in is older than 90 days cannot be re-subscribed this way; no live
+  consent-true account at all is the old plain skip).
+- **`consent_source`** is the fixed `taxscan account settings`, and every value passes `safeConsentSource()`: only letters, digits, spaces and `. , : - _ / @ +`
+  survive (brackets made the live test answer 422), at most 100 characters, never empty.
+- **Answers:**
+
+  | Mailercloud | Meaning | Client / writer |
+  |---|---|---|
+  | **200** `changed: true` | re-subscribed (status Unknown = mailable, "Contact resubscribed") | `subscribed` → `resubscribed` |
+  | **200** `changed: false` | already subscribed (e.g. re-subscribed by hand) | `already` → `resubscribeAlready` |
+  | **202** `pending_confirmation` | double opt-in for the API is on: the reader gets Mailercloud's confirmation e-mail (a repeat within 24 h sends no second one) | `pending_confirmation` → `resubscribePending`; the lift is handled, never repeated |
+  | **404** `contact_not_found`, **409** `contact_not_resubscribable` + `current_status` (bounced / spam / abuse / suppressed: never possible), **422** `invalid` | refused for good | `NOT_RESUBSCRIBABLE` → `resubscribeRefused`; handled, never retried, no alert |
+  | **429**, 408, 5xx, network, timeout | | RETRYABLE: +1, +5, +15 min, then hourly (unchanged) |
+  | **401**, **403** (`quota_exceeded`), anything else | | FATAL as before: that member stops, `audience_writer_fatal` |
+
+  Limits: 60 a minute and 5,000 a day per Mailercloud account; our lifts are capped at `MAX_LIFTS_PER_DAY` and paced at `AUDIENCE_WRITE_RPS`, so nothing more is needed.
+  The writer line `[audience] writer …` prints counts only (`resubscribed= already= pending= resubRefused= resubSkipped= consentTooOld=`), never an address, a key or
+  Mailercloud's own words; an error message carries the status and Mailercloud's snake_case code words at most.
+- **Not changed:** when a lift happens (`liftOnConsent` in `ingest.ts`: an explicit opt-in dated after OUR `EmailSuppression` row). A reader unsubscribed only in
+  Mailercloud, with no row in our table, is not lifted; the Mailercloud status import (Digests → Audience) fills our table, which is an operations step.
+- **Switching it on** (planning + owner, after a live check with a test contact): set `AUDIENCE_RESUBSCRIBE_WRITES=true` in Railway and redeploy. Check the writer line
+  for `resubscribed=1` (or `already=1` / `pending=1`) after one real lift, and in Mailercloud's web screen the contact reads Unknown (mailable) with "Contact
+  resubscribed". Until then the CMS keeps its "turn it back on" switch OFF. Turning it off again needs no cleanup: contacts already re-subscribed stay so.
 
 **A fix that lands with this work** (noted in digest task 8). A Mailercloud replay of an old opt-out after a lift
 would re-create the suppression. The suppression upsert must run **only for `EmailEvent` rows that were newly
@@ -737,7 +771,7 @@ premium exclude cannot be trusted, and paid members would be shown the subscript
 | `AUDIENCE_SYNC_ENABLED` | Webhook route + pulls write **Postgres only**. Off: the route answers 401 (contract v1.2), and boot logs `[audience] disabled (set AUDIENCE_SYNC_ENABLED=true to start)`. That line is the **marker for a backend-only deploy** |
 | `AUDIENCE_SYNC_WRITE_MAILERCLOUD` | Writer on. Off: the writer runs **dry**, logging `would_add= would_remove=` (counts only) |
 | `DIGEST_AUDIENCE_FROM_CMS` | Derived digest targets + the send guard |
-| `AUDIENCE_RESUBSCRIBE_WRITES` | The §6.3 `contact_type=active` path |
+| `AUDIENCE_RESUBSCRIBE_WRITES` | The §6.3 re-subscribe through `POST /v1/contacts/resubscribe` |
 | ~~`AUDIENCE_ERASE_IN_MAILERCLOUD`~~ | **Removed 24 Oct** (owner): the CMS deletes the contact itself; we never call a Mailercloud delete. Ignored, with a boot warning, if set |
 
 **Settings:**
@@ -817,7 +851,7 @@ An **Audience card on Digests**. All of it comes from Postgres.
 | Absence | truncated load → nobody removed | complete load → absent account loses its tags |
 | Breaker | 6% change → writes paused | 4% → written |
 | Suppressed add | suppressed (by address or account) → no add | removal + No-marketing tag still written |
-| contact_type | never present in any request body (all fakes) | only on the lift path with its flag |
+| contact_type | never present in any request body (all fakes), and nowhere in `src/services/audience` (source scan) | the lift path re-subscribes through `POST /contacts/resubscribe` with its flag |
 | Guard | 27 h stale / 3% deviation / breaker → Premium held, then SKIPPED at 17:00 | 25 h, in tolerance → scheduled |
 | Free guard | Premium tag count 0 → Free held | > 0 → sent, with both derived excludes in the payload |
 | Lift | `at` ≤ `lastSeenAt` or MANUAL → nothing | `at` > `lastSeenAt` → row deleted + `RESUBSCRIBE` |
@@ -981,8 +1015,9 @@ An **Audience card on Digests**. All of it comes from Postgres.
   - Tests: `audiencePull.test.ts` (fake CMS that verifies OUR signature) and `audiencePullAcceptance.test.ts` (a feed that
     never ends, absences against the cap, the cap as a percentage, 429, the timeout).
 - **Task 6 — built 2026-10-29** (flags off; writes off by default = DRY RUN). `audience/mcContacts.ts` (the contact client:
-  get, single create, PUT `{tags}` only, tag remove, tag/segment reads, and `resubscribe()` — the only `contact_type`, refused
-  unless built with `AUDIENCE_RESUBSCRIBE_WRITES`; **no DELETE exists**, a source-scan test pins it) and `audience/writer.ts`
+  get, single create, PUT `{tags}` only, tag remove, tag/segment reads, and `resubscribe()` — the only re-subscribe, refused
+  unless built with `AUDIENCE_RESUBSCRIBE_WRITES` (first built as a PUT with `contact_type`, which Mailercloud never honoured; since
+  2026-11-12 `POST /v1/contacts/resubscribe`, §6.3); **no DELETE exists**, a source-scan test pins it) and `audience/writer.ts`
   (`flushPending`, `driftCheck`). Boot registers the writer tick (every minute) and the drift check (05:30 IST, after the
   04:30 full load); both do nothing unless `AUDIENCE_SYNC_ENABLED`, and the writer sends nothing unless
   `AUDIENCE_SYNC_WRITE_MAILERCLOUD` (off: it logs `[audience] writer dry-run members= would_add= would_remove=`, counts only).
@@ -1012,7 +1047,8 @@ An **Audience card on Digests**. All of it comes from Postgres.
     member always has one) instead of scanning the table. The nightly drift sample (`ORDER BY random()`) and the pull's
     start-of-run mailed count read the whole table or index by design (≈ 26 ms and ≈ 15 ms).
   - Tests: `audienceWriter.test.ts` (both behaviours of M-1 … M-3 and the read-back shape; `contact_type` and DELETE asserted on
-    every recorded request).
+    every recorded request) and, for the re-subscribe endpoint, `audienceResubscribe.test.ts` (every documented answer, the consent
+    rules, the source scan of the whole audience directory).
 
 - **Task 7 — built 2026-10-30** (behind `DIGEST_AUDIENCE_FROM_CMS`, default off; with it off the runner never calls the guard
   and `audienceTarget()` is unchanged). `audience/guard.ts`: `audienceGuard(audience, snapshot, now, thresholds)` is pure; every

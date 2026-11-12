@@ -1,8 +1,8 @@
 /**
  * CMS audience sync, task 6 (docs/CMS_AUDIENCE_SYNC_DESIGN.md §6, §10.3): the Mailercloud contact
  * writer against a fake Mailercloud whose contact semantics (M-1 … M-3, tag read-back shape) are
- * switched BOTH ways. The invariants asserted on every recorded request: no `contact_type` (except the
- * lift path with its flag) and no DELETE.
+ * switched BOTH ways. The invariants asserted on every recorded request: no `contact_type` (a status is never sent;
+ * the lift path re-subscribes through POST /v1/contacts/resubscribe, with its flag) and no DELETE.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -240,9 +240,9 @@ describe.each(BEHAVIOURS)('the writer against the fake Mailercloud — $name', (
   });
 });
 
-// ─── 7 / 8: contact_type, DELETE, suppressed members ────────────────────────
+// ─── 7 / 8: re-subscribe, DELETE, suppressed members ────────────────────────
 
-describe('the lift path is the only contact_type', () => {
+describe('the lift path is the only re-subscribe', () => {
   async function lifting(over: { flag: boolean; suppressed?: boolean; consent?: boolean }) {
     const m = await member(`lift-${over.flag}-${over.suppressed ?? false}-${over.consent ?? true}`, {
       desiredRole: 'NONE',
@@ -253,43 +253,45 @@ describe('the lift path is the only contact_type', () => {
       data: { accountId: `${P}${m.h.slice(0, 8)}`, seq: 1n, status: 'free', lastSource: 'webhook', emailHash: m.h, consentValue: over.consent ?? true, consentAt: now },
     });
     fake.addContact(m.email, { status: 'unsubscribed' });
+    fake.clock = () => now; // the fake judges the consent time by this test's clock
     const r = await flushPending(deps({ onlyHashes: [m.h], resubscribe: over.flag }));
     return { m, r };
   }
-  const withType = () => fake.requests.filter((r) => JSON.stringify(r.body ?? null).includes('contact_type'));
+  const resubRequests = () => fake.requests.filter((r) => r.path === '/v1/contacts/resubscribe');
 
-  it('flag ON + current consent + not suppressed: exactly one PUT {contact_type: active}', async () => {
+  it('flag ON + current consent + not suppressed: exactly one POST /v1/contacts/resubscribe {email, consent_source, consent_at}, and no status field anywhere', async () => {
     const { m, r } = await lifting({ flag: true });
     expect(r).toMatchObject({ resubscribed: 1, done: 1 });
-    expect(withType()).toHaveLength(1);
-    expect(withType()[0]).toMatchObject({ method: 'PUT', body: { contact_type: 'active' } });
+    expect(resubRequests()).toHaveLength(1);
+    expect(resubRequests()[0]).toMatchObject({ method: 'POST', body: { email: m.email, consent_source: 'taxscan account settings', consent_at: '2027-03-01T10:00:00Z' } });
+    expect(Object.keys(resubRequests()[0].body as object).sort()).toEqual(['consent_at', 'consent_source', 'email']);
     expect(fake.contacts.get(m.email)!.status).toBe('active');
     expect((await row(m.h))).toBeNull(); // handled: nothing left to hold
-    expectInvariants({ allowContactType: true });
+    expectInvariants();
   });
 
-  it('flag OFF: no contact_type anywhere, the contact stays unsubscribed, the lift is counted as skipped', async () => {
+  it('flag OFF: no re-subscribe request, the contact stays unsubscribed, the lift is counted as skipped', async () => {
     const { m, r } = await lifting({ flag: false });
     expect(r).toMatchObject({ resubscribed: 0, resubscribeSkipped: 1 });
-    expect(withType()).toHaveLength(0);
+    expect(resubRequests()).toHaveLength(0);
     expect(fake.contacts.get(m.email)!.status).toBe('unsubscribed');
     expectInvariants();
   });
 
-  it('flag ON but the member is suppressed (or consent is not true): still no contact_type', async () => {
+  it('flag ON but the member is suppressed (or consent is not true): still no re-subscribe request', async () => {
     await lifting({ flag: true, suppressed: true });
     await lifting({ flag: true, consent: false });
-    expect(withType()).toHaveLength(0);
+    expect(resubRequests()).toHaveLength(0);
     expectInvariants();
   });
 
   it('the client refuses resubscribe() itself unless built with the flag (no request is made)', async () => {
     const c = new McContactClient({ apiKey: KEY, baseV1: base });
-    await expect(c.resubscribe('a@example.com')).rejects.toMatchObject({ kind: 'FATAL' });
+    await expect(c.resubscribe('a@example.com', { source: 'x', at: now })).rejects.toMatchObject({ kind: 'FATAL' });
     expect(fake.requests).toHaveLength(0);
   });
 
-  it('source scan: no DELETE in the writer or the contact client; contact_type only in resubscribe()', () => {
+  it('source scan: no DELETE in the writer or the contact client; no status field anywhere in src/services/audience; the re-subscribe path only in resubscribe()', () => {
     const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const writer = strip(readFileSync(path.join(__dirname, '../services/audience/writer.ts'), 'utf8'));
     const client = strip(readFileSync(path.join(__dirname, '../services/audience/mcContacts.ts'), 'utf8'));
@@ -297,8 +299,10 @@ describe('the lift path is the only contact_type', () => {
     expect(client).not.toMatch(/['"`]DELETE['"`]/);
     expect(client).toMatch(/method: 'GET' \| 'POST' \| 'PUT'/);
     expect(writer).not.toContain('contact_type');
-    expect(client.match(/contact_type/g)).toHaveLength(1);
-    expect(client.indexOf('contact_type')).toBeGreaterThan(client.indexOf('async resubscribe'));
+    expect(client).not.toContain('contact_type');
+    expect(client.match(/\/contacts\/resubscribe/g)).toHaveLength(1);
+    expect(client.indexOf('/contacts/resubscribe')).toBeGreaterThan(client.indexOf('async resubscribe'));
+    expect(writer).not.toContain('/contacts/resubscribe');
   });
 });
 
