@@ -205,7 +205,8 @@ describe('buildSurfacesReport with nothing synced', () => {
     expect(payload.columns).toEqual([]);
     expect(payload.totals).toEqual([]);
     expect(grid(payload.byCategory, 'DISCOVER').rows).toEqual([]);
-    expect(payload.topArticles.GOOGLE_NEWS).toEqual([]);
+    expect(grid(payload.byCategory, 'GOOGLE_SEARCH_NEWS').rows).toEqual([]);
+    expect(payload.topArticles).toEqual({ DISCOVER: [], GOOGLE_SEARCH_NEWS: [], GOOGLE_NEWS: [] });
   });
 });
 
@@ -445,6 +446,74 @@ describe('buildSurfacesReport with new-CMS article URLs', () => {
     });
     expect(ranged.totals[0].DISCOVER).toEqual({ clicks: 100, impressions: 1030, articles: 2 });
     expect(ranged.totals[0].GOOGLE_NEWS).toEqual({ clicks: 40, impressions: 400, articles: 1 });
+  });
+});
+
+/** The third surface, the News tab in Google Search, beside the other two. */
+describe('buildSurfacesReport with the Search News surface', () => {
+  const portal = `test-surfaces-searchnews-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  const RUN = `t${Date.now()}z`;
+  const A = {
+    oldId: `/income-tax/${RUN}-itat-deletes-addition-${ID}`,
+    delhi: `/gst/${RUN}-gst-itc-denial-quashed-delhi-high-court`,
+  };
+  const now = new Date('2026-11-26T12:00:00.000Z');
+  let before: SurfacesPayload;
+  let after: SurfacesPayload;
+
+  beforeAll(async () => {
+    await seed(portal, [
+      [A.oldId, 'DISCOVER', '2026-10-03', 10, 100],
+      [A.delhi, 'DISCOVER', '2026-11-24', 300, 3000],
+      [A.oldId, 'GOOGLE_NEWS', '2026-10-04', 5, 50],
+      [A.delhi, 'GOOGLE_NEWS', '2026-11-20', 6, 60],
+    ]);
+    before = await buildSurfacesReport({ portal, now });
+    // Inside the same first and last day, so the columns cannot move.
+    await seed(portal, [
+      [A.oldId, 'GOOGLE_SEARCH_NEWS', '2026-10-05', 900, 9000],
+      [A.delhi, 'GOOGLE_SEARCH_NEWS', '2026-10-28', 70, 700],
+      [A.delhi, 'GOOGLE_SEARCH_NEWS', '2026-11-12', 30, 330],
+      ['/trackers/gst', 'GOOGLE_SEARCH_NEWS', '2026-11-12', 5000, 50000],
+      ['/', 'GOOGLE_SEARCH_NEWS', '2026-10-28', 999, 9999],
+    ]);
+    after = await buildSurfacesReport({ portal, now });
+  });
+
+  afterAll(async () => {
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+
+  it('lists the surfaces in screen order, in every part of the payload', () => {
+    const order = ['DISCOVER', 'GOOGLE_SEARCH_NEWS', 'GOOGLE_NEWS'];
+    expect(after.byCategory.map((g) => g.surface)).toEqual(order);
+    expect(after.byBench.map((g) => g.surface)).toEqual(order);
+    expect(Object.keys(after.topArticles)).toEqual(order);
+    for (const t of after.totals) expect(Object.keys(t)).toEqual(order);
+  });
+
+  it('has month columns, bench and category rows (both URL styles), totals and a top list', () => {
+    const [oct, nov] = [ci(after, '2026-10'), ci(after, '2026-11')];
+    expect(after.totals[oct].GOOGLE_SEARCH_NEWS).toEqual({ clicks: 970, impressions: 9700, articles: 2 });
+    expect(after.totals[nov].GOOGLE_SEARCH_NEWS).toEqual({ clicks: 30, impressions: 330, articles: 1 });
+    expect(row(after.byBench, 'GOOGLE_SEARCH_NEWS', 'Delhi High Court')?.cells.map((c) => c?.clicks)).toEqual([70, 30]);
+    expect(row(after.byBench, 'GOOGLE_SEARCH_NEWS', 'ITAT')?.cells[oct]?.clicks).toBe(900);
+    expect(row(after.byCategory, 'GOOGLE_SEARCH_NEWS', 'GST')?.cells.map((c) => c?.clicks)).toEqual([70, 30]);
+    expect(row(after.byCategory, 'GOOGLE_SEARCH_NEWS', 'Income Tax')?.cells[oct]?.clicks).toBe(900);
+    // The 30-day window ends on the latest synced day, so the 5 October row is outside it.
+    expect(after.topArticles.GOOGLE_SEARCH_NEWS.map((t) => [t.pagePath, t.clicks])).toEqual([[A.delhi, 100]]);
+  });
+
+  it('leaves Discover and Google News exactly as they were', () => {
+    expect(after.columns).toEqual(before.columns);
+    for (const surface of ['DISCOVER', 'GOOGLE_NEWS'] as const) {
+      expect(after.totals.map((t) => t[surface])).toEqual(before.totals.map((t) => t[surface]));
+      expect(grid(after.byCategory, surface)).toEqual(grid(before.byCategory, surface));
+      expect(grid(after.byBench, surface)).toEqual(grid(before.byBench, surface));
+      expect(after.topArticles[surface]).toEqual(before.topArticles[surface]);
+    }
+    expect(before.totals.map((t) => t.GOOGLE_SEARCH_NEWS.clicks)).toEqual([0, 0]);
+    expect(grid(before.byCategory, 'GOOGLE_SEARCH_NEWS').rows).toEqual([]);
   });
 });
 

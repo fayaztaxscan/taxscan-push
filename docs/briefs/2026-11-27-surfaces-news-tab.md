@@ -82,3 +82,9 @@ Each one must PASS in the REPORT.
 `titleFromPath` strips ANY trailing `-<digits>` (`/-\d+$/`), so a new id-less slug ending in a number loses it
 (`…-fy-2025-26` → "… fy 2025"). Strip only an old article id (`-\d{5,}$`, the same rule as `isArticlePath`'s id test).
 Acceptance: `/gst/x-fy-2025-26` → "X fy 2025 26"; `/gst/x-section-148` keeps 148; `/gst/x-1448729` → "X".
+
+## Follow-up 2 (planning, 27 Nov — builder's catch)
+Google's API reference defines type `news` as results from the **"News" tab in Google Search** only; Top stories is not
+named. Use exact wording: the hint reads **"News tab in Google Search"** (screen, guide, Surfaces doc, code comments);
+the label "Google Search · News" stays. Do not claim Top stories anywhere. The under-a-tenth fold rule applies to this
+section like the others (no special case).

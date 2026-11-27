@@ -96,6 +96,8 @@ enum AuditAction {
   TELEGRAM_POSTING_RESUMED
   SOCIAL_PAGE_PAUSED
   SOCIAL_PAGE_RESUMED
+  // Surfaces: an admin started a Search Console history backfill (surface, range, chunk count only)
+  SURFACES_BACKFILL_STARTED
 }
 
 model Subscriber {
@@ -328,10 +330,11 @@ model ArticleReadStat {
 // than a free string so a typo can't silently create a third, empty surface.
 enum SearchSurface {
   DISCOVER
-  GOOGLE_NEWS
+  GOOGLE_NEWS // the Google News app and news.google.com (Search Console type `googleNews`)
+  GOOGLE_SEARCH_NEWS // the News tab in Google Search (Search Console type `news`)
 }
 
-// Per-article Discover / Google News performance, synced from the Search
+// Per-article Discover / Google News / Search News-tab performance, synced from the Search
 // Console Search Analytics API (src/services/searchSurfaces.ts). One row per
 // (portal, pagePath, date, surface).
 //
@@ -339,7 +342,7 @@ enum SearchSurface {
 // carry a plain google.com referrer, so they land in `google / organic`
 // alongside ordinary search (or in `(direct)` when the Google app strips the
 // referrer). Search Console's API is the only source that separates the
-// surfaces, via its `type` parameter (discover / googleNews).
+// surfaces, via its `type` parameter (discover / news / googleNews).
 //
 // These are CLICKS AND IMPRESSIONS, not pageviews — they are NOT comparable
 // with ArticleReadStat.totalViews and must never be summed with it. Google

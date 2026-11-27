@@ -71,6 +71,7 @@ const ACTIONS = [
   'TELEGRAM_POSTING_RESUMED',
   'SOCIAL_PAGE_PAUSED',
   'SOCIAL_PAGE_RESUMED',
+  'SURFACES_BACKFILL_STARTED',
 ] as const;
 
 const api = useApi();
@@ -194,6 +195,13 @@ function summarize(item: AuditItem): string {
       if (item.action === 'SOCIAL_PAGE_RESUMED') return `Resumed posting to ${where}`;
       const why = typeof m.note === 'string' && m.note ? ` — “${m.note}”` : '';
       return `Paused posting to ${where}${why}`;
+    }
+    case 'SURFACES_BACKFILL_STARTED': {
+      // metadata: { surface (the Search Console type), from, to, chunks }
+      const names: Record<string, string> = { discover: 'Google Discover', news: 'Google Search · News', googleNews: 'Google News' };
+      const what = names[String(m.surface)] ?? 'a surface';
+      const months = typeof m.chunks === 'number' ? ` (${m.chunks} monthly part${m.chunks === 1 ? '' : 's'})` : '';
+      return `Started collecting ${what} history, ${m.from ?? '?'} to ${m.to ?? '?'}${months}`;
     }
     case 'DIGEST_AD_ARCHIVED':
       return `Archived digest ad “${m.name ?? '—'}”`;

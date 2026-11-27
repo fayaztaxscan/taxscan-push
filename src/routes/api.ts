@@ -18,6 +18,12 @@ import { customReportWindow, getReport, reportWindow } from '../services/reports
 import { getReadsReport } from '../services/readsReport';
 import { readsEnabled, readsSourceNote } from '../services/reads';
 import { customSurfacesWindow, getSurfacesReport } from '../services/surfacesReport';
+import {
+  getSurfacesBackfillRun,
+  startSurfacesBackfill,
+  surfacesBackfillConfigProblem,
+  validateSurfacesBackfill,
+} from '../services/surfacesBackfill';
 import { lastReportEmailRun, sendScheduledReport } from '../services/reportScheduler';
 import { lastBackupRun } from '../services/backup';
 import { isUrlDeadDefault, pendingQueue } from '../services/pacer';
@@ -770,7 +776,7 @@ export function createApiRouter(
     }
   });
 
-  // The "Surfaces" report: Google Discover / Google News pickup (CLICKS and
+  // The "Surfaces" report: Google Discover / Search News tab / Google News pickup (CLICKS and
   // IMPRESSIONS — never comparable with the "Reads" pageviews) by category and
   // by bench over the same trailing windows the Reads tab uses. Aggregated from
   // the locally-mirrored ArticleSurfaceStat, so this never calls Google either.
@@ -781,7 +787,7 @@ export function createApiRouter(
       if (!env.searchConsole.enabled) {
         return res
           .status(404)
-          .json({ error: 'disabled', message: 'Discover / Google News reporting is not enabled.' });
+          .json({ error: 'disabled', message: 'Google Discover and news reporting is not enabled.' });
       }
       // ?from=&to= switches to the custom range (that span + the equally-long
       // one before it). Validated server-side, like the coverage report's
@@ -805,7 +811,7 @@ export function createApiRouter(
         return res.json({
           ready: false,
           message:
-            'No Discover or Google News data has synced yet — Search Console reports 2-3 days late, so check back shortly.',
+            'No Google Discover or news data has synced yet — Search Console reports 2-3 days late, so check back shortly.',
         });
       }
       return res.json({ ready: true, generatedAt: new Date().toISOString(), ...payload });
@@ -988,6 +994,37 @@ export function createApiRouter(
 
   router.get('/admin/cms-views/backfill/:id', requireBearerOrUser(['ADMIN']), (req, res) => {
     const run = getBackfillRun(req.params.id);
+    // In memory: after an app restart the id is gone — rerun the same range (idempotent).
+    if (!run) return res.status(404).json({ error: 'backfill_not_found' });
+    return res.json(run);
+  });
+
+  // History backfill of ONE Surfaces search type (discover / news / googleNews), run inside the app because the prod
+  // database and shell can't be reached from outside. In-memory run state; see services/surfacesBackfill.ts.
+  router.post('/admin/surfaces/backfill', requireBearerOrUser(['ADMIN']), async (req, res, next) => {
+    try {
+      const input = validateSurfacesBackfill((req.body ?? {}) as { surface?: unknown; from?: unknown; to?: unknown });
+      if ('error' in input) return res.status(400).json(input);
+      const problem = surfacesBackfillConfigProblem();
+      if (problem) return res.status(409).json({ error: problem });
+      const started = startSurfacesBackfill(input);
+      if (!started) return res.status(409).json({ error: 'sync_running' });
+      await recordAudit({
+        userId: req.user?.id ?? null,
+        action: 'SURFACES_BACKFILL_STARTED',
+        resourceType: 'ArticleSurfaceStat',
+        resourceId: started.run.id,
+        metadata: { surface: input.surface.type, from: input.from, to: input.to, chunks: started.run.chunks.length },
+        ipAddress: requestClientIp(req),
+      });
+      return res.status(202).json(started.run);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/admin/surfaces/backfill/:id', requireBearerOrUser(['ADMIN']), (req, res) => {
+    const run = getSurfacesBackfillRun(req.params.id);
     // In memory: after an app restart the id is gone — rerun the same range (idempotent).
     if (!run) return res.status(404).json({ error: 'backfill_not_found' });
     return res.json(run);
