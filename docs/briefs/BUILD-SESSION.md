@@ -90,8 +90,10 @@ more than half the machine.** That means:
 - Every acceptance test in the brief must pass, or be marked FAILED in the REPORT with its output.
 - **Never run the same test file in two jest processes against one database** (2 Nov): files share a cleanup prefix and
   delete each other's rows, which looks like a flake. For a stress run, loop the file in ONE process beside a full suite of the OTHER files.
-- Known flaky test: eventRetention "lifetime totals" under parallel workers. Re-run it alone before calling it
-  a failure, and say you did.
+- Known flaky tests (re-run the file alone before calling it a failure, and say you did): eventRetention "lifetime
+  totals" under parallel workers; cmsEvents (log line); cmsNoticesDoor "30 an hour" (200 instead of 429);
+  socialComposeSkip #10 (404); telegramWorker (401/404). The AudienceMember/CmsAccount suites are serialised by an
+  advisory lock since 12 Nov (`jest.environment.js`), so a failure there is real until shown otherwise.
 
 ## 5. Finish
 1. **One code commit** on `build/<name>`, message `<type>(<area>): <what> (brief <date>-<name>)`, ending with
@@ -118,7 +120,7 @@ git branch -D build/<name>; git push origin --delete build/<name>
 
 ## 6. Release check (owner's standing rule, 2 Nov 2026)
 Production moves at most **twice a day: ~13:00 IST (lunch) and ~18:00 IST (evening)**, clear of the digest window
-(06:15–08:30), quiet hours and the 02:20 backup. Before each release the owner tells this session
+(07:45–10:00 IST since 12 Nov: run 07:45, build 08:00, send 09:00, reminder 10:00), quiet hours and the 02:20 backup. Before each release the owner tells this session
 `Release check` (no brief). Then:
 1. A fresh worktree off `origin/develop` (`../taxscan-push-worktrees/release`) with its own DB
    `taxscan_push_build_release` (+ `_shadow`) and the minimal `.env`; migrate it.
