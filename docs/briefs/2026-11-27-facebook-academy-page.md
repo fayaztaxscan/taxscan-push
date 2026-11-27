@@ -70,3 +70,11 @@ Each one must PASS in the REPORT. All Graph calls mocked.
 ## Context the builder needs
 - Model: `docs/briefs/2026-11-12-facebook-shopscan-page.md` and its code (`parseFacebookShopscanEnv`, `SHARED_PAGES`, `portalPages()`,
   `pagePostFrom`, the multi-page tick fix that keeps per-page totals). `parseSharedLinkedInPage` in `env.ts` is the generalisation pattern.
+
+## Follow-up 1 (planning, 27 Nov — builder's catch)
+`socialComposeSkip.test.ts` "7. a scheduled send keeps its socialSkip…" fails on develop e00dd0a itself (date bomb): its
+clock is fixed at 24 Nov 2026 while send-route tests in the same describe stamp campaigns with the REAL time, which since
+24 Nov falls after the pages' go-live, so the LinkedIn tick posts them too. Allowed in this build, **test-only**: before that
+tick, clear `lastSentAt` on the describe's other campaigns (scoped to the test's own PORTAL/prefix, never global), with a
+one-line comment naming the cause. No production code change for this. Acceptance 12 then = full suite green; say in the
+REPORT that this test was changed and why.
