@@ -12,8 +12,8 @@ import { getPause, type SocialChannel } from './pause';
  *
  *   linkedin:<page>   every page of `portalPages()` (Taxscan, Academy, Shopscan; the last two only while their variables are valid),
  *                     only while LINKEDIN_POSTING_ENABLED is on;
- *   facebook:<page>   every page of Facebook's `portalPages()` (Taxscan, Shopscan; the last only while its variables are valid) with a valid id and
- *                     token, only while FACEBOOK_POSTING_ENABLED is on;
+ *   facebook:<page>   every page of Facebook's `portalPages()` (Taxscan, Shopscan, Academy; the last two only while their variables are valid)
+ *                     with a valid id and token, only while FACEBOOK_POSTING_ENABLED is on;
  *   telegram:<page>   the Telegram channel, only while it is switched on AND all four variables are valid (brief 2026-11-09-telegram-channel);
  *   whatsapp          the WhatsApp channel queue, only while WHATSAPP_QUEUE_ENABLED is on.
  *

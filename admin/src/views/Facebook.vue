@@ -68,7 +68,7 @@ const counts = ref<Counts>({ ...EMPTY_COUNTS });
 const login = ref<ListResponse['login']>(null);
 const policy = ref<ListResponse['policy']>(null);
 // Which Facebook page is on screen. null = not chosen yet: the first request leaves `page` out and adopts the server's answer (its
-// first page, Taxscan). `pages` = the ACTIVE pages (Taxscan, then Shopscan); the switch shows only when there are two or more.
+// first page, Taxscan). `pages` = the ACTIVE pages (Taxscan, then Shopscan, then Academy); the switch shows only when there are two or more.
 const page = ref<string | null>(null);
 const pages = ref<string[]>([]);
 // When the page started posting EVERY push (the server's `everyPushFrom`); null = it still posts one per article.
@@ -87,14 +87,16 @@ const isToday = computed(() => date.value === maxDate);
 const isYesterday = computed(() => date.value === istDay(-1));
 
 // A page's name as the editors say it. Any other key is shown capitalised (a page added later needs no change here).
-const PAGE_LABEL: Record<string, string> = { taxscan: 'Taxscan', shopscan: 'Shopscan' };
+const PAGE_LABEL: Record<string, string> = { taxscan: 'Taxscan', shopscan: 'Shopscan', academy: 'Academy' };
 const labelOf = (key: string): string => PAGE_LABEL[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 const multi = computed(() => pages.value.length > 1);
 // The page being shown ("Taxscan" until the first answer, which is also what a one-page server always shows).
 const pageLabel = computed(() => labelOf(page.value ?? pages.value[0] ?? 'taxscan'));
-// A page after the first (Shopscan): it starts posting at its own go-live, so nothing before then is ever posted to it.
+// A page after the first (Shopscan, Academy): it starts posting at its own go-live, so nothing before then is ever posted to it.
 const laterPage = computed(() => multi.value && !!page.value && page.value !== pages.value[0]);
 const bothPages = computed(() => (pages.value.length === 2 ? 'Both pages' : 'All pages'));
+// What a stop on the page shown leaves running: one other page, or several.
+const othersKeepPosting = computed(() => (pages.value.length === 2 ? 'The other page keeps posting.' : 'The other pages keep posting.'));
 
 const CHIPS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -145,7 +147,7 @@ const loginText = computed(() => {
   const lead = `Facebook rejected the access token${st} since ${when}.`;
   // One page in use: the original wording, word for word.
   if (!multi.value) return `${lead} Posting is stopped until a new token is set in Railway or the app restarts.`;
-  // Two pages: a stop belongs to one page, so the banner names it.
+  // Two or three pages: a stop belongs to one page, so the banner names it.
   return `${lead} Posting to the ${pageLabel.value} page is stopped until a new token is set in Railway or the app restarts. Tell the owner.`;
 });
 
@@ -177,7 +179,7 @@ const policyText = computed(() => {
 });
 
 // Each answer is for one page and one day. If a newer request has started (another page or day tapped meanwhile), an older
-// answer is dropped, so one page's rows can never appear under the other page's name.
+// answer is dropped, so one page's rows can never appear under another page's name.
 let loadSeq = 0;
 function fetchList(withPage = true): Promise<ListResponse> {
   const pageQ = withPage && page.value ? `&page=${encodeURIComponent(page.value)}` : '';
@@ -195,7 +197,7 @@ async function load(keepError = false): Promise<void> {
       const err = e as ApiError;
       const invalidPage = err.status === 400 && (err.body as { error?: string } | undefined)?.error === 'invalid_page';
       if (!page.value || !invalidPage) throw e;
-      // The remembered page is no longer active (the Shopscan page was switched off meanwhile): quietly ask for the first
+      // The remembered page is no longer active (it was switched off meanwhile): quietly ask for the first
       // page instead. Nothing on screen changes until that answer arrives, so if it fails too the screen stays consistent.
       data = await fetchList(false);
     }
@@ -220,7 +222,7 @@ function selectPage(p: string): void {
   page.value = p;
   // Rows, counts and every banner belong to the page just left: clear them so none of its Retry / Skip / Resume buttons stay on
   // screen under the new name while the answer is on its way. The same goes for "every push is posted from …" (each page has its
-  // own time) and for a Check connection answer, which was about the other page's token (one still on its way is dropped).
+  // own time) and for a Check connection answer, which was about that page's token (one still on its way is dropped).
   rows.value = [];
   counts.value = { ...EMPTY_COUNTS };
   login.value = null;
@@ -403,7 +405,7 @@ onMounted(() => load());
         <PagePauseControl v-if="isAdmin && !multi" channel="facebook" :page="page" :status="pageStatus" @done="onPauseDone" />
       </div>
     </div>
-    <!-- Which page's list this is. Only while a second page (Shopscan) is on; it sits above everything it changes. -->
+    <!-- Which page's list this is. Only while a second page (Shopscan, Academy) is on; it sits above everything it changes. -->
     <div v-if="multi" class="fb-scope">
       <div class="fb-switch" role="group" aria-label="Facebook page" data-testid="fb-switch">
         <button
@@ -449,8 +451,8 @@ onMounted(() => load());
     <ul class="fb-rules muted" data-testid="fb-rules">
       <li>One post at a time, at least 10 minutes apart, and no more than 30 a day. Busy days spill over, so a post can be late.</li>
       <li v-if="multi" data-testid="fb-rule-stop">
-        If Facebook blocks a post to the {{ pageLabel }} page, posting to it stops completely until an administrator presses Resume. The
-        other page keeps posting.
+        If Facebook blocks a post to the {{ pageLabel }} page, posting to it stops completely until an administrator presses Resume.
+        {{ othersKeepPosting }}
       </li>
       <li v-else>If Facebook blocks a post, posting stops completely until an administrator presses Resume.</li>
       <li v-if="everyPushFrom" data-testid="fb-rule-repeat">
