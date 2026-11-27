@@ -4,7 +4,7 @@
 - **Standing rules:** `docs/briefs/BUILD-SESSION.md` (read first)
 
 ## Goal
-A third Facebook page, **Academy** (Taxscan Academy), posts every push exactly like the Shopscan page does: its own page id,
+A third Facebook page, **Academy** (facebook.com/taxscanacademy, owner 27 Nov), posts every push exactly like the Shopscan page does: its own page id,
 Page token and go-live, its own pacing/stops/Pause/alerts, "Facebook · Academy" in Compose "Post to" and on the Facebook screen.
 Off until its three variables are set.
 
