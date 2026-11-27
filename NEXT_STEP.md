@@ -7,6 +7,13 @@ status changes so a fresh Claude session can pick up cleanly.
 
 ## ▶️ NEXT STEPS / open items (as of 2026-10-29)
 
+**⏳ PENDING (2026-11-12 evening) — current list; full version in memory `project_taxscan_push_state`.**
+a. ✅ PR #115 LIVE ~19:20 IST (flake fix, Facebook Shopscan, re-subscribe endpoint). Facebook Shopscan ON from 13:42:46Z; watch the first post. `AUDIENCE_RESUBSCRIBE_WRITES` ON — confirm on the first real lift (`resubscribed=1`, consent_at accepted).
+b. 13 Nov: paid digest now 08:00 build / 09:00 send. Free = EEZEK+EEZES+EEZEu (~41k): refresh EEZEu in Mailercloud first (API count still 0), Abdullah presses Send Free in our app (no hand edits of `Ts-Digest-…` drafts), credit for ~41k→~65k/day.
+c. Anagha: Mailercloud status export → ADMIN import → then tell CMS planning to turn on `DIGEST_NOTICES_RESUBSCRIBE`.
+d. Later brief: remaining test flakes (cmsEvents log line, cmsNoticesDoor rate limit, socialComposeSkip #10, telegramWorker 401/404).
+e. Record: digest docs still say 07:30 in places (setting is 09:00 since 12 Nov).
+
 **⏳ PENDING (2026-11-09 evening) — current list; full version in memory `project_taxscan_push_state`.**
 a. ✅ PR #113 LIVE 17:51 IST (menu + small fixes; menu verified live). Watch the Shopscan `org_daily_limit` hold on its next 429 (10 Nov, after ~3 posts). NEW small item: audience tests `audienceFreeReaders` #8 + `audiencePullAcceptance` 5% limit flake when run in parallel (pull.ts:205 counts mailable members globally) — brief to serialise them / scope the count.
 b. ✅ PR #114 LIVE 18:34 IST: social page alerts + per-page Pause/Resume. NEXT build: `docs/briefs/2026-11-09-audience-test-flake.md` (run 1 of both 9 Nov Release checks failed on it).

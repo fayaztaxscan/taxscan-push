@@ -2,18 +2,21 @@ import { env, FACEBOOK_PAGE_ID_SHAPE, FACEBOOK_TOKEN_SHAPE } from '../../lib/env
 import { withSocialUtm } from '../social/utm';
 
 /**
- * Facebook pages, keyed by name (briefs 2026-11-03-facebook-page-posting, 2026-11-12-facebook-shopscan-page). `FacebookPost.page` is a
- * plain string: a page is its env variables plus a place in `portalPages()`; no schema change.
+ * Facebook pages, keyed by name (briefs 2026-11-03-facebook-page-posting, 2026-11-12-facebook-shopscan-page,
+ * 2026-11-27-facebook-academy-page). `FacebookPost.page` is a plain string: a page is its env variables plus a place in `portalPages()`;
+ * no schema change.
  *  - `taxscan` is the portal's own page (`env.facebook.pages`, one entry per page, `PORTAL_TO_PAGE`). The worker refuses to start without it.
- *  - `shopscan` is a SHARED page (`env.facebook.sharedPages`): it receives the `taxscan` portal's pushes too, with a page id, token and
- *    go-live of its own, and exists ONLY while all three of its FACEBOOK_SHOPSCAN_* variables are valid. It posts EVERY push from its go-live.
+ *  - `shopscan` and `academy` are SHARED pages (`env.facebook.sharedPages`): each receives the `taxscan` portal's pushes too, with a page
+ *    id, token and go-live of its own, and exists ONLY while all three of its FACEBOOK_<PAGE>_* variables are valid. Each posts EVERY push
+ *    from its go-live.
  */
 export const PAGE_TAXSCAN = 'taxscan';
 export const PAGE_SHOPSCAN = 'shopscan';
+export const PAGE_ACADEMY = 'academy';
 /** Campaign.portal → the portal's OWN Facebook page. A shared page is not in it (see `portalPages`). */
 export const PORTAL_TO_PAGE: Readonly<Record<string, string>> = { taxscan: PAGE_TAXSCAN };
 /** The shared pages, in the order a tick handles them after Taxscan. */
-export const SHARED_PAGES = [PAGE_SHOPSCAN] as const;
+export const SHARED_PAGES = [PAGE_SHOPSCAN, PAGE_ACADEMY] as const;
 
 const sharedActive = (page: string): boolean => Object.prototype.hasOwnProperty.call(env.facebook.sharedPages, page);
 export const shopscanActive = (): boolean => sharedActive(PAGE_SHOPSCAN);
@@ -21,10 +24,10 @@ export const shopscanActive = (): boolean => sharedActive(PAGE_SHOPSCAN);
 export const isSharedPage = (page: string): boolean => (SHARED_PAGES as readonly string[]).includes(page) || sharedActive(page);
 
 /**
- * Campaign.portal → the Facebook pages its pushes are posted to, Taxscan FIRST, then Shopscan (a tick handles them in that order, so a
- * busy Taxscan page only delays the other). Read at call time: a shared page appears only while it is active; with none, this is exactly
- * the old one-page-per-portal map. EVERY reader of the page list (the worker, the screen's API, Compose "Post to", the page status) uses
- * this one function, so Shopscan appears everywhere at once and nowhere while it is off.
+ * Campaign.portal → the Facebook pages its pushes are posted to, Taxscan FIRST, then Shopscan, then Academy (a tick handles them in that
+ * order, so a busy page only delays the later ones). Read at call time: a shared page appears only while it is active; with none, this is
+ * exactly the old one-page-per-portal map. EVERY reader of the page list (the worker, the screen's API, Compose "Post to", the page
+ * status) uses this one function, so a shared page appears everywhere at once and nowhere while it is off.
  */
 export function portalPages(): Record<string, string[]> {
   return { taxscan: [PAGE_TAXSCAN, ...SHARED_PAGES.filter(sharedActive)] };

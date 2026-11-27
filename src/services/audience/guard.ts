@@ -11,7 +11,8 @@ import { env, type AudienceEnv } from '../../lib/env';
  *  - `stale_full_load`        the last complete full load is older than AUDIENCE_MAX_STALE_HOURS;
  *  - `no_activity`            no successful pull or webhook for 3 h;
  *  - `breaker_open`           the circuit breaker is open;
- *  - `pending_writes`         members whose Premium tag is still pending number more than max(1 %, 10);
+ *  - `pending_writes`         members whose Premium tag is still pending (`pendingPremiumWhere`) number more than
+ *                             max(1 %, 10);
  *  - `mailercloud_deviation`  Mailercloud's Premium count differs from our applied count by more than
  *                             max(AUDIENCE_PREMIUM_DEVIATION_PCT, 25) (both read from the nightly drift check,
  *                             so they describe the same instant); `mailercloud_count_missing` when it never ran;
@@ -142,11 +143,30 @@ function num(v: unknown): number | null {
 }
 
 /**
- * Members whose Premium role and Premium tag disagree (`pendingPremium`): Premium without the tag, or the tag on a non-Premium member.
+ * A member the writer stopped on (FATAL) that still has an address: what the Audience card counts as "refused", and what
+ * `pendingPremiumWhere` leaves out. The single definition of both.
+ */
+export const REFUSED_WHERE = { lastErrorKind: 'FATAL', email: { not: null } } satisfies Prisma.AudienceMemberWhereInput;
+
+/**
+ * Members whose Premium role and Premium tag disagree (`pendingPremium`): Premium without the tag, or the tag on a
+ * non-Premium member. "Premium without the tag" leaves out members that are not waiting for it: refused ones
+ * (`REFUSED_WHERE`, shown on the card as refused) and suppressed ones (`diffMember` never adds the tag to them).
  * The single definition; exported so a test can scope it to its own rows.
  */
 export function pendingPremiumWhere(tag: string): Prisma.AudienceMemberWhereInput {
-  return { OR: [{ desiredRole: 'PREMIUM', NOT: { appliedTags: { has: tag } } }, { desiredRole: { not: 'PREMIUM' }, appliedTags: { has: tag } }] };
+  return {
+    OR: [
+      {
+        desiredRole: 'PREMIUM',
+        suppressed: false,
+        NOT: { appliedTags: { has: tag } },
+        // "Not refused", spelled out for the nullable column: NOT alone would drop the rows with no error (SQL NULL).
+        OR: [{ lastErrorKind: null }, { NOT: REFUSED_WHERE }],
+      },
+      { desiredRole: { not: 'PREMIUM' }, appliedTags: { has: tag } },
+    ],
+  };
 }
 
 /** The snapshot, from Postgres only. */

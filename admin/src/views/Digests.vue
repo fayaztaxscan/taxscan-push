@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { DISPATCH_TIMEOUT_MS, apiErrorMessage, useApi, type ApiError } from '../composables/useApi';
 import AudienceCard from '../components/AudienceCard.vue';
 import ConfirmPush from '../components/ConfirmPush.vue';
@@ -39,6 +39,11 @@ import {
  *
  * The server decides which buttons exist (`actions`); this screen never
  * infers a gate. Send now and Retry now go through ConfirmPush.
+ *
+ * Those buttons are only as good as the last load, so the screen reloads when
+ * someone comes back to it, and after any press that is refused or unanswered.
+ * That press's red message is then brought into view, and nothing fetched
+ * before the press may replace it.
  */
 
 type ScreenAction = { show: boolean; enabled: boolean; reason: string | null };
@@ -170,13 +175,17 @@ const previewSrc = computed(() =>
 );
 const viewingPast = computed(() => !!detail.value && !detail.value.isToday);
 
+/** The newest request for a run wins: a slower, older reply must not put old buttons back. */
+let detailAsk = 0;
 async function loadDetail(runId: string | null) {
+  const ask = ++detailAsk;
   selectedRunId.value = runId;
   if (!runId) {
     detail.value = null;
     return;
   }
-  detail.value = await api.get<Detail>(`/api/digest/runs/${runId}`);
+  const next = await api.get<Detail>(`/api/digest/runs/${runId}`);
+  if (ask === detailAsk) detail.value = next;
 }
 
 /* Subject edit: one version at a time, inline. */
@@ -188,8 +197,11 @@ const subjectBusy = ref(false);
 const subjectError = ref<string | null>(null);
 const subjectCount = computed(() => subjectDraft.value.trim().length);
 
+/** The subject as it stood when the box was opened. A reload underneath must not move it, or the server could not tell that someone else changed it. */
+let subjectFrom = '';
 function startSubjectEdit() {
   if (!variant.value) return;
+  subjectFrom = variant.value.subject;
   subjectDraft.value = variant.value.subject;
   subjectError.value = null;
   editingSubject.value = true;
@@ -202,14 +214,16 @@ async function saveSubject() {
   if (!detail.value || !variant.value) return;
   subjectBusy.value = true;
   subjectError.value = null;
+  const before = presses;
   try {
     await api.post(`/api/digest/runs/${detail.value.runId}/subject/${audience.value.toLowerCase()}`, {
       subject: subjectDraft.value,
-      from: variant.value.subject, // what this editor saw: if someone else changed it meanwhile, the server says so
+      from: subjectFrom, // what this editor saw: if someone else changed it meanwhile, the server says so
     });
     editingSubject.value = false;
     notice.value = `${AUDIENCE_LABEL[audience.value]} subject updated.`;
-    await load();
+    // A press made while this was saving owns the red message: the reload keeps it.
+    await load(before === presses ? null : error.value);
   } catch (e) {
     subjectError.value = apiErrorMessage(e);
   } finally {
@@ -219,52 +233,136 @@ async function saveSubject() {
 // Switching version (or run) closes an open edit: the draft belongs to one version.
 watch([audience, () => detail.value?.runId], () => cancelSubjectEdit());
 
-async function load() {
+/** When the screen last loaded successfully; 0 after a failed load, so the next return tries again. */
+let loadedAt = 0;
+/** Each load takes a number, and only the newest one writes to the screen. */
+let loadSeq = 0;
+/** Presses of Approve, Hold and the send buttons so far. Nothing started before a press may talk over its answer. */
+let presses = 0;
+
+/** A press wins over whatever is already being fetched: neither its result nor its failure lands. */
+function startPress() {
+  presses += 1;
+  loadSeq += 1;
+  detailAsk += 1;
+  loading.value = false;
+}
+
+/**
+ * `keep`: the red message of the press that caused this reload. It stays on screen through the
+ * reload, and a reload that fails does not replace it.
+ */
+async function load(keep: string | null = null) {
+  const seq = ++loadSeq;
   loading.value = true;
-  error.value = null;
+  error.value = keep;
   try {
-    status.value = await api.get<Status>('/api/digest/status');
-    if (!status.value.enabled) return;
-    const [h] = await Promise.all([
-      api.get<{ runs: HistoryRow[] }>('/api/digest/runs?days=14'),
-      loadDetail(selectedRunId.value ?? status.value.today?.runId ?? null),
-    ]);
-    history.value = h.runs;
+    const next = await api.get<Status>('/api/digest/status');
+    if (seq !== loadSeq) return;
+    status.value = next;
+    if (next.enabled) {
+      const [h] = await Promise.all([
+        api.get<{ runs: HistoryRow[] }>('/api/digest/runs?days=14'),
+        loadDetail(selectedRunId.value ?? next.today?.runId ?? null),
+      ]);
+      if (seq !== loadSeq) return;
+      history.value = h.runs;
+    }
+    loadedAt = Date.now();
   } catch (e) {
-    error.value = apiErrorMessage(e);
+    if (seq !== loadSeq) return;
+    loadedAt = 0;
+    error.value = keep ?? apiErrorMessage(e);
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
+  }
+}
+
+const errorBanner = ref<HTMLElement | null>(null);
+
+/**
+ * After a press that was refused or unanswered: the red banner sits above the cards, usually far
+ * off screen from the button just pressed. Bring it into view and give it focus, so it is read out.
+ */
+async function showPressError() {
+  await nextTick();
+  const el = errorBanner.value;
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el.scrollIntoView({ behavior: still ? 'instant' : 'smooth', block: 'start' });
+}
+
+/*
+ * Coming back to the screen. A phone tab or a Home Screen window can hold buttons that are hours
+ * old (27 Nov 2026: Approve was still on offer an hour after the approval). Never under a press or
+ * an open confirm box, and not when what is shown is under 30 seconds old.
+ */
+const RETURN_RELOAD_AFTER_MS = 30_000;
+function reloadOnReturn() {
+  if (loading.value || busy.value || subjectBusy.value || confirming.value) return;
+  if (Date.now() - loadedAt < RETURN_RELOAD_AFTER_MS) return;
+  void load();
+}
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') reloadOnReturn();
+}
+/** `persisted`: brought back from the back-forward cache (iOS). A page's first show is not. */
+function onPageShow(e: PageTransitionEvent) {
+  if (e.persisted) reloadOnReturn();
+}
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('pageshow', onPageShow);
+  void load();
+});
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  window.removeEventListener('pageshow', onPageShow);
+});
+
+/** A history row or "Back to today": if a press comes meanwhile, this neither scrolls nor reports. */
+async function showRun(runId: string | null, scroll: boolean) {
+  const before = presses;
+  try {
+    await loadDetail(runId);
+    if (!scroll || before !== presses) return;
+    await nextTick();
+    document.getElementById('digest-today')?.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    if (before === presses) error.value = apiErrorMessage(e);
   }
 }
 
 function viewRun(runId: string) {
   error.value = null;
-  void loadDetail(runId)
-    .then(() => nextTick(() => document.getElementById('digest-today')?.scrollIntoView({ behavior: 'smooth' })))
-    .catch((e) => (error.value = apiErrorMessage(e)));
+  void showRun(runId, true);
 }
 
 function backToToday() {
-  void loadDetail(status.value?.today?.runId ?? null).catch((e) => (error.value = apiErrorMessage(e)));
+  void showRun(status.value?.today?.runId ?? null, false);
 }
 
 async function act(kind: 'approve' | 'hold') {
   if (!detail.value) return;
+  startPress();
   busy.value = kind;
   error.value = null;
   notice.value = null;
+  let failed: string | null = null;
   try {
     // Approve names the variants this screen shows as built and waiting: one built after the
     // run was approved is covered only by an approval given while it was on screen.
     const audiences = detail.value.variants.filter((v) => v.hasPreview && v.approval === 'waiting').map((v) => v.audience);
     await api.post(`/api/digest/runs/${detail.value.runId}/${kind}`, kind === 'approve' ? { audiences } : {});
     notice.value = kind === 'approve' ? 'Approved.' : 'Held. It will not send until someone approves it.';
-    await load();
   } catch (e) {
-    error.value = apiErrorMessage(e);
-  } finally {
-    busy.value = null;
+    failed = apiErrorMessage(e);
   }
+  // Reload whatever the answer, or with none: a refused press usually means this screen was out of date.
+  await load(failed);
+  busy.value = null;
+  if (failed) await showPressError();
 }
 
 const DOOR_UNKNOWN =
@@ -274,6 +372,7 @@ async function confirmDoor() {
   const kind = confirming.value;
   if (!kind || !detail.value) return;
   if (busy.value) return; // one press at a time: a second confirm while one is running does nothing
+  startPress();
   busy.value = kind;
   error.value = null;
   notice.value = null;
@@ -295,11 +394,11 @@ async function confirmDoor() {
   } finally {
     busy.value = null;
     confirming.value = null;
-    await load(); // refreshes the screen; it also clears `error`, so the message is set AFTER it
-    if (outcome) {
-      if (outcome.tone === 'err') error.value = outcome.text;
-      else notice.value = outcome.text;
-    }
+    // Reload whatever the answer, or with none; a red message is handed to load() so it stays up.
+    const red = outcome?.tone === 'err' ? outcome.text : null;
+    await load(red);
+    if (red) await showPressError();
+    else if (outcome) notice.value = outcome.text;
   }
 }
 
@@ -386,22 +485,20 @@ function pair(row: HistoryRow, pick: (v: HistoryRow['variants'][number]) => numb
     return v ? count(pick(v)) : '—';
   }).join(' / ');
 }
-
-onMounted(load);
 </script>
 
 <template>
   <main class="page page-wide">
     <div class="toolbar">
       <h1 class="section-title" style="margin: 0">Email digest</h1>
-      <button class="btn" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh' }}</button>
+      <button class="btn" :disabled="loading" @click="load()">{{ loading ? 'Loading…' : 'Refresh' }}</button>
     </div>
 
     <div v-if="status?.enabled && status.attention" class="banner warn" role="status">
       <p class="banner-lead">{{ status.attention.headline }}</p>
       <p class="banner-detail">{{ status.attention.action }}</p>
     </div>
-    <div v-if="error" class="banner err" role="alert">{{ error }}</div>
+    <div v-if="error" ref="errorBanner" class="banner err screen-error" role="alert" tabindex="-1">{{ error }}</div>
     <div v-if="notice" class="banner ok" role="status">{{ notice }}</div>
 
     <!-- Task 14: this device's approval notifications (shown whether or not the digest is on). -->
@@ -743,6 +840,10 @@ onMounted(load);
 </template>
 
 <style scoped>
+/* Scrolled to after a refused press: a little air above it, not flush with the top edge. */
+.screen-error {
+  scroll-margin-top: 12px;
+}
 .lead-line {
   margin: 0 0 8px;
   font-size: 16px;
