@@ -8,6 +8,8 @@ import {
   buildReadsReport,
   refreshReadsReport,
   getReadsReport,
+  isArticlePath,
+  readsSummaryForWindow,
   READ_WINDOWS,
 } from '../services/readsReport';
 import type { FetchLike, GaCredentials } from '../services/gaReads';
@@ -58,6 +60,70 @@ describe('cleanPageTitle', () => {
   it('strips the site suffix before classification', () => {
     expect(cleanPageTitle('ITAT quashes reassessment - Taxscan')).toBe('ITAT quashes reassessment');
     expect(cleanPageTitle('GST fraud case | plain title')).toBe('GST fraud case | plain title');
+  });
+});
+
+describe('isArticlePath', () => {
+  it.each([
+    '/gst/foo-bar-12345',
+    '/gst/foo-bar',
+    '/other-taxations/foo',
+    '/income-tax/foo/',
+    '/foo-bar-12345', // an old one-segment id, as before
+    '/top-stories/a-story-1448729/',
+    '/corporate-laws/foo',
+    '/excise-customs/foo',
+    '/cst-vat/foo',
+    '/service-tax/foo',
+    '/job-scan/foo',
+    '/news-updates/foo',
+    '/top-stories/foo',
+  ])('%s is an article', (path) => {
+    expect(isArticlePath(path)).toBe(true);
+  });
+
+  it.each([
+    '/trackers/gst',
+    '/trackers/income-tax',
+    '/subscription/x',
+    '/pricing',
+    '/',
+    '',
+    '/gst',
+    '/gst/',
+    '/foo-bar', // one segment, no id
+    '/gst/page/2', // three segments
+    '/tag/gst/foo',
+    '/gstx/foo', // the section must match exactly
+  ])('"%s" is not an article', (path) => {
+    expect(isArticlePath(path)).toBe(false);
+  });
+});
+
+describe('readsSummaryForWindow from GA rows, new-CMS URLs', () => {
+  const portal = `test-reads-newurls-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+
+  afterAll(async () => {
+    await prisma.articleReadStat.deleteMany({ where: { portal } });
+  });
+
+  it('counts an id-less article and leaves site pages out', async () => {
+    const date = new Date('2026-10-03');
+    await prisma.articleReadStat.createMany({
+      data: [
+        { portal, pagePath: `/gst/${portal}-story`, date, totalViews: 70, pushViews: 7 },
+        { portal, pagePath: `/income-tax/${portal}-old-444444`, date, totalViews: 20, pushViews: 2 },
+        { portal, pagePath: '/trackers/gst', date, totalViews: 900, pushViews: 9 },
+        { portal, pagePath: '/pricing', date, totalViews: 800, pushViews: 8 },
+      ],
+    });
+    const s = await readsSummaryForWindow({
+      start: new Date('2026-10-01T18:30:00Z'),
+      end: new Date('2026-10-04T18:30:00Z'),
+      portal,
+    });
+    expect(s).toMatchObject({ totalReads: 90, pushReads: 9 });
+    expect(s!.topArticles.map((a) => a.reads)).toEqual([70, 20]);
   });
 });
 
