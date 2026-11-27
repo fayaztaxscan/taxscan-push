@@ -92,7 +92,7 @@ more than half the machine.** That means:
   delete each other's rows, which looks like a flake. For a stress run, loop the file in ONE process beside a full suite of the OTHER files.
 - Known flaky tests (re-run the file alone before calling it a failure, and say you did): eventRetention "lifetime
   totals" under parallel workers; cmsEvents (log line); cmsNoticesDoor "30 an hour" (200 instead of 429);
-  socialComposeSkip #10 (404); telegramWorker (401/404); socialPause route tests (404 where 401/400 expected; passes alone). The AudienceMember/CmsAccount suites are serialised by an
+  socialComposeSkip #10 (404); telegramWorker (401/404); socialPause route tests (404 where 401/400 expected; passes alone); since 27 Nov also whatsAppAllPushes, facebookWorker and digestScreen route tests (404, pass alone) — likely supertest `request(app)` listening on :: while another program holds the same port on 127.0.0.1 (fix brief pending). The AudienceMember/CmsAccount suites are serialised by an
   advisory lock since 12 Nov (`jest.environment.js`), so a failure there is real until shown otherwise.
 
 ## 5. Finish
