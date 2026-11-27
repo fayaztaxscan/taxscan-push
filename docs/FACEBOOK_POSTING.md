@@ -132,8 +132,10 @@ applies to it, with its own names.
   rows (`FacebookPost.page = 'academy'`) are its own; it works whether Shopscan is on or off.
 - **Link, screen, Compose:** the link is tagged `utm_campaign=facebook-academy`; SOCIAL → Facebook shows an **Academy** tab; Compose "Post to"
   lists "Facebook · Academy" while it is active.
-- **Check the id and token belong to the Academy page.** Nothing stops two pages being given the same page id (each would post, so that page
-  would get every push twice): press **Check connection** on the Academy tab and read the page name.
+- **One page, one id** (brief 2026-11-27-duplicate-page-guard): Shopscan or Academy given the Taxscan page's id, or (Academy) Shopscan's,
+  stays **off** (it would post every push twice), with the boot line `[facebook] <page> page off: FACEBOOK_<PAGE>_PAGE_ID is the same page as
+  <other> (it would post every push twice)`; the worker still starts. A wrong id that clashes with nothing is not caught: press **Check
+  connection** on the page's tab and read the page name.
 
 ## Pacing (account safety)
 - At most **one post attempt per page per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts on a page.

@@ -14,7 +14,8 @@ import { articleKey } from '../services/reports';
 jest.spyOn(console, 'log').mockImplementation(() => undefined);
 jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-const RUN = `${Date.now()}-${randomBytes(3).toString('hex')}`;
+// The "r" matters: six all-digit hex characters would read as a taxscan article id (articleKey), giving every seeded URL the same key.
+const RUN = `${Date.now()}-r${randomBytes(3).toString('hex')}`;
 const PORTAL = env.rss.portal;
 const FROM = new Date(Date.now() - 6 * 3600_000);
 const NOW = new Date(Date.now() - 60_000);

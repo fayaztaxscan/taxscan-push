@@ -591,6 +591,67 @@ export function parseSharedFacebookPage(src: NodeJS.ProcessEnv, prefix: 'SHOPSCA
 }
 
 /**
+ * ONE PAGE, ONE ID (brief 2026-11-27-duplicate-page-guard). A channel's shared pages are read in `order`; a page that is otherwise valid but
+ * carries the Taxscan page's id, or the id of an earlier shared page that is on, is left OUT: it would post every push twice. A page that is
+ * off holds no id, so it never blocks a later one. Ids are compared as the parsers read them (trimmed, otherwise exactly). `pages` is the
+ * channel's `sharedPages`; `off` says why each other page is off (the parser's words, or the clash), naming variables and pages, never an id.
+ * The env and the workers' boot lines both read this one result. Pure.
+ */
+function sharedPagesByUniqueId<P>(o: {
+  order: readonly string[];
+  taxscanId: string;
+  parse: (name: string) => { page: P | null; off: string | null };
+  idOf: (page: P) => string;
+  idVarOf: (name: string) => string;
+}): { pages: Record<string, P>; off: Record<string, string> } {
+  const pages: Record<string, P> = {};
+  const off: Record<string, string> = {};
+  const holder = new Map<string, string>(); // id → the page that posts to it
+  if (o.taxscanId) holder.set(o.taxscanId, 'taxscan');
+  for (const name of o.order) {
+    const r = o.parse(name);
+    if (!r.page) {
+      off[name] = r.off ?? 'not configured';
+      continue;
+    }
+    const other = holder.get(o.idOf(r.page));
+    if (other) {
+      off[name] = `${o.idVarOf(name)} is the same page as ${other} (it would post every push twice)`;
+      continue;
+    }
+    holder.set(o.idOf(r.page), name);
+    pages[name] = r.page;
+  }
+  return { pages, off };
+}
+
+/** The shared pages of each channel, in the order a tick handles them after Taxscan (also the order in which an id is first claimed). */
+export const FACEBOOK_SHARED_ORDER = ['shopscan', 'academy'] as const;
+export const LINKEDIN_SHARED_ORDER = ['academy', 'shopscan'] as const;
+
+/** Facebook's shared pages that are on, and why each other one is off. */
+export function facebookSharedPages(src: NodeJS.ProcessEnv): { pages: Record<string, SharedFacebookPage>; off: Record<string, string> } {
+  return sharedPagesByUniqueId<SharedFacebookPage>({
+    order: FACEBOOK_SHARED_ORDER,
+    taxscanId: (src.FACEBOOK_TAXSCAN_PAGE_ID ?? '').trim(),
+    parse: (name) => parseSharedFacebookPage(src, name.toUpperCase() as 'SHOPSCAN' | 'ACADEMY'),
+    idOf: (page) => page.pageId,
+    idVarOf: (name) => `FACEBOOK_${name.toUpperCase()}_PAGE_ID`,
+  });
+}
+
+/** LinkedIn's shared pages that are on, and why each other one is off. */
+export function linkedinSharedPages(src: NodeJS.ProcessEnv): { pages: Record<string, SharedLinkedInPage>; off: Record<string, string> } {
+  return sharedPagesByUniqueId<SharedLinkedInPage>({
+    order: LINKEDIN_SHARED_ORDER,
+    taxscanId: (src.LINKEDIN_TAXSCAN_ORG_URN ?? '').trim(),
+    parse: (name) => parseSharedLinkedInPage(src, name.toUpperCase()),
+    idOf: (page) => page.orgUrn,
+    idVarOf: (name) => `LINKEDIN_${name.toUpperCase()}_ORG_URN`,
+  });
+}
+
+/**
  * The daily LinkedIn quota guard (briefs 2026-11-09-linkedin-shopscan-page + Follow-up 1). All pages post with ONE member token on
  * the Development tier: 100 `posts` CREATE calls per member per 24 h. Counting today's (IST day) create attempts across ALL pages, a
  * page below holds ITSELF once the count reaches its threshold, so the Taxscan page (never held) keeps room: Academy first, then
@@ -881,16 +942,9 @@ export const env = {
     } as Record<string, { orgUrn: string; accessToken: string; refreshToken?: string; refreshExpiresAt?: Date | null }>,
     // Pages that post with ANOTHER page's token, kept OUT of `pages` on purpose: every token loop (renewal, `LinkedInToken` rows,
     // the active-token cache) walks `pages`, and a page without a token of its own must never get a row or a renewal. Today only
-    // `academy` and `shopscan`, each only while it is ACTIVE (both of its LINKEDIN_<PAGE>_* variables valid, see parseSharedLinkedInPage).
-    // Read at call time everywhere, so a test can add a private page here.
-    sharedPages: (() => {
-      const out: Record<string, SharedLinkedInPage> = {};
-      const academy = parseLinkedInAcademyEnv(process.env).page;
-      if (academy) out.academy = academy;
-      const shopscan = parseLinkedInShopscanEnv(process.env).page;
-      if (shopscan) out.shopscan = shopscan;
-      return out;
-    })() as Record<string, SharedLinkedInPage>,
+    // `academy` and `shopscan`, each only while it is ACTIVE (both of its LINKEDIN_<PAGE>_* variables valid, see parseSharedLinkedInPage, and
+    // its org URN not another page's, see linkedinSharedPages). Read at call time everywhere, so a test can add a private page here.
+    sharedPages: linkedinSharedPages(process.env).pages,
     // The daily quota guard (see LINKEDIN_HEADROOM_VARS): a page named here holds itself once today's create attempts, across ALL
     // pages, reach its number. Taxscan is never in it. Read at call time everywhere, so a test can give a private page a number.
     dailyHeadroom: {
@@ -948,17 +1002,10 @@ export const env = {
     } as Record<string, { pageId: string; accessToken: string }>,
     // Pages that post EVERY push of the Taxscan portal besides the Taxscan page, with a page id, token and go-live of their own (briefs
     // 2026-11-12-facebook-shopscan-page, 2026-11-27-facebook-academy-page): `shopscan` and `academy`, each only while ALL THREE of its
-    // FACEBOOK_<PAGE>_* variables are valid (see parseSharedFacebookPage). Kept OUT of `pages` on purpose: `pages` is the set the worker
-    // must be able to post to before it starts, and a shared page must never stop it from starting. Read at call time everywhere, so a
-    // test can add a private page here.
-    sharedPages: (() => {
-      const out: Record<string, SharedFacebookPage> = {};
-      const shopscan = parseFacebookShopscanEnv(process.env).page;
-      if (shopscan) out.shopscan = shopscan;
-      const academy = parseFacebookAcademyEnv(process.env).page;
-      if (academy) out.academy = academy;
-      return out;
-    })() as Record<string, SharedFacebookPage>,
+    // FACEBOOK_<PAGE>_* variables are valid (see parseSharedFacebookPage) and its page id is not another page's (see facebookSharedPages).
+    // Kept OUT of `pages` on purpose: `pages` is the set the worker must be able to post to before it starts, and a shared page must never
+    // stop it from starting. Read at call time everywhere, so a test can add a private page here.
+    sharedPages: facebookSharedPages(process.env).pages,
     // "Every push posts" (brief 2026-11-04-academy-store-posts): the page's time for it, null = the page stays on today's rule.
     allPushesFrom: parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).at as Date | null,
   },

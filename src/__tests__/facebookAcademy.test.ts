@@ -300,7 +300,8 @@ describe('1. the Academy variables: off unless ALL THREE are valid, and never a 
     });
     withSharedVars({ ...GOOD, FACEBOOK_ACADEMY_PAGE_ID: 'abc' }, () => expect(load().facebook.sharedPages).toEqual({}));
     withSharedVars({}, () => expect(load().facebook.sharedPages).toEqual({}));
-    const shop = Object.fromEntries(Object.entries(GOOD).map(([k, v]) => [k.replace('ACADEMY', 'SHOPSCAN'), v]));
+    // Shopscan with a page id of its own: two pages sharing one id are refused (brief 2026-11-27-duplicate-page-guard).
+    const shop = { ...Object.fromEntries(Object.entries(GOOD).map(([k, v]) => [k.replace('ACADEMY', 'SHOPSCAN'), v])), FACEBOOK_SHOPSCAN_PAGE_ID: '8765432110' };
     withSharedVars({ ...GOOD, ...shop }, () => expect(Object.keys(load().facebook.sharedPages)).toEqual(['shopscan', 'academy']));
   });
 
