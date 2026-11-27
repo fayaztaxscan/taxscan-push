@@ -146,7 +146,8 @@ See `docs/LINKEDIN_POSTING.md`.
 `FACEBOOK_POSTING_ENABLED` off and set `FACEBOOK_POST_FROM` to the restore time before switching it back on. With the rows gone and no age
 limit, everything pushed since go-live would otherwise post a second time, and repeated posts put the page at risk with Facebook. **Set
 `FACEBOOK_ALL_PUSHES_FROM` to the restore time too (or unset it)**: with the `push:` rows gone, an old value would post every push since then
-again. See `docs/FACEBOOK_POSTING.md`.
+again. **Likewise set `FACEBOOK_SHOPSCAN_POST_FROM` and `FACEBOOK_ACADEMY_POST_FROM` to the restore time** (each shared page's go-live
+is also its every-push time). See `docs/FACEBOOK_POSTING.md`.
 
 **`TelegramPost` (the Telegram channel posting log) is deliberately NOT in the export, and the same rule applies.** (Added 2026-11-09, brief
 2026-11-09-telegram-channel.) After a restore keep `TELEGRAM_POSTING_ENABLED` off and **set `TELEGRAM_POST_FROM` to the restore time**
