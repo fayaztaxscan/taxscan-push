@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type SearchSurface } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { benchRank, benchRowKey, categoryRowKey, istDateKey } from './reports';
 import { isArticlePath, titleFromPath } from './readsReport';
@@ -6,8 +6,9 @@ import { readsPath } from './metrics';
 import { SURFACES } from './searchSurfaces';
 
 /**
- * The "Surfaces" report: which articles Google Discover and Google News picked
- * up, by category and by bench, plus a top most-picked-up list per surface.
+ * The "Surfaces" report: which articles Google Discover, the News tab in Google
+ * Search, and Google News picked up, by category and by bench, plus a top
+ * most-picked-up list per surface.
  *
  * CLICKS AND IMPRESSIONS, NEVER PAGEVIEWS. Nothing here is comparable with
  * ArticleReadStat.totalViews ("Reads") and the two must never be summed or put
@@ -39,7 +40,7 @@ import { SURFACES } from './searchSurfaces';
  * `partial` so the UI can say so rather than let it read as a collapse.
  */
 
-export type SurfaceKey = 'DISCOVER' | 'GOOGLE_NEWS';
+export type SurfaceKey = SearchSurface;
 
 /** null = this row had no pickup in this column (distinct from a synced zero). */
 export type SurfaceCell = { clicks: number; impressions: number; articles: number } | null;
@@ -130,10 +131,12 @@ const MONTH_LABELS = [
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 
-const emptyTotals = (): Record<SurfaceKey, SurfaceTotals> => ({
-  DISCOVER: { clicks: 0, impressions: 0, articles: 0 },
-  GOOGLE_NEWS: { clicks: 0, impressions: 0, articles: 0 },
-});
+/** One fresh value per tracked surface. */
+const perSurface = <T>(make: () => T): Record<SurfaceKey, T> =>
+  Object.fromEntries(SURFACES.map(({ surface }) => [surface, make()])) as Record<SurfaceKey, T>;
+
+const emptyTotals = (): Record<SurfaceKey, SurfaceTotals> =>
+  perSurface(() => ({ clicks: 0, impressions: 0, articles: 0 }));
 
 /** UTC-midnight Date for a day key — matches how ArticleSurfaceStat.date is stored. */
 function dayStart(key: string): Date {
@@ -332,7 +335,7 @@ export async function buildSurfacesReport(opts: {
       totals: [],
       byCategory: SURFACES.map(({ surface }) => ({ surface, rows: [] })),
       byBench: SURFACES.map(({ surface }) => ({ surface, rows: [] })),
-      topArticles: { DISCOVER: [], GOOGLE_NEWS: [] },
+      topArticles: perSurface<TopSurfacedArticle[]>(() => []),
       topWindow: { from: istDateKey(now), to: istDateKey(now), label: '' },
       dataThrough: null,
       dataFrom: null,
@@ -373,8 +376,8 @@ export async function buildSurfacesReport(opts: {
   ]);
 
   const colIndex = new Map(columns.map((c, i) => [c.key, i]));
-  const byCategory: Record<SurfaceKey, Agg> = { DISCOVER: new Map(), GOOGLE_NEWS: new Map() };
-  const byBench: Record<SurfaceKey, Agg> = { DISCOVER: new Map(), GOOGLE_NEWS: new Map() };
+  const byCategory = perSurface<Agg>(() => new Map());
+  const byBench = perSurface<Agg>(() => new Map());
   const totals = columns.map(() => emptyTotals());
 
   // Slug → row labels, memoised because the same path recurs in every column.
@@ -446,11 +449,8 @@ export async function buildSurfacesReport(opts: {
 async function topSurfacedArticles(
   rows: GroupedRow[],
 ): Promise<Record<SurfaceKey, TopSurfacedArticle[]>> {
-  const out: Record<SurfaceKey, TopSurfacedArticle[]> = { DISCOVER: [], GOOGLE_NEWS: [] };
-  const byPath: Record<SurfaceKey, Map<string, SurfaceTotals>> = {
-    DISCOVER: new Map(),
-    GOOGLE_NEWS: new Map(),
-  };
+  const out = perSurface<TopSurfacedArticle[]>(() => []);
+  const byPath = perSurface<Map<string, SurfaceTotals>>(() => new Map());
   for (const r of rows) {
     const path = r.pagePath.replace(/\/+$/, '');
     if (!isArticlePath(path)) continue;
@@ -462,7 +462,7 @@ async function topSurfacedArticles(
     m.set(path, e);
   }
 
-  const shortlist: Record<SurfaceKey, [string, SurfaceTotals][]> = { DISCOVER: [], GOOGLE_NEWS: [] };
+  const shortlist = perSurface<[string, SurfaceTotals][]>(() => []);
   const paths = new Set<string>();
   for (const { surface } of SURFACES) {
     shortlist[surface] = [...byPath[surface].entries()]

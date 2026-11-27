@@ -13,8 +13,8 @@ import {
 } from './gaReads';
 
 /**
- * Google Discover / Google News pickup, from the Search Console Search
- * Analytics API.
+ * Google Discover / Google News / Google Search News-tab pickup, from the
+ * Search Console Search Analytics API.
  *
  * WHY NOT GA4 (the question this module exists to answer): Discover is
  * invisible in GA4. A Discover click carries a plain `https://www.google.com/`
@@ -24,8 +24,10 @@ import {
  * GA4 dimension isolates it. Google News fares slightly better — news.google.com
  * referrals are visible — but that misses the Google News app (referrer-less)
  * and the News tab inside Search (`google / organic`), so GA4 undercounts by an
- * unknown margin. Search Console's `type` parameter (`discover` / `googleNews`)
- * is the only authoritative split, so that is what we sync.
+ * unknown margin. Search Console's `type` parameter (`discover` / `news` /
+ * `googleNews`) is the only authoritative split, so that is what we sync.
+ * `news` (the News tab in Google Search) and `googleNews` (the
+ * Google News app and site) are DIFFERENT surfaces with similar names.
  *
  * Same invariant as the GA reads sync: a flag-gated cron mirrors Search Console
  * into Postgres and THE REQUEST PATH NEVER CALLS GOOGLE — an outage leaves the
@@ -50,11 +52,35 @@ const MAX_PAGES = 40;
 
 const API_ROOT = 'https://searchconsole.googleapis.com/webmasters/v3/sites';
 
-/** The two surfaces we track, and the API `type` value each maps to. */
-export const SURFACES: { surface: SearchSurface; type: string }[] = [
-  { surface: 'DISCOVER', type: 'discover' },
-  { surface: 'GOOGLE_NEWS', type: 'googleNews' },
+/**
+ * The surfaces we track, in the order the report shows them. `type` is the API's search type (also what a backfill is
+ * asked for); `logName` is the count's name in log lines.
+ */
+export const SURFACES: { surface: SearchSurface; type: string; logName: string }[] = [
+  { surface: 'DISCOVER', type: 'discover', logName: 'discover' },
+  { surface: 'GOOGLE_SEARCH_NEWS', type: 'news', logName: 'searchNews' },
+  { surface: 'GOOGLE_NEWS', type: 'googleNews', logName: 'googleNews' },
 ];
+
+/** `discover=12 searchNews=3 googleNews=1`, naming only the surfaces that were fetched. */
+export function surfaceCounts(bySurface: Record<string, number>): string {
+  return SURFACES.filter((s) => bySurface[s.surface] !== undefined)
+    .map((s) => `${s.logName}=${bySurface[s.surface]}`)
+    .join(' ');
+}
+
+// One sync at a time in this process: the cron pass and a backfill both replace rows by date, so running them together
+// could collide on the (portal, pagePath, date, surface) unique index.
+let syncing = false;
+/** Takes the lock; false if a sync or backfill holds it. Pair with `releaseSurfacesLock`. */
+export function acquireSurfacesLock(): boolean {
+  if (syncing) return false;
+  syncing = true;
+  return true;
+}
+export function releaseSurfacesLock(): void {
+  syncing = false;
+}
 
 export type SurfaceRow = {
   date: Date;
@@ -175,13 +201,14 @@ export async function fetchSurface(opts: {
 }
 
 /**
- * One sync pass: pull both surfaces over the rolling lookback window and mirror
- * them into ArticleSurfaceStat.
+ * One sync pass: pull every surface (or just the ones named) over the rolling
+ * lookback window and mirror them into ArticleSurfaceStat.
  *
- * Both fetches complete BEFORE anything is deleted, so a failure on the second
- * surface can't leave the first one's dates wiped. Each date the API returned
+ * ALL fetches complete BEFORE anything is deleted, so a failure on a later
+ * surface can't leave an earlier one's dates wiped. Each date the API returned
  * rows for is then replaced wholesale, exactly like the GA reads sync; dates it
- * returned nothing for keep their previously-synced rows.
+ * returned nothing for keep their previously-synced rows. Only the fetched
+ * surfaces' rows are ever replaced: a one-surface backfill leaves the others.
  *
  * TWO WAYS TO PICK THE WINDOW, and the difference matters:
  *   - `lookbackDays` (the cron): [now - lookbackDays, now].
@@ -204,6 +231,8 @@ export async function syncSearchSurfaces(
     /** Explicit window (YYYY-MM-DD, inclusive). Both or neither; wins over lookbackDays. */
     startDate?: string;
     endDate?: string;
+    /** Fetch and replace only these surfaces (a one-surface backfill). Default: all of them. */
+    surfaces?: SearchSurface[];
   } = {},
 ): Promise<{ rows: number; dates: number; bySurface: Record<string, number> }> {
   const creds = deps.creds ?? loadGaCredentials();
@@ -224,9 +253,12 @@ export async function syncSearchSurfaces(
     throw new Error(`syncSearchSurfaces: startDate ${startDate} is after endDate ${endDate}`);
   }
 
+  const wanted = SURFACES.filter((s) => !deps.surfaces || deps.surfaces.includes(s.surface));
+  if (wanted.length === 0) throw new Error('syncSearchSurfaces: no known surface to fetch');
+
   const rows: SurfaceRow[] = [];
   const bySurface: Record<string, number> = {};
-  for (const { surface, type } of SURFACES) {
+  for (const { surface, type } of wanted) {
     const got = await fetchSurface({
       creds,
       surface,
@@ -244,7 +276,9 @@ export async function syncSearchSurfaces(
   const dates = [...new Set(rows.map((r) => r.date.getTime()))].map((t) => new Date(t));
   const CHUNK = 1000;
   const writes = [
-    prisma.articleSurfaceStat.deleteMany({ where: { portal, date: { in: dates } } }),
+    prisma.articleSurfaceStat.deleteMany({
+      where: { portal, date: { in: dates }, surface: { in: wanted.map((s) => s.surface) } },
+    }),
   ];
   for (let i = 0; i < rows.length; i += CHUNK) {
     writes.push(
@@ -255,6 +289,25 @@ export async function syncSearchSurfaces(
   }
   await prisma.$transaction(writes);
   return { rows: rows.length, dates: dates.length, bySurface };
+}
+
+/** The cron's pass: skipped while a backfill runs (the next one covers the same days); never throws. */
+export async function runScheduledSync(deps: Parameters<typeof syncSearchSurfaces>[0] = {}): Promise<void> {
+  if (!acquireSurfacesLock()) {
+    // eslint-disable-next-line no-console
+    console.log('[surfaces] sync skipped (another sync or a backfill is running)');
+    return;
+  }
+  try {
+    const r = await syncSearchSurfaces(deps);
+    // eslint-disable-next-line no-console
+    console.log(`[surfaces] synced rows=${r.rows} dates=${r.dates} ${surfaceCounts(r.bySurface)}`);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[surfaces] sync failed (last-synced counts stay in place)', safeErrorLog(e, { stack: true }));
+  } finally {
+    releaseSurfacesLock();
+  }
 }
 
 let started = false;
@@ -281,24 +334,11 @@ export function startSearchSurfacesSync(): void {
   if (started) return;
   started = true;
 
-  const run = async () => {
-    try {
-      const r = await syncSearchSurfaces();
-      // eslint-disable-next-line no-console
-      console.log(
-        `[surfaces] synced rows=${r.rows} dates=${r.dates} discover=${r.bySurface.DISCOVER ?? 0} googleNews=${r.bySurface.GOOGLE_NEWS ?? 0}`,
-      );
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[surfaces] sync failed (last-synced counts stay in place)', safeErrorLog(e, { stack: true }));
-    }
-  };
-
-  cron.schedule(env.searchConsole.cron, () => void run(), { timezone: env.rss.tz });
+  cron.schedule(env.searchConsole.cron, () => void runScheduledSync(), { timezone: env.rss.tz });
   // One pass shortly after boot so enabling the flag is verifiable without
   // waiting for the next slot. Delayed to let the deploy settle, and staggered
   // past the GA sync's own boot pass so the two don't contend.
-  setTimeout(() => void run(), 45_000).unref();
+  setTimeout(() => void runScheduledSync(), 45_000).unref();
   // eslint-disable-next-line no-console
   console.log(
     `[surfaces] scheduled cron="${env.searchConsole.cron}" site=${env.searchConsole.siteUrl} lookback=${env.searchConsole.lookbackDays}d`,

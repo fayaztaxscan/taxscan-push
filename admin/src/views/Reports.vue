@@ -42,11 +42,12 @@ type ReadsReport = {
   source?: { mode: 'cms'; note: string; cmsFrom: string; usedGa: boolean };
 };
 
-// The "Surfaces" report — how much traffic Google Discover and Google News sent
-// us, by category and bench, month by month (or over a custom range).
+// The "Surfaces" report — how much traffic Google Discover, the News tab of
+// Google Search and Google News sent us, by category and bench, month by month
+// (or over a custom range).
 // UNIT WARNING: these are Google CLICKS and IMPRESSIONS, not pageviews. They are
 // never comparable with (and must never be added to) the Reads figures above.
-type SurfaceKey = 'DISCOVER' | 'GOOGLE_NEWS';
+type SurfaceKey = 'DISCOVER' | 'GOOGLE_SEARCH_NEWS' | 'GOOGLE_NEWS';
 type SurfaceStat = { clicks: number; impressions: number; articles: number };
 /** null = no pickup at all for this row in this column (NOT a synced zero). */
 type SurfaceCell = SurfaceStat | null;
@@ -287,10 +288,16 @@ const readsAsOf = computed(() => {
 // and impressions, which are a different unit entirely).
 const fmtCount = fmtViews;
 
-const SURFACE_KEYS: SurfaceKey[] = ['DISCOVER', 'GOOGLE_NEWS'];
+/** Screen order. */
+const SURFACE_KEYS: SurfaceKey[] = ['DISCOVER', 'GOOGLE_SEARCH_NEWS', 'GOOGLE_NEWS'];
 const SURFACE_LABEL: Record<SurfaceKey, string> = {
   DISCOVER: 'Google Discover',
+  GOOGLE_SEARCH_NEWS: 'Google Search · News',
   GOOGLE_NEWS: 'Google News',
+};
+/** A line under a name that is easy to mistake for another one. */
+const SURFACE_HINT: Partial<Record<SurfaceKey, string>> = {
+  GOOGLE_SEARCH_NEWS: 'News tab in Google Search',
 };
 const EMPTY_STAT: SurfaceStat = { clicks: 0, impressions: 0, articles: 0 };
 
@@ -358,30 +365,6 @@ const columnHeads = computed(() =>
 );
 
 /**
- * One self-contained section per surface: its per-column totals (also the
- * shading denominators), its two grids and its top-articles list. Built here so
- * the template never has to hunt through the per-surface grid arrays.
- */
-const surfaceSections = computed(() => {
-  const r = surfacesReport.value;
-  if (!r?.ready) return [];
-  return SURFACE_KEYS.map((key) => ({
-    key,
-    label: SURFACE_LABEL[key],
-    totals: (r.totals ?? []).map((t) => t?.[key] ?? EMPTY_STAT),
-    benches: r.byBench?.find((g) => g.surface === key)?.rows ?? [],
-    categories: r.byCategory?.find((g) => g.surface === key)?.rows ?? [],
-    top: r.topArticles?.[key] ?? [],
-    // Bench above Category, matching the coverage and Reads tabs. Iterated in
-    // the template so the two grids can never drift apart in markup.
-    grids: [
-      { key: 'bench', title: 'Courts / benches', unit: 'court or bench story', rows: r.byBench?.find((g) => g.surface === key)?.rows ?? [] },
-      { key: 'category', title: 'Categories', unit: 'category', rows: r.byCategory?.find((g) => g.surface === key)?.rows ?? [] },
-    ],
-  }));
-});
-
-/**
  * Which two columns every Δ on this screen compares, as {current, base}.
  *
  * Taken from the payload, NOT re-derived here. The two modes order their columns
@@ -393,6 +376,46 @@ const surfaceSections = computed(() => {
 const compareIdx = computed<{ current: number; base: number }>(
   () => surfacesReport.value?.compare ?? { current: -1, base: -1 },
 );
+
+/**
+ * One self-contained section per surface: its per-column totals (also the
+ * shading denominators), its two grids and its top-articles list. Built here so
+ * the template never has to hunt through the per-surface grid arrays.
+ */
+const surfaceSections = computed(() => {
+  const r = surfacesReport.value;
+  if (!r?.ready) return [];
+  return SURFACE_KEYS.map((key) => {
+    const totals = (r.totals ?? []).map((t) => t?.[key] ?? EMPTY_STAT);
+    const benches = r.byBench?.find((g) => g.surface === key)?.rows ?? [];
+    const categories = r.byCategory?.find((g) => g.surface === key)?.rows ?? [];
+    return {
+      key,
+      label: SURFACE_LABEL[key],
+      hint: SURFACE_HINT[key],
+      totals,
+      totalMove: surfaceMove(totals, compareIdx.value.current, compareIdx.value.base),
+      benches,
+      categories,
+      top: r.topArticles?.[key] ?? [],
+      // Bench above Category, matching the coverage and Reads tabs. Iterated in
+      // the template so the two grids can never drift apart in markup.
+      grids: [
+        { key: 'bench', title: 'Courts / benches', unit: 'court or bench story', rows: benches },
+        { key: 'category', title: 'Categories', unit: 'category', rows: categories },
+      ],
+    };
+  });
+});
+
+/**
+ * Whether we hold anything for a surface in a column. Google sends no row at all
+ * when it has nothing to report, and a month whose history was never collected
+ * looks exactly the same — so neither is shown as a measured 0 or compared against.
+ */
+function hasFigures(t: SurfaceStat | undefined): boolean {
+  return !!t && (t.articles > 0 || t.clicks > 0 || t.impressions > 0);
+}
 
 function pctChange(now: number, before: number): number | null {
   if (before <= 0) return null;
@@ -420,20 +443,25 @@ const surfaceHeadline = computed(() => {
   const hasBase = base >= 0 && base < cols.length;
   return surfaceSections.value.map((s) => {
     const clicks = s.totals[i]?.clicks ?? 0;
+    const has = hasFigures(s.totals[i]);
+    // Only up to the compared month: "▼ since" means nothing against the later,
+    // still-filling one.
     let peakIdx = 0;
-    s.totals.forEach((t, ti) => {
+    s.totals.slice(0, i + 1).forEach((t, ti) => {
       if ((t?.clicks ?? 0) > (s.totals[peakIdx]?.clicks ?? 0)) peakIdx = ti;
     });
     // "Best month on screen" is a statement about a run of months. Across two
     // range columns the peak is just whichever side is larger, which the Δ
     // already says — so it is dropped rather than restated.
-    const showPeak = surfacesMode.value === 'months' && peakIdx !== i;
+    const showPeak = has && surfacesMode.value === 'months' && peakIdx !== i;
     return {
       key: s.key,
       label: s.label,
+      hint: s.hint,
+      has,
       clicks,
       columnLabel: cols[i]?.label ?? '',
-      delta: hasBase ? move(clicks, s.totals[base]?.clicks ?? 0) : null,
+      delta: s.totalMove,
       prevLabel: hasBase ? (cols[base]?.label ?? '') : '',
       peak: s.totals[peakIdx]?.clicks ?? 0,
       peakLabel: cols[peakIdx]?.label ?? '',
@@ -458,10 +486,15 @@ type Move = { pct: number | null; from: number; to: number };
 function move(to: number, from: number): Move {
   return { pct: pctChange(to, from), from, to };
 }
+/** A surface's own movement between two columns; null ("—") unless both have figures. */
+function surfaceMove(totals: SurfaceStat[], now: number, before: number): Move | null {
+  if (!hasFigures(totals[now]) || !hasFigures(totals[before])) return null;
+  return move(totals[now].clicks, totals[before].clicks);
+}
 /** Row-level movement: the last complete column against the one before it. */
-function rowDelta(row: SurfaceRow): Move | null {
+function rowDelta(row: SurfaceRow, totals: SurfaceStat[]): Move | null {
   const { current, base } = compareIdx.value;
-  if (current < 0 || base < 0 || base >= row.cells.length) return null;
+  if (!surfaceMove(totals, current, base)) return null;
   return move(row.cells[current]?.clicks ?? 0, row.cells[base]?.clicks ?? 0);
 }
 function deltaText(m: Move | null): string {
@@ -488,25 +521,31 @@ function deltaClass(m: Move | null): string {
   return m.to > m.from ? 'up' : 'down';
 }
 
-/**
- * Share of the LATEST COMPLETE column's clicks across BOTH surfaces. Drives
- * which section opens by default: giving a surface worth a rounding error the
- * same screen space as the one carrying the traffic is what makes a report
- * tiring to read.
- */
-function surfaceShareOfAll(key: SurfaceKey): number {
+// A surface carrying under a tenth of the LATEST COMPLETE column's clicks (all
+// surfaces together) stays collapsed until asked for: giving a rounding error the
+// same screen space as the one carrying the traffic is what makes a report tiring
+// to read. Computed, not hardcoded, so a surface that grows expands on its own.
+const MINOR_SURFACE_SHARE = 0.1;
+function surfaceIsMinor(key: SurfaceKey): boolean {
   const total = surfaceHeadline.value.reduce((n, h) => n + h.clicks, 0);
-  if (total <= 0) return 0;
-  return (surfaceHeadline.value.find((h) => h.key === key)?.clicks ?? 0) / total;
+  if (total <= 0) return false;
+  return (surfaceHeadline.value.find((h) => h.key === key)?.clicks ?? 0) / total < MINOR_SURFACE_SHARE;
+}
+/** What a collapsed surface says in place of its grids. */
+function foldedNote(key: SurfaceKey): string {
+  const h = surfaceHeadline.value.find((x) => x.key === key);
+  if (!h) return '';
+  if (!h.has) return `No figures for ${h.columnLabel}. Show the breakdown to see what there is.`;
+  return (
+    `${fmtCount(h.clicks)} click${h.clicks === 1 ? '' : 's'} in ${h.columnLabel} — under a tenth of the ` +
+    'clicks on this tab. Show the breakdown if you want the detail.'
+  );
 }
 
-// Surfaces the reader has opened by hand. A minor surface stays collapsed until
-// asked for — but the threshold is computed, not hardcoded, so if Google News
-// ever grows into a real channel it expands on its own.
-const MINOR_SURFACE_SHARE = 0.1;
+// Surfaces the reader has opened by hand.
 const openedSurfaces = ref<SurfaceKey[]>([]);
 function surfaceIsOpen(key: SurfaceKey): boolean {
-  return surfaceShareOfAll(key) >= MINOR_SURFACE_SHARE || openedSurfaces.value.includes(key);
+  return !surfaceIsMinor(key) || openedSurfaces.value.includes(key);
 }
 function toggleSurface(key: SurfaceKey): void {
   openedSurfaces.value = openedSurfaces.value.includes(key)
@@ -623,7 +662,6 @@ const shareCard = computed<CardModel | null>(() => {
     const sec = surfaceSections.value.find((x) => x.key === 'DISCOVER');
     if (!r?.ready || !disc || !sec) return null;
     const { current } = compareIdx.value;
-    const news = head.find((h) => h.key === 'GOOGLE_NEWS');
     const benches = sec.benches
       .filter((b) => !isResidual(b.label) && (b.cells[current]?.clicks ?? 0) > 0)
       .sort((a, b) => (b.cells[current]?.clicks ?? 0) - (a.cells[current]?.clicks ?? 0))
@@ -642,19 +680,20 @@ const shareCard = computed<CardModel | null>(() => {
       kicker: 'Taxscan · Google Discover',
       title: disc.columnLabel,
       hero: {
-        value: fmtCount(disc.clicks),
+        value: disc.has ? fmtCount(disc.clicks) : '—',
         label: 'clicks from Google Discover',
         delta: cardDelta(disc.delta),
         deltaNote: disc.prevLabel ? ` vs ${disc.prevLabel}` : '',
       },
-      secondary: news
-        ? [{ label: 'Google News', value: fmtCount(news.clicks), delta: cardDelta(news.delta) }]
-        : [],
+      // The other surfaces as one-line figures; one with nothing for this period is left off.
+      secondary: head
+        .filter((h) => h.key !== 'DISCOVER' && h.has)
+        .map((h) => ({ label: h.label, value: fmtCount(h.clicks), delta: cardDelta(h.delta) })),
       sections: [
         {
           title: `Top courts & benches · ${disc.columnLabel}`,
           rows: benches.map((b) => {
-            return { label: b.label, value: fmtCount(b.cells[current]?.clicks ?? 0), delta: cardDelta(rowDelta(b)) };
+            return { label: b.label, value: fmtCount(b.cells[current]?.clicks ?? 0), delta: cardDelta(rowDelta(b, sec.totals)) };
           }),
         },
         {
@@ -1200,15 +1239,15 @@ onMounted(() => {
       <p class="muted">{{ readsReport.message ?? 'The first reads report has not been built yet — check back shortly.' }}</p>
     </div>
 
-    <!-- Surfaces report: what Google Discover / Google News picked up, by bench
-         and category, month by month (or over a chosen range). Aggregated on the
-         server from stored Search Console data — the request path never calls
-         Google. -->
+    <!-- Surfaces report: what Google Discover, Search's News tab and Google News
+         picked up, by bench and category, month by month (or over a chosen range).
+         Aggregated on the server from stored Search Console data — the request
+         path never calls Google. -->
     <div v-else-if="period === 'surfaces' && surfacesReport?.ready" ref="sheet" class="report-sheet">
       <div class="report-head">
         <div class="report-title">Taxscan Google Surfaces Report</div>
         <div class="report-range">
-          What Google Discover &amp; Google News picked up ·
+          What Google Discover, Search’s News tab and Google News picked up ·
           <template v-if="surfacesMode === 'range' && surfaceColumns.length">
             {{ surfaceColumns[0].label }} against the {{ surfaceColumns[1]?.label?.toLowerCase() }} ·
           </template>
@@ -1222,11 +1261,13 @@ onMounted(() => {
            month's number reads as fine in isolation; the slope is the story. -->
       <div class="surface-headline">
         <div v-for="h in surfaceHeadline" :key="h.key" class="sh-item">
-          <span class="sh-n">{{ fmtCount(h.clicks) }}</span>
-          <span class="sh-l">{{ h.label }} clicks · {{ h.columnLabel }}</span>
-          <span class="sh-d">
+          <span class="sh-n">{{ h.has ? fmtCount(h.clicks) : '—' }}</span>
+          <span class="sh-l">{{ h.label }} clicks, {{ h.columnLabel }}</span>
+          <span v-if="h.hint" class="sh-l">{{ h.hint }}</span>
+          <span v-if="!h.has" class="sh-sub">No figures for this period</span>
+          <span v-else-if="h.prevLabel" class="sh-d">
             <span :class="['delta', deltaClass(h.delta)]">{{ deltaText(h.delta) }}</span>
-            <span v-if="h.prevLabel" class="sh-sub">vs {{ h.prevLabel }}</span>
+            <span class="sh-sub">vs {{ h.prevLabel }}</span>
           </span>
           <span v-if="h.fromPeak !== null" class="sh-sub">
             Best month on screen: {{ h.peakLabel }} ({{ fmtCount(h.peak) }}) ·
@@ -1242,8 +1283,8 @@ onMounted(() => {
       <div class="gaps">
         <p style="margin: 0 0 4px">
           <strong>These are Google clicks, not Reads.</strong>
-          Someone tapped our headline in Discover or Google News. The Reads tab counts page views
-          from every source — don’t add or compare the two.
+          Someone tapped our headline in Discover, in Search’s News tab or in Google News. The Reads
+          tab counts page views from every source — don’t add these to Reads or compare them.
         </p>
         <p v-if="surfaceColumns.some((c) => c.partial)" style="margin: 0">
           <strong>The newest column is still filling.</strong>
@@ -1265,27 +1306,23 @@ onMounted(() => {
         <div class="surface-h-row">
           <h3 class="surface-h">{{ s.label }}</h3>
           <!-- A surface carrying a rounding-error share stays folded away until
-               asked for, so the one that matters isn't buried under a duplicate. -->
+               asked for, so the one that matters isn't buried under the others. -->
           <button
-            v-if="!surfaceHasNothing(s) && surfaceShareOfAll(s.key) < MINOR_SURFACE_SHARE"
+            v-if="!surfaceHasNothing(s) && surfaceIsMinor(s.key)"
             class="btn"
             @click="toggleSurface(s.key)"
           >
             {{ surfaceIsOpen(s.key) ? 'Hide breakdown' : 'Show breakdown' }}
           </button>
         </div>
+        <p v-if="s.hint" class="surface-hint">{{ s.hint }}</p>
 
         <p v-if="surfaceHasNothing(s)" class="muted no-pickup">
-          Google sent us nothing from {{ s.label }} in this period — no clicks and no impressions.
-          Either our stories are not being picked up there, or Google has not reported them yet.
+          No {{ s.label }} figures for this period. Either nothing has been collected for these
+          dates, or Google showed none of our stories there.
         </p>
 
-        <p v-else-if="!surfaceIsOpen(s.key)" class="muted no-pickup">
-          A small share of our Google traffic —
-          {{ fmtCount(surfaceHeadline.find((h) => h.key === s.key)?.clicks ?? 0) }} clicks in
-          {{ surfaceHeadline.find((h) => h.key === s.key)?.columnLabel }}. Show the breakdown if you
-          want the detail.
-        </p>
+        <p v-else-if="!surfaceIsOpen(s.key)" class="muted no-pickup">{{ foldedNote(s.key) }}</p>
 
         <template v-else>
           <div v-for="g in s.grids" :key="g.key">
@@ -1332,7 +1369,9 @@ onMounted(() => {
                       :title="
                         c
                           ? surfaceCellTitle(s.label, row.label, surfaceColumns[i]?.label ?? '', c, s.totals[i]?.clicks ?? 0)
-                          : `${row.label} — no ${s.label} pickup in ${surfaceColumns[i]?.label ?? 'this period'}`
+                          : hasFigures(s.totals[i])
+                            ? `${row.label} — no ${s.label} pickup in ${surfaceColumns[i]?.label ?? 'this period'}`
+                            : `No ${s.label} figures for ${surfaceColumns[i]?.label ?? 'this period'}`
                       "
                     >
                       <!-- Clicks only. Impressions, click rate and share are all in
@@ -1342,16 +1381,16 @@ onMounted(() => {
                       <span v-else class="muted">—</span>
                     </td>
                     <td
-                      :class="['td-delta', deltaClass(rowDelta(row))]"
+                      :class="['td-delta', deltaClass(rowDelta(row, s.totals))]"
                       :title="
                         deltaTitle(
-                          rowDelta(row),
+                          rowDelta(row, s.totals),
                           surfaceColumns[compareIdx.base]?.label ?? '',
                           surfaceColumns[compareIdx.current]?.label ?? '',
                         )
                       "
                     >
-                      {{ deltaText(rowDelta(row)) }}
+                      {{ deltaText(rowDelta(row, s.totals)) }}
                     </td>
                   </tr>
                 </tbody>
@@ -1365,31 +1404,10 @@ onMounted(() => {
                       />
                     </td>
                     <td v-for="(t, i) in s.totals" :key="i" :class="{ 'td-partial': surfaceColumns[i]?.partial }">
-                      {{ fmtCount(t.clicks) }}
+                      {{ hasFigures(t) ? fmtCount(t.clicks) : '—' }}
                     </td>
-                    <td
-                      :class="[
-                        'td-delta',
-                        deltaClass(
-                          compareIdx.base >= 0
-                            ? move(
-                                s.totals[compareIdx.current]?.clicks ?? 0,
-                                s.totals[compareIdx.base]?.clicks ?? 0,
-                              )
-                            : null,
-                        ),
-                      ]"
-                    >
-                      {{
-                        deltaText(
-                          compareIdx.base >= 0
-                            ? move(
-                                s.totals[compareIdx.current]?.clicks ?? 0,
-                                s.totals[compareIdx.base]?.clicks ?? 0,
-                              )
-                            : null,
-                        )
-                      }}
+                    <td :class="['td-delta', deltaClass(s.totalMove)]">
+                      {{ deltaText(s.totalMove) }}
                     </td>
                   </tr>
                 </tfoot>
@@ -1431,7 +1449,8 @@ onMounted(() => {
 
       <div class="report-foot">
         Numbers are clicks from Google; hover a cell for impressions, click rate and share. “—” means
-        no pickup at all, which is not the same as zero clicks. Deeper violet = a larger share of that
+        no figures (no pickup, or nothing collected for those dates), which is not the same as zero
+        clicks. Deeper violet = a larger share of that
         surface’s clicks <em>within its own column</em>, so shading shows what Google favoured that
         month rather than restating the size of the month. Δ compares the last complete month with the
         one before it. Google credits whichever copy of a story it treats as the original, so a story
@@ -1442,7 +1461,7 @@ onMounted(() => {
 
     <!-- (a) Feature switched off — a state, not an error. -->
     <div v-else-if="period === 'surfaces' && surfacesOff" class="card">
-      <p style="margin: 0 0 6px"><strong>Google Discover &amp; News tracking is switched off.</strong></p>
+      <p style="margin: 0 0 6px"><strong>Google Discover and news tracking is switched off.</strong></p>
       <p class="muted" style="margin: 0 0 6px">{{ surfacesOff }}</p>
       <p class="muted" style="margin: 0">
         Nothing is being collected at the moment, so there is nothing to show here. An admin can turn
@@ -1454,7 +1473,7 @@ onMounted(() => {
     <div v-else-if="period === 'surfaces' && surfacesReport && !surfacesReport.ready" class="card">
       <p style="margin: 0 0 6px"><strong>Nothing has come back from Google yet.</strong></p>
       <p class="muted" style="margin: 0 0 6px">
-        {{ surfacesReport.message ?? 'Tracking is on, but no Discover or Google News data has been collected so far.' }}
+        {{ surfacesReport.message ?? 'Tracking is on, but Google has not sent any figures so far.' }}
       </p>
       <p class="muted" style="margin: 0">
         Google reports this data 2–3 days behind, so the first numbers usually appear a couple of days
@@ -1776,6 +1795,13 @@ table.heat.surfaces .rs {
   padding: 10px 14px;
   min-width: 160px;
 }
+/* Phones: one tile per row, all the same width — a tile with no figures has little
+   text and would otherwise shrink to it. */
+@media (max-width: 720px) {
+  .sh-item {
+    flex: 1 1 100%;
+  }
+}
 .sh-n {
   display: block;
   font-size: 24px;
@@ -1886,6 +1912,11 @@ table.heat.surfaces tfoot td.td-trend {
   font-size: 15px;
   font-weight: 700;
   color: #0f172a;
+}
+.surface-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 /* Distinct from an error: "no pickup here" is a finding, not a fault. */
 .no-pickup {

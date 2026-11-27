@@ -9,6 +9,12 @@ describe('titleFromPath', () => {
     );
     expect(titleFromPath('/x-123456/')).toBe('X');
   });
+
+  it('keeps every other trailing number: only an old article id is dropped', () => {
+    expect(titleFromPath('/gst/x-fy-2025-26')).toBe('X fy 2025 26');
+    expect(titleFromPath('/gst/x-section-148')).toBe('X section 148');
+    expect(titleFromPath('/gst/x-1448729')).toBe('X');
+  });
 });
 
 describe('readsSummaryForWindow', () => {
