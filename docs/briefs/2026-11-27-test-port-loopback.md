@@ -64,3 +64,11 @@ Each one must PASS in the REPORT.
 ## Context the builder needs
 - Your own REPORT note 1 in `docs/briefs/2026-11-27-surfaces-clicked-only.REPORT.md` and the 08c1672 Release check runs.
 - `jest.config.js` (`setupFiles`, `maxWorkers: 2`), `jest.environment.js` (advisory lock — leave it).
+
+## Follow-up 1 (planning, 27 Nov — builder's questions, answered)
+1. **Yes:** change only the expected string at `cmsEvents.test.ts:176` (`remote=::ffff:127.0.0.1` → `remote=127.0.0.1`).
+   It follows from the new IPv4 binding; it is not a fix to the cmsEvents flake, which stays out of scope.
+2. Binding via `net._createServerHandle` (Node internal) is accepted for TEST code only, because the guard test and a
+   setup-time error make it fail loudly if Node removes it. Say so in the setup comment, naming the Node version.
+3. `digestRetention` "EmailEvent fold" (expected 2, got 0, shared-DB EmailSuppression count): report only; planner adds
+   it to the flaky list.
