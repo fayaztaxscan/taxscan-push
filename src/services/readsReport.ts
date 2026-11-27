@@ -353,10 +353,12 @@ export function isArticlePath(path: string): boolean {
  * Readable pseudo-title from an article slug — used to classify paths whose
  * article we never captured, and as the display fallback when no campaign
  * title matches. The category regexes are case-insensitive, so slug text
- * ("gst"/"itat"/"income tax") classifies the same as a real headline.
+ * ("gst"/"itat"/"income tax") classifies the same as a real headline. Only an
+ * old article id is dropped: other trailing numbers ("…-fy-2025-26",
+ * "…-section-148") are part of the headline.
  */
 export function titleFromPath(p: string): string {
-  const slug = (p.split('/').filter(Boolean).pop() ?? '').replace(/-\d+$/, '');
+  const slug = (p.split('/').filter(Boolean).pop() ?? '').replace(ARTICLE_ID_PATH_RE, '');
   const text = slug.replace(/-/g, ' ').trim();
   return text.charAt(0).toUpperCase() + text.slice(1);
 }

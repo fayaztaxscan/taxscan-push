@@ -7,6 +7,10 @@ import {
   fetchSurface,
   syncSearchSurfaces,
   startSearchSurfacesSync,
+  runScheduledSync,
+  surfaceCounts,
+  acquireSurfacesLock,
+  releaseSurfacesLock,
   type SearchAnalyticsRow,
 } from '../services/searchSurfaces';
 import { __resetTokenCache, type FetchLike, type GaCredentials } from '../services/gaReads';
@@ -287,6 +291,119 @@ describe('syncSearchSurfaces', () => {
     await expect(
       syncSearchSurfaces({ creds, portal, siteUrl: '', fetchImpl: bySurfaceFetch({}) }),
     ).rejects.toThrow(/SEARCH_CONSOLE_SITE_URL/);
+  });
+});
+
+/** The third surface: the News tab in Google Search (API type `news`). */
+describe('syncSearchSurfaces with the Search News surface', () => {
+  const portal = `test-sc-news-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const creds: GaCredentials = {
+    client_email: 'sc@y.iam',
+    private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  };
+  const siteUrl = 'sc-domain:taxscan.in';
+  const page = `${URL_BASE}/gst/a-story`;
+
+  /** One row per type (its own click count), optionally failing one type; records the types asked for. */
+  const google =
+    (clicks: Record<string, number>, asked: string[] = [], failOn?: string): FetchLike =>
+    async (url, init) => {
+      if (String(url).includes('oauth2.googleapis.com')) {
+        return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+      }
+      const { type = '' } = JSON.parse(String(init?.body ?? '{}')) as { type?: string };
+      asked.push(type);
+      if (type === failOn) return new Response(JSON.stringify({ error: { message: 'boom' } }), { status: 500 });
+      const n = clicks[type];
+      return new Response(JSON.stringify({ rows: n === undefined ? [] : [row('2026-08-01', page, n, n * 10)] }), { status: 200 });
+    };
+  const stored = async () =>
+    (await prisma.articleSurfaceStat.findMany({ where: { portal }, orderBy: { surface: 'asc' } })).map((r) => [r.surface, r.clicks]);
+  const all = { creds, portal, siteUrl };
+
+  beforeEach(async () => {
+    __resetTokenCache();
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+  afterEach(() => jest.restoreAllMocks());
+  afterAll(async () => {
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+
+  it('fetches all three types and writes three surfaces', async () => {
+    const asked: string[] = [];
+    const r = await syncSearchSurfaces({ ...all, fetchImpl: google({ discover: 1, news: 2, googleNews: 3 }, asked) });
+    expect(asked).toEqual(['discover', 'news', 'googleNews']);
+    expect(r).toMatchObject({ rows: 3, dates: 1, bySurface: { DISCOVER: 1, GOOGLE_SEARCH_NEWS: 1, GOOGLE_NEWS: 1 } });
+    expect(await stored()).toEqual([
+      ['DISCOVER', 1],
+      ['GOOGLE_NEWS', 3],
+      ['GOOGLE_SEARCH_NEWS', 2],
+    ]);
+  });
+
+  it('writes NOTHING for the pass when `news` fails: no surface is deleted or changed', async () => {
+    await syncSearchSurfaces({ ...all, fetchImpl: google({ discover: 1, news: 2, googleNews: 3 }) });
+    const before = await prisma.articleSurfaceStat.findMany({ where: { portal }, orderBy: { id: 'asc' } });
+    await expect(
+      syncSearchSurfaces({ ...all, fetchImpl: google({ discover: 100, googleNews: 300 }, [], 'news') }),
+    ).rejects.toThrow(/Search Console query failed for news \(500\)/);
+    expect(await prisma.articleSurfaceStat.findMany({ where: { portal }, orderBy: { id: 'asc' } })).toEqual(before);
+  });
+
+  it('a one-surface sync asks only for that type and replaces only its rows; rerunning changes nothing', async () => {
+    await syncSearchSurfaces({ ...all, fetchImpl: google({ discover: 1, news: 2, googleNews: 3 }) });
+    const others = () =>
+      prisma.articleSurfaceStat.findMany({ where: { portal, surface: { not: 'GOOGLE_SEARCH_NEWS' } }, orderBy: { id: 'asc' } });
+    const untouched = await others();
+    for (let pass = 0; pass < 2; pass += 1) {
+      const asked: string[] = [];
+      const r = await syncSearchSurfaces({ ...all, surfaces: ['GOOGLE_SEARCH_NEWS'], fetchImpl: google({ discover: 100, news: 20, googleNews: 300 }, asked) });
+      expect(asked).toEqual(['news']);
+      expect(r.bySurface).toEqual({ GOOGLE_SEARCH_NEWS: 1 });
+      expect(await others()).toEqual(untouched);
+      expect(await stored()).toEqual([
+        ['DISCOVER', 1],
+        ['GOOGLE_NEWS', 3],
+        ['GOOGLE_SEARCH_NEWS', 20],
+      ]);
+    }
+  });
+
+  it('refuses an empty surface list rather than fetch (or delete) everything', async () => {
+    const asked: string[] = [];
+    await expect(syncSearchSurfaces({ ...all, surfaces: [], fetchImpl: google({}, asked) })).rejects.toThrow(/no known surface/);
+    expect(asked).toEqual([]);
+  });
+
+  it('names the counts for the log, only for the surfaces fetched', () => {
+    expect(surfaceCounts({ DISCOVER: 4, GOOGLE_SEARCH_NEWS: 0, GOOGLE_NEWS: 2 })).toBe('discover=4 searchNews=0 googleNews=2');
+    expect(surfaceCounts({ GOOGLE_SEARCH_NEWS: 7 })).toBe('searchNews=7');
+  });
+
+  it('the scheduled pass logs searchNews=N, and is skipped while the lock is held', async () => {
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const asked: string[] = [];
+    expect(acquireSurfacesLock()).toBe(true);
+    await runScheduledSync({ ...all, fetchImpl: google({ news: 1 }, asked) });
+    expect(asked).toEqual([]);
+    expect(log.mock.calls.flat().join('\n')).toMatch(/\[surfaces\] sync skipped/);
+    releaseSurfacesLock();
+
+    await runScheduledSync({ ...all, fetchImpl: google({ discover: 1, news: 2 }, asked) });
+    expect(log.mock.calls.flat().join('\n')).toContain('[surfaces] synced rows=2 dates=1 discover=1 searchNews=1 googleNews=0');
+    // The lock is free again afterwards.
+    expect(acquireSurfacesLock()).toBe(true);
+    releaseSurfacesLock();
+  });
+
+  it('the scheduled pass never throws, and frees the lock after a failure', async () => {
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(runScheduledSync({ ...all, fetchImpl: google({}, [], 'news') })).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(acquireSurfacesLock()).toBe(true);
+    releaseSurfacesLock();
   });
 });
 

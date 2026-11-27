@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "AuditAction" ADD VALUE 'SURFACES_BACKFILL_STARTED';
+
+-- AlterEnum
+ALTER TYPE "SearchSurface" ADD VALUE 'GOOGLE_SEARCH_NEWS';

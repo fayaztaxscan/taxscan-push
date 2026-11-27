@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * One-off history backfill for ArticleSurfaceStat (Google Discover / News).
+ * One-off history backfill for ArticleSurfaceStat (Google Discover / Search News tab / Google News).
  *
  * WHY THIS EXISTS: the live sync fetches a rolling `SEARCH_CONSOLE_LOOKBACK_DAYS`
  * window (7), so a fresh install only ever holds a week — every trailing window
@@ -27,7 +27,11 @@
  * Flags:
  *   --from YYYY-MM   first month to fetch (required)
  *   --to   YYYY-MM   last month (default: the current month)
+ *   --surface X      fetch and replace ONE search type only: discover | news | googleNews (default: all)
  *   --yes            actually write; without it the script only reports the plan
+ *
+ * Production can't run this script (no shell into the app, no public database): there, use
+ * `POST /api/admin/surfaces/backfill {surface, from, to}` instead.
  *
  * Credentials come from the same place the cron uses: GA_SERVICE_ACCOUNT_JSON,
  * else the gitignored key file (GA_SERVICE_ACCOUNT_FILE). The service account
@@ -36,7 +40,7 @@
  */
 
 import { prisma } from '../src/lib/prisma';
-import { syncSearchSurfaces } from '../src/services/searchSurfaces';
+import { SURFACES, surfaceCounts, syncSearchSurfaces } from '../src/services/searchSurfaces';
 
 type Month = { year: number; month: number }; // month is 1-12
 
@@ -107,6 +111,13 @@ function hostOf(url: string | undefined): string {
     : { year: today.getUTCFullYear(), month: today.getUTCMonth() + 1 };
   const write = process.argv.includes('--yes');
 
+  const surfaceArg = arg('surface');
+  const surface = SURFACES.find((s) => s.type === surfaceArg);
+  // A bare or misspelt --surface must never fall through to "all surfaces".
+  if (process.argv.includes('--surface') && !surface) {
+    throw new Error(`--surface must be one of ${SURFACES.map((s) => s.type).join(' | ')} (got "${surfaceArg ?? ''}")`);
+  }
+
   const months = monthsBetween(from, to);
   if (months.length === 0) throw new Error('--from is after --to');
 
@@ -115,6 +126,7 @@ function hostOf(url: string | undefined): string {
   console.log(
     `[backfill-surfaces] months     : ${months.length} (${fromArg} → ${to.year}-${String(to.month).padStart(2, '0')})`,
   );
+  console.log(`[backfill-surfaces] surfaces   : ${surface ? surface.type : 'all'}`);
   if (!write) {
     console.log('[backfill-surfaces] DRY RUN — pass --yes to write. Planned windows:');
     for (const m of months) {
@@ -133,11 +145,14 @@ function hostOf(url: string | undefined): string {
     const w = windowFor(m, today);
     const label = `${m.year}-${String(m.month).padStart(2, '0')}`;
     try {
-      const r = await syncSearchSurfaces({ startDate: w.from, endDate: w.to });
+      const r = await syncSearchSurfaces({
+        startDate: w.from,
+        endDate: w.to,
+        ...(surface ? { surfaces: [surface.surface] } : {}),
+      });
       rowsWritten += r.rows;
       console.log(
-        `[backfill-surfaces] ${label} (${w.from}→${w.to}) rows=${r.rows} dates=${r.dates} ` +
-          `discover=${r.bySurface.DISCOVER ?? 0} googleNews=${r.bySurface.GOOGLE_NEWS ?? 0}`,
+        `[backfill-surfaces] ${label} (${w.from}→${w.to}) rows=${r.rows} dates=${r.dates} ${surfaceCounts(r.bySurface)}`,
       );
     } catch (e) {
       // Keep going: one month failing (a rate limit, a transient 5xx) should not
@@ -151,7 +166,9 @@ function hostOf(url: string | undefined): string {
   const after = await prisma.articleSurfaceStat.count();
   console.log(`[backfill-surfaces] done. table ${before} → ${after} rows (fetched ${rowsWritten})`);
   if (failed.length) {
-    console.log(`[backfill-surfaces] re-run for: --from ${failed[0]} --to ${failed[failed.length - 1]}`);
+    console.log(
+      `[backfill-surfaces] re-run for: --from ${failed[0]} --to ${failed[failed.length - 1]}${surface ? ` --surface ${surface.type}` : ''}`,
+    );
     process.exitCode = 1;
   }
   await prisma.$disconnect();
