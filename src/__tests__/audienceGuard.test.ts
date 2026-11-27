@@ -1,12 +1,13 @@
 import request from 'supertest';
 import bcrypt from 'bcrypt';
-import type { DigestAudience, User, UserRole } from '@prisma/client';
+import type { DigestAudience, Prisma, User, UserRole } from '@prisma/client';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { parseAudienceEnv, parseDigestEnv, type AudienceEnv, type DigestEnv } from '../lib/env';
 import { advanceRun, audienceTarget, awaitDigestAlerts, ensureRun, type DigestTrigger } from '../services/digest/runner';
 import * as guardModule from '../services/audience/guard';
-import { audienceGuard, deviationLimit, pendingLimit, type GuardSnapshot } from '../services/audience/guard';
+import { audienceGuard, deviationLimit, loadGuardSnapshot, pendingLimit, pendingPremiumWhere, type GuardSnapshot } from '../services/audience/guard';
+import { audienceCard } from '../services/audience/adminView';
 import { openBreaker } from '../services/audience/breaker';
 import { alertCopy } from '../services/digest/alerts';
 import { placeholderContent } from './digestPlaceholderContent';
@@ -173,6 +174,84 @@ describe('audienceGuard — FREE', () => {
 
   it('passes with the breaker open and with every Premium-only check failing', () => {
     expect(free({ breakerOpen: true, pendingPremium: 999, driftMailercloud: null, cmsPremium: null, lastFullOkAt: ago(40 * H), lastIncrOkAt: ago(40 * H) }).ok).toBe(true);
+  });
+});
+
+/* ---------------------------------------------------------------- */
+/* Pending Premium: members the writer will not tag (27 Nov)         */
+/* ---------------------------------------------------------------- */
+
+describe('pending Premium: refused and suppressed members are not "pending"', () => {
+  const now = new Date('2026-10-30T02:00:00Z');
+  const PREMIUM_TAG = AUD_OFF.mailercloud.tagPremium;
+  let batch = 0;
+  const hashes: string[] = [];
+  const syncPortals: string[] = [];
+
+  /** `count` members of this test's own, scoped by hash; addresses are never printed. */
+  async function seed(count: number, over: Partial<Prisma.AudienceMemberCreateManyInput>): Promise<string[]> {
+    const mine = Array.from({ length: count }, () => `hash-pending-${Date.now()}-${++batch}-${Math.floor(Math.random() * 1e9)}`);
+    hashes.push(...mine);
+    await prisma.audienceMember.createMany({
+      data: mine.map((h) => ({ emailHash: h, email: `${h}@example.org`, desiredRole: 'PREMIUM', ...over })),
+    });
+    return mine;
+  }
+  const pendingOf = (mine: string[]) => prisma.audienceMember.count({ where: { AND: [{ emailHash: { in: mine } }, pendingPremiumWhere(PREMIUM_TAG)] } });
+
+  afterEach(async () => {
+    await prisma.audienceMember.deleteMany({ where: { emailHash: { in: hashes.splice(0) } } });
+    await prisma.audienceSyncState.deleteMany({ where: { portal: { in: syncPortals.splice(0) } } });
+  });
+
+  it.each([
+    ['untagged, refused (FATAL) with an address: not pending', { lastErrorKind: 'FATAL' }, 0],
+    ['untagged and suppressed: not pending', { suppressed: true }, 0],
+    ['untagged, no error, not suppressed: pending', {}, 1],
+    ['untagged and still retrying: pending', { lastErrorKind: 'RETRYABLE' }, 1],
+    ['untagged, FATAL with no address (not counted as refused either): pending', { lastErrorKind: 'FATAL', email: null }, 1],
+    ['carrying the Premium tag: not pending', { appliedTags: [PREMIUM_TAG] }, 0],
+    ['not Premium, carrying the Premium tag: pending', { desiredRole: 'NONE', appliedTags: [PREMIUM_TAG] }, 1],
+    // The "tag on a non-Premium member" half is unchanged: a removal still owed counts whatever stopped it.
+    ['not Premium, carrying the tag, refused: pending', { desiredRole: 'FORMER', appliedTags: [PREMIUM_TAG], lastErrorKind: 'FATAL' }, 1],
+    ['not Premium, carrying the tag, suppressed: pending', { desiredRole: 'NONE', appliedTags: [PREMIUM_TAG], suppressed: true }, 1],
+  ] as [string, Partial<Prisma.AudienceMemberCreateManyInput>, number][])('%s', async (_name, over, expected) => {
+    expect(await pendingOf(await seed(1, over))).toBe(expected);
+  });
+
+  it('79 refused + 3 suppressed untagged Premium, all else healthy: the guard passes and the card says so', async () => {
+    const before = (await loadGuardSnapshot('test-audience-guard-none', AUD_OFF)).pendingPremium;
+    await seed(10, { appliedTags: [PREMIUM_TAG] });
+    await seed(79, { lastErrorKind: 'FATAL' });
+    await seed(3, { suppressed: true });
+    const snap = await loadGuardSnapshot('test-audience-guard-none', AUD_OFF);
+    expect(snap.pendingPremium).toBe(before); // the 82 add nothing
+    // Without the exclusion this would refuse: the 82 are past the limit.
+    expect(79 + 3).toBeGreaterThan(pendingLimit(snap.premiumDesired));
+
+    const portal = `${PORTAL_PREFIX}pending-${Date.now()}-${++batch}`;
+    syncPortals.push(portal);
+    const at = new Date(now.getTime() - 30 * MIN);
+    await prisma.audienceSyncState.create({
+      data: {
+        portal,
+        lastFullOkAt: at,
+        lastIncrOkAt: at,
+        lastWebhookAt: at,
+        cmsCounts: { active: snap.premiumDesired, cancelled: 0 },
+        drift: { premiumOurs: snap.premiumApplied, premiumMailercloud: snap.premiumApplied },
+      },
+    });
+    const card = await audienceCard(portal, 'ADMIN', now, AUD_OFF);
+    expect(card).toMatchObject({
+      ok: true,
+      guardActive: false,
+      guard: { ok: true },
+      line: 'Audience sync is healthy; the Premium list is verified. (the send guard is off)',
+    });
+    // The refused are still shown as refused.
+    expect((card as { refused: { premium: number } }).refused.premium).toBeGreaterThanOrEqual(79);
+    expect(await audienceCard(portal, 'PUBLISHER', now, AUD_OFF)).toEqual({ enabled: true, ok: true, line: 'Audience sync is healthy; the Premium list is verified. (the send guard is off)' });
   });
 });
 
