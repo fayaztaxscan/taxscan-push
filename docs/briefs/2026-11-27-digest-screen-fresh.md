@@ -92,3 +92,18 @@ Each one must PASS in the REPORT.
   same FATAL+email condition you exclude in item 3 — keep the two in step (reuse one `where`, don't copy it).
 - `loadGuardSnapshot()` counts `pendingPremiumWhere(tag)`; the jest advisory lock (`jest.environment.js`) already
   serialises suites naming AudienceMember.
+
+## Follow-up 1 (planning, 27 Nov — builder's catch)
+After a refused or unanswered press (Approve, Hold, Send now, Send Free, Retry), the red message is placed above the
+Notifications and Audience cards, i.e. off screen (measured −1081 px on 375×812, −587 px on 1280×900), so the reader only
+sees Approve vanish.
+1. After such a press and its reload, **scroll the message into view** (smooth, `block: 'start'`, respecting
+   `prefers-reduced-motion`) and move focus to it (`tabindex="-1"`, `role="alert"` kept/added) so a screen reader announces it.
+   Not on a successful press (the "Approved." notice behaves as today).
+2. **Race:** a return-reload (visibility/pageshow) already in flight when a press is made must not overwrite the press's
+   message when it lands or fails late — the press's outcome wins (e.g. a load sequence number; drop a stale load's
+   result/error).
+Acceptance: 13. refused Approve on a phone-width screen scrolled to the Approve button → after the reload the message's top
+is within the viewport (real browser, phone + desktop numbers in the REPORT). 14. a successful Approve does not scroll.
+15. a slow return-reload started before a refused press, resolving (or failing) after it, leaves the refusal message shown.
+UI to `ui-developer`; same branch, same REPORT.
