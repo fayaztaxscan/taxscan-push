@@ -164,7 +164,7 @@ function hostOf(url: string | undefined): string {
   }
 
   const after = await prisma.articleSurfaceStat.count();
-  console.log(`[backfill-surfaces] done. table ${before} → ${after} rows (fetched ${rowsWritten})`);
+  console.log(`[backfill-surfaces] done. table ${before} → ${after} rows (wrote ${rowsWritten} clicked rows)`);
   if (failed.length) {
     console.log(
       `[backfill-surfaces] re-run for: --from ${failed[0]} --to ${failed[failed.length - 1]}${surface ? ` --surface ${surface.type}` : ''}`,
