@@ -92,8 +92,11 @@ more than half the machine.** That means:
   delete each other's rows, which looks like a flake. For a stress run, loop the file in ONE process beside a full suite of the OTHER files.
 - Known flaky tests (re-run the file alone before calling it a failure, and say you did): eventRetention "lifetime
   totals" under parallel workers; cmsEvents (log line); cmsNoticesDoor "30 an hour" (200 instead of 429);
-  socialComposeSkip #10 (404); telegramWorker (401/404); socialPause route tests (404 where 401/400 expected; passes alone); since 27 Nov also whatsAppAllPushes, facebookWorker and digestScreen route tests (404, pass alone) — likely supertest `request(app)` listening on :: while another program holds the same port on 127.0.0.1 (fix brief pending); digestRetention "EmailEvent fold" (expected 2, got 0 — counts all EmailSuppression rows in the shared DB). The AudienceMember/CmsAccount suites are serialised by an
+  digestRetention "EmailEvent fold" (expected 2, got 0 — counts all EmailSuppression rows in the shared DB). The AudienceMember/CmsAccount suites are serialised by an
   advisory lock since 12 Nov (`jest.environment.js`), so a failure there is real until shown otherwise.
+  **Since 27 Nov (brief test-port-loopback) every test server binds 127.0.0.1** (`src/__tests__/setup.ts`), so an
+  unexpected 404 in a route test is REAL — the old 404 family (socialComposeSkip #10, telegramWorker, socialPause,
+  whatsAppAllPushes, facebookWorker, digestScreen) is off this list.
 
 ## 5. Finish
 1. **One code commit** on `build/<name>`, message `<type>(<area>): <what> (brief <date>-<name>)`, ending with
