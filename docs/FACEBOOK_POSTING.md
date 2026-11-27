@@ -3,7 +3,8 @@
 Built 3 Nov 2026 (brief `docs/briefs/2026-11-03-facebook-page-posting.md`). It mirrors the LinkedIn posting
 (`docs/LINKEDIN_POSTING.md`) and does not change it. Code: `src/services/facebook/{client,pages,post,worker}.ts`,
 `src/routes/facebook.ts`. Table `FacebookPost` (not in the R2 backup). Since 12 Nov 2026 a second page, **Shopscan**
-(facebook.com/shopscan.in), can post every push too: see "The Shopscan page" below (off unless its three variables are set).
+(facebook.com/shopscan.in), can post every push too, and a third, **Academy** (facebook.com/taxscanacademy), is built the same way (27 Nov
+2026): see "The Shopscan page" and "The Academy page" below (each off unless its three variables are set).
 
 ## What posts
 (This is **today's rule**, the one the page follows until `FACEBOOK_ALL_PUSHES_FROM` is set; see "Every push posts" below.)
@@ -82,8 +83,8 @@ the worker, the screen and the Campaigns Channels mark all call.
 
 ## Compose: untick the page for one push (brief 2026-11-09-compose-skip-pages)
 Compose's **Post to** list (`GET /api/social/pages`) offers `facebook:<page>` for every Facebook page with a valid id and token while
-`FACEBOOK_POSTING_ENABLED` is on, from the ONE list `portalPages()` (Taxscan, then Shopscan while it is active: "Facebook · Shopscan"); a later
-Facebook page (Academy) joins the list by its own name with no change to Compose.
+`FACEBOOK_POSTING_ENABLED` is on, from the ONE list `portalPages()` (Taxscan, then Shopscan and Academy while each is active: "Facebook ·
+Shopscan", "Facebook · Academy"); a later Facebook page joins the list by its own name with no change to Compose.
 Unticking it means the page gets nothing for THIS one push; the pacer, Push now and the backfill post as ever. The worker reads
 `Campaign.socialSkip` and writes ONE `FacebookPost` row, status SKIPPED, error `compose_skip`, attempts 0, **no Graph call**; the row is written at
 once whatever the page is waiting for (the gap between posts, the daily cap, a stop), because it is a database write that makes no post, and it
@@ -117,6 +118,23 @@ none while it is off.
   writes SKIPPED `compose_skip` for Shopscan only.
 - **The Channels mark on Campaigns** still means the Taxscan page only.
 
+## The Academy page (brief 2026-11-27-facebook-academy-page)
+The **Academy** page (facebook.com/taxscanacademy) is a second shared page, built exactly like Shopscan: everything under "The Shopscan page"
+applies to it, with its own names.
+
+- **Variables:** `FACEBOOK_ACADEMY_PAGE_ID`, `FACEBOOK_ACADEMY_PAGE_TOKEN`, `FACEBOOK_ACADEMY_POST_FROM`, read by the same parser as Shopscan's
+  (`parseSharedFacebookPage()` in `src/lib/env.ts`). All three valid (and `FACEBOOK_POSTING_ENABLED` on) = on; anything else = off, and it never
+  stops the worker from starting. Boot line: `[facebook] academy page on (every push from <ISO>)` or `[facebook] academy page off: …` (names
+  only, never a value).
+- **What it posts:** every push from `FACEBOOK_ACADEMY_POST_FROM` (articles, courses, products, other allowed pages with `SOCIAL_ANY_LINK_FROM`,
+  exact repeats), nothing pushed before it. Not only Academy courses: it follows the same every-push rule as the other pages.
+- **Order and independence:** a tick handles Taxscan, then Shopscan, then Academy. Its pace, daily cap, token and policy stops, Pause, alerts and
+  rows (`FacebookPost.page = 'academy'`) are its own; it works whether Shopscan is on or off.
+- **Link, screen, Compose:** the link is tagged `utm_campaign=facebook-academy`; SOCIAL → Facebook shows an **Academy** tab; Compose "Post to"
+  lists "Facebook · Academy" while it is active.
+- **Check the id and token belong to the Academy page.** Nothing stops two pages being given the same page id (each would post, so that page
+  would get every push twice): press **Check connection** on the Academy tab and read the page name.
+
 ## Pacing (account safety)
 - At most **one post attempt per page per 1-minute tick**, and at least `FACEBOOK_MIN_GAP_MINUTES` (10) between two posts on a page.
 - At most `FACEBOOK_DAILY_CAP` (30) posts per IST day **per page**; the rest wait for the next day, however old they are by then.
@@ -139,8 +157,8 @@ The token never appears in a URL, log, `error` column, API response or e-mail.
 
 ## API (ADMIN or PUBLISHER unless noted; flag off = 404)
 `GET /api/facebook/posts?date=YYYY-MM-DD&page=<key>` (IST day, 14 days back) -> `{date, page, rows[], counts, login, policy, pageStatus}`; `page` is one of the
-ACTIVE pages (`taxscan`, or `shopscan` while it is active), default the first; anything else is 400 `invalid_page`; `pages` (the active list, Taxscan first) is in the
-answer only while there are two or more, so with Shopscan off the answer is exactly what it always was;
+ACTIVE pages (`taxscan`, and `shopscan` / `academy` while each is active), default the first; anything else is 400 `invalid_page`; `pages` (the active list, Taxscan
+first) is in the answer only while there are two or more, so with no shared page on the answer is exactly what it always was;
 `POST /api/facebook/posts/:id/retry`; `POST /api/facebook/posts/:id/skip` (by row id: a Shopscan row never touches a Taxscan one); `POST /api/facebook/check`
 `{ page? }` (ADMIN: one `GET /<version>/<page-id>?fields=name` with that page's own token in the Authorization header, posts nothing); `POST /api/facebook/resume`
 `{ page? }` (ADMIN: clears that page's policy stop only; 400 `invalid_page`).
@@ -159,11 +177,14 @@ answer only while there are two or more, so with Shopscan off the answer is exac
 | `FACEBOOK_SHOPSCAN_PAGE_ID` | - | The Shopscan page's numeric id. With the next two, ALL THREE valid = the Shopscan page is on. |
 | `FACEBOOK_SHOPSCAN_PAGE_TOKEN` | - | Its **Page** access token (from `me/accounts`; Railway only). |
 | `FACEBOOK_SHOPSCAN_POST_FROM` | - | Its own go-live, a strict ISO time = also its every-push time. Set it to the moment of switch-on, never earlier. |
+| `FACEBOOK_ACADEMY_PAGE_ID` | - | The Academy page's numeric id. With the next two, ALL THREE valid = the Academy page is on. |
+| `FACEBOOK_ACADEMY_PAGE_TOKEN` | - | Its **Page** access token (from `me/accounts`; Railway only). |
+| `FACEBOOK_ACADEMY_POST_FROM` | - | Its own go-live, a strict ISO time = also its every-push time. Set it to the moment of switch-on, never earlier. |
 | `FACEBOOK_GRAPH_VERSION` | `v25.0` | |
 | `FACEBOOK_MIN_GAP_MINUTES` | 10 | |
 | `FACEBOOK_DAILY_CAP` | 30 | per IST day |
-The worker refuses to start (`[facebook] refusing to start: ...`) without a valid `FACEBOOK_POST_FROM`, page id and token **for the Taxscan page**; the Shopscan page
-is optional and never causes that refusal.
+The worker refuses to start (`[facebook] refusing to start: ...`) without a valid `FACEBOOK_POST_FROM`, page id and token **for the Taxscan page**; the Shopscan and
+Academy pages are optional and never cause that refusal.
 
 ## Switch-on (owner, after deploy)
 1. Create the Meta app from the long-standing page-admin account (planning sends the steps).
@@ -184,6 +205,16 @@ nothing in the past is posted. Look for `[facebook] all pushes on for FACEBOOK_A
 3. ADMIN: SOCIAL -> Facebook -> the **Shopscan** tab -> **Check connection** ("Connected to page: …").
 4. Watch the next push: two `outcome=posted` lines, `page=taxscan` then `page=shopscan`, and the post on facebook.com/shopscan.in in a logged-out browser.
 To switch it off again, remove any one of the three variables (and redeploy; a deleted variable needs a redeploy): nothing is reposted or deleted.
+
+### Switching the Academy page on (owner, on the owner's yes, after deploy)
+1. Railway: `FACEBOOK_ACADEMY_PAGE_ID` and `FACEBOOK_ACADEMY_PAGE_TOKEN` (`railway variable set NAME="$(pbpaste)"`; a never-expiring **Page** token
+   from `me/accounts` for `taxscan_post_app`, NOT a user or system-user token). Then `FACEBOOK_ACADEMY_POST_FROM` = **the moment of switch-on**
+   (UTC ISO), never earlier. Redeploy.
+2. Boot log: `[facebook] academy page on (every push from …)` (or `… off: …` naming what is missing).
+3. ADMIN: SOCIAL -> Facebook -> the **Academy** tab -> **Check connection**: the page name shown must be the Academy page's.
+4. Watch the next push: an `outcome=posted` line with `page=academy` after the other pages', and the post on facebook.com/taxscanacademy in a
+   logged-out browser.
+To switch it off again, remove any one of the three variables (and redeploy): nothing is reposted or deleted.
 
 ## When a page stops: status, alerts and Pause (brief 2026-11-09-social-page-alerts-pause)
 
@@ -222,5 +253,5 @@ backup, so a restore brings a pause back with it.
 `FacebookPost` is **not** in the R2 export. After a restore keep `FACEBOOK_POSTING_ENABLED` **off** and set `FACEBOOK_POST_FROM` to the restore time
 before switching it back on: with the rows gone and no age limit, everything pushed since go-live would otherwise post a second time. **Set
 `FACEBOOK_ALL_PUSHES_FROM` to the restore time too** (or unset it): the `push:` rows are gone with the rest, and an old value would post every
-push since then, repeats included. **Set `FACEBOOK_SHOPSCAN_POST_FROM` to the restore time as well** (it is that page's go-live AND its every-push time; an old value would
-post every push since then on Shopscan). See `docs/BACKUPS.md`.
+push since then, repeats included. **Set `FACEBOOK_SHOPSCAN_POST_FROM` and `FACEBOOK_ACADEMY_POST_FROM` to the restore time as well** (each is its page's go-live AND its
+every-push time; an old value would post every push since then on that page). See `docs/BACKUPS.md`.

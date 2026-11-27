@@ -354,6 +354,8 @@ describe('POST /api/send: validation, storage, scheduling, audit', () => {
     const c = await prisma.campaign.update({ where: { id: d.id }, data: { lastSentAt: at(NOW, -30) } });
     // this describe switched the REAL page names on for the list and the route; the worker below runs on the private pages
     env.linkedin.sharedPages = { [LI_A]: { orgUrn: ORG_A, postFrom: FROM, tokenFrom: LI_T }, [LI_S]: { orgUrn: ORG_S, postFrom: FROM, tokenFrom: LI_T } };
+    // The route tests above stamp their campaigns with the REAL time; since the fixed go-live (24 Nov 2026) passed, the tick posted them too.
+    await prisma.campaign.updateMany({ where: { portal: PORTAL, id: { not: c.id } }, data: { lastSentAt: null } });
     await runLinkedInTick(liDeps());
     expect(liOrgs()).toEqual([ORG_T, ORG_S]);
     expect(await statusOf(LI_A, c)).toBe('SKIPPED');

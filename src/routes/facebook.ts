@@ -27,14 +27,15 @@ import type { FetchLike } from '../services/linkedin/post';
  *   GET  /api/facebook/posts?date=YYYY-MM-DD&page=<key>
  *                                               IST day, default today, up to 14 days back. `page` = one of the ACTIVE pages (listed as `pages` in
  *                                               the answer while there are two or more, Taxscan first), default the first (taxscan); anything
- *                                               else (an unknown page, or `shopscan` while it is not active) is 400 invalid_page.
+ *                                               else (an unknown page, or `shopscan` / `academy` while it is not active) is 400 invalid_page.
  *   POST /api/facebook/posts/:id/retry          a FAILED row: post it now (409 policy_stop while stopped)
  *   POST /api/facebook/posts/:id/skip           a FAILED row, or one waiting for a retry
  *   POST /api/facebook/check      { page? }     ADMIN: "Connected to page: <name>" or the error class; posts nothing (that page's own id + token)
  *   POST /api/facebook/resume     { page? }     ADMIN: clears THAT page's policy stop (audited); the other page's stop is untouched
  *
- * TWO PAGES (brief 2026-11-12-facebook-shopscan-page): the Shopscan page joins `pages` while its three FACEBOOK_SHOPSCAN_* variables are valid
- * (`portalPages()`), with its own go-live, banners, stops, status and Pause (`page-pause` / `page-resume` take `page` too). A request that
+ * SEVERAL PAGES (briefs 2026-11-12-facebook-shopscan-page, 2026-11-27-facebook-academy-page): the Shopscan and Academy pages each join `pages`
+ * while their three FACEBOOK_<PAGE>_* variables are valid (`portalPages()`), each with its own go-live, banners, stops, status and Pause
+ * (`page-pause` / `page-resume` take `page` too). A request that
  * names no page is about the first one, so a Taxscan-only deployment answers exactly as before.
  *
  * EVERY PUSH POSTS (brief 2026-11-04-academy-store-posts): once FACEBOOK_ALL_PUSHES_FROM is set, a push at or after it is its own row
@@ -87,7 +88,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
       const day = typeof req.query.date === 'string' && req.query.date !== '' ? req.query.date : istDay(now);
       const problem = dayProblem(day, now);
       if (problem) return res.status(400).json({ error: 'invalid_date', message: problem });
-      // The ACTIVE pages, Taxscan first. `?page=` must be one of them: an unknown page, or `shopscan` while it is not active, is refused
+      // The ACTIVE pages, Taxscan first. `?page=` must be one of them: an unknown page, or a shared page while it is not active, is refused
       // before anything is read.
       const portals = normalizePortals(portalsOf());
       const pages = pagesOf(portals);
@@ -101,7 +102,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
         select: { id: true, title: true, url: true, target: true, lastSentAt: true, socialSkip: true },
         orderBy: [{ lastSentAt: 'asc' }, { id: 'asc' }],
       });
-      // This page's OWN go-live (Shopscan has its own), and its all-pushes time (null = it stays on today's rule).
+      // This page's OWN go-live (a shared page has its own), and its all-pushes time (null = it stays on today's rule).
       const postFrom = resolvePostFrom(postFromOf(), page);
       const pushesFrom = newRuleFrom(resolveAllPushesFrom(allPushesFromOf(), page), postFrom); // null = the page stays on today's rule; never earlier than the page's own go-live
       // One row per article (its oldest push) for a push before the all-pushes time, one row per PUSH at or after it. Pushes come
@@ -197,7 +198,7 @@ export function createFacebookRouter(o: FacebookRouterOptions = {}): Router {
         date: day,
         page,
         // The ACTIVE pages (Taxscan first), present ONLY while there are two or more: that is when the screen shows its page switch, and
-        // while Shopscan is off the answer is exactly what it was before it existed.
+        // while no shared page is on the answer is exactly what it was before they existed.
         ...(pages.length > 1 ? { pages } : {}),
         rows,
         counts: { waiting: n('WAITING') + n('RETRYING'), posted: n('POSTED'), failed: n('FAILED'), skipped: n('SKIPPED'), notPosted: n('NOT_POSTED'), all: rows.length },
