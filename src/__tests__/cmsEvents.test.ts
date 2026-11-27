@@ -173,7 +173,7 @@ describe('the fence refusal logs what the fence saw (brief 2026-10-29-cms-fence-
     expect(res.status).toBe(401);
     const l = lines();
     expect(l).toHaveLength(1);
-    expect(l[0]).toBe('[audience] fence detail peer=10.1.2.3 peerIsCloudflare=false cfConnectingIp=148.113.0.114 xff=203.0.113.9, 10.1.2.3 xRealIp=10.9.9.9 remote=::ffff:127.0.0.1 client=203.0.113.9');
+    expect(l[0]).toBe('[audience] fence detail peer=10.1.2.3 peerIsCloudflare=false cfConnectingIp=148.113.0.114 xff=203.0.113.9, 10.1.2.3 xRealIp=10.9.9.9 remote=127.0.0.1 client=203.0.113.9');
   });
 
   it('absent headers read "none"; a Cloudflare peer reads true; control characters are flattened', async () => {

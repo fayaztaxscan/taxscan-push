@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import request from 'supertest';
@@ -42,8 +43,9 @@ function app(over: { cfg?: NoticesEnv; perHour?: number } = {}) {
 }
 
 /** A correctly SIGNED GET that also carries a body (supertest cannot send one): a plain Node request with a Content-Length. */
-function getWithBody(a: ReturnType<typeof app>, body: string): Promise<{ status: number; body: unknown }> {
-  const server = a.listen(0);
+async function getWithBody(a: ReturnType<typeof app>, body: string): Promise<{ status: number; body: unknown }> {
+  const server = a.listen(0, '127.0.0.1');
+  await once(server, 'listening'); // a named host binds a moment later
   const { port } = server.address() as AddressInfo;
   const signed = signCmsNoticesGet({ secret: SECRET, now: clockNow });
   usedNonces.push(signed.nonce);
