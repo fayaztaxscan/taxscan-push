@@ -287,7 +287,10 @@ defineExpose({ load });
         </dl>
         <button class="btn btn-primary" :disabled="busy" @click="confirming = true">Resume</button>
       </div>
-      <p v-else-if="!full.guard.ok" class="muted aud-held">Premium digest held: {{ full.guard.plain }}.</p>
+      <!-- With the send guard off nothing is held: say what it would do, not that it did it. -->
+      <p v-else-if="!full.guard.ok" class="muted aud-held">
+        {{ full.guardActive ? 'Premium digest held' : 'Would hold the Premium digest if the send guard were on' }}: {{ full.guard.plain }}.
+      </p>
 
       <div v-if="refusedTotal > 0" class="aud-refused">
         <p v-if="refusedPremium > 0">{{ refusedLine(refusedPremium, 'Premium') }} and have no tag.</p>

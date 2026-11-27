@@ -1,7 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { env, type AudienceEnv } from '../../lib/env';
 import { todaysCounters } from './breaker';
-import { GUARD_SHORT, audienceGuard, loadGuardSnapshot, type GuardResult } from './guard';
+import { GUARD_SHORT, REFUSED_WHERE, audienceGuard, loadGuardSnapshot, type GuardResult } from './guard';
 import { freeAdmittedToday } from './writer';
 import { digestNoticeList, noticeCounts, noticesNotReady } from './notices';
 
@@ -63,8 +63,8 @@ export async function audienceCard(portal: string, role: AudienceCardRole, now: 
     prisma.audienceMember.count({ where: { noMarketing: true } }),
     prisma.audienceMember.count({ where: { lastErrorKind: 'RETRYABLE', updatedAt: { gte: since } } }),
     prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', updatedAt: { gte: since } } }),
-    prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'PREMIUM' } }),
-    prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'FORMER' } }),
+    prisma.audienceMember.count({ where: { ...REFUSED_WHERE, desiredRole: 'PREMIUM' } }),
+    prisma.audienceMember.count({ where: { ...REFUSED_WHERE, desiredRole: 'FORMER' } }),
     todaysCounters(prisma, portal, now),
   ]);
   const free = cfg.freeReaders ? await freeCounts(now, cfg) : null;
@@ -115,7 +115,7 @@ async function freeCounts(now: Date, cfg: AudienceEnv) {
     prisma.audienceMember.count({ where: { desiredRole: 'FREE' } }),
     prisma.audienceMember.count({ where: { desiredRole: 'FREE', admittedAt: { not: null } } }),
     tag ? prisma.audienceMember.count({ where: { appliedTags: { has: tag } } }) : Promise.resolve(0),
-    prisma.audienceMember.count({ where: { lastErrorKind: 'FATAL', email: { not: null }, desiredRole: 'FREE' } }),
+    prisma.audienceMember.count({ where: { ...REFUSED_WHERE, desiredRole: 'FREE' } }),
     prisma.audienceMember.count({ where: { desiredRole: 'FREE', admittedAt: null, appliedTags: { isEmpty: true }, email: { not: null }, suppressed: false } }),
     freeAdmittedToday(now),
   ]);
