@@ -77,3 +77,8 @@ Each one must PASS in the REPORT.
 - `scripts/backfill-surfaces.ts` header: month chunks, replace-by-date idempotency.
 - `cmsViews/backfill.ts` + `api.ts:963` for the async ADMIN backfill pattern.
 - Brief `2026-11-27-surfaces-new-urls` for `isArticlePath`.
+
+## Follow-up 1 (planning, 27 Nov — from the surfaces-new-urls REPORT)
+`titleFromPath` strips ANY trailing `-<digits>` (`/-\d+$/`), so a new id-less slug ending in a number loses it
+(`…-fy-2025-26` → "… fy 2025"). Strip only an old article id (`-\d{5,}$`, the same rule as `isArticlePath`'s id test).
+Acceptance: `/gst/x-fy-2025-26` → "X fy 2025 26"; `/gst/x-section-148` keeps 148; `/gst/x-1448729` → "X".
