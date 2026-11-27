@@ -42,7 +42,10 @@ import { SURFACES } from './searchSurfaces';
 
 export type SurfaceKey = SearchSurface;
 
-/** null = this row had no pickup in this column (distinct from a synced zero). */
+/**
+ * null = no stored row for this cell in this column. Only clicked page-days are stored (searchSurfaces.ts), so that
+ * covers "never shown" and "shown but never clicked", and `impressions` / `articles` count clicked ones only.
+ */
 export type SurfaceCell = { clicks: number; impressions: number; articles: number } | null;
 
 export type SurfaceRow = { label: string; cells: SurfaceCell[] };
@@ -261,9 +264,9 @@ const toRows = (agg: Agg): SurfaceRow[] =>
   [...agg.entries()].map(([label, arr]) => ({
     label,
     cells: arr.map((c) =>
-      // Emptiness is decided on whether any row existed at all, NOT on clicks:
-      // a page Google showed but nobody tapped is a real finding and must
-      // render as a zero, not vanish into an em-dash.
+      // Emptiness is decided on whether any row existed at all, not on clicks: the
+      // report shows what is stored. Only clicked page-days are stored
+      // (searchSurfaces.ts), so a page shown but never clicked reads as a dash.
       c.articles === 0 ? null : { clicks: c.clicks, impressions: c.impressions, articles: c.articles },
     ),
   }));

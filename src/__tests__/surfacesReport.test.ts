@@ -518,6 +518,76 @@ describe('buildSurfacesReport with the Search News surface', () => {
 });
 
 /**
+ * Only clicked rows are stored since 27 Nov 2026 (and the older unclicked ones were deleted): what that does, and does
+ * not, change in the report.
+ */
+describe('buildSurfacesReport before and after removing unclicked rows', () => {
+  const portal = `test-surfaces-clicked-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  const RUN = `t${Date.now()}z`;
+  const A = {
+    itat: `/income-tax/${RUN}-itat-deletes-addition`,
+    delhi: `/gst/${RUN}-gst-itc-denial-quashed-delhi-high-court`,
+    sebi: `/top-stories/${RUN}-sebi-tightens-disclosure-norms`,
+  };
+  const now = new Date('2026-11-26T12:00:00.000Z');
+  let before: SurfacesPayload;
+  let after: SurfacesPayload;
+
+  beforeAll(async () => {
+    await seed(portal, [
+      [A.itat, 'DISCOVER', '2026-10-03', 10, 100],
+      [A.itat, 'DISCOVER', '2026-10-04', 0, 1000], // an unclicked day of a clicked page
+      [A.delhi, 'DISCOVER', '2026-11-20', 300, 3000],
+      [A.delhi, 'DISCOVER', '2026-10-10', 0, 50], // Delhi HC in October: shown, never clicked
+      [A.sebi, 'DISCOVER', '2026-11-12', 0, 700], // a whole row that was never clicked
+      [A.delhi, 'GOOGLE_NEWS', '2026-11-20', 6, 60],
+      [A.itat, 'GOOGLE_SEARCH_NEWS', '2026-10-05', 9, 90],
+      [A.sebi, 'GOOGLE_SEARCH_NEWS', '2026-11-21', 0, 400],
+      // The first and last day carry clicks, so the columns cannot move.
+      [A.itat, 'DISCOVER', '2026-11-24', 1, 10],
+    ]);
+    before = await buildSurfacesReport({ portal, now });
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal, clicks: 0 } });
+    after = await buildSurfacesReport({ portal, now });
+  });
+
+  afterAll(async () => {
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+
+  const clickedCells = (p: SurfacesPayload) =>
+    (['byBench', 'byCategory'] as const).flatMap((k) =>
+      p[k].flatMap((g) =>
+        g.rows.flatMap((r) => r.cells.flatMap((c, i) => (c && c.clicks > 0 ? [`${k} ${g.surface} ${r.label} ${p.columns[i].key}=${c.clicks}`] : []))),
+      ),
+    );
+
+  it('keeps every click total and every clicked cell exactly', () => {
+    expect(after.columns).toEqual(before.columns);
+    expect(after.compare).toEqual(before.compare);
+    expect(after.totals.map((t) => Object.values(t).map((s) => s.clicks))).toEqual(before.totals.map((t) => Object.values(t).map((s) => s.clicks)));
+    expect(clickedCells(after)).toEqual(clickedCells(before));
+    expect(clickedCells(after).length).toBeGreaterThan(0);
+    for (const [surface, list] of Object.entries(after.topArticles)) {
+      expect(list.map((t) => [t.pagePath, t.clicks])).toEqual(
+        before.topArticles[surface as keyof typeof before.topArticles].filter((t) => t.clicks > 0).map((t) => [t.pagePath, t.clicks]),
+      );
+    }
+  });
+
+  it('turns an unclicked-only cell into a dash, drops an unclicked-only row, and counts clicked impressions only', () => {
+    const [oct, nov] = [ci(after, '2026-10'), ci(after, '2026-11')];
+    expect(row(before.byBench, 'DISCOVER', 'Delhi High Court')?.cells[oct]).toEqual({ clicks: 0, impressions: 50, articles: 1 });
+    expect(row(after.byBench, 'DISCOVER', 'Delhi High Court')?.cells[oct]).toBeNull();
+    expect(row(before.byCategory, 'DISCOVER', 'SEBI/RBI')).toBeDefined();
+    expect(row(after.byCategory, 'DISCOVER', 'SEBI/RBI')).toBeUndefined();
+    expect(before.totals[oct].DISCOVER).toEqual({ clicks: 10, impressions: 1150, articles: 2 });
+    expect(after.totals[oct].DISCOVER).toEqual({ clicks: 10, impressions: 100, articles: 1 });
+    expect(after.totals[nov].DISCOVER).toEqual({ clicks: 301, impressions: 3010, articles: 2 });
+  });
+});
+
+/**
  * The sync only ever fetches a rolling lookback, so a fresh install holds days
  * rather than months. `dataFrom` is what lets the panel say "we only have N days
  * of history" instead of presenting a week's data under a "12 months" heading.

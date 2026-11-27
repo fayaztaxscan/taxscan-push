@@ -210,6 +210,12 @@ export async function fetchSurface(opts: {
  * returned nothing for keep their previously-synced rows. Only the fetched
  * surfaces' rows are ever replaced: a one-surface backfill leaves the others.
  *
+ * ONLY CLICKED ROWS ARE WRITTEN (owner, 27 Nov 2026: most rows had no click and
+ * filled the database). A row is a page on a day, judged after fetchSurface has
+ * merged the URL spellings, so `impressions` counts clicked page-days only. A
+ * date whose rows ALL had no click is still replaced, i.e. emptied. The returned
+ * `rows` and `bySurface` count what was written; `dates` what was replaced.
+ *
  * TWO WAYS TO PICK THE WINDOW, and the difference matters:
  *   - `lookbackDays` (the cron): [now - lookbackDays, now].
  *   - `startDate`/`endDate` (backfills): an explicit YYYY-MM-DD span.
@@ -256,7 +262,8 @@ export async function syncSearchSurfaces(
   const wanted = SURFACES.filter((s) => !deps.surfaces || deps.surfaces.includes(s.surface));
   if (wanted.length === 0) throw new Error('syncSearchSurfaces: no known surface to fetch');
 
-  const rows: SurfaceRow[] = [];
+  const fetched: SurfaceRow[] = [];
+  const rows: SurfaceRow[] = []; // what gets written: the clicked ones
   const bySurface: Record<string, number> = {};
   for (const { surface, type } of wanted) {
     const got = await fetchSurface({
@@ -269,11 +276,14 @@ export async function syncSearchSurfaces(
       fetchImpl: deps.fetchImpl,
       now,
     });
-    bySurface[surface] = got.length;
-    rows.push(...got);
+    const clicked = got.filter((r) => r.clicks > 0);
+    bySurface[surface] = clicked.length;
+    for (const r of got) fetched.push(r);
+    for (const r of clicked) rows.push(r);
   }
 
-  const dates = [...new Set(rows.map((r) => r.date.getTime()))].map((t) => new Date(t));
+  // From everything fetched, not only what is written: an all-unclicked date must still lose its old rows.
+  const dates = [...new Set(fetched.map((r) => r.date.getTime()))].map((t) => new Date(t));
   const CHUNK = 1000;
   const writes = [
     prisma.articleSurfaceStat.deleteMany({

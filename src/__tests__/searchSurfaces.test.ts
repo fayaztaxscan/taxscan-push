@@ -407,6 +407,91 @@ describe('syncSearchSurfaces with the Search News surface', () => {
   });
 });
 
+/** Only rows with at least one click are kept, for every surface. */
+describe('syncSearchSurfaces stores only clicked rows', () => {
+  const portal = `test-sc-clicked-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const creds: GaCredentials = {
+    client_email: 'sc@y.iam',
+    private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  };
+  const siteUrl = 'sc-domain:taxscan.in';
+  const google =
+    (byType: Record<string, SearchAnalyticsRow[]>): FetchLike =>
+    async (url, init) => {
+      if (String(url).includes('oauth2.googleapis.com')) {
+        return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+      }
+      const { type = '' } = JSON.parse(String(init?.body ?? '{}')) as { type?: string };
+      return new Response(JSON.stringify({ rows: byType[type] ?? [] }), { status: 200 });
+    };
+  const stored = async () =>
+    (
+      await prisma.articleSurfaceStat.findMany({ where: { portal }, orderBy: [{ date: 'asc' }, { surface: 'asc' }, { pagePath: 'asc' }] })
+    ).map((r) => [r.date.toISOString().slice(0, 10), r.surface, r.pagePath, r.clicks, r.impressions]);
+  const at = (path: string, clicks: number, impressions: number, date = '2026-08-01') =>
+    row(date, `${URL_BASE}${path}`, clicks, impressions);
+
+  beforeEach(async () => {
+    __resetTokenCache();
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+  afterAll(async () => {
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+  });
+
+  it('writes only paths with a click, on all three surfaces, judged after the URL spellings are merged', async () => {
+    const r = await syncSearchSurfaces({
+      creds,
+      portal,
+      siteUrl,
+      fetchImpl: google({
+        discover: [
+          at('/gst/clicked', 5, 50),
+          at('/gst/unclicked', 0, 900),
+          // One page under two spellings: only one was clicked, and the page keeps BOTH rows' impressions.
+          at('/gst/split', 0, 40),
+          at('/gst/split/', 3, 60),
+          // Two spellings, neither clicked.
+          at('/gst/never', 0, 7),
+          at('/gst/never/', 0, 8),
+        ],
+        news: [at('/gst/clicked', 0, 300), at('/gst/news', 1, 10)],
+        googleNews: [at('/gst/clicked', 0, 20)],
+      }),
+    });
+    expect(await stored()).toEqual([
+      ['2026-08-01', 'DISCOVER', '/gst/clicked', 5, 50],
+      ['2026-08-01', 'DISCOVER', '/gst/split', 3, 100],
+      ['2026-08-01', 'GOOGLE_SEARCH_NEWS', '/gst/news', 1, 10],
+    ]);
+    // The counts (and so the log line) are of what was written.
+    expect(r).toEqual({ rows: 3, dates: 1, bySurface: { DISCOVER: 2, GOOGLE_SEARCH_NEWS: 1, GOOGLE_NEWS: 0 } });
+  });
+
+  it('empties a date whose rows all had no click, and leaves a date Google did not return', async () => {
+    const old = (date: string, pagePath: string, clicks: number) => ({
+      portal,
+      pagePath,
+      surface: 'DISCOVER' as const,
+      date: new Date(`${date}T00:00:00.000Z`),
+      clicks,
+      impressions: 10,
+    });
+    await prisma.articleSurfaceStat.createMany({
+      data: [old('2026-08-01', '/gst/was-clicked', 4), old('2026-08-01', '/gst/stale-zero', 0), old('2026-08-02', '/gst/other-day', 2)],
+    });
+    const r = await syncSearchSurfaces({
+      creds,
+      portal,
+      siteUrl,
+      fetchImpl: google({ discover: [at('/gst/was-clicked', 0, 99), at('/gst/new-zero', 0, 5)] }),
+    });
+    expect(r).toMatchObject({ rows: 0, dates: 1 });
+    expect(await stored()).toEqual([['2026-08-02', 'DISCOVER', '/gst/other-day', 2, 10]]);
+  });
+});
+
 describe('startSearchSurfacesSync', () => {
   it('is a no-op when SEARCH_CONSOLE_ENABLED is off (default)', () => {
     expect(() => startSearchSurfacesSync()).not.toThrow();

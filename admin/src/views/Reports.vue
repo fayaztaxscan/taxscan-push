@@ -47,9 +47,12 @@ type ReadsReport = {
 // (or over a custom range).
 // UNIT WARNING: these are Google CLICKS and IMPRESSIONS, not pageviews. They are
 // never comparable with (and must never be added to) the Reads figures above.
+// Only page-days with at least one click are stored: clicks are complete, but
+// impressions and article counts cover those days only (see IMPRESSIONS_NOTE).
 type SurfaceKey = 'DISCOVER' | 'GOOGLE_SEARCH_NEWS' | 'GOOGLE_NEWS';
 type SurfaceStat = { clicks: number; impressions: number; articles: number };
-/** null = no pickup at all for this row in this column (NOT a synced zero). */
+/** null = no clicks recorded for this row in this column: not shown, shown but never
+ *  clicked, not yet reported, or never collected. */
 type SurfaceCell = SurfaceStat | null;
 type SurfaceRow = { label: string; cells: SurfaceCell[] };
 type SurfaceGrid = { surface: SurfaceKey; rows: SurfaceRow[] };
@@ -409,9 +412,10 @@ const surfaceSections = computed(() => {
 });
 
 /**
- * Whether we hold anything for a surface in a column. Google sends no row at all
- * when it has nothing to report, and a month whose history was never collected
- * looks exactly the same — so neither is shown as a measured 0 or compared against.
+ * Whether we hold anything for a surface in a column. Nothing is stored for a page
+ * that was only shown, Google sends no row when it has nothing to report, and a
+ * month whose history was never collected looks exactly the same — so none of
+ * these is shown as a measured 0 or compared against.
  */
 function hasFigures(t: SurfaceStat | undefined): boolean {
   return !!t && (t.articles > 0 || t.clicks > 0 || t.impressions > 0);
@@ -470,7 +474,7 @@ const surfaceHeadline = computed(() => {
   });
 });
 
-/** Row values for the inline trend line, nulls read as zero pickup. */
+/** Row values for the inline trend line, nulls read as zero clicks. */
 function rowValues(row: SurfaceRow): number[] {
   return row.cells.map((c) => c?.clicks ?? 0);
 }
@@ -535,7 +539,7 @@ function surfaceIsMinor(key: SurfaceKey): boolean {
 function foldedNote(key: SurfaceKey): string {
   const h = surfaceHeadline.value.find((x) => x.key === key);
   if (!h) return '';
-  if (!h.has) return `No figures for ${h.columnLabel}. Show the breakdown to see what there is.`;
+  if (!h.has) return `No clicks recorded for ${h.columnLabel}. Show the breakdown to see what there is.`;
   return (
     `${fmtCount(h.clicks)} click${h.clicks === 1 ? '' : 's'} in ${h.columnLabel} — under a tenth of the ` +
     'clicks on this tab. Show the breakdown if you want the detail.'
@@ -553,7 +557,7 @@ function toggleSurface(key: SurfaceKey): void {
     : [...openedSurfaces.value, key];
 }
 
-/** True when Google has reported no pickup at all for this surface, anywhere on screen. */
+/** True when no clicks are recorded for this surface anywhere on screen. */
 function surfaceHasNothing(s: { totals: SurfaceStat[]; benches: SurfaceRow[]; categories: SurfaceRow[] }): boolean {
   return (
     s.benches.length === 0 &&
@@ -592,8 +596,14 @@ function surfaceCellColor(share: number): string {
   const mix = (w: number, v: number) => Math.round(w + (v - w) * p);
   return `rgb(${mix(255, 109)}, ${mix(255, 40)}, ${mix(255, 217)})`; // white → #6d28d9
 }
-function ctrPct(clicks: number, impressions: number): string {
-  return impressions > 0 ? ((clicks / impressions) * 100).toFixed(1) + '%' : '—';
+/**
+ * Said wherever an impressions figure is shown. It is also why the tab has no
+ * click rate: with unclicked page-days left out, clicks ÷ impressions would read
+ * far higher than Google's own.
+ */
+const IMPRESSIONS_NOTE = 'Impressions count a page only on days it got at least one click.';
+function countOf(n: number, noun: string): string {
+  return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
 }
 /** Full-sentence native tooltip: spells out the unit so nobody reads it as reads. */
 function surfaceCellTitle(
@@ -605,10 +615,9 @@ function surfaceCellTitle(
 ): string {
   return (
     `${rowLabel} — ${surfaceLabel}, ${columnLabel}: ` +
-    `${c.clicks.toLocaleString()} clicks from ${c.impressions.toLocaleString()} impressions ` +
-    `(click rate ${ctrPct(c.clicks, c.impressions)}) across ${c.articles.toLocaleString()} articles — ` +
+    `${countOf(c.clicks, 'click')} across ${countOf(c.articles, 'clicked article')} — ` +
     `${sharePct(surfaceShare(c.clicks, columnClicks))} of what ${surfaceLabel} sent that period. ` +
-    `Google clicks, not reads.`
+    `Google clicks, not reads. ${countOf(c.impressions, 'impression')}. ${IMPRESSIONS_NOTE}`
   );
 }
 const surfacesThrough = computed(() => surfacesReport.value?.dataThrough ?? null);
@@ -1264,7 +1273,7 @@ onMounted(() => {
           <span class="sh-n">{{ h.has ? fmtCount(h.clicks) : '—' }}</span>
           <span class="sh-l">{{ h.label }} clicks, {{ h.columnLabel }}</span>
           <span v-if="h.hint" class="sh-l">{{ h.hint }}</span>
-          <span v-if="!h.has" class="sh-sub">No figures for this period</span>
+          <span v-if="!h.has" class="sh-sub">No clicks recorded for this period</span>
           <span v-else-if="h.prevLabel" class="sh-d">
             <span :class="['delta', deltaClass(h.delta)]">{{ deltaText(h.delta) }}</span>
             <span class="sh-sub">vs {{ h.prevLabel }}</span>
@@ -1318,8 +1327,8 @@ onMounted(() => {
         <p v-if="s.hint" class="surface-hint">{{ s.hint }}</p>
 
         <p v-if="surfaceHasNothing(s)" class="muted no-pickup">
-          No {{ s.label }} figures for this period. Either nothing has been collected for these
-          dates, or Google showed none of our stories there.
+          No {{ s.label }} clicks recorded for this period. Either nothing has been reported or
+          collected for these dates, or none of our stories got a click there.
         </p>
 
         <p v-else-if="!surfaceIsOpen(s.key)" class="muted no-pickup">{{ foldedNote(s.key) }}</p>
@@ -1330,7 +1339,7 @@ onMounted(() => {
               {{ g.title }} × {{ surfacesMode === 'months' ? 'month' : 'period' }}
             </h3>
             <p v-if="!g.rows.length" class="muted no-pickup">
-              No {{ s.label }} pickup on any {{ g.unit }} in this period.
+              No {{ s.label }} clicks on any {{ g.unit }} in this period.
             </p>
             <div v-else class="heat-scroll">
               <table class="heat surfaces">
@@ -1370,12 +1379,12 @@ onMounted(() => {
                         c
                           ? surfaceCellTitle(s.label, row.label, surfaceColumns[i]?.label ?? '', c, s.totals[i]?.clicks ?? 0)
                           : hasFigures(s.totals[i])
-                            ? `${row.label} — no ${s.label} pickup in ${surfaceColumns[i]?.label ?? 'this period'}`
-                            : `No ${s.label} figures for ${surfaceColumns[i]?.label ?? 'this period'}`
+                            ? `${row.label} — no ${s.label} clicks recorded in ${surfaceColumns[i]?.label ?? 'this period'}`
+                            : `No ${s.label} clicks recorded for ${surfaceColumns[i]?.label ?? 'this period'}`
                       "
                     >
-                      <!-- Clicks only. Impressions, click rate and share are all in
-                           the cell's tooltip — two numbers in every cell of a 30-row
+                      <!-- Clicks only. Share, clicked articles and impressions are
+                           in the cell's tooltip — two numbers in every cell of a 30-row
                            grid is 300 numbers to read past to find the pattern. -->
                       <span v-if="c" class="rv">{{ fmtCount(c.clicks) }}</span>
                       <span v-else class="muted">—</span>
@@ -1419,38 +1428,39 @@ onMounted(() => {
           <p v-if="!s.top.length" class="muted no-pickup">
             No single article drew a {{ s.label }} click in that period.
           </p>
-          <div v-else class="heat-scroll">
-            <table class="heat surfaces">
-              <thead>
-                <tr>
-                  <th class="heat-label">#</th>
-                  <th class="heat-label">Article</th>
-                  <th>Clicks</th>
-                  <th>Impressions</th>
-                  <th>Click rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(a, i) in s.top" :key="a.pagePath">
-                  <td class="heat-label rank">{{ i + 1 }}</td>
-                  <td class="heat-label art-title">
-                    <span class="rv">{{ a.title }}</span>
-                    <span class="rs">{{ a.pagePath }}</span>
-                  </td>
-                  <td>{{ a.clicks.toLocaleString() }}</td>
-                  <td class="dim">{{ a.impressions.toLocaleString() }}</td>
-                  <td class="dim">{{ ctrPct(a.clicks, a.impressions) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <template v-else>
+            <p class="surface-hint impressions-note">{{ IMPRESSIONS_NOTE }}</p>
+            <div class="heat-scroll">
+              <table class="heat surfaces">
+                <thead>
+                  <tr>
+                    <th class="heat-label">#</th>
+                    <th class="heat-label">Article</th>
+                    <th>Clicks</th>
+                    <th>Impressions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(a, i) in s.top" :key="a.pagePath">
+                    <td class="heat-label rank">{{ i + 1 }}</td>
+                    <td class="heat-label art-title">
+                      <span class="rv">{{ a.title }}</span>
+                      <span class="rs">{{ a.pagePath }}</span>
+                    </td>
+                    <td>{{ a.clicks.toLocaleString() }}</td>
+                    <td class="dim">{{ a.impressions.toLocaleString() }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
         </template>
       </section>
 
       <div class="report-foot">
-        Numbers are clicks from Google; hover a cell for impressions, click rate and share. “—” means
-        no figures (no pickup, or nothing collected for those dates), which is not the same as zero
-        clicks. Deeper violet = a larger share of that
+        Numbers are clicks from Google; hover a cell for share, clicked articles and impressions. “—”
+        means no clicks recorded: not shown, shown but never clicked, or no figures for those dates.
+        Deeper violet = a larger share of that
         surface’s clicks <em>within its own column</em>, so shading shows what Google favoured that
         month rather than restating the size of the month. Δ compares the last complete month with the
         one before it. Google credits whichever copy of a story it treats as the original, so a story
@@ -1918,7 +1928,10 @@ table.heat.surfaces tfoot td.td-trend {
   font-size: 12px;
   color: var(--muted);
 }
-/* Distinct from an error: "no pickup here" is a finding, not a fault. */
+.impressions-note {
+  margin-bottom: 6px;
+}
+/* Distinct from an error: "no clicks here" is a finding, not a fault. */
 .no-pickup {
   font-size: 12px;
   margin: 6px 0 2px;
