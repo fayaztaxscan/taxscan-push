@@ -336,7 +336,9 @@ enum SearchSurface {
 
 // Per-article Discover / Google News / Search News-tab performance, synced from the Search
 // Console Search Analytics API (src/services/searchSurfaces.ts). One row per
-// (portal, pagePath, date, surface).
+// (portal, pagePath, date, surface) WITH AT LEAST ONE CLICK: a page's days
+// without a click are not stored, so `impressions` counts clicked page-days
+// only and is not the site's total.
 //
 // WHY SEARCH CONSOLE AND NOT GA4: Discover is invisible to GA4 — its clicks
 // carry a plain google.com referrer, so they land in `google / organic`

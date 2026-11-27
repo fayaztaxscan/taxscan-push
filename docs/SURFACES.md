@@ -13,6 +13,20 @@ pageviews: they are not comparable with "Reads" and are never added to them. Int
 
 `news` and `googleNews` are different surfaces despite the names.
 
+## Only clicked rows are kept (since 27 Nov 2026)
+
+`ArticleSurfaceStat` holds a row (one page, one day, one surface) only when it got **at least one click**; most rows
+never did and were filling the database. So:
+
+- click figures are complete;
+- **impressions** (and article counts) cover clicked page-days only. A page's impressions on a day without a click are
+  not stored, so they are not Google's totals and a click rate worked out from them reads far too high;
+- a "—" can mean the stories were shown and never clicked, as well as not shown or not yet reported.
+
+The rule is applied on write, after the URL spellings of one page are merged. A date whose rows were all unclicked is
+still replaced, so nothing stale remains. The migration `surfaces_clicked_only` deleted the older unclicked rows; a
+`VACUUM FULL "ArticleSurfaceStat"` gives the space back (run once, by hand; it locks only that table).
+
 ## How it is filled
 
 - `src/services/searchSurfaces.ts`: every 6 hours (`SEARCH_CONSOLE_CRON`), flag `SEARCH_CONSOLE_ENABLED`, the last

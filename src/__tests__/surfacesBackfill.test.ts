@@ -239,6 +239,23 @@ describe('a run', () => {
     expect(await stored('DISCOVER')).toEqual(discover);
   });
 
+  it('stores only clicked rows (the same write path as the routine sync), and counts those', async () => {
+    onQuery = async (q) =>
+      new Response(
+        JSON.stringify({
+          rows: [
+            { keys: [q.startDate, 'https://www.taxscan.in/gst/a-story'], clicks: 2, impressions: 20 },
+            { keys: [q.startDate, 'https://www.taxscan.in/gst/never-clicked'], clicks: 0, impressions: 500 },
+          ],
+        }),
+        { status: 200 },
+      );
+    const done = await finished((await post({ surface: 'news', from: FROM, to: TO })).body.id);
+    const chunks = monthChunks(FROM, TO).length;
+    expect(done).toMatchObject({ state: 'done', rows: chunks });
+    expect((await stored()).map((r) => [r.pagePath, r.clicks])).toEqual(Array(chunks).fill(['/gst/a-story', 2]));
+  });
+
   it('reports progress while running; a second backfill and the cron pass wait their turn', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
