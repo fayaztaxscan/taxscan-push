@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { createHash } from 'node:crypto';
 import { Prisma, type LinkedInPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, parseLinkedInAcademyEnv, parseLinkedInShopscanEnv, parseLinkedInHeadroom, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
+import { env, linkedinSharedPages, parseLinkedInHeadroom, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
@@ -692,14 +692,15 @@ export function startLinkedInWorker(): void {
   // eslint-disable-next-line no-console
   console.log(`[linkedin] worker started (post from ${env.linkedin.postFrom!.toISOString()})`);
   // The Academy page's ONE boot line (nothing else is logged about it while it is off): on with its own go-live, or off and why
-  // (fixed words naming the variables, never their values).
+  // (fixed words naming the variables, never their values; an org URN clashing with another page's is one such reason).
+  const { off } = linkedinSharedPages(process.env);
   const academy = env.linkedin.sharedPages[PAGE_ACADEMY];
   // eslint-disable-next-line no-console
-  console.log(academy ? `[linkedin] academy page on (post from ${academy.postFrom.toISOString()})` : `[linkedin] academy page off: ${parseLinkedInAcademyEnv(process.env).off ?? 'not configured'}`);
+  console.log(academy ? `[linkedin] academy page on (post from ${academy.postFrom.toISOString()})` : `[linkedin] academy page off: ${off[PAGE_ACADEMY] ?? 'not configured'}`);
   // The Shopscan page's ONE boot line, worded like Academy's: on with its go-live (it posts every push from then), or off and why.
   const shopscan = env.linkedin.sharedPages[PAGE_SHOPSCAN];
   // eslint-disable-next-line no-console
-  console.log(shopscan ? `[linkedin] shopscan page on (post from ${shopscan.postFrom.toISOString()}; every push from then)` : `[linkedin] shopscan page off: ${parseLinkedInShopscanEnv(process.env).off ?? 'not configured'}`);
+  console.log(shopscan ? `[linkedin] shopscan page on (post from ${shopscan.postFrom.toISOString()}; every push from then)` : `[linkedin] shopscan page off: ${off[PAGE_SHOPSCAN] ?? 'not configured'}`);
   // The daily quota guard: which active pages hold themselves, at what number (names capitalised: the page lines above are the
   // lowercase ones). An invalid number says so and uses the default, active page or not (it was typed for a reason).
   const guarded = ([PAGE_ACADEMY, PAGE_SHOPSCAN] as const).filter((p) => env.linkedin.sharedPages[p]);

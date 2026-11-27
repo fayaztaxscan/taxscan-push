@@ -1,4 +1,4 @@
-import { env } from '../../lib/env';
+import { env, LINKEDIN_SHARED_ORDER } from '../../lib/env';
 import { withSocialUtm } from '../social/utm';
 import { cachedAccessToken, tokenPageOf } from './token';
 
@@ -12,8 +12,8 @@ import { cachedAccessToken, tokenPageOf } from './token';
 export const PAGE_TAXSCAN = 'taxscan';
 export const PAGE_ACADEMY = 'academy';
 export const PAGE_SHOPSCAN = 'shopscan';
-/** The pages that borrow the Taxscan token, in the order a tick handles them after Taxscan. */
-export const SHARED_PAGES = [PAGE_ACADEMY, PAGE_SHOPSCAN] as const;
+/** The pages that borrow the Taxscan token, in the order a tick handles them after Taxscan: Academy, then Shopscan (the one list is in env.ts). */
+export const SHARED_PAGES = LINKEDIN_SHARED_ORDER;
 
 /** A portal → its page(s): one page name or a list. Callers (tests) may inject either shape. */
 export type PortalMap = Readonly<Record<string, string | readonly string[]>>;
