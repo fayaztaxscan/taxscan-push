@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { createHash } from 'node:crypto';
 import { Prisma, type FacebookPost } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { env, parseAllPushesFrom, parseFacebookAcademyEnv, parseFacebookShopscanEnv, ALL_PUSHES_FROM_VARS } from '../../lib/env';
+import { env, facebookSharedPages, parseAllPushesFrom, ALL_PUSHES_FROM_VARS } from '../../lib/env';
 import { safeErrorLog } from '../../lib/httpErrors';
 import { defaultEmailSender, isEmailConfigured, type EmailSender } from '../../lib/email';
 import { isQuietHours } from '../../lib/quietHours';
@@ -560,12 +560,6 @@ export async function skipPost(id: string): Promise<boolean> {
 
 let ticking = false;
 
-/** Each shared page's own reading of its variables (for the boot line's "off" reason). */
-const SHARED_PAGE_ENV: Record<(typeof SHARED_PAGES)[number], typeof parseFacebookShopscanEnv> = {
-  shopscan: parseFacebookShopscanEnv,
-  academy: parseFacebookAcademyEnv,
-};
-
 /** Started like the other crons, only when the flag is on and the config is sound. */
 export function startFacebookWorker(): void {
   if (!env.facebook.enabled) {
@@ -601,11 +595,12 @@ export function startFacebookWorker(): void {
       : `[facebook] all pushes off: ${parseAllPushesFrom(process.env, ALL_PUSHES_FROM_VARS.facebook).off ?? `${ALL_PUSHES_FROM_VARS.facebook} is not set`} (today's rule: one post per article)`,
   );
   // The shared pages (briefs 2026-11-12-facebook-shopscan-page, 2026-11-27-facebook-academy-page): ONE line each, on with its go-live, or
-  // off and why in fixed words naming the variables, never their values. Off is normal: the worker above already started and Taxscan posts
-  // exactly as before.
+  // off and why in fixed words naming the variables, never their values (a page id clashing with another page's is one such reason,
+  // brief 2026-11-27-duplicate-page-guard). Off is normal: the worker above already started and Taxscan posts exactly as before.
+  const { off } = facebookSharedPages(process.env);
   for (const page of SHARED_PAGES) {
     const on = env.facebook.sharedPages[page];
     // eslint-disable-next-line no-console
-    console.log(on ? `[facebook] ${page} page on (every push from ${on.postFrom.toISOString()})` : `[facebook] ${page} page off: ${SHARED_PAGE_ENV[page](process.env).off ?? 'not configured'}`);
+    console.log(on ? `[facebook] ${page} page on (every push from ${on.postFrom.toISOString()})` : `[facebook] ${page} page off: ${off[page] ?? 'not configured'}`);
   }
 }

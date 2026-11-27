@@ -320,8 +320,11 @@ the standing rule "every page posts every push" narrowed only by the sender's ow
   - **Switching it off** only stops it (rows kept, nothing marked FAILED). **Switching it back on**: set `LINKEDIN_SHOPSCAN_POST_FROM` to
     that moment, or everything pushed since the old time posts.
   - **Campaigns → Channels** still means the Taxscan page only.
-- Another page later is the same recipe: its variables, a place in `SHARED_PAGES` / `portalPages()`, and (if it should be held) a number in
-  `LINKEDIN_HEADROOM_VARS`.
+- **One page, one org URN** (brief 2026-11-27-duplicate-page-guard): a shared page given the Taxscan page's org URN, or an earlier shared
+  page's (Academy, then Shopscan), stays **off** (it would post every push twice), with the boot line `[linkedin] <page> page off:
+  LINKEDIN_<PAGE>_ORG_URN is the same page as <other> (it would post every push twice)`; the worker still starts.
+- Another page later is the same recipe: its variables, a place in `LINKEDIN_SHARED_ORDER` (env.ts) / `portalPages()`, and (if it should be
+  held) a number in `LINKEDIN_HEADROOM_VARS`.
 
 ## The screen's API
 `GET /api/linkedin/posts?date=YYYY-MM-DD&page=<key>` (ADMIN or PUBLISHER; `date` = an IST day, default today, up to 14 days back).

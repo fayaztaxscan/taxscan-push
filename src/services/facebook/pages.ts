@@ -1,4 +1,4 @@
-import { env, FACEBOOK_PAGE_ID_SHAPE, FACEBOOK_TOKEN_SHAPE } from '../../lib/env';
+import { env, FACEBOOK_PAGE_ID_SHAPE, FACEBOOK_SHARED_ORDER, FACEBOOK_TOKEN_SHAPE } from '../../lib/env';
 import { withSocialUtm } from '../social/utm';
 
 /**
@@ -15,8 +15,8 @@ export const PAGE_SHOPSCAN = 'shopscan';
 export const PAGE_ACADEMY = 'academy';
 /** Campaign.portal → the portal's OWN Facebook page. A shared page is not in it (see `portalPages`). */
 export const PORTAL_TO_PAGE: Readonly<Record<string, string>> = { taxscan: PAGE_TAXSCAN };
-/** The shared pages, in the order a tick handles them after Taxscan. */
-export const SHARED_PAGES = [PAGE_SHOPSCAN, PAGE_ACADEMY] as const;
+/** The shared pages, in the order a tick handles them after Taxscan: Shopscan, then Academy (the one list is in env.ts). */
+export const SHARED_PAGES = FACEBOOK_SHARED_ORDER;
 
 const sharedActive = (page: string): boolean => Object.prototype.hasOwnProperty.call(env.facebook.sharedPages, page);
 export const shopscanActive = (): boolean => sharedActive(PAGE_SHOPSCAN);
