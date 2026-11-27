@@ -8,6 +8,7 @@
  *    erasure:true on a live event, the 401 shape on every refusal.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { once } from 'node:events';
 import { gzipSync } from 'node:zlib';
 import express from 'express';
 import request from 'supertest';
@@ -297,7 +298,8 @@ describe('webhook route — adversarial', () => {
   /** One raw HTTP/1.1 request on a socket (repeated headers, exact body bytes); returns the status + logged step. */
   async function rawPost(a: express.Express, headers: [string, string][], payload: Buffer): Promise<{ status: number; step: string | null }> {
     const net = await import('node:net');
-    const server = a.listen(0);
+    const server = a.listen(0, '127.0.0.1');
+    await once(server, 'listening'); // a named host binds a moment later
     try {
       const port = (server.address() as { port: number }).port;
       const head = [`POST ${CMS_WEBHOOK_PATH} HTTP/1.1`, 'Host: localhost', 'Connection: close', ...headers.map(([k, v]) => `${k}: ${v}`), `Content-Length: ${payload.length}`].join('\r\n');
