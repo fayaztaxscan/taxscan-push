@@ -328,6 +328,127 @@ describe('buildSurfacesReport in range mode', () => {
 });
 
 /**
+ * Since the new CMS (28 Sep 2026) an article address is `/<section>/<slug>` with no numeric id. Both styles count;
+ * site pages stay out however many clicks they have.
+ */
+describe('buildSurfacesReport with new-CMS article URLs', () => {
+  const portal = `test-surfaces-newurls-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  // Unique per run and never ending in digits: a slug ending `-<5+ digits>` would be an OLD address and prove nothing.
+  const RUN = `t${Date.now()}z`;
+  const A = {
+    oldId: `/income-tax/${RUN}-itat-deletes-addition-${ID}`,
+    delhi: `/gst/${RUN}-gst-itc-denial-quashed-delhi-high-court`,
+    sc: `/other-taxations/${RUN}-supreme-court-upholds-pmla-attachment`,
+    slash: `/income-tax/${RUN}-itat-allows-deduction-under-income-tax-act`,
+  };
+  const NOT_ARTICLES = ['/trackers/gst', '/trackers/income-tax', `/subscription/${RUN}-plan`, '/pricing', '/gst', '/'];
+  const campaignIds: string[] = [];
+  let payload: SurfacesPayload;
+
+  beforeAll(async () => {
+    await seed(portal, [
+      [A.oldId, 'DISCOVER', '2026-10-03', 10, 100],
+      [A.delhi, 'DISCOVER', '2026-10-28', 300, 3000],
+      [A.sc, 'DISCOVER', '2026-10-29', 200, 2000],
+      [`${A.slash}/`, 'DISCOVER', '2026-11-10', 70, 700],
+      [A.delhi, 'DISCOVER', '2026-11-12', 30, 330],
+      [A.delhi, 'GOOGLE_NEWS', '2026-11-24', 40, 400],
+      // Site pages, with more clicks than any story, inside both months and the top list's window.
+      [NOT_ARTICLES[0], 'DISCOVER', '2026-10-28', 5000, 50000],
+      [NOT_ARTICLES[0], 'DISCOVER', '2026-11-12', 5000, 50000],
+      [NOT_ARTICLES[0], 'GOOGLE_NEWS', '2026-11-12', 4000, 40000],
+      [NOT_ARTICLES[1], 'GOOGLE_NEWS', '2026-10-28', 700, 7000],
+      [NOT_ARTICLES[2], 'DISCOVER', '2026-11-12', 900, 9000],
+      [NOT_ARTICLES[3], 'DISCOVER', '2026-11-12', 800, 8000],
+      [NOT_ARTICLES[4], 'DISCOVER', '2026-10-28', 600, 6000],
+      [NOT_ARTICLES[5], 'DISCOVER', '2026-11-12', 999, 9999],
+    ]);
+    const c = await prisma.campaign.create({
+      data: {
+        portal,
+        title: 'Delhi HC Quashes Denial of ITC',
+        body: '.',
+        url: `https://www.taxscan.in${A.delhi}?utm_source=taxscan-push`,
+        target: { type: 'all' },
+        status: 'SENT',
+      },
+    });
+    campaignIds.push(c.id);
+    payload = await buildSurfacesReport({ portal, now: new Date('2026-11-26T12:00:00.000Z') });
+  });
+
+  afterAll(async () => {
+    await prisma.articleSurfaceStat.deleteMany({ where: { portal } });
+    await prisma.campaign.deleteMany({ where: { id: { in: campaignIds } } });
+  });
+
+  it('counts id-less article clicks in the Oct and Nov columns, and nothing else', () => {
+    expect(payload.columns.map((c) => c.key)).toEqual(['2026-10', '2026-11']);
+    const [oct, nov] = [ci(payload, '2026-10'), ci(payload, '2026-11')];
+    expect(payload.totals[oct].DISCOVER).toEqual({ clicks: 510, impressions: 5100, articles: 3 });
+    expect(payload.totals[nov].DISCOVER).toEqual({ clicks: 100, impressions: 1030, articles: 2 });
+    expect(payload.totals[oct].GOOGLE_NEWS).toEqual({ clicks: 0, impressions: 0, articles: 0 });
+    expect(payload.totals[nov].GOOGLE_NEWS).toEqual({ clicks: 40, impressions: 400, articles: 1 });
+  });
+
+  it('fills the bench and category rows, and every grid adds up to the article totals', () => {
+    const [oct, nov] = [ci(payload, '2026-10'), ci(payload, '2026-11')];
+    const delhi = row(payload.byBench, 'DISCOVER', 'Delhi High Court');
+    expect(delhi?.cells[oct]).toEqual({ clicks: 300, impressions: 3000, articles: 1 });
+    expect(delhi?.cells[nov]).toEqual({ clicks: 30, impressions: 330, articles: 1 });
+    expect(row(payload.byBench, 'DISCOVER', 'Supreme Court')?.cells[oct]?.clicks).toBe(200);
+    expect(row(payload.byBench, 'DISCOVER', 'ITAT')?.cells.map((c) => c?.clicks)).toEqual([10, 70]);
+    expect(row(payload.byCategory, 'DISCOVER', 'GST')?.cells.map((c) => c?.clicks)).toEqual([300, 30]);
+
+    for (const grids of [payload.byCategory, payload.byBench]) {
+      for (const surface of ['DISCOVER', 'GOOGLE_NEWS'] as const) {
+        payload.columns.forEach((_, i) => {
+          const sum = grid(grids, surface).rows.reduce(
+            (n, r) => ({
+              clicks: n.clicks + (r.cells[i]?.clicks ?? 0),
+              impressions: n.impressions + (r.cells[i]?.impressions ?? 0),
+              articles: n.articles + (r.cells[i]?.articles ?? 0),
+            }),
+            { clicks: 0, impressions: 0, articles: 0 },
+          );
+          expect(sum).toEqual(payload.totals[i][surface]);
+        });
+      }
+    }
+  });
+
+  it('lists id-less articles in the top list, titled from the campaign when pushed, else from the slug', () => {
+    expect(payload.topWindow).toMatchObject({ from: '2026-10-26', to: '2026-11-24' });
+    const top = payload.topArticles.DISCOVER;
+    expect(top.map((t) => [t.pagePath, t.clicks])).toEqual([
+      [A.delhi, 330],
+      [A.sc, 200],
+      [A.slash, 70],
+    ]);
+    expect(top[0].title).toBe('Delhi HC Quashes Denial of ITC');
+    expect(top[1].title).toBe(`T${RUN.slice(1)} supreme court upholds pmla attachment`);
+    expect(payload.topArticles.GOOGLE_NEWS.map((t) => [t.pagePath, t.title, t.clicks])).toEqual([
+      [A.delhi, 'Delhi HC Quashes Denial of ITC', 40],
+    ]);
+  });
+
+  it('never shows a site page in a top list', () => {
+    const listed = [...payload.topArticles.DISCOVER, ...payload.topArticles.GOOGLE_NEWS].map((t) => t.pagePath);
+    for (const path of NOT_ARTICLES) expect(listed).not.toContain(path);
+  });
+
+  it('applies the same rule to a custom range', async () => {
+    const ranged = await buildSurfacesReport({
+      portal,
+      now: new Date('2026-11-26T12:00:00.000Z'),
+      range: { from: '2026-11-01', to: '2026-11-24' },
+    });
+    expect(ranged.totals[0].DISCOVER).toEqual({ clicks: 100, impressions: 1030, articles: 2 });
+    expect(ranged.totals[0].GOOGLE_NEWS).toEqual({ clicks: 40, impressions: 400, articles: 1 });
+  });
+});
+
+/**
  * The sync only ever fetches a rolling lookback, so a fresh install holds days
  * rather than months. `dataFrom` is what lets the panel say "we only have N days
  * of history" instead of presenting a week's data under a "12 months" heading.

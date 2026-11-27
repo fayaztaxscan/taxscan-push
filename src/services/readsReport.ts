@@ -33,7 +33,11 @@ export const READ_WINDOWS = [
   { label: '12 months', days: 365 },
 ] as const;
 
-/** Article pages: the slug ends in the numeric article id (…-scheme-2026-1448729). */
+/**
+ * The GA API's page filter: OLD article addresses only (…-scheme-2026-1448729). Deliberately not widened to the new
+ * CMS's id-less addresses (brief 2026-11-27-surfaces-new-urls): GA answers for the dates before READS_CMS_FROM only.
+ * Everything read back from our own tables is screened with `isArticlePath` below.
+ */
 const ARTICLE_PATH_RE = '-\\d{5,}/?$';
 
 export type ReadsCell = { views: number; articles: number; share: number } | null;
@@ -311,14 +315,39 @@ export type ReadsEmailSummary = {
   sourceNote?: string;
 };
 
+/** An OLD article address: the slug ends in the numeric article id. */
+const ARTICLE_ID_PATH_RE = /-\d{5,}$/;
+
 /**
- * JS twin of ARTICLE_PATH_RE (which is a GA API filter string). Exported
- * because the Surfaces report needs the identical test: its rows are screened
- * by host only, so the homepage and section pages reach the table and would be
- * classified as if they were stories. Two copies of this would silently drift
- * the day taxscan's URL format changes.
+ * taxscan.in's article sections. Since the new CMS (28 Sep 2026) an article lives at `/<section>/<slug>` with no numeric
+ * id, so on those addresses the section is all that tells a story from a site page (`/trackers/gst`, `/subscription/…`).
+ * A new article section must be added here, or its stories are silently left out of the reports.
  */
-export const ARTICLE_PATH_JS_RE = /-\d{5,}$/;
+const ARTICLE_SECTIONS: ReadonlySet<string> = new Set([
+  'gst',
+  'income-tax',
+  'corporate-laws',
+  'excise-customs',
+  'other-taxations',
+  'cst-vat',
+  'service-tax',
+  'job-scan',
+  'news-updates',
+  'top-stories',
+]);
+
+/**
+ * Is this taxscan.in path an article? True for an old address (ends in the numeric id, whatever its section) or exactly
+ * `/<section>/<slug>` in an article section. A trailing slash is ignored. Shared by the Surfaces report and the reads
+ * email: their rows are screened by host only, so the homepage and section pages reach the tables and would be
+ * classified as if they were stories. Two copies of this would silently drift the day taxscan's URL format changes.
+ */
+export function isArticlePath(path: string): boolean {
+  const p = path.replace(/\/+$/, '');
+  if (ARTICLE_ID_PATH_RE.test(p)) return true;
+  const parts = p.split('/'); // '/gst/a-story' → ['', 'gst', 'a-story']
+  return parts.length === 3 && parts[0] === '' && ARTICLE_SECTIONS.has(parts[1]);
+}
 
 /**
  * Readable pseudo-title from an article slug — used to classify paths whose
@@ -334,8 +363,8 @@ export function titleFromPath(p: string): string {
 
 /**
  * Reads during [start, end) for the coverage-report email, from ArticleReadStat
- * only (never GA at send time). Counts article pages only (slug ends in the
- * numeric id); categories are classified from the campaign-independent slug so
+ * only (never GA at send time). Counts article pages only (`isArticlePath`; a
+ * CMS row always counts); categories are classified from the campaign-independent slug so
  * every read counts even when we never captured the article. Returns null when
  * the window has no read data at all (e.g. before tracking started).
  */
@@ -352,13 +381,13 @@ export async function readsSummaryForWindow(opts: {
   // midnights — compare by day key.
   const win = await readsWindowByPath(istDateKey(opts.start), istDateKey(opts.end), { portal });
 
-  // Keep article pages only: GA's rows are every page of the site (a story's slug ends in its numeric id), while a CMS
-  // row IS an article — and a story born on the new CMS has no numeric id in its URL.
+  // Keep article pages only: GA's rows are every page of the site, so they are screened with `isArticlePath`; a CMS row
+  // IS an article, whatever its URL looks like.
   const byPath = new Map<string, { reads: number; pushReads: number }>();
   let usedGa = false;
   let usedCms = false;
   for (const [path, e] of win) {
-    if (!e.usedCms && !ARTICLE_PATH_JS_RE.test(path)) continue;
+    if (!e.usedCms && !isArticlePath(path)) continue;
     byPath.set(path, { reads: e.views, pushReads: e.pushViews ?? 0 });
     usedGa ||= e.usedGa;
     usedCms ||= e.usedCms;
