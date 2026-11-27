@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { benchRank, benchRowKey, categoryRowKey, istDateKey } from './reports';
-import { ARTICLE_PATH_JS_RE, titleFromPath } from './readsReport';
+import { isArticlePath, titleFromPath } from './readsReport';
 import { readsPath } from './metrics';
 import { SURFACES } from './searchSurfaces';
 
@@ -102,8 +102,8 @@ export type SurfacesPayload = {
   dataFrom: string | null;
 };
 
-// ARTICLE_PATH_JS_RE (imported above) keeps non-article rows out: the sync
-// screens the HOST only, so the homepage and section pages do reach
+// isArticlePath (imported above) keeps non-article rows out: the sync screens
+// the HOST only, so the homepage, section and other site pages do reach
 // ArticleSurfaceStat and would otherwise be classified as if they were stories.
 
 /** Top most-surfaced articles listed per surface. */
@@ -395,7 +395,7 @@ export async function buildSurfacesReport(opts: {
 
   for (const r of rows) {
     const path = r.pagePath.replace(/\/+$/, '');
-    if (!ARTICLE_PATH_JS_RE.test(path)) continue;
+    if (!isArticlePath(path)) continue;
     const ci = colIndex.get(r.bucket);
     if (ci === undefined) continue;
     const surface = r.surface as SurfaceKey;
@@ -453,7 +453,7 @@ async function topSurfacedArticles(
   };
   for (const r of rows) {
     const path = r.pagePath.replace(/\/+$/, '');
-    if (!ARTICLE_PATH_JS_RE.test(path)) continue;
+    if (!isArticlePath(path)) continue;
     const m = byPath[r.surface as SurfaceKey];
     if (!m) continue;
     const e = m.get(path) ?? { clicks: 0, impressions: 0, articles: 1 };
