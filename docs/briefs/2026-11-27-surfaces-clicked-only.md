@@ -66,3 +66,9 @@ Each one must PASS in the REPORT.
 - `searchSurfaces.ts`: the per-path merge (`surfacePagePath`, rounding) happens before write; filter after it.
 - Brief `2026-11-27-surfaces-news-tab` + its REPORT for the backfill path.
 - `docs/EVENT_RETENTION.md` / CLAUDE.md for the earlier VACUUM FULL precedent.
+
+## Follow-up 1 (planning, 27 Nov — builder's catch, agreed)
+1. Acceptance 5 means: click TOTALS and every cell with ≥ 1 click identical. A cell made only of 0-click rows becomes a
+   dash, a row made only of such cells disappears, article counts count clicked articles, equal-click ties in the top list
+   may reorder. Reword the dash footnote + guide: a dash now also covers "shown but never clicked".
+2. Rows are per page per DAY, so the hint reads: "Impressions count a page only on days it got at least one click."
